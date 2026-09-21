@@ -1,0 +1,101 @@
+# ============================================================================
+# 扫码点餐管理系统 — Git 忽略清单
+# ----------------------------------------------------------------------------
+# 约定：只提交「源码 / 配置模板 / 迁移脚本 / 种子图片」，
+#       一切「编译产物 / 运行期数据 / 密钥 / 依赖目录」都不入库。
+# ============================================================================
+
+# ---------------- 通用 ----------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# ---------------- 后端 (Go) ----------------
+# 编译产物
+backend/bin/
+backend/*.exe
+backend/*.test
+backend/dining-server
+coverage.out
+coverage.txt
+*.cover
+*.coverprofile
+
+# Go 工作区（本地开发可能产生，不共享）
+go.work
+go.work.sum
+
+# SQLite 运行期数据库（由程序自动创建）
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/*.db-journal
+*.sqlite
+*.sqlite3
+
+# 运行期主密钥目录（AES 加密敏感配置用；首次启动自动生成，
+# 换机 / 换库时必须手动带走，否则已加密的密钥无法解密）
+backend/data/
+!backend/data/.gitkeep
+
+# 迁移 / 校验用的临时库
+backend/_t_*.db*
+backend/_mig_test*.db*
+backend/_verify_*.py
+
+# 环境变量文件（可能含数据库密码、支付密钥等，绝不入库）
+# .env.example 是模板，需要入库，放在最后一行以覆盖上面的排除规则。
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# 部署配置文件（YAML 方式，同样会含数据库密码，绝不入库）
+config.yaml
+backend/config.yaml
+frontend/config.yaml
+# 但模板需要入库（见文件末尾的否定规则）
+
+!.env.example
+!config.example.yaml
+
+# 上传目录：只忽略「运行期上传」的文件，保留种子图片
+#   种子图片命名约定：dining_YYYYMMDD_NNN.*（菜品图）、pay_wx.png / pay_ali.jpg（收款码）
+backend/uploads/*
+!backend/uploads/dining_2026*.jpeg
+!backend/uploads/dining_2026*.jpg
+!backend/uploads/dining_2026*.png
+!backend/uploads/dining_2026*.webp
+!backend/uploads/pay_wx.png
+!backend/uploads/pay_ali.jpg
+
+# ---------------- 前端 (Vue / Vite) ----------------
+frontend/node_modules/
+frontend/node_modules.bak/
+frontend/.vite/
+frontend/dist/
+# 构建中途留下的临时目录（改名前 / 备份名 / 轮换目录）
+frontend/dist_*/
+frontend/dist-*/
+frontend/_dist_*/
+frontend/_old_dist_*
+frontend/*.timestamp-*.mjs
+frontend/dev.log
+
+# ---------------- 文档 / 预览产物 ----------------
+outputs/
+*.local

@@ -1,0 +1,69 @@
+# ============================================================================
+# 扫码点餐管理系统 - 后端 systemd 服务单元
+#
+# 安装: 复制到 /etc/systemd/system/dining-server.service
+#       systemctl daemon-reload && systemctl enable --now dining-server
+#
+# 说明: 工作目录设为安装目录, 使相对路径(./dining.db、./uploads)稳定可用;
+#       也可通过 Environment 覆盖端口/数据库/上传目录。
+# ============================================================================
+
+[Unit]
+Description=Dining System Backend (扫码点餐管理系统后端)
+After=network.target
+
+[Service]
+Type=simple
+# 运行用户(建议非 root; 确保该用户对工作目录有读写权限)
+User=dining
+Group=dining
+
+# 安装目录(与 deploy.sh 中 INSTALL_DIR 保持一致)
+WorkingDirectory=/opt/dining-system
+# 后端二进制
+ExecStart=/opt/dining-system/bin/dining-server
+
+# 环境变量说明:
+#   DB_PATH / UPLOAD_DIR 使用相对路径(./dining.db、./uploads),配合 WorkingDirectory
+#   落在 /opt/dining-system 下,无需显式指定。
+#   STATIC_DIR 必须显式指定:后端默认值是 ../frontend/dist,而本服务 WorkingDirectory
+#   是 /opt/dining-system,相对路径会解析成 /opt/frontend/dist(错误)。由 deploy.sh 的
+#   sed 将 /opt/dining-system 替换为实际 INSTALL_DIR。
+Environment=STATIC_DIR=/opt/dining-system/frontend/dist
+
+# 管理端凭据由 deploy.sh 写入 /etc/dining-server.env(权限 600),
+# 避免在服务单元里明文写密码。文件缺失时 "-" 前缀使其不报错。
+EnvironmentFile=-/etc/dining-server.env
+
+# 可选环境变量(按需取消注释)
+# Environment=PORT=8080
+# Environment=DB_PATH=/opt/dining-system/dining.db
+# Environment=UPLOAD_DIR=/opt/dining-system/uploads
+
+# ---- 切换到 MySQL(详见 docs/mysql-migration.md) ----
+# 只需打开 DB_DRIVER 并填好连接信息,业务代码无需改动。
+# 密码不建议写在这里,放 EnvironmentFile(上方 /etc/dining-server.env,权限 600)。
+# Environment=DB_DRIVER=mysql
+# Environment=DB_HOST=127.0.0.1
+# Environment=DB_PORT=3306
+# Environment=DB_USER=dining
+# Environment=DB_NAME=dining
+# Environment=DB_PASSWORD=改成强密码
+# 也可用一行完整连接串(设置后优先于上面的分项):
+# Environment=DB_DSN=dining:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local
+#
+# ⚠️ 主密钥 CONFIG_MASTER_KEY / data/master.key 必须与原库一致,否则已加密的
+#    支付密钥无法解密;迁移时请一并复制 /opt/dining-system/data/master.key。
+#
+# 经 Nginx 反代时务必配置,否则登录限流取不到真实客户端 IP:
+# Environment=TRUSTED_PROXIES=127.0.0.1
+
+# 崩溃自动重启
+Restart=always
+RestartSec=3
+
+# 资源限制(可选)
+# LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

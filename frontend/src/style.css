@@ -1,0 +1,316 @@
+/* ============================================================
+   扫码点餐系统 · Design Token（对齐 UI 优化设计稿 v2）
+   品牌：食欲暖橙；文字：炭黑；语义：薄荷绿/琥珀/珊瑚红
+   ============================================================ */
+:root {
+  /* 品牌色 */
+  --brand: #FF6B35;
+  --brand-deep: #F0481F;
+  --brand-light: #FF8A50;
+  --brand-soft: #FFF1EA;
+  --brand-ghost: #FFF8F5;
+
+  /* 中性色 */
+  --ink: #1A1A1A;
+  --ink-2: #4A4A4A;
+  --ink-3: #8C8C8C;
+  --ink-4: #C7C7C7;
+
+  /* 线条 / 背景 */
+  --line: #EEEEEE;
+  --bg: #F7F7F7;
+  --card: #FFFFFF;
+
+  /* 语义色 */
+  --success: #1FC97E;
+  --success-soft: #E8FAF1;
+  --warning: #FFB020;
+  --warning-soft: #FFF6E5;
+  --danger: #F53F3F;
+  --danger-soft: #FEEEEE;
+
+  /* 圆角 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* 阴影 */
+  --shadow-1: 0 2px 8px rgba(26, 26, 26, 0.06);
+  --shadow-2: 0 8px 24px rgba(26, 26, 26, 0.10);
+  --shadow-3: 0 12px 36px rgba(240, 72, 31, 0.28);
+
+  /* 主渐变（按钮 / 头部 / CTA） */
+  --grad-brand: linear-gradient(135deg, #FF8A50 0%, #FF6B35 45%, #F0481F 100%);
+  --grad-brand-soft: linear-gradient(135deg, #FF8A50 0%, #F0481F 100%);
+
+  /* ===== 覆盖 TDesign 品牌色为暖橙 ===== */
+  --td-brand-color-1: #FFF1EA;
+  --td-brand-color-2: #FFE3D4;
+  --td-brand-color-3: #FFD5C4;
+  --td-brand-color-4: #FFB08A;
+  --td-brand-color-5: #FF9A66;
+  --td-brand-color-6: #FF8A50;
+  --td-brand-color-7: #FF6B35;
+  --td-brand-color-8: #F0481F;
+  --td-brand-color-9: #C73814;
+  --td-brand-color-10: #96270B;
+  --td-brand-color: var(--td-brand-color-7);
+  --td-brand-color-hover: var(--td-brand-color-6);
+  --td-brand-color-focus: var(--td-brand-color-2);
+  --td-brand-color-active: var(--td-brand-color-8);
+  --td-brand-color-disabled: var(--td-brand-color-3);
+  --td-brand-color-light: var(--td-brand-color-1);
+  --td-brand-color-light-hover: var(--td-brand-color-2);
+}
+
+/* TDesign 主按钮改用品牌渐变 */
+.t-button--theme-primary.t-button--variant-base {
+  background: var(--grad-brand-soft) !important;
+  border: none !important;
+  box-shadow: 0 4px 14px rgba(240, 72, 31, 0.24);
+}
+.t-button--theme-primary.t-button--variant-base:hover {
+  background: var(--grad-brand) !important;
+  box-shadow: 0 6px 18px rgba(240, 72, 31, 0.32);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+/* 通用页面卡片 */
+.page-card {
+  background: var(--card);
+  border-radius: var(--r-lg);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-1);
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-left {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.money {
+  color: var(--brand-deep);
+  font-weight: 700;
+}
+
+/* 表格卡片圆角统一 */
+.t-table {
+  border-radius: var(--r-md);
+}
+
+/* 图标垂直对齐 */
+svg.ic-svg {
+  vertical-align: middle;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+/* ============================================================
+   弹窗宽度兜底
+   页面里的 t-dialog 写的是固定像素宽(720/660/480),而 TDesign 的
+   `.t-dialog { width: 480px }` 并没有 max-width,窄屏下会溢出视口、
+   必须横向拖动才能看到右半边。这里统一兜一层上限,不必逐个改调用点。
+   同时限制最大高度,避免长表单弹窗在手机竖屏下超出屏幕。
+   ============================================================ */
+.t-dialog {
+  max-width: 92vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.t-dialog__body {
+  overflow-y: auto;
+  min-height: 0;
+}
+/* 弹窗内的描述列表在窄屏降列,3 列挤在 390px 里会连字都换不开 */
+@media (max-width: 767px) {
+  .t-dialog .t-descriptions--bordered .t-descriptions__body .t-descriptions__table {
+    table-layout: auto;
+  }
+  .t-dialog__header {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .t-dialog__body {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* ============================================================
+   移动端卡片列表
+   窄屏下 TDesign 表格只能横向拖(Orders 的列宽合计 900px+,操作列还占
+   290px),改用它来替代:关键信息竖排、操作按钮换行铺在卡片底部。
+   ============================================================ */
+.m-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mcard {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: #fff;
+  padding: 12px 14px;
+}
+.mcard-hd {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mcard-no {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.4px;
+}
+.mcard-sub {
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.mcard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin-top: 10px;
+}
+.mcard-cell {
+  min-width: 0;
+}
+.mcard-cell .k {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.mcard-cell .v {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin-top: 2px;
+  word-break: break-word;
+}
+.mcard-ft {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.mcard-ft .t-button {
+  flex: 0 0 auto;
+}
+.m-empty {
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  padding: 32px 0;
+}
+.m-pager {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+/* 分页器在 366px 里放不下"共 N 项 + 7 个页码",允许折行而不是把总数压扁。
+   注意 TDesign 给 .t-pagination__total 设的是 flex:1(flex-basis:0%),
+   只写 flex-shrink:0 没用 —— basis 是 0 时没有可收缩的余地,必须写 flex:0 0 auto。 */
+.m-pager .t-pagination {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 8px;
+}
+.m-pager .t-pagination__total {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   窄屏通用收敛
+   ============================================================ */
+@media (max-width: 767px) {
+  /* 工具栏里的筛选控件写死了 inline width(180/120/140/150px),换行后
+     每个都独占一行且宽度不齐;统一拉满整行。 */
+  .toolbar-left > * {
+    width: 100% !important;
+    flex: 1 1 100%;
+  }
+  .toolbar {
+    align-items: stretch;
+  }
+  /* 工具栏右侧的操作按钮组(新增/导出等)同样拉满整行,方便单手点按 */
+  .toolbar .t-space {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .toolbar .t-space-item {
+    flex: 1 1 auto;
+  }
+  .toolbar .t-space-item > .t-button {
+    width: 100%;
+  }
+  /* 工具栏里直接挂着的按钮(如「刷新」)也拉满,避免半宽左对齐的割裂感 */
+  .toolbar > .t-button {
+    width: 100%;
+  }
+  /* TDesign 的 .t-input-number 固定 144px 宽;套在竖向 t-space 里时,
+     suffix(如「元/人」)会把内部 input 挤到只剩 12px,数字根本看不清。 */
+  .t-form .t-space {
+    width: 100%;
+  }
+  .t-form .t-space-item {
+    align-self: stretch;
+    max-width: 100%;
+  }
+  .t-form .t-space-item > .t-input-number {
+    width: 100%;
+    max-width: 220px;
+  }
+  /* TDesign 分节标题默认 nowrap,长文案(如「在线支付(未申请 key 前…)」)
+     会撑出 380px+ 把容器撑破、逼出横向滚动条 */
+  .t-divider__inner-text {
+    white-space: normal;
+    text-align: center;
+    line-height: 1.6;
+  }
+  /* 卡片内边距收窄,把有限的横向空间让给内容 */
+  .page-card {
+    padding: 14px;
+    border-radius: var(--r-md);
+  }
+  /* 表格自带横向滚动,不允许它把父级撑破 */
+  .page-card .t-table,
+  .page-card .t-table__content {
+    max-width: 100%;
+  }
+  .t-table .t-table__content::-webkit-scrollbar {
+    height: 4px;
+  }
+}
