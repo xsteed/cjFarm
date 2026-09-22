@@ -69,7 +69,9 @@ func normalizePrinter(p *model.Printer) {
 	if p.PrinterType != model.PrinterTypeKitchen && p.PrinterType != model.PrinterTypeGuest {
 		p.PrinterType = model.PrinterTypeKitchen
 	}
-	if p.Provider != model.PrinterProviderFeie {
+	// 接入方式只接受三种已知取值,其余(含历史上可能出现的中文/空值)一律回落到网络直连 ——
+	// 存进库的枚举值会直接决定「走哪条发送路径」,不能让脏值漏进去。
+	if p.Provider != model.PrinterProviderFeie && p.Provider != model.PrinterProviderAgent {
 		p.Provider = model.PrinterProviderTCP
 	}
 	if p.Port == 0 {
@@ -102,8 +104,12 @@ func normalizePrinter(p *model.Printer) {
 
 // validatePrinter 按接入方式分别校验,失败时已写入错误响应。
 //
-// 两条通道的必填项不同:直连必须填 IP(且要做防 SSRF 校验),
-// 云打印必须填 SN(不发起任何对内网的连接,故不做 IP 校验)。
+// 三条通道的必填项不同:
+//   - tcp   必须填 IP(后端要直连,且要做防 SSRF 校验);
+//   - feie  必须填 SN(不发起任何对内网的连接,故不做 IP 校验);
+//   - agent 必须填 IP —— 它是「打印机在门店内网的地址」,由门店代理使用。
+//     虽然云后端自己不会去连它(SSRF 面不存在),仍按同一规则校验:
+//     地址写错时在保存阶段就报错,比让代理一遍遍连不上、堆一队列任务要好得多。
 func validatePrinter(c *gin.Context, p *model.Printer) bool {
 	if strings.TrimSpace(p.PrinterName) == "" {
 		fail(c, "请填写打印机名称")
@@ -117,6 +123,10 @@ func validatePrinter(c *gin.Context, p *model.Printer) bool {
 		return true
 	}
 	if strings.TrimSpace(p.IP) == "" {
+		if p.IsAgent() {
+			fail(c, "请填写打印机在门店内网的 IP 地址(格式如 192.168.1.8)")
+			return false
+		}
 		fail(c, "请填写打印机 IP 地址")
 		return false
 	}
@@ -222,8 +232,9 @@ func PrinterProbe(c *gin.Context) {
 }
 
 // PrinterStatus 查询打印机实时状态。
-//   - 飞鹅: 走 Open_queryPrinterStatus 拿在线/缺纸状态,并附带当日打印统计;
-//   - TCP:  只能探一次端口连通性(直连打印机没有可查询的状态接口)。
+//   - 飞鹅:  走 Open_queryPrinterStatus 拿在线/缺纸状态,并附带当日打印统计;
+//   - TCP:   只能探一次端口连通性(直连打印机没有可查询的状态接口);
+//   - agent: 云后端够不到门店内网,状态的含义是「门店代理是否还在轮询」+ 本机积压。
 func PrinterStatus(c *gin.Context) {
 	id, okid := idParam(c)
 	if !okid {
@@ -235,11 +246,25 @@ func PrinterStatus(c *gin.Context) {
 		return
 	}
 	if !p.IsFeie() {
-		if _, err := print.ProbePrinter(p); err != nil {
-			ok(c, gin.H{"provider": "tcp", "online": false, "status": "连接失败:" + err.Error()})
+		provider := "tcp"
+		if p.IsAgent() {
+			provider = "agent"
+		}
+		msg, err := print.ProbePrinter(p)
+		if err != nil {
+			res := gin.H{"provider": provider, "online": false, "status": err.Error()}
+			if p.IsAgent() {
+				res["pending"] = store.PendingJobCountByPrinter(p.PrinterID)
+			}
+			ok(c, res)
 			return
 		}
-		ok(c, gin.H{"provider": "tcp", "online": true, "status": "端口可达(直连打印机无状态查询接口)"})
+		res := gin.H{"provider": provider, "online": true, "status": "端口可达(直连打印机无状态查询接口)"}
+		if p.IsAgent() {
+			res["status"] = msg
+			res["pending"] = store.PendingJobCountByPrinter(p.PrinterID)
+		}
+		ok(c, res)
 		return
 	}
 	client, err := print.NewFeieClient()
@@ -322,8 +347,18 @@ func PrinterClear(c *gin.Context) {
 	if !okp {
 		return
 	}
+	if p.IsAgent() {
+		// 代理掉线 / IP 填错时队列会一直堆积,必须给商家一个止损手段。
+		n, err := print.ClearAgentQueue(p.PrinterID)
+		if err != nil {
+			fail(c, err.Error())
+			return
+		}
+		okMsg(c, "已清空「"+p.PrinterName+"」的待打印队列(丢弃 "+strconv.Itoa(n)+" 条未送出任务)")
+		return
+	}
 	if !p.IsFeie() {
-		fail(c, "清空队列仅支持飞鹅云打印机")
+		fail(c, "清空队列仅支持飞鹅云 / 本地打印代理打印机")
 		return
 	}
 	client, err := print.NewFeieClient()
@@ -370,5 +405,9 @@ func printerTarget(p model.Printer) string {
 	if port <= 0 {
 		port = 9100
 	}
-	return p.IP + ":" + strconv.Itoa(port)
+	addr := p.IP + ":" + strconv.Itoa(port)
+	if p.IsAgent() {
+		return "门店内网 " + addr + "(由本地打印代理转发)"
+	}
+	return addr
 }

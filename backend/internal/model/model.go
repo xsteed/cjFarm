@@ -94,6 +94,11 @@ type Remark struct {
 const (
 	PrinterProviderTCP  = "tcp"  // 网络热敏机: 后端拼 ESC/POS 走 IP:9100
 	PrinterProviderFeie = "feie" // 飞鹅云打印机: 后端走开放平台 HTTP 接口推单
+	// PrinterProviderAgent 本地打印代理: 后端只把票据入队,由门店内网常驻的
+	// 代理程序出站拉单后再向 IP:9100 直发。后端部署在云服务器时,这是
+	// 复用门店已有网络打印机的唯一通道(tcp 通道在云端够不到门店内网)。
+	// 完整部署说明见 docs/print-agent.md。
+	PrinterProviderAgent = "agent"
 )
 
 // 打印机类型。
@@ -129,6 +134,12 @@ type Printer struct {
 // IsFeie 报告该打印机是否走飞鹅云接口。
 func (p *Printer) IsFeie() bool { return p.Provider == PrinterProviderFeie }
 
+// IsAgent 报告该打印机是否走本地打印代理(云后端入队 + 门店代理取单)。
+func (p *Printer) IsAgent() bool { return p.Provider == PrinterProviderAgent }
+
+// IsDirect 报告该打印机是否由后端直连 IP:9100 发送(要求后端与打印机同局域网)。
+func (p *Printer) IsDirect() bool { return !p.IsFeie() && !p.IsAgent() }
+
 // EffectiveCopies 返回实际打印份数(兜底 1,上限 5,避免误填 100 份把纸打光)。
 func (p *Printer) EffectiveCopies() int {
 	if p.Copies < 1 {
@@ -150,6 +161,10 @@ const (
 const (
 	PrintStatusFailed  = 0 // 发送失败
 	PrintStatusSuccess = 1 // 已送出
+	// PrintStatusQueued 已入队、等待本地打印代理取单。
+	// 仅 provider=agent 会出现:后端不再同步送出,「已入队」与「真出纸」是两件事,
+	// 用独立状态区分,否则代理掉线时日志会显示成「已送出」而实际一张纸都没吐。
+	PrintStatusQueued = 2
 )
 
 // 打印触发场景(落 tb_print_log.trigger_by),用于区分「自动打印」与「人工补打」。
@@ -182,6 +197,73 @@ type PrintLog struct {
 	Operator    string `json:"operator"`
 	CostMs      int    `json:"costMs"`
 	CreateTime  string `json:"createTime"`
+}
+
+// ============ 本地打印代理任务队列 ============
+
+// 打印任务状态(落 tb_print_job.status)。
+const (
+	PrintJobPending = 0 // 待代理取单
+	PrintJobClaimed = 1 // 已被某个代理取走,打印中(带租约,超时可被重新取走)
+	PrintJobDone    = 2 // 代理已成功送出
+	PrintJobDead    = 3 // 重试次数用尽,放弃(需人工补打)
+)
+
+// 打印任务重试上限:超过后置为 dead,避免坏任务在队列里无限循环。
+const PrintJobMaxAttempts = 3
+
+// PrintJob 一条「待本地打印代理送出」的打印任务。
+//
+// Payload 存的是渲染后的等宽文本行(用 '\n' 连接),不是厂商协议字节:
+//   - 文本行与厂商无关,和小票直连/飞鹅云共用同一份渲染结果(ticket.go);
+//   - ESC/POS 字节(GBK 编码 + 切纸指令)在「代理取单时」由后端现场编码后
+//     以 base64 下发,代理程序因此完全不需要懂打印协议,只做字节搬运。
+type PrintJob struct {
+	JobID       int    `json:"jobId"`
+	PrinterID   int    `json:"printerId"`
+	PrinterName string `json:"printerName"`
+	PrinterType int    `json:"printerType"`
+	IP          string `json:"ip"`   // 打印机在门店内网的地址(云后端不直连,由代理使用)
+	Port        int    `json:"port"` // 默认 9100
+	DocType     string `json:"docType"`
+	OrderID     int    `json:"orderId"`
+	OrderNo     string `json:"orderNo"`
+	TableNo     string `json:"tableNo"`
+	Copies      int    `json:"copies"`
+	PrintLogID  int    `json:"printLogId"` // 关联的 tb_print_log 主键,回执时回写结果
+	// DeliveryID 幂等投递号(入队时生成、永不变更):代理打印成功后本地持久化这个号,
+	// 若回执丢失导致任务被重新下发,代理凭它判断「这一条我已经打过了」,跳过打印直接回执,
+	// 从根上消除「回执丢失 → 重复出票」。见 docs/print-agent.md 的「幂等投递」。
+	DeliveryID string `json:"deliveryId"`
+	// Payload 渲染后的文本行,以 '\n' 连接。
+	Payload     string `json:"-"` // 不出现在列表接口里(体积大,只有取单接口用)
+	Status      int    `json:"status"`
+	Attempts    int    `json:"attempts"`
+	LastError   string `json:"lastError"`
+	ClaimedBy   string `json:"claimedBy"`
+	ClaimTime   string `json:"claimTime"`
+	NextTryTime string `json:"nextTryTime"`
+	TriggerBy   string `json:"triggerBy"`
+	Operator    string `json:"operator"`
+	CreateTime  string `json:"createTime"`
+	DoneTime    string `json:"doneTime"`
+}
+
+// AgentJob 下发给本地打印代理的单条任务(接口出参,含已编码好的字节)。
+type AgentJob struct {
+	JobID       int    `json:"jobId"`
+	PrinterID   int    `json:"printerId"`
+	PrinterName string `json:"printerName"`
+	IP          string `json:"ip"`
+	Port        int    `json:"port"`
+	Copies      int    `json:"copies"`
+	DocType     string `json:"docType"`
+	OrderNo     string `json:"orderNo"`
+	TableNo     string `json:"tableNo"`
+	// DeliveryID 幂等投递号:代理打印成功后本地持久化,重发时据此去重(见 PrintJob.DeliveryID)。
+	DeliveryID string `json:"deliveryId"`
+	// Payload 为 ESC/POS 指令流的 base64(含初始化、GBK 文本、切纸)。
+	Payload string `json:"payload"`
 }
 
 type Config struct {
@@ -221,6 +303,9 @@ type Config struct {
 	FeieUser   string `json:"feie_user"`
 	FeieUkey   string `json:"feie_ukey"`
 	FeieApiURL string `json:"feie_api_url"`
+	// 本地打印代理令牌(敏感项):门店代理程序出站拉单时用它鉴权,
+	// 与飞鹅 UKEY 同理——拿到它就能冒充代理拉走并打印任意票据,故落库加密、接口不回显。
+	AgentToken string `json:"agent_token"`
 }
 
 // Payment 支付流水(与 tb_payment 表对应)。

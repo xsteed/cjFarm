@@ -162,10 +162,12 @@ export const probePrinter = (id) => http.post(`/dining/printer/probe/${id}`, nul
 export const printerStatus = (id) => http.get(`/dining/printer/status/${id}`, { timeout: 60000 })
 // 把打印机绑定到当前飞鹅账号(SN#KEY#备注#流量卡)
 export const bindFeiePrinter = (data) => http.post('/dining/printer/bind', data, { timeout: 60000 })
-// 清空飞鹅云端待打印队列
+// 清空待打印队列(飞鹅云端队列 / 本地代理队列)
 export const clearPrinterQueue = (id) => http.post(`/dining/printer/clear/${id}`, null, { timeout: 60000 })
 // 飞鹅账号配置概况(不回显 UKEY)
 export const getFeieInfo = () => http.get('/dining/printer/feie/info')
+// 本地打印代理概况(不回显代理令牌;含代理是否在线与队列积压)
+export const getAgentInfo = () => http.get('/dining/printer/agent/info')
 
 // 打印日志与补打
 export const listPrintLogs = (params) => http.get('/dining/print/log/list', { params })
@@ -207,10 +209,16 @@ export const queryRefund = (data) => http.post('/dining/pay/refund/query', data)
 export const listRefunds = (orderId) => http.get('/dining/pay/refund/list', { params: { orderId } })
 
 // 报表
+// summary 汇总(含昨日/上月同期,供前端算环比);
+// dailyTrend / hourly / settleMix 支持 days=N 或 start&end 自定义区间。
 export const getReportSummary = () => http.get('/dining/report/summary')
 export const getDailyTrend = (params) => http.get('/dining/report/dailyTrend', { params })
 export const getMonthlyTrend = () => http.get('/dining/report/monthlyTrend')
 export const getDishRank = (params) => http.get('/dining/report/dishRank', { params })
+// 时段分布(排班/备货参考)
+export const getHourlyReport = (params) => http.get('/dining/report/hourly', { params })
+// 结算方式构成(正常收款/免单/挂账)
+export const getSettleMix = (params) => http.get('/dining/report/settleMix', { params })
 
 // 上传
 export const uploadFile = (file) => {
@@ -250,10 +258,15 @@ export const REFUND_STATUS = {
   2: { label: '退款失败', theme: 'danger' }
 }
 
-// 打印机接入方式:tcp=网络直连(与后端同局域网) / feie=飞鹅云打印(跨网络可用)
+// 打印机接入方式:
+//   tcp   网络直连(要求后端与打印机同局域网)
+//   feie  飞鹅云打印(打印机自己联网取单,后端在云上也能用)
+//   agent 本地打印代理(后端只入队,门店内网的代理程序取单后直发 9100;
+//         云部署 + 复用门店已有网络机时用它,不需要装任何打印机驱动)
 export const PRINTER_PROVIDER = {
   tcp: { label: '网络直连', theme: 'default' },
-  feie: { label: '飞鹅云', theme: 'primary' }
+  feie: { label: '飞鹅云', theme: 'primary' },
+  agent: { label: '本地代理', theme: 'warning' }
 }
 
 // 打印机类型
@@ -269,10 +282,11 @@ export const PRINT_DOC_TYPE = {
   test: { label: '测试页', theme: 'default' }
 }
 
-// 打印结果:0 失败 1 已送出
+// 打印结果:0 失败 / 1 已送出 / 2 排队中(仅本地代理通道:已入队、等待门店代理取单)
 export const PRINT_STATUS = {
   0: { label: '失败', theme: 'danger' },
-  1: { label: '已送出', theme: 'success' }
+  1: { label: '已送出', theme: 'success' },
+  2: { label: '排队中', theme: 'warning' }
 }
 
 // 打印触发场景

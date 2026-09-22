@@ -1,0 +1,59 @@
+# ============================================================================
+# 门店本地打印代理 - systemd 服务单元
+#
+# 用途: 后端部署在云服务器时,用门店内网的这台设备出站拉单,再向 9100 直发。
+#       完整说明见 docs/print-agent.md。
+#
+# 安装(在门店那台常开机的 Linux 设备上执行):
+#   sudo mkdir -p /opt/dining-print-agent
+#   sudo cp print-agent-linux-amd64 /opt/dining-print-agent/print-agent
+#   sudo cp print-agent.service /etc/systemd/system/
+#   # 写配置(见下方 EnvironmentFile)
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now print-agent
+#   journalctl -u print-agent -f
+#
+# 注意: 本单元是「门店侧」的,与服务端 dining-backend.service 无关,
+#       不要装在同一台云服务器上(那样它连不到门店内网的打印机)。
+# ============================================================================
+
+[Unit]
+Description=Dining Print Agent (门店本地打印代理)
+# 必须等网络就绪:代理启动时要先向云端做一次心跳自检,网络没通会直接失败退出。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 打印代理只需访问局域网打印机与云端,不需要 root。
+# 若门店设备不方便建用户,可改成 User=nobody(需确认对 /opt/dining-print-agent 有读权限)。
+User=printagent
+Group=printagent
+
+WorkingDirectory=/opt/dining-print-agent
+ExecStart=/opt/dining-print-agent/print-agent
+
+# 配置从单独文件读取(权限 600,内含代理令牌):
+#   PRINT_AGENT_SERVER=https://dining.example.com
+#   PRINT_AGENT_TOKEN=换成系统配置里生成的代理令牌
+#   PRINT_AGENT_INTERVAL=3
+#   PRINT_AGENT_NAME=门店收银电脑
+EnvironmentFile=-/opt/dining-print-agent/agent.env
+
+# 日志走 journald,由 journalctl -u print-agent 查看;
+# 需要落盘时用: StandardOutput=append:/var/log/print-agent.log
+StandardOutput=journal
+StandardError=journal
+
+# 崩溃/断网后自动重启。代理自身已经会重试取单,这里主要覆盖「进程被杀」的情况。
+Restart=always
+RestartSec=5s
+
+# 轻量加固(代理不需要写文件、不需要提权)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

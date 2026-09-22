@@ -103,6 +103,32 @@ CREATE TABLE IF NOT EXISTS tb_print_log (
         cost_ms      INTEGER      DEFAULT 0,
         create_time  VARCHAR(32)
     );
+CREATE TABLE IF NOT EXISTS tb_print_job (
+        job_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        printer_id   INTEGER       DEFAULT 0,
+        printer_name VARCHAR(64)   DEFAULT '',
+        printer_type INTEGER       DEFAULT 1,
+        ip           VARCHAR(64)   DEFAULT '',
+        port         INTEGER       DEFAULT 9100,
+        doc_type     VARCHAR(16)   DEFAULT '',
+        order_id     INTEGER       DEFAULT 0,
+        order_no     VARCHAR(64)   DEFAULT '',
+        table_no     VARCHAR(32)   DEFAULT '',
+        copies       INTEGER       DEFAULT 1,
+        print_log_id INTEGER       DEFAULT 0,
+        delivery_id  VARCHAR(36)   DEFAULT '',
+        payload      VARCHAR(4000) DEFAULT '',
+        status       INTEGER       DEFAULT 0,
+        attempts     INTEGER       DEFAULT 0,
+        last_error   VARCHAR(500)  DEFAULT '',
+        claimed_by   VARCHAR(64)   DEFAULT '',
+        claim_time   VARCHAR(32),
+        next_try_time VARCHAR(32),
+        trigger_by   VARCHAR(16)   DEFAULT '',
+        operator     VARCHAR(64)   DEFAULT '',
+        create_time  VARCHAR(32),
+        done_time    VARCHAR(32)
+    );
 CREATE TABLE IF NOT EXISTS tb_oper_log (
         log_id        INTEGER PRIMARY KEY AUTOINCREMENT,
         module        VARCHAR(32)   DEFAULT '',
@@ -276,6 +302,8 @@ CREATE INDEX IF NOT EXISTS idx_urge_order ON tb_order_urge(order_id);
 CREATE INDEX IF NOT EXISTS idx_print_log_order ON tb_print_log(order_id);
 CREATE INDEX IF NOT EXISTS idx_print_log_time ON tb_print_log(create_time);
 CREATE INDEX IF NOT EXISTS idx_print_log_status ON tb_print_log(status, create_time);
+CREATE INDEX IF NOT EXISTS idx_print_job_pick ON tb_print_job(status, next_try_time, job_id);
+CREATE INDEX IF NOT EXISTS idx_print_job_printer ON tb_print_job(printer_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_table_code ON tb_table(table_code) WHERE table_code!='';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_username ON tb_user(username) WHERE del_flag='0';
 CREATE INDEX IF NOT EXISTS idx_user_role ON tb_user(role_id);

@@ -57,8 +57,8 @@ var cfgDefaults = map[string]string{
 	"shop_logo":           "",
 	"seat_fee_enabled":    "1",
 	"seat_fee":            "6",
-	"pay_qr_wx":           "/picture/pay_wx.png",
-	"pay_qr_ali":          "/picture/pay_ali.jpg",
+	"pay_qr_wx":           "/uploads/pay_wx.png",
+	"pay_qr_ali":          "/uploads/pay_ali.jpg",
 	"h5_base_url":         "http://localhost:8080",
 	"promotion_enabled":   "0",
 	"promotion_threshold": "100",
@@ -75,6 +75,11 @@ var cfgDefaults = map[string]string{
 	"feie_user":    "",
 	"feie_ukey":    "",
 	"feie_api_url": "https://api.de.feieyun.com/Api/Open/",
+	// 本地打印代理(provider=agent 的打印机使用)。
+	//   agent_token 门店代理程序出站拉单时的鉴权令牌 —— 敏感项,落库前自动加密、
+	//   接口不回显;留空表示未启用代理通道(代理程序会被拒绝,并提示去系统配置填写)。
+	//   生成方式见 docs/print-agent.md(要求足够长且随机,等同于一台打印机的操作权限)。
+	"agent_token": "",
 	// 在线支付(默认关闭,待商户申请 key 后填写并开启)
 	"wxpay_enabled":            "0",
 	"alipay_enabled":           "0",
@@ -141,6 +146,10 @@ func AuditConfigEmpties() {
 		len(empties), strings.Join(empties, ", "))
 }
 
+// UploadURLPrefix 是图片/收款码在库里存储的路径前缀,与后端静态路由、Nginx 反代、
+// 上传接口返回值三处必须一致。存量库中的 /picture/ 前缀由 migrateUploadPrefix 改写。
+const UploadURLPrefix = "/uploads/"
+
 // AuditDishImages 校验菜品图片是否都在磁盘上,缺失则打 [warn]。
 // 用于回答「不能少东西」—— 引用在库里、文件却不在盘上,会表现为菜品图 404。
 func AuditDishImages(uploadDir string) {
@@ -161,7 +170,7 @@ func AuditDishImages(uploadDir string) {
 		var img string
 		rows.Scan(&img)
 		n++
-		name := filepath.Base(strings.TrimPrefix(strings.TrimPrefix(img, "/picture/"), "/uploads/"))
+		name := filepath.Base(strings.TrimPrefix(img, UploadURLPrefix))
 		if _, err := os.Stat(filepath.Join(uploadDir, name)); err != nil {
 			missing = append(missing, img)
 		}
@@ -233,7 +242,7 @@ type dishSeed struct {
 	cat   string
 	name  string
 	desc  string
-	img   string // 图片相对路径(/picture/...)
+	img   string // 图片相对路径(/uploads/...)
 	specs []specSeed
 }
 
@@ -245,27 +254,27 @@ type specSeed struct {
 
 // seedDishRows 菜品(21 道)+ 规格(32 条)。
 var seedDishRows = []dishSeed{
-	{"凉菜素菜", "凉拌青瓜", "清爽开胃", "/picture/dining_20260918_001.jpeg", []specSeed{{"份", 2800}}},
-	{"凉菜素菜", "本场时蔬", "当日新鲜时令蔬菜", "/picture/dining_20260918_002.jpeg", []specSeed{{"份", 2800}}},
-	{"凉菜素菜", "清炒腐竹", "", "/picture/dining_20260918_003.jpeg", []specSeed{{"份", 3800}}},
-	{"凉菜素菜", "山泉水豆腐", "", "/picture/dining_20260918_004.png", []specSeed{{"小份", 4800}, {"大份", 6800}}},
-	{"荤菜", "香煎万绿湖鱼干", "推荐加辣", "/picture/dining_20260918_005.png", []specSeed{{"份", 6800}}},
-	{"荤菜", "砵仔黑土猪肉", "", "/picture/dining_20260918_006.png", []specSeed{{"份", 6800}}},
-	{"荤菜", "盐水猪脚", "", "/picture/dining_20260918_007.png", []specSeed{{"份", 6800}}},
-	{"荤菜", "沙姜猪肚", "", "/picture/dining_20260918_008.png", []specSeed{{"份", 6800}}},
-	{"荤菜", "葱姜焗鱼（清蒸）", "", "/picture/dining_20260918_009.png", []specSeed{{"小条", 6800}, {"大条", 8800}}},
-	{"荤菜", "秘制萝卜牛腩煲", "", "/picture/dining_20260918_010.png", []specSeed{{"份", 6800}}},
-	{"特色农家菜", "五指毛桃鸡", "", "/picture/dining_20260918_011.png", []specSeed{{"份", 9800}, {"只", 18800}}},
-	{"特色农家菜", "茶油蒸长健果园鸡", "", "/picture/dining_20260918_012.png", []specSeed{{"份", 9800}, {"只", 18800}}},
-	{"特色农家菜", "荔枝果园土鹅", "", "/picture/dining_20260918_013.png", []specSeed{{"份", 9800}}},
-	{"特色农家菜", "地胆头蒸老鸭", "", "/picture/dining_20260918_014.png", []specSeed{{"份", 9800}}},
-	{"特色农家菜", "荔枝柴火窑/烧鸡", "新鲜宰杀，需提前2小时预约", "/picture/dining_20260918_015.png", []specSeed{{"只", 13800}}},
-	{"汤品", "本场黑猪汤", "小份3人 / 中份6人 / 大份10人", "/picture/dining_20260918_016.png", []specSeed{{"小份(3人)", 3800}, {"中份(6人)", 6800}, {"大份(10人)", 9800}}},
-	{"汤品", "预约柴火炖汤", "按位计费，需提前预约，138元起(3-5人)", "/picture/dining_20260918_017.png", []specSeed{{"23元/位", 2300}, {"30元/位", 3000}, {"38元/位", 3800}, {"138元起(3-5人)", 13800}}},
-	{"汤品", "柴火炖鸡", "需提前2小时预约", "/picture/dining_20260918_018.png", []specSeed{{"份", 21800}}},
-	{"汤品", "柴火炖纯鸡汤", "需提前2小时预约", "/picture/dining_20260918_019.png", []specSeed{{"份", 21800}}},
-	{"主食", "长健特色炒饭", "", "/picture/dining_20260918_020.png", []specSeed{{"小份", 3800}, {"中份", 6800}, {"大份", 8800}}},
-	{"海鲜预订", "海鲜预订（当日时价）", "当日时价，下单后店家将与您联系确认", "/picture/dining_20260918_021.png", []specSeed{{"时价", 0}}},
+	{"凉菜素菜", "凉拌青瓜", "清爽开胃", "/uploads/dining_20260918_001.jpeg", []specSeed{{"份", 2800}}},
+	{"凉菜素菜", "本场时蔬", "当日新鲜时令蔬菜", "/uploads/dining_20260918_002.jpeg", []specSeed{{"份", 2800}}},
+	{"凉菜素菜", "清炒腐竹", "", "/uploads/dining_20260918_003.jpeg", []specSeed{{"份", 3800}}},
+	{"凉菜素菜", "山泉水豆腐", "", "/uploads/dining_20260918_004.png", []specSeed{{"小份", 4800}, {"大份", 6800}}},
+	{"荤菜", "香煎万绿湖鱼干", "推荐加辣", "/uploads/dining_20260918_005.png", []specSeed{{"份", 6800}}},
+	{"荤菜", "砵仔黑土猪肉", "", "/uploads/dining_20260918_006.png", []specSeed{{"份", 6800}}},
+	{"荤菜", "盐水猪脚", "", "/uploads/dining_20260918_007.png", []specSeed{{"份", 6800}}},
+	{"荤菜", "沙姜猪肚", "", "/uploads/dining_20260918_008.png", []specSeed{{"份", 6800}}},
+	{"荤菜", "葱姜焗鱼（清蒸）", "", "/uploads/dining_20260918_009.png", []specSeed{{"小条", 6800}, {"大条", 8800}}},
+	{"荤菜", "秘制萝卜牛腩煲", "", "/uploads/dining_20260918_010.png", []specSeed{{"份", 6800}}},
+	{"特色农家菜", "五指毛桃鸡", "", "/uploads/dining_20260918_011.png", []specSeed{{"份", 9800}, {"只", 18800}}},
+	{"特色农家菜", "茶油蒸长健果园鸡", "", "/uploads/dining_20260918_012.png", []specSeed{{"份", 9800}, {"只", 18800}}},
+	{"特色农家菜", "荔枝果园土鹅", "", "/uploads/dining_20260918_013.png", []specSeed{{"份", 9800}}},
+	{"特色农家菜", "地胆头蒸老鸭", "", "/uploads/dining_20260918_014.png", []specSeed{{"份", 9800}}},
+	{"特色农家菜", "荔枝柴火窑/烧鸡", "新鲜宰杀，需提前2小时预约", "/uploads/dining_20260918_015.png", []specSeed{{"只", 13800}}},
+	{"汤品", "本场黑猪汤", "小份3人 / 中份6人 / 大份10人", "/uploads/dining_20260918_016.png", []specSeed{{"小份(3人)", 3800}, {"中份(6人)", 6800}, {"大份(10人)", 9800}}},
+	{"汤品", "预约柴火炖汤", "按位计费，需提前预约，138元起(3-5人)", "/uploads/dining_20260918_017.png", []specSeed{{"23元/位", 2300}, {"30元/位", 3000}, {"38元/位", 3800}, {"138元起(3-5人)", 13800}}},
+	{"汤品", "柴火炖鸡", "需提前2小时预约", "/uploads/dining_20260918_018.png", []specSeed{{"份", 21800}}},
+	{"汤品", "柴火炖纯鸡汤", "需提前2小时预约", "/uploads/dining_20260918_019.png", []specSeed{{"份", 21800}}},
+	{"主食", "长健特色炒饭", "", "/uploads/dining_20260918_020.png", []specSeed{{"小份", 3800}, {"中份", 6800}, {"大份", 8800}}},
+	{"海鲜预订", "海鲜预订（当日时价）", "当日时价，下单后店家将与您联系确认", "/uploads/dining_20260918_021.png", []specSeed{{"时价", 0}}},
 }
 
 // ============================================================================

@@ -89,6 +89,8 @@ var routePerms = map[string]string{
 	// 「查看类」给 printer:view;「会触发打印或改动打印机状态」的动作一律给 printer:edit。
 	"GET /prod-api/dining/printer/status/:id": "printer:view",
 	"GET /prod-api/dining/printer/feie/info":  "printer:view",
+	// 本地打印代理概况:只读展示(令牌不回显),故归 printer:view。
+	"GET /prod-api/dining/printer/agent/info": "printer:view",
 	"POST /prod-api/dining/printer/probe/:id": "printer:edit",
 	"POST /prod-api/dining/printer/bind":      "printer:edit",
 	"POST /prod-api/dining/printer/clear/:id": "printer:edit",
@@ -128,6 +130,8 @@ var routePerms = map[string]string{
 	"GET /prod-api/dining/report/dailyTrend":   "report:view",
 	"GET /prod-api/dining/report/monthlyTrend": "report:view",
 	"GET /prod-api/dining/report/dishRank":     "report:view",
+	"GET /prod-api/dining/report/hourly":       "report:view",
+	"GET /prod-api/dining/report/settleMix":    "report:view",
 
 	// ---- 操作日志(审计) ----
 	// 查看只需 log:view;清理会真的删数据,单独收口到 log:manage。

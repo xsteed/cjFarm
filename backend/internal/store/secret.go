@@ -36,6 +36,8 @@ var sensitiveKeys = map[string]bool{
 	"wxpay_apiv3_key": true,
 	// 飞鹅开发者 UKEY:等同于账号密码(拿到它就能用商户账号给任意已绑定打印机推单)。
 	"feie_ukey": true,
+	// 本地打印代理令牌:拿到它就能冒充门店代理把队列里的票据全部拉走(含订单金额)。
+	"agent_token": true,
 }
 
 var (

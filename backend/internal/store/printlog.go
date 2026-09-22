@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"strconv"
 	"strings"
 
@@ -32,14 +33,33 @@ func ScanPrintLog(rows interface{ Scan(...interface{}) error }) (model.PrintLog,
 // 打印日志是「排查用」的旁路数据,写入失败绝不能反向影响下单/结账主流程,
 // 故这里只返回 error 由调用方决定是否记后端日志,不做任何重试或 panic。
 func InsertPrintLog(l model.PrintLog) error {
-	_, err := DB.Exec(`INSERT INTO tb_print_log(order_id, order_no, table_no, table_name,
+	_, err := insertPrintLog(l)
+	return err
+}
+
+// InsertPrintLogReturningID 写入一条打印日志并返回主键。
+//
+// 本地打印代理通道需要它:入队时先落一条「排队中」日志,并把这个 log_id 记在
+// 任务行上,等代理回执时再回写成「已送出 / 失败原因」——一单一条日志,
+// 而不是入队、送出各记一条(否则打印日志页会出现两行,商家反而看不清这单到底打没打)。
+func InsertPrintLogReturningID(l model.PrintLog) (int, error) {
+	res, err := insertPrintLog(l)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	return int(id), nil
+}
+
+// insertPrintLog 公共写入实现。
+func insertPrintLog(l model.PrintLog) (sql.Result, error) {
+	return DB.Exec(`INSERT INTO tb_print_log(order_id, order_no, table_no, table_name,
 		printer_id, printer_name, printer_type, provider, doc_type, copies,
 		status, remote_id, detail, trigger_by, operator, cost_ms, create_time)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.OrderID, l.OrderNo, l.TableNo, l.TableName,
 		l.PrinterID, l.PrinterName, l.PrinterType, l.Provider, l.DocType, l.Copies,
 		l.Status, l.RemoteID, l.Detail, l.TriggerBy, l.Operator, l.CostMs, l.CreateTime)
-	return err
 }
 
 // LoadPrinter 按 ID 读取一台打印机(含已停用/已删除 — 补打历史单据时仍需要它)。

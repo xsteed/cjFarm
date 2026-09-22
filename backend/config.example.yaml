@@ -23,13 +23,15 @@
 #
 # 完整迁移手册见 ../docs/mysql-migration.md
 #
-# 【日志】zap 结构化日志,控制台可读 + 文件 JSON 可采集(可选)。
+# 【日志】zap 结构化日志,控制台可读 + 文件 JSON 可采集。
 #   仅通过环境变量/.env 配置(config.yaml 不支持以下键):
-#   · LOG_PATH          日志文件路径,如 ./logs/app.log;不设则只写控制台
+#   · LOG_PATH          日志文件路径,默认 ./logs/app.log(固定落盘);
+#                       设为 off / none / false / 0 / - 可关闭,仅写控制台
 #   · LOG_LEVEL         debug / info / warn / error(默认 info)
 #   · LOG_MAX_SIZE_MB   单文件大小上限,默认 50
 #   · LOG_MAX_AGE_DAYS  保留天数,默认 30
 #   · LOG_MAX_BACKUPS   保留历史文件数,默认 7(旧文件自动压缩)
+#   生产用 systemd 部署时, 路径由服务单元固定为 <INSTALL_DIR>/logs/app.log。
 # ============================================================================
 
 # ---------------------------------------------------------------------------

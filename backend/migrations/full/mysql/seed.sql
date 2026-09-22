@@ -5,16 +5,17 @@
 -- 本文件由 `go run ./cmd/gensql` 从 backend/internal/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 30 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 内容:系统配置 31 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
 -- 执行方式:mysql -u dining -p dining < seed.sql
 -- 幂等性  :全部使用 INSERT IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
--- 注意:金额一律为「分」;菜品图片与收款码需另将 uploads/ 下文件放到
---       后端静态托管的 /picture/ 目录才能显示。
+-- 注意:金额一律为「分」;菜品图片与收款码存的是 /uploads/ 虚拟路径,
+--       需将 backend/uploads/ 下对应文件放到后端静态托管的 /uploads/ 目录才能显示。
 -- ============================================================================
 
 SET NAMES utf8mb4;
 
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('agent_token', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('alipay_appid', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('alipay_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('alipay_notify_url', '');
@@ -24,8 +25,8 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_api_url', 'https:/
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_ukey', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_user', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('h5_base_url', 'http://localhost:8080');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_ali', '/picture/pay_ali.jpg');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_wx', '/picture/pay_wx.png');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_ali', '/uploads/pay_ali.jpg');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_wx', '/uploads/pay_wx.png');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_enabled', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_show_price', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_discount', '0');
@@ -65,27 +66,27 @@ INSERT IGNORE INTO tb_category(category_id, category_name, sort_order, del_flag,
 INSERT IGNORE INTO tb_category(category_id, category_name, sort_order, del_flag, create_time, update_time) VALUES(6, '海鲜预订', 6, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
 
 -- 菜品(21 道):category_id 与上面的分类按顺序一一对应。
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(1, 1, '凉拌青瓜', '/picture/dining_20260918_001.jpeg', '清爽开胃', 1, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(2, 1, '本场时蔬', '/picture/dining_20260918_002.jpeg', '当日新鲜时令蔬菜', 1, 2, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(3, 1, '清炒腐竹', '/picture/dining_20260918_003.jpeg', '', 1, 3, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(4, 1, '山泉水豆腐', '/picture/dining_20260918_004.png', '', 1, 4, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(5, 2, '香煎万绿湖鱼干', '/picture/dining_20260918_005.png', '推荐加辣', 1, 5, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(6, 2, '砵仔黑土猪肉', '/picture/dining_20260918_006.png', '', 1, 6, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(7, 2, '盐水猪脚', '/picture/dining_20260918_007.png', '', 1, 7, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(8, 2, '沙姜猪肚', '/picture/dining_20260918_008.png', '', 1, 8, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(9, 2, '葱姜焗鱼（清蒸）', '/picture/dining_20260918_009.png', '', 1, 9, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(10, 2, '秘制萝卜牛腩煲', '/picture/dining_20260918_010.png', '', 1, 10, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(11, 3, '五指毛桃鸡', '/picture/dining_20260918_011.png', '', 1, 11, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(12, 3, '茶油蒸长健果园鸡', '/picture/dining_20260918_012.png', '', 1, 12, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(13, 3, '荔枝果园土鹅', '/picture/dining_20260918_013.png', '', 1, 13, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(14, 3, '地胆头蒸老鸭', '/picture/dining_20260918_014.png', '', 1, 14, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(15, 3, '荔枝柴火窑/烧鸡', '/picture/dining_20260918_015.png', '新鲜宰杀，需提前2小时预约', 1, 15, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(16, 4, '本场黑猪汤', '/picture/dining_20260918_016.png', '小份3人 / 中份6人 / 大份10人', 1, 16, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(17, 4, '预约柴火炖汤', '/picture/dining_20260918_017.png', '按位计费，需提前预约，138元起(3-5人)', 1, 17, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(18, 4, '柴火炖鸡', '/picture/dining_20260918_018.png', '需提前2小时预约', 1, 18, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(19, 4, '柴火炖纯鸡汤', '/picture/dining_20260918_019.png', '需提前2小时预约', 1, 19, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(20, 5, '长健特色炒饭', '/picture/dining_20260918_020.png', '', 1, 20, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(21, 6, '海鲜预订（当日时价）', '/picture/dining_20260918_021.png', '当日时价，下单后店家将与您联系确认', 1, 21, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(1, 1, '凉拌青瓜', '/uploads/dining_20260918_001.jpeg', '清爽开胃', 1, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(2, 1, '本场时蔬', '/uploads/dining_20260918_002.jpeg', '当日新鲜时令蔬菜', 1, 2, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(3, 1, '清炒腐竹', '/uploads/dining_20260918_003.jpeg', '', 1, 3, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(4, 1, '山泉水豆腐', '/uploads/dining_20260918_004.png', '', 1, 4, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(5, 2, '香煎万绿湖鱼干', '/uploads/dining_20260918_005.png', '推荐加辣', 1, 5, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(6, 2, '砵仔黑土猪肉', '/uploads/dining_20260918_006.png', '', 1, 6, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(7, 2, '盐水猪脚', '/uploads/dining_20260918_007.png', '', 1, 7, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(8, 2, '沙姜猪肚', '/uploads/dining_20260918_008.png', '', 1, 8, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(9, 2, '葱姜焗鱼（清蒸）', '/uploads/dining_20260918_009.png', '', 1, 9, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(10, 2, '秘制萝卜牛腩煲', '/uploads/dining_20260918_010.png', '', 1, 10, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(11, 3, '五指毛桃鸡', '/uploads/dining_20260918_011.png', '', 1, 11, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(12, 3, '茶油蒸长健果园鸡', '/uploads/dining_20260918_012.png', '', 1, 12, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(13, 3, '荔枝果园土鹅', '/uploads/dining_20260918_013.png', '', 1, 13, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(14, 3, '地胆头蒸老鸭', '/uploads/dining_20260918_014.png', '', 1, 14, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(15, 3, '荔枝柴火窑/烧鸡', '/uploads/dining_20260918_015.png', '新鲜宰杀，需提前2小时预约', 1, 15, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(16, 4, '本场黑猪汤', '/uploads/dining_20260918_016.png', '小份3人 / 中份6人 / 大份10人', 1, 16, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(17, 4, '预约柴火炖汤', '/uploads/dining_20260918_017.png', '按位计费，需提前预约，138元起(3-5人)', 1, 17, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(18, 4, '柴火炖鸡', '/uploads/dining_20260918_018.png', '需提前2小时预约', 1, 18, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(19, 4, '柴火炖纯鸡汤', '/uploads/dining_20260918_019.png', '需提前2小时预约', 1, 19, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(20, 5, '长健特色炒饭', '/uploads/dining_20260918_020.png', '', 1, 20, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT IGNORE INTO tb_dish(dish_id, category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time) VALUES(21, 6, '海鲜预订（当日时价）', '/uploads/dining_20260918_021.png', '当日时价，下单后店家将与您联系确认', 1, 21, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
 
 -- 菜品规格(32 条):price 单位为「分」(如 2800 = 28.00 元)。
 INSERT IGNORE INTO tb_spec(spec_id, dish_id, spec_name, price) VALUES(1, 1, '份', 2800);

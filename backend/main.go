@@ -14,6 +14,7 @@ import (
 
 	"dining-system/internal/handler"
 	"dining-system/internal/logger"
+	"dining-system/internal/print"
 	"dining-system/internal/store"
 )
 
@@ -103,6 +104,14 @@ func setupAPI(r *gin.Engine) {
 		prod.POST("/api/dining/pay/notify/alipay", handler.PayNotifyAlipay)
 		prod.GET("/api/dining/pay/query", handler.PayQuery)
 
+		// ---- 本地打印代理(门店内网程序调用,令牌鉴权) ----
+		// 不走 AdminAuth:调用方是门店里常驻的代理程序(不是浏览器会话),
+		// 它出站轮询云端取单,再向门店内网 打印机IP:9100 直发。见 docs/print-agent.md。
+		prod.POST("/agent/print/pull", handler.AgentPull)
+		prod.POST("/agent/print/ack", handler.AgentAck)
+		// ping 也用 POST:三个接口统一一种方法,代理程序与自研实现都不必区分动词。
+		prod.POST("/agent/print/ping", handler.AgentPing)
+
 		// ---- 管理端(需登录 + 按路由校验权限) ----
 		// AuditLog 挂在最后:它要等 AdminAuth 拿到操作人身份、等 handler 跑完
 		// 才知道成败,因此不能在最前面;写日志失败也不影响业务(旁路数据)。
@@ -159,6 +168,8 @@ func setupAPI(r *gin.Engine) {
 			admin.POST("/printer/bind", handler.PrinterBind)
 			admin.POST("/printer/clear/:id", handler.PrinterClear)
 			admin.GET("/printer/feie/info", handler.FeieInfo)
+			// 本地打印代理概况(令牌是否已配、代理是否在线、队列积压)
+			admin.GET("/printer/agent/info", handler.AgentInfo)
 
 			// 打印日志(排查「小票没出来」)与人工补打
 			admin.GET("/print/log/list", handler.PrintLogList)
@@ -190,6 +201,9 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/report/dailyTrend", handler.ReportDailyTrend)
 			admin.GET("/report/monthlyTrend", handler.ReportMonthlyTrend)
 			admin.GET("/report/dishRank", handler.ReportDishRank)
+			// 时段分布(排班/备货参考)与结算方式构成
+			admin.GET("/report/hourly", handler.ReportHourly)
+			admin.GET("/report/settleMix", handler.ReportSettleMix)
 
 			// ---- 操作日志(审计留痕) ----
 			admin.GET("/log/list", handler.LogList)
@@ -225,7 +239,7 @@ func main() {
 		logger.Infof("[config] 已从 %s 载入 %d 项配置(未覆盖更高优先级的来源)", cfgStats.DotEnvPath, cfgStats.DotEnvCount)
 	}
 	// 部署配置(config.yaml/.env)此时已写入环境变量,重建日志以生效其中的
-	// LOG_LEVEL / LOG_PATH 等设置;此前的启动日志走默认控制台输出。
+	// LOG_LEVEL / LOG_PATH 等设置;此前的启动日志已按默认配置输出(默认同样落盘到 ./logs/app.log)。
 	logger.Init()
 
 	// 数据库后端由环境变量决定:默认 SQLite(DB_PATH),设置 DB_DRIVER=mysql
@@ -240,6 +254,9 @@ func main() {
 	if n := store.CleanExpiredOperLogs(); n > 0 {
 		logger.Infof("[audit] 已清理 %d 条过期操作日志", n)
 	}
+	// 后台定时清理已结案的本地打印代理任务(AGENT_JOB_RETENTION_DAYS,默认 7 天)。
+	// 队列是「待办」,结案后没有长期保留价值;翻账看的是 tb_print_log,不受影响。
+	print.StartAgentCleanup()
 
 	// 上传目录与前端静态目录均支持环境变量覆盖,便于打包部署到不同工作目录。
 	uploadDir := store.Getenv("UPLOAD_DIR", "./uploads")
@@ -270,8 +287,9 @@ func main() {
 		}
 		c.File(p)
 	}
+	// 图片/收款码只有 /uploads/ 一个前缀(历史 /picture/ 已由 migrateUploadPrefix 改写),
+	// 避免同一目录挂两个前缀造成「代码里写哪个才对」的歧义。
 	r.GET("/uploads/*file", serveUpload)
-	r.GET("/picture/*file", serveUpload)
 
 	// 后端 API 前缀
 	setupAPI(r)
@@ -296,7 +314,7 @@ func main() {
 		r.NoRoute(func(c *gin.Context) {
 			p := c.Request.URL.Path
 			// API 与静态资源路径返回 JSON 404,不落入 SPA 兜底
-			if strings.HasPrefix(p, "/prod-api") || strings.HasPrefix(p, "/uploads") || strings.HasPrefix(p, "/picture") {
+			if strings.HasPrefix(p, "/prod-api") || strings.HasPrefix(p, "/uploads") {
 				c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "接口不存在"})
 				return
 			}

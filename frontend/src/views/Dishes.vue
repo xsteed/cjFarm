@@ -140,6 +140,13 @@ function onPageSizeChange(size) {
   load()
 }
 
+// t-upload 的回显项:只带 url(没有 raw)时组件会按普通图片渲染缩略图,
+// 但不会触发上传 —— 保存时按 raw 是否存在区分「沿用旧图」与「上传新图」。
+function imageFileList(url) {
+  if (!url) return []
+  return [{ url, name: url.split('/').pop() || 'dish-image', status: 'success' }]
+}
+
 function openAdd() {
   Object.assign(form, { dishId: null, categoryId: categories.value[0]?.categoryId || null, dishName: '', dishImage: '', description: '', status: 1, sortOrder: 0, specs: [{ specName: '份', price: 0 }], imageFiles: [] })
   dialogVisible.value = true
@@ -149,7 +156,8 @@ function openEdit(row) {
   Object.assign(form, {
     dishId: row.dishId, categoryId: row.categoryId, dishName: row.dishName, dishImage: row.dishImage,
     description: row.description, status: Number(row.status) === 1 ? 1 : 0, sortOrder: row.sortOrder,
-    specs: row.specs.map((s) => ({ specName: s.specName, price: s.price })), imageFiles: []
+    specs: row.specs.map((s) => ({ specName: s.specName, price: s.price })),
+    imageFiles: imageFileList(row.dishImage)
   })
   dialogVisible.value = true
 }
@@ -171,18 +179,31 @@ async function save() {
     MessagePlugin.warning('请至少添加一个规格')
     return
   }
-  if (form.imageFiles.length) {
-    const file = form.imageFiles[0].raw || form.imageFiles[0]
-    if (file) {
-      const res = await uploadFile(file)
+  // 图片处理:仅有 raw(本次新选的文件)才需要上传;只带 url 的是编辑回显的旧图,跳过。
+  const picked = form.imageFiles[0]
+  if (picked?.raw) {
+    try {
+      const res = await uploadFile(picked.raw)
       form.dishImage = res.url
+    } catch {
+      return // 上传失败:拦截器已弹提示,保持弹窗以便重试
     }
+  } else if (!picked) {
+    // 用户在编辑态删除了原图且未重新选择 → 明确清空,否则旧路径残留
+    form.dishImage = ''
   }
+
+  // imageFiles 是上传组件的本地状态,不是后端字段,提交前剔除
   const payload = { ...form, specs: form.specs.filter((s) => s.specName) }
-  if (form.dishId) {
-    await updateDish(payload)
-  } else {
-    await saveDish(payload)
+  delete payload.imageFiles
+  try {
+    if (form.dishId) {
+      await updateDish(payload)
+    } else {
+      await saveDish(payload)
+    }
+  } catch {
+    return // 保存失败同样保持弹窗,避免用户重填
   }
   MessagePlugin.success('保存成功')
   dialogVisible.value = false
@@ -350,6 +371,31 @@ onMounted(() => {
 @media (max-width: 900px) {
   .dish-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+/* 手机(iOS 375~430 / 安卓 360~412):收窄间距、降图片高度,让 2 列卡片更紧凑 */
+@media (max-width: 767px) {
+  .dish-grid {
+    gap: 10px;
+  }
+  .pic {
+    height: 110px;
+  }
+  .info {
+    padding: 10px 11px 12px;
+  }
+  /* 规格编辑行:规格名(160px)+价格(130px)+删除按钮在 92vw 弹窗里会溢出,窄屏允许折行 */
+  .spec-row {
+    flex-wrap: wrap;
+  }
+  .spec-row .t-input-number {
+    max-width: 140px;
+  }
+}
+/* 超窄屏(320~360px):2 列卡片每列不足 140px,改单列舒展 */
+@media (max-width: 360px) {
+  .dish-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

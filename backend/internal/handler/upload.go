@@ -92,5 +92,6 @@ func Upload(c *gin.Context) {
 		fail(c, "上传失败")
 		return
 	}
-	ok(c, gin.H{"fileName": file.Filename, "url": "/uploads/" + name})
+	// 返回的路径前缀必须与后端静态路由、Nginx 反代一致,统一取自 store.UploadURLPrefix。
+	ok(c, gin.H{"fileName": file.Filename, "url": store.UploadURLPrefix + name})
 }

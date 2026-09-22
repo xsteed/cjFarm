@@ -791,7 +791,8 @@ onUnmounted(() => {
 /* ---------- 顶部大块 hero ---------- */
 .op-hero {
   background: linear-gradient(135deg, #FF8A50 0%, #FF6B35 55%, #F0481F 100%);
-  padding: 38px 18px 30px;
+  /* 顶部预留刘海/灵动岛安全区(iPhone X 及以后),避免店名被状态栏裁切 */
+  padding: calc(38px + env(safe-area-inset-top, 0px)) 18px 30px;
   position: relative;
   overflow: hidden;
   flex-shrink: 0;

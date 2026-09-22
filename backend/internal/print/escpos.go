@@ -55,6 +55,13 @@ func gbk(s string) []byte {
 	return out
 }
 
+// EncodeTicket 把渲染好的文本行组装成 ESC/POS 字节流(含初始化、GBK 文本、切纸)。
+//
+// 导出是为了让「本地打印代理」通道复用同一份协议实现:代理通道下字节在
+// 取单接口里现场编码后以 base64 下发,代理程序因此完全不需要理解打印协议。
+// 见 agent.go 的设计说明。
+func EncodeTicket(lines []string) []byte { return encodeESCPOS(lines) }
+
 // encodeESCPOS 组装一份单据的 ESC/POS 字节流,入参为已对齐/折行后的文本行。
 func encodeESCPOS(lines []string) []byte {
 	var b []byte

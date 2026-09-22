@@ -165,8 +165,8 @@ DB_PASSWORD=改成你的强密码
 DB_NAME=dining
 ```
 ```bash
-./bin/dining-server.exe        # Windows
-# ./bin/dining-server          # Linux
+./bin/dining-backend.exe        # Windows
+# ./bin/dining-backend          # Linux
 ```
 
 启动日志会明确打印「配置来源」与「连的是哪个后端」：

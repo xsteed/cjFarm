@@ -38,8 +38,31 @@ var (
 //
 // 环境变量:
 //   - LOG_LEVEL: debug/info/warn/error,默认 info;
-//   - LOG_PATH: 日志文件路径,为空则只写控制台、不落盘;
+//   - LOG_PATH: 日志文件路径,默认 ./logs/app.log(固定落盘);
+//     设为 off/none/false/0/- 可关闭文件落盘(仅写控制台);
 //   - LOG_MAX_SIZE_MB / LOG_MAX_AGE_DAYS / LOG_MAX_BACKUPS: 轮转策略,默认 50MB/30天/7 个。
+//
+// 默认落盘的考虑:线上排障往往事后才发生,只写控制台(尤其被 systemd/nohup 接管时)
+// 容易丢失现场;固定一个文件路径,运维 tail 即可。生产用 systemd 部署时会在服务
+// 单元里显式指定绝对路径(见 deploy/dining-backend.service),避免受工作目录变化影响。
+// defaultLogPath 是未配置 LOG_PATH 时的默认落盘路径(相对进程工作目录)。
+const defaultLogPath = "./logs/app.log"
+
+// resolveLogPath 求最终日志文件路径:
+//   - LOG_PATH 未设置 → 用默认值 ./logs/app.log;
+//   - LOG_PATH 显式设为 off/none/false/0/- → 返回空串,表示不落盘(仅控制台)。
+func resolveLogPath() string {
+	p := strings.TrimSpace(os.Getenv("LOG_PATH"))
+	if p == "" {
+		p = defaultLogPath
+	}
+	switch strings.ToLower(p) {
+	case "off", "none", "false", "0", "-":
+		return ""
+	}
+	return p
+}
+
 func Init() {
 	level := parseLevel(os.Getenv("LOG_LEVEL"))
 	encoderCfg := zapcore.EncoderConfig{
@@ -71,9 +94,13 @@ func Init() {
 
 	cores := []zapcore.Core{consoleCore}
 
-	// 文件: JSON 格式,按大小/时间轮转;LOG_PATH 未配置则不落盘。
-	if path := strings.TrimSpace(os.Getenv("LOG_PATH")); path != "" {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err == nil {
+	// 文件: JSON 格式,按大小/时间轮转;默认落盘到 ./logs/app.log,
+	// 可用 LOG_PATH=off/none/false/0/- 关闭(此时仅写控制台)。
+	if path := resolveLogPath(); path != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			// 目录建不出来时不能静默降级为「只写控制台」——否则运维会误以为日志在落盘。
+			fmt.Fprintf(os.Stderr, "[logger] 创建日志目录失败,已退化为仅控制台输出: %v\n", err)
+		} else {
 			fileCore := zapcore.NewCore(
 				zapcore.NewJSONEncoder(encoderCfg),
 				zapcore.AddSync(&lumberjack.Logger{
@@ -190,7 +217,7 @@ func Fatalf(template string, args ...any) {
 // ---- gin 中间件 ----
 
 // 静态资源路径不打访问日志,避免刷屏;静态文件缺失已有 [static] 告警覆盖。
-var skipPrefixes = []string{"/uploads", "/picture", "/static", "/assets", "/favicon"}
+var skipPrefixes = []string{"/uploads", "/static", "/assets", "/favicon"}
 
 func skipPath(p string) bool {
 	for _, pre := range skipPrefixes {

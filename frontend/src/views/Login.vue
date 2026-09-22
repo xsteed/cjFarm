@@ -11,13 +11,26 @@
       </div>
       <div class="field">
         <label>密码</label>
-        <input
-          v-model="form.password"
-          type="password"
-          placeholder="请输入密码"
-          autocomplete="current-password"
-          @keyup.enter="onSubmit"
-        />
+        <div class="pwd-wrap">
+          <input
+            v-model="form.password"
+            :type="showPassword ? 'text' : 'password'"
+            placeholder="请输入密码"
+            autocomplete="current-password"
+            @keyup.enter="onSubmit"
+          />
+          <button
+            type="button"
+            class="pwd-toggle"
+            :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+            :title="showPassword ? '隐藏密码' : '显示密码'"
+            @mousedown.prevent
+            @click="showPassword = !showPassword"
+          >
+            <browse-off-icon v-if="showPassword" />
+            <browse-icon v-else />
+          </button>
+        </div>
       </div>
 
       <div class="remember">
@@ -49,6 +62,7 @@
 import { reactive, ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { BrowseIcon, BrowseOffIcon } from 'tdesign-icons-vue-next'
 import { login, rememberLogin } from '../api'
 import { setAuth } from '../utils/perm'
 import { firstAccessiblePath } from '../router'
@@ -60,17 +74,37 @@ const form = reactive({ username: '', password: '' })
 const loading = ref(false)
 const remember = ref(false)
 const rememberDays = ref(7)
+// 密码明文/密文切换:默认密文,由右侧小眼睛图标控制。
+const showPassword = ref(false)
+// 用户是否已手动提交登录。一旦提交,自动登录的返回结果就要丢弃,
+// 否则两个请求先后回到时,后到的那个会把登录态覆盖成另一个账号。
+let manualSubmit = false
+
+// 只接受站内路径。redirect 来自 URL query,不校验的话 "//evil.com"
+// 会被浏览器当作协议相对地址,配合下面的整页跳转就构成开放重定向。
+function safeRedirect() {
+  const raw = String(route.query.redirect || '')
+  return raw.startsWith('/') && !raw.startsWith('//') ? raw : firstAccessiblePath()
+}
 
 // 写入登录态并跳转到落地页(被守卫踹来登录页时带 redirect 优先回原页)。
-function enter(res) {
+async function enter(res) {
   // 一次性写入 token/姓名/角色/权限:写入后 permSet 立即可用,
   // 下面的 firstAccessiblePath() 才能正确算出该账号的落地页。
   setAuth(res)
   // 若来时是被守卫从某个页面踹到登录页的(带 redirect),优先回原页面;
   // 否则落到「第一个有权限的菜单」——收银员没有 report:view 也能直接进订单页,
   // 不必先撞一次权限守卫再被弹走。
-  const redirect = route.query.redirect || firstAccessiblePath()
-  router.replace(String(redirect))
+  const redirect = safeRedirect()
+  try {
+    await router.replace(redirect)
+  } catch {
+    // 跳转失败最常见的原因是:发版后浏览器(尤其微信内置浏览器)仍在用缓存的旧入口,
+    // 它引用的懒加载 chunk 已被 rsync --delete 删除,动态 import 失败 ——
+    // 此时页面停在登录页且没有任何提示,用户看到的就是「点了登录没反应」。
+    // 整页跳转可强制浏览器重新拉取最新入口,从根上跳出旧的缓存世界。
+    window.location.replace(redirect)
+  }
 }
 
 async function onSubmit() {
@@ -78,6 +112,7 @@ async function onSubmit() {
     MessagePlugin.warning('请输入用户名和密码')
     return
   }
+  manualSubmit = true
   loading.value = true
   try {
     // 勾选「记住我」时把 remember / days 一并发给后端,由后端签发并回传令牌。
@@ -93,9 +128,12 @@ async function onSubmit() {
     } else {
       clearRemember()
     }
-    enter(res)
+    await enter(res)
   } catch (e) {
-    // 错误提示由全局拦截器统一处理
+    // 网络/业务错误已由全局拦截器弹过提示(带 friendlyMessage 标记),这里不重复打扰;
+    // 剩下的是拦截器管不到的本地异常(存储写入失败 / 路由跳转失败),必须给出反馈,
+    // 否则用户看到的就是「点了登录没反应」。
+    if (!e?.friendlyMessage) MessagePlugin.error('登录失败，请刷新页面后重试')
   } finally {
     loading.value = false
   }
@@ -103,18 +141,20 @@ async function onSubmit() {
 
 // 挂载时若本地存有「记住我」令牌,拿它去后端静默换发登录态,实现免登录。
 // 过期/失效由后端查库裁决:后端返 401 即清掉本地令牌并留在登录页。
+//
+// 注意这里刻意不碰 loading:自动登录若占用 loading,移动网络下请求稍慢就会把
+// 登录按钮置为 disabled,用户点击毫无反应(只能干等),这正是「手机登不上」的常见成因。
 async function autoLogin() {
   const token = getRemember()
   if (!token) return
-  loading.value = true
   try {
     const res = await rememberLogin({ rememberToken: token })
-    enter(res)
+    // 用户已经手动登录过了(可能换了账号),丢弃这次静默结果,别覆盖登录态。
+    if (manualSubmit) return
+    await enter(res)
   } catch {
     // 令牌已过期 / 账号状态变更:清掉本地令牌,回到手动登录。
     clearRemember()
-  } finally {
-    loading.value = false
   }
 }
 
@@ -221,6 +261,37 @@ onMounted(() => {
   border-color: var(--brand);
   background: #fff;
   box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+/* 密码框:右侧留出图标位,避免文字与图标重叠 */
+.pwd-wrap {
+  position: relative;
+}
+.pwd-wrap input {
+  padding-right: 46px;
+}
+.pwd-toggle {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.pwd-toggle:hover {
+  color: var(--brand);
+  background: var(--brand-soft);
 }
 
 .login-btn {

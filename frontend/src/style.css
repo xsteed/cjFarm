@@ -313,4 +313,32 @@ svg.ic-svg {
   .t-table .t-table__content::-webkit-scrollbar {
     height: 4px;
   }
+  /* 打印记录 / 操作日志的 .filters 筛选区:多个固定宽控件(130/140/200/320px)
+     换行后参差不齐,统一把输入类控件拉满整行,查询/重置按钮并排平分 */
+  .filters > * {
+    width: 100% !important;
+    flex: 1 1 100%;
+  }
+  .filters > .t-button {
+    width: auto !important;
+    flex: 1 1 auto;
+  }
+}
+
+/* ============================================================
+   超窄屏(iPhone SE 1代 320 / 小安卓 360)再收一档。
+   主流机型的下限是 320px,这里兜住这一档的挤压风险。
+   ============================================================ */
+@media (max-width: 360px) {
+  /* 移动端卡片信息格:两列在 320px 下仍然偏挤,改成单列更稳 */
+  .mcard-grid {
+    grid-template-columns: 1fr;
+  }
+  /* 卡片内边距再收窄,给内容让出横向空间 */
+  .mcard {
+    padding: 10px 11px;
+  }
+  .page-card {
+    padding: 12px;
+  }
 }

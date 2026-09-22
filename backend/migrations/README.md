@@ -23,9 +23,10 @@ backend/migrations/
     │   ├── 20260920022000_tb_order_add_pay_columns.sql
     │   ├── 20260920023000_tb_order_add_settle_credit_columns.sql
     │   ├── 20260921000000_tb_user_role_create.sql      #   员工与角色表（多员工 + 权限）
-    │   └── 20260922000000_tb_oper_log_create.sql       #   操作日志表（审计留痕）
+    │   ├── 20260922000000_tb_oper_log_create.sql       #   操作日志表（审计留痕）
+    │   └── 20260923000000_tb_print_job_create.sql      #   本地打印代理任务队列（云部署 + 门店 9100 网络机）
     └── mysql/                                             # 与 sqlite/ 同名同序，内容按 MySQL 语法适配
-        └──（同上 6 个文件）
+        └──（同上 7 个文件）
 ```
 
 > 另有 `tb_print_log`（打印日志）与 `tb_printer` 的飞鹅云字段，因早于 `incr/` 机制建立，
@@ -106,7 +107,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 >
 > `create` 系列为纯建表（`IF NOT EXISTS`），可安全重复执行。
 
-## 四、表清单（共 17 张）
+## 四、表清单（共 18 张）
 
 | # | 表名 | 说明 | 种子数据 | 归属脚本 |
 |---|---|---|---|---|
@@ -116,7 +117,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 4 | `tb_spec` | 菜品规格 | 32 条 | full |
 | 5 | `tb_remark` | 备注选项 | 6 项 | full |
 | 6 | `tb_printer` | 打印机（ESC/POS 网络 + 飞鹅云） | 2 台（停用） | full |
-| 7 | `tb_config` | 系统配置（键值对） | 30 项 | full |
+| 7 | `tb_config` | 系统配置（键值对） | 31 项 | full |
 | 8 | `tb_order` | 订单主表（37 列） | 运行时产生 | full + incr 03/04 |
 | 9 | `tb_order_item` | 订单明细 | 运行时产生 | full |
 | 10 | `tb_order_urge` | 催菜/加菜记录 | 运行时产生 | incr 01 |
@@ -127,13 +128,19 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 15 | `tb_user` | 员工账号 | 首次启动引导超管 | incr 05 |
 | 16 | `tb_oper_log` | 操作日志（审计留痕：谁在何时改了什么） | 运行时产生 | incr 06 |
 | 17 | `tb_remember_token` | 记住我令牌（7/30 天免登录，过期由后端查库裁决） | 运行时产生 | full + incr |
+| 18 | `tb_print_job` | 本地打印代理任务队列（云后端入队，门店代理取单后直发 9100） | 运行时产生 | incr 07 |
+
+> `tb_print_job` 与 `tb_print_log` 的分工：前者是「待办」（送达即结案，可定期清理），
+> 后者是「台账」（给商家查「这单打了没」，长期保留），两者由 `print_log_id` 关联。
+> 不用 `agent` 通道时该表始终为空，行为与升级前完全一致。
+> 部署与排障见 [`../../docs/print-agent.md`](../../docs/print-agent.md)。
 
 > `tb_user` **不写种子数据**：由启动引导 `store.EnsureAdminUser()` 按
 > `ADMIN_USER` / `ADMIN_PASS`（默认 `admin`/`admin123`）生成首个超级管理员。
 > `tb_role` 的 4 个内置角色（admin / manager / cashier / staff）每次启动由
 > `store.SyncBuiltinRoles()` 幂等校准；其中 `admin` 的权限**强制恢复为全量**，防止误改锁死。
 
-## 五、索引清单（共 23 个）
+## 五、索引清单（共 25 个）
 
 | 索引名 | 表 | 类型 | 用途 |
 |---|---|---|---|
@@ -151,6 +158,8 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_print_log_order` | tb_print_log | 普通 | 打印日志按订单倒查 |
 | `idx_print_log_time` | tb_print_log | 普通 | 打印日志按时间翻页 |
 | `idx_print_log_status` | tb_print_log | 普通（2 列） | 按结果筛失败记录 |
+| `idx_print_job_pick` | tb_print_job | 普通（3 列） | 代理取单（按状态 + 可执行时间，3 秒轮询一次） |
+| `idx_print_job_printer` | tb_print_job | 普通（2 列） | 按打印机看积压 / 清空队列 |
 | `idx_table_code` | tb_table | 部分唯一 | 桌台点餐码唯一 |
 | `idx_user_username` | tb_user | 部分唯一 | 登录名唯一（仅未删除行） |
 | `idx_user_role` | tb_user | 普通 | 员工按角色统计 |
@@ -205,8 +214,9 @@ go test ./...
 2. **时间字段**：统一存 `VARCHAR(32)` 的 `YYYY-MM-DD HH:MM:SS` 本地时间字符串，
    两库行为一致，便于跨库搬迁（MySQL 侧无需处理时区类型差异）。
 3. **图片/收款码**：`tb_dish.dish_image`、`tb_config.pay_qr_*` 存的是虚拟路径
-   （如 `/picture/dining_20260918_001.jpeg`），需将 `backend/uploads/` 下对应文件
-   放到后端静态托管的 `/picture/` 目录才能显示。
+   （如 `/uploads/dining_20260918_001.jpeg`），需将 `backend/uploads/` 下对应文件
+   放到后端静态托管的 `/uploads/` 目录才能显示（该前缀由后端 `store.UploadURLPrefix`
+   统一定义，启动时会把老库里的 `/picture/` 前缀自动改写）。
 4. **软删除**：业务表用 `del_flag`（`'0'` 正常 / `'1'` 删除），查询需带 `del_flag='0'`。
 5. **full 与 incr 的关系**：`full/schema.sql` 始终体现**最终结构**（已内联历史上所有
    `ALTER TABLE` 追加的列）；`incr/` 则保留**逐步演进过程**，供老库按序升级。

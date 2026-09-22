@@ -221,7 +221,13 @@ func (j job) render() []string {
 }
 
 // run 渲染 + 发送 + 记日志,返回发送错误(异步调用方通常会忽略)。
+//
+// agent 通道走单独的入队路径:它不做网络发送,只把票据写进任务队列等门店代理来取,
+// 因此日志也要等代理回执后才回写结果(见 agent.go 的 enqueueAgentJob)。
 func run(j job) error {
+	if j.p.IsAgent() {
+		return enqueueAgentJob(j)
+	}
 	lines := j.render()
 	start := time.Now()
 	remoteID, detail, err := sendWithRetry(j.p, lines)
@@ -241,6 +247,9 @@ func run(j job) error {
 func providerAddr(p model.Printer) string {
 	if p.IsFeie() {
 		return "飞鹅SN:" + p.FeieSN
+	}
+	if p.IsAgent() {
+		return "本地代理→" + addrOf(p.IP, effectivePort(p.Port))
 	}
 	return addrOf(p.IP, p.Port)
 }
@@ -384,9 +393,13 @@ func Reprint(printerID, orderID int, docType, operator string) error {
 }
 
 // ProbePrinter 测试打印机连通性,不落地任何纸:
-//   - tcp  只探一次 TCP 连接(不写数据,避免又吐一张测试页);
-//   - feie 查云端在线状态与设备类型,顺带验证账号/SN 是否配对。
+//   - tcp   只探一次 TCP 连接(不写数据,避免又吐一张测试页);
+//   - feie  查云端在线状态与设备类型,顺带验证账号/SN 是否配对;
+//   - agent 云端够不到门店内网,只能看「代理是否还在轮询」与队列积压。
 func ProbePrinter(p model.Printer) (string, error) {
+	if p.IsAgent() {
+		return probeAgent(p)
+	}
 	if p.IsFeie() {
 		client, err := NewFeieClient()
 		if err != nil {
@@ -417,7 +430,12 @@ func effectivePort(port int) int {
 }
 
 // SendTestPrint 发送测试打印页(同步,失败原因原样返回给前端)。
+// agent 通道下「同步」的含义变为「已同步入队」——代理在线时几乎立刻出纸,
+// 离线则排队等它上线,与前端的交互仍是「点一下、马上有结果」。
 func SendTestPrint(p model.Printer) error {
+	if p.IsAgent() {
+		return enqueueAgentTicket(p, RenderTestTicket(p), docTest, model.Order{}, model.PrintTriggerTest, "")
+	}
 	lines := RenderTestTicket(p)
 	start := time.Now()
 	remoteID, detail, err := sendWithRetry(p, lines)

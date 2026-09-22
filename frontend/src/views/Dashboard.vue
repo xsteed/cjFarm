@@ -372,4 +372,17 @@ onMounted(load)
     padding: 10px 3px;
   }
 }
+
+/* 超窄屏(iPhone SE 1代 320 / 小安卓 360):3 列桌号卡再收紧,桌号字号下调避免溢出 */
+@media (max-width: 360px) {
+  .tg {
+    padding: 8px 2px;
+  }
+  .tg .n {
+    font-size: 14px;
+  }
+  .tg .s {
+    font-size: 9px;
+  }
+}
 </style>

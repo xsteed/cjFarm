@@ -40,7 +40,7 @@
           </div>
           <div class="mcard-cell">
             <div class="k">打印机</div>
-            <div class="v">{{ row.printerName }}{{ row.provider === 'feie' ? '（飞鹅云）' : '' }}</div>
+            <div class="v">{{ row.printerName }}（{{ providerLabel(row.provider) }}）</div>
           </div>
           <div class="mcard-cell">
             <div class="k">触发 / 份数</div>
@@ -49,7 +49,7 @@
         </div>
 
         <div class="mcard-sub" style="margin-top: 8px">
-          {{ row.status === 1 ? '说明' : '失败原因' }}：{{ row.detail || '—' }}
+          {{ row.status === 0 ? '失败原因' : '说明' }}：{{ row.detail || '—' }}
         </div>
 
         <div v-if="canReprint" class="mcard-ft">
@@ -90,7 +90,7 @@
         </template>
         <template #printer="{ row }">
           <div>{{ row.printerName }}</div>
-          <div class="tip">{{ row.provider === 'feie' ? '飞鹅云' : '网络直连' }} · {{ row.copies }} 份</div>
+          <div class="tip">{{ providerLabel(row.provider) }} · {{ row.copies }} 份</div>
         </template>
         <template #triggerBy="{ row }">
           <span>{{ PRINT_TRIGGER[row.triggerBy] || row.triggerBy }}</span>
@@ -132,7 +132,9 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { listPrintLogs, reprintLog, PRINT_DOC_TYPE, PRINT_STATUS, PRINT_TRIGGER } from '../api'
+import {
+  listPrintLogs, reprintLog, PRINT_DOC_TYPE, PRINT_STATUS, PRINT_TRIGGER, PRINTER_PROVIDER
+} from '../api'
 import { useIsMobile } from '../utils/useMobile'
 import { hasPerm } from '../utils/perm'
 
@@ -147,8 +149,12 @@ const canReprint = computed(() => hasPerm('printer:edit'))
 
 const query = reactive({ status: '', docType: '', provider: '', orderNo: '', pageNum: 1, pageSize: 10 })
 
+// 通道中文名统一取自 api 枚举,避免这里再硬编码一遍导致两处漂移。
+const providerLabel = (p) => PRINTER_PROVIDER[p]?.label || '网络直连'
+
 const statusOptions = [
   { label: '已送出', value: '1' },
+  { label: '排队中', value: '2' },
   { label: '失败', value: '0' }
 ]
 const docOptions = [
@@ -158,7 +164,8 @@ const docOptions = [
 ]
 const providerOptions = [
   { label: '网络直连', value: 'tcp' },
-  { label: '飞鹅云', value: 'feie' }
+  { label: '飞鹅云', value: 'feie' },
+  { label: '本地代理', value: 'agent' }
 ]
 
 const columns = computed(() => {

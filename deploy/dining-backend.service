@@ -1,8 +1,8 @@
 # ============================================================================
 # 扫码点餐管理系统 - 后端 systemd 服务单元
 #
-# 安装: 复制到 /etc/systemd/system/dining-server.service
-#       systemctl daemon-reload && systemctl enable --now dining-server
+# 安装: 复制到 /etc/systemd/system/dining-backend.service
+#       systemctl daemon-reload && systemctl enable --now dining-backend
 #
 # 说明: 工作目录设为安装目录, 使相对路径(./dining.db、./uploads)稳定可用;
 #       也可通过 Environment 覆盖端口/数据库/上传目录。
@@ -21,28 +21,34 @@ Group=dining
 # 安装目录(与 deploy.sh 中 INSTALL_DIR 保持一致)
 WorkingDirectory=/opt/dining-system
 # 后端二进制
-ExecStart=/opt/dining-system/bin/dining-server
+ExecStart=/opt/dining-system/bin/dining-backend
 
 # 环境变量说明:
-#   DB_PATH / UPLOAD_DIR 使用相对路径(./dining.db、./uploads),配合 WorkingDirectory
-#   落在 /opt/dining-system 下,无需显式指定。
-#   STATIC_DIR 必须显式指定:后端默认值是 ../frontend/dist,而本服务 WorkingDirectory
-#   是 /opt/dining-system,相对路径会解析成 /opt/frontend/dist(错误)。由 deploy.sh 的
-#   sed 将 /opt/dining-system 替换为实际 INSTALL_DIR。
+#   DB_PATH 使用相对路径(./dining.db),配合 WorkingDirectory 落在 /opt/dining-system 下。
+#   STATIC_DIR / UPLOAD_DIR 显式写死绝对路径:二者后端默认值都是相对路径
+#   (../frontend/dist、./uploads),一旦有人改了 WorkingDirectory、或在别处直接
+#   cd 到 bin 目录启动二进制,就会解析到错误位置(典型症状:菜品图与收款码 404)。
+#   写死绝对路径可彻底消除该歧义,与 WorkingDirectory 解耦。
+#   由 deploy.sh 的 sed 将 /opt/dining-system 替换为实际 INSTALL_DIR。
 Environment=STATIC_DIR=/opt/dining-system/frontend/dist
+Environment=UPLOAD_DIR=/opt/dining-system/uploads
+# 日志固定落盘到安装目录下的 logs/(deploy.sh 会把 /opt/dining-system 替换为实际 INSTALL_DIR)。
+# 用绝对路径,避免服务 WorkingDirectory 变化导致日志跑偏;后端的 EnvironmentFile
+# (/etc/dining-backend.env)在其后加载,如需改路径在那边覆盖即可。
+# 默认按 50MB/30 天/7 份轮转并压缩,由程序自带(无需 logrotate)。
+Environment=LOG_PATH=/opt/dining-system/logs/app.log
 
-# 管理端凭据由 deploy.sh 写入 /etc/dining-server.env(权限 600),
+# 管理端凭据由 deploy.sh 写入 /etc/dining-backend.env(权限 600),
 # 避免在服务单元里明文写密码。文件缺失时 "-" 前缀使其不报错。
-EnvironmentFile=-/etc/dining-server.env
+EnvironmentFile=-/etc/dining-backend.env
 
 # 可选环境变量(按需取消注释)
 # Environment=PORT=8080
 # Environment=DB_PATH=/opt/dining-system/dining.db
-# Environment=UPLOAD_DIR=/opt/dining-system/uploads
 
 # ---- 切换到 MySQL(详见 docs/mysql-migration.md) ----
 # 只需打开 DB_DRIVER 并填好连接信息,业务代码无需改动。
-# 密码不建议写在这里,放 EnvironmentFile(上方 /etc/dining-server.env,权限 600)。
+# 密码不建议写在这里,放 EnvironmentFile(上方 /etc/dining-backend.env,权限 600)。
 # Environment=DB_DRIVER=mysql
 # Environment=DB_HOST=127.0.0.1
 # Environment=DB_PORT=3306

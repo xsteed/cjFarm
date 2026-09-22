@@ -82,10 +82,14 @@ var schemaTemplate = []string{
 	){{OPTS}}`,
 
 	// provider 决定「怎么把票据送出去」:
-	//   - tcp  直连网络热敏机,后端拼 ESC/POS 指令走 IP:9100,
-	//          要求后端与打印机在同一局域网(云端部署连不上门店打印机);
-	//   - feie 飞鹅云打印机,后端按开放平台 HTTP 接口推单,
-	//          打印机自己联网到飞鹅云取单,后端在哪里都能用。
+	//   - tcp   直连网络热敏机,后端拼 ESC/POS 指令走 IP:9100,
+	//           要求后端与打印机在同一局域网(云端部署连不上门店打印机);
+	//   - feie  飞鹅云打印机,后端按开放平台 HTTP 接口推单,
+	//           打印机自己联网到飞鹅云取单,后端在哪里都能用;
+	//   - agent 本地打印代理:后端只入队(tb_print_job),门店内网的代理程序
+	//           出站拉单后再向 ip:port 直发。云后端 + 门店已有 9100 网络机的场景用它。
+	// ip/port 三种通道都要填:agent 通道下它是「打印机在门店内网的地址」,
+	// 由代理程序使用,云后端自己不会去连(见 docs/print-agent.md)。
 	// category_ids 为「按菜品分类分单」:CSV 分类 ID,空串=收全部菜品。
 	// 典型用法是凉菜/热菜各一台厨房机,不同分类的菜分别落到对应机器上。
 	`CREATE TABLE IF NOT EXISTS tb_printer (
@@ -129,6 +133,47 @@ var schemaTemplate = []string{
 		operator     VARCHAR(64)  DEFAULT '',
 		cost_ms      INTEGER      DEFAULT 0,
 		create_time  VARCHAR(32)
+	){{OPTS}}`,
+
+	// 本地打印代理任务队列(tb_printer.provider='agent' 的打印机使用)。
+	//
+	// 为什么需要一张表:后端部署在云服务器时够不到门店内网的打印机(见 escpos.go
+	// 顶部说明),只能把票据存下来等门店内网的代理程序主动来取。这也顺带带来了
+	// 「打印机离线不丢单」——代理恢复后会把积压的任务依次补打出来。
+	//
+	// payload 存的是渲染后的等宽文本行(以 '\n' 连接),不是 ESC/POS 字节:
+	//   1. 文本行与厂商无关,与直连/飞鹅云共用同一份渲染结果(ticket.go);
+	//   2. ESC/POS 字节含 GBK 编码与切纸指令,在代理取单时现场编码后以 base64 下发,
+	//      代理程序因此完全不需要理解打印协议,换个语言重写代理也不用改协议;
+	//   3. 长度可控:VARCHAR(4000) 约合 80 行 80mm 小票,超出时后端按行拆成多条任务
+	//      (与飞鹅云超长内容分段推送同一策略)。
+	//
+	// status: 0 待取单 / 1 已取单(带租约) / 2 已送出 / 3 放弃(重试次数用尽)。
+	`CREATE TABLE IF NOT EXISTS tb_print_job (
+		job_id       {{PK}},
+		printer_id   INTEGER       DEFAULT 0,
+		printer_name VARCHAR(64)   DEFAULT '',
+		printer_type INTEGER       DEFAULT 1,
+		ip           VARCHAR(64)   DEFAULT '',
+		port         INTEGER       DEFAULT 9100,
+		doc_type     VARCHAR(16)   DEFAULT '',
+		order_id     INTEGER       DEFAULT 0,
+		order_no     VARCHAR(64)   DEFAULT '',
+		table_no     VARCHAR(32)   DEFAULT '',
+		copies       INTEGER       DEFAULT 1,
+		print_log_id INTEGER       DEFAULT 0,
+		delivery_id  VARCHAR(36)   DEFAULT '',
+		payload      VARCHAR(4000) DEFAULT '',
+		status       INTEGER       DEFAULT 0,
+		attempts     INTEGER       DEFAULT 0,
+		last_error   VARCHAR(500)  DEFAULT '',
+		claimed_by   VARCHAR(64)   DEFAULT '',
+		claim_time   VARCHAR(32),
+		next_try_time VARCHAR(32),
+		trigger_by   VARCHAR(16)   DEFAULT '',
+		operator     VARCHAR(64)   DEFAULT '',
+		create_time  VARCHAR(32),
+		done_time    VARCHAR(32)
 	){{OPTS}}`,
 
 	// 操作日志(审计留痕):管理端每次写操作落一行,只追加、不修改。
@@ -344,7 +389,7 @@ type indexDef struct {
 	Where string
 }
 
-// indexDefs 全部索引(共 22 个)。
+// indexDefs 全部索引(共 25 个)。
 // 唯一索引保证 order_no / refund_no / 渠道交易号不重复;
 // 其余索引用于订单查询、看板与报表加速。
 var indexDefs = []indexDef{
@@ -363,6 +408,10 @@ var indexDefs = []indexDef{
 	{Name: "idx_print_log_order", Table: "tb_print_log", Columns: "order_id"},
 	{Name: "idx_print_log_time", Table: "tb_print_log", Columns: "create_time"},
 	{Name: "idx_print_log_status", Table: "tb_print_log", Columns: "status, create_time"},
+	// 代理任务队列:取单按「状态 + 可执行时间」筛(代理每 3 秒轮询一次,必须有索引),
+	// 打印日志页按「打印机 + 状态」看某台机器的积压。
+	{Name: "idx_print_job_pick", Table: "tb_print_job", Columns: "status, next_try_time, job_id"},
+	{Name: "idx_print_job_printer", Table: "tb_print_job", Columns: "printer_id, status"},
 	{Name: "idx_table_code", Table: "tb_table", Columns: "table_code", Unique: true, Where: "table_code!=''"},
 	// 用户名/角色标识的唯一性只约束「未删除」的行 —— 删掉员工后可以重新使用同名账号。
 	// 与 idx_table_code 同理:MySQL 不支持部分索引会降级为普通索引,
@@ -498,6 +547,37 @@ func migrate() {
 		WHERE pay_status=1 AND (paid_amount IS NULL OR paid_amount=0) AND (settle_type IS NULL OR settle_type='normal')`)
 	DB.Exec(`UPDATE tb_order SET settle_type='normal' WHERE settle_type IS NULL OR settle_type=''`)
 	backfillTableCodes()
+	migrateUploadPrefix()
+}
+
+// legacyUploadPrefix 是图片/收款码的历史路径前缀,已废弃。
+// 保留此常量只用于一次性数据改写,新代码一律使用 UploadURLPrefix。
+const legacyUploadPrefix = "/picture/"
+
+// migrateUploadPrefix 把存量数据里的 /picture/ 前缀统一改写为 /uploads/。
+//
+// 背景:菜品图与收款码早期写入的是 /picture/xxx,但上传接口返回、后端静态路由
+// 与 Nginx 反代用的都是 /uploads/ —— 两套前缀并存时,/picture/ 在生产会落进前端
+// SPA 兜底而返回 index.html(收款码在顾客端直接显示不出来)。
+// 这里做一次性幂等改写:改完再删掉 /picture 路由,存量数据不会 404。
+func migrateUploadPrefix() {
+	updates := []string{
+		`UPDATE tb_dish SET dish_image = REPLACE(dish_image, '` + legacyUploadPrefix + `', '` + UploadURLPrefix + `')
+			WHERE dish_image LIKE '` + legacyUploadPrefix + `%'`,
+		`UPDATE tb_config SET cfg_value = REPLACE(cfg_value, '` + legacyUploadPrefix + `', '` + UploadURLPrefix + `')
+			WHERE cfg_value LIKE '` + legacyUploadPrefix + `%'`,
+	}
+	for _, stmt := range updates {
+		res, err := DB.Exec(stmt)
+		if err != nil {
+			// 不 Fatalf:路径前缀是展示问题,不该让服务起不来。
+			logger.Warnf("[db] 统一图片路径前缀失败: %v", err)
+			continue
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			logger.Infof("[db] 已将 %d 条 %s 路径改写为 %s", n, legacyUploadPrefix, UploadURLPrefix)
+		}
+	}
 }
 
 // backfillTableCodes 为存量桌台补发稳定码(老库升级时一次性完成)。

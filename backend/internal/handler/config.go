@@ -132,6 +132,7 @@ func ConfigSave(c *gin.Context) {
 	secrets := map[string]string{
 		"wxpay_apiv3_key": cfg.WxpayApiv3Key,
 		"feie_ukey":       cfg.FeieUkey,
+		"agent_token":     cfg.AgentToken,
 	}
 	for k, v := range secrets {
 		if !store.IsSensitiveKey(k) {
@@ -168,7 +169,7 @@ func describeConfigChange(vals, secrets map[string]string) string {
 		}
 	}
 	// 敏感项:前端不回显、留空表示不修改,故只判断「本次是否提交了新的值」。
-	for _, k := range []string{"wxpay_apiv3_key", "feie_ukey"} {
+	for _, k := range []string{"wxpay_apiv3_key", "feie_ukey", "agent_token"} {
 		if secrets[k] != "" {
 			changed = append(changed, k+"(敏感项,值不记录)")
 		}

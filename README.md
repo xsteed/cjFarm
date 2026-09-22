@@ -1,4 +1,4 @@
-# 扫码点餐管理系统（本地复刻版）
+# 扫码点餐管理系统
 
 完整复刻自目标站点 `http://221.226.11.83:58085` 的「扫码点餐管理系统」。
 
@@ -22,6 +22,7 @@ dining-system/
 │   │   ├── print/          # ESC/POS 网络打印（异步，失败不影响下单）
 │   │   └── handler/        # HTTP 层：响应封装/鉴权/各资源处理器/上传
 │   ├── cmd/gensql/         # SQL 脚本生成器（改表结构后重新生成两库脚本）
+│   ├── cmd/print-agent/    # 门店本地打印代理（跑在门店内网，出站拉单后直发 9100）
 │   ├── scripts/            # 运维脚本（sqlite2mysql.py：SQLite→MySQL 数据搬运）
 │   ├── migrations/         # 数据库迁移脚本（SQLite / MySQL 各一套）
 │   │   ├── README.md       #   迁移说明、命名规则与表/索引清单
@@ -37,11 +38,15 @@ dining-system/
 │       ├── layout/AdminLayout.vue
 │       └── views/          # 登录页 + 13 个管理页（含员工、角色）+ 顾客点餐页 + 打印页
 ├── deploy/                 # 部署物料
-│   ├── nginx.conf          # Nginx 配置（SPA + 反代 /prod-api、/uploads）
-│   ├── deploy.sh           # 一键部署脚本（构建 + 安装 + 启动）
-│   └── dining-server.service  # systemd 服务单元
+│   ├── deploy.sh           # 服务器端部署/更新（自动识别首次安装或覆盖更新）
+│   ├── setup-nginx.sh      # Nginx 配置一键生成（server_name/HTTPS/校验/回滚/重载）
+│   ├── nginx-production.conf   # Nginx 配置模板（唯一来源，由 setup-nginx.sh 生成）
+│   ├── check-health.sh     # 健康检查（也可用于 cron 探测）
+│   ├── dining-backend.service  # 服务端 systemd 服务单元
+│   └── print-agent.service # 门店本地打印代理 systemd 服务单元
 ├── docs/                   # 文档
-│   └── mysql-migration.md  #   切换到 MySQL 操作手册
+│   ├── mysql-migration.md  #   切换到 MySQL 操作手册
+│   └── print-agent.md      #   云部署 + 门店 9100 打印机的本地代理方案
 ├── start.bat / stop.bat    # Windows 一键启动 / 停止后端（双击运行）
 └── README.md              
 ```
@@ -112,7 +117,7 @@ cp config.example.yaml config.yaml   # 编辑 database.driver=mysql 及下面的
 - 迁移脚本目录（SQLite / MySQL 两套）：`backend/migrations/`，说明见其中的 `README.md`。
 - ⚠️ 搬迁时**务必把 `backend/data/master.key` 一起带走**，否则已加密的支付密钥无法解密。
 
-首次启动自动建表并写入种子数据（6 大分类 21 道菜品、8 张桌台、店铺配置、备注、2 台打印机）。菜品图片与微信/支付宝收款码已从目标站真实下载并打包进 `backend/uploads/`，首次启动即通过 `/picture/` 路径展示。
+首次启动自动建表并写入种子数据（6 大分类 21 道菜品、8 张桌台、店铺配置、备注、2 台打印机）。菜品图片与微信/支付宝收款码已从目标站真实下载并打包进 `backend/uploads/`，首次启动即通过 `/uploads/` 路径展示。
 
 ### 2. 前端（开发模式）
 
@@ -136,10 +141,10 @@ npm run build     # 产物输出到 frontend/dist/static（assetsDir 已对齐�
 
 | 命令 | 说明 |
 |---|---|
-| `make build` | 本机编译，输出 `bin/dining-server(.exe)` |
+| `make build` | 本机编译，输出 `bin/dining-backend(.exe)` |
 | `make build-linux` | 交叉编译 Linux amd64 + arm64 |
-| `make build-linux-amd64` | 交叉编译 `bin/dining-server-linux-amd64` |
-| `make build-linux-arm64` | 交叉编译 `bin/dining-server-linux-arm64` |
+| `make build-linux-amd64` | 交叉编译 `bin/dining-backend-linux-amd64` |
+| `make build-linux-arm64` | 交叉编译 `bin/dining-backend-linux-arm64` |
 | `make run` / `make test` / `make vet` / `make fmt` / `make tidy` | 运行 / 测试 / 静态检查 / 格式化 / 整理依赖 |
 | `make clean` | 清理 `bin/` |
 | `make help` | 查看所有目标 |
@@ -163,13 +168,54 @@ sudo bash deploy/deploy.sh --skip-build
 
 # 可通过环境变量覆盖默认配置
 INSTALL_DIR=/opt/dining-system BACKEND_PORT=9000 sudo bash deploy/deploy.sh
+
+# 已知服务器公网 IP / 域名时，直接安装生产 Nginx 配置（server_name 不再是通配的 "_"）
+SERVER_NAME=111.230.154.50 sudo bash deploy/deploy.sh --skip-build
+
+# 已有证书：自动启用 HTTPS（443 服务块 + 80→443 跳转）
+SERVER_NAME=dining.example.com SSL_CERT=/etc/nginx/ssl/dining.crt \
+  SSL_KEY=/etc/nginx/ssl/dining.key sudo bash deploy/deploy.sh --skip-build
 ```
 
 脚本会：
-1. `make build-linux-amd64` 交叉编译后端 → `$INSTALL_DIR/bin/dining-server`
+1. `make build-linux-amd64` 交叉编译后端 → `$INSTALL_DIR/bin/dining-backend`
 2. `npm ci && npm run build` 构建前端 → `$INSTALL_DIR/frontend/dist`
-3. 生成 `dining-server.service`（systemd，崩溃自动重启）并 `enable --now`
-4. 生成 `nginx.conf`（SPA 回退 + 反代 `/prod-api`、`/uploads`）并 `nginx -s reload`
+3. 生成 `dining-backend.service`（systemd，崩溃自动重启）并 `enable --now`
+4. 由 `deploy/setup-nginx.sh` 按 `deploy/nginx-production.conf`（唯一配置来源）生成 Nginx 配置并 `nginx -t && nginx -s reload`：
+   - 未设置 `SERVER_NAME`：用通配 `server_name _`（与过去的基础配置等价）；
+   - 设置了 `SERVER_NAME`：写入指定域名/IP，带证书时自动启用 HTTPS；
+   - 全程自动备份旧配置、`nginx -t` 失败自动回滚，并做前端与反代自检。
+
+部署后后端日志有两个去处：
+
+- **落盘文件（推荐排障）**：`$INSTALL_DIR/logs/app.log`，JSON 行格式，按 50MB / 30 天 / 7 份自动轮转并压缩。systemd 服务单元已显式指定该绝对路径，不受工作目录变化影响；
+- **journald**：进程控制台输出由 systemd 接管，`journalctl -u dining-backend -f` 可看。
+
+需要改路径或级别：编辑 `/etc/dining-backend.env`（`LOG_PATH` / `LOG_LEVEL` / `LOG_MAX_*`）后 `systemctl restart dining-backend`。
+本地直接运行（`make run` 或 `start.bat`）时默认写到 `backend/logs/app.log`，无需任何配置；设 `LOG_PATH=off` 可只输出控制台。
+
+### Nginx 生产配置（也可单独执行）
+
+只调整 Nginx（不动程序产物）时，直接跑配置脚本，可反复执行、幂等：
+
+```bash
+# 纯 IP 模式（默认 server_name=111.230.154.50，只监听 80）
+sudo bash deploy/setup-nginx.sh
+
+# 指定公网 IP
+sudo bash deploy/setup-nginx.sh --ip 111.230.154.50
+
+# 域名 + HTTPS（自动取消 443 段注释、打开 80→443 跳转、替换证书路径）
+sudo bash deploy/setup-nginx.sh --domain dining.example.com \
+  --cert /etc/nginx/ssl/dining.crt --key /etc/nginx/ssl/dining.key
+
+# 彩排：只生成并做语法校验，不落盘、不重载
+sudo bash deploy/setup-nginx.sh --dry-run
+```
+
+流程：生成配置 → 备份旧配置（保留最近 5 份）→ `nginx -t` 校验（失败自动回滚）→ reload → 前端/后端自检；
+同时会自动处理 SELinux（`httpd_can_network_connect`，否则反代 502）、可选的防火墙放行（`--open-firewall`）与发行版默认站点（`--disable-default`）。
+完整参数见 `sudo bash deploy/setup-nginx.sh --help`。
 
 ### 方案 B：手动部署
 
@@ -181,21 +227,46 @@ cd backend && make build-linux-amd64
 cd ../frontend && npm ci && npm run build
 
 # 3. 拷贝产物到服务器
-#    bin/dining-server-linux-amd64  -> /opt/dining-system/bin/dining-server
+#    bin/dining-backend-linux-amd64  -> /opt/dining-system/bin/dining-backend
 #    frontend/dist/                 -> /opt/dining-system/frontend/dist/
 
 # 4. 安装 systemd 服务
-sudo cp deploy/dining-server.service /etc/systemd/system/dining-server.service
-sudo systemctl daemon-reload && sudo systemctl enable --now dining-server
+sudo cp deploy/dining-backend.service /etc/systemd/system/dining-backend.service
+sudo systemctl daemon-reload && sudo systemctl enable --now dining-backend
 
-# 5. 安装 Nginx 配置
-sudo cp deploy/nginx.conf /etc/nginx/conf.d/dining-system.conf
-sudo nginx -t && sudo nginx -s reload
+# 5. 安装 Nginx 生产配置（写入 server_name / 安装路径 / 后端端口，并自动校验重载）
+sudo bash deploy/setup-nginx.sh --ip 服务器公网IP
+
+# 已有域名与证书时（自动启用 HTTPS）
+sudo bash deploy/setup-nginx.sh --domain 你的域名 \
+  --cert /etc/nginx/ssl/dining.crt --key /etc/nginx/ssl/dining.key
 ```
 
 部署完成后访问 `http://服务器IP/` 即进入前端，管理后台 `/dining/dashboard`。
 
 > Nginx 与 Go 后端的分工：Nginx 托管前端静态资源并做 SPA 回退，将 `/prod-api`、`/uploads` 反向代理到 Go 后端（`127.0.0.1:8080`）。
+
+### 云部署后，门店的打印机怎么出纸？
+
+后端在云服务器上**够不到门店内网的打印机**（`192.168.x.x` 没有路由，直连通道只会超时）。
+三条通道任选一条，在「打印机管理 → 接入方式」里逐台选择：
+
+| 通道 | 适用 | 门店侧要做什么 |
+|---|---|---|
+| **网络直连** `tcp` | 后端与打印机同一局域网（单机/内网部署） | 无 |
+| **飞鹅云** `feie` | 任意网络，需用飞鹅云打印机 | 无（打印机自己联网取单，按台付费） |
+| **本地打印代理** `agent` | 云部署 + **复用门店已有的 9100 网络热敏机** | 门店内网放一台常开机设备跑 `print-agent` |
+
+第三条通道**不需要安装任何打印机驱动**（9100 是 RAW 端口，打印机直接收 ESC/POS 字节流）；
+代理程序只**出站**连云端，门店不需要公网 IP、不需要端口映射、不需要 VPN。
+云端只把票据排队（`tb_print_job`），打印机离线也不丢单，代理恢复后依次补打。
+
+```bash
+cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三个代理程序
+```
+
+完整步骤（生成代理令牌 → 打印机选通道 → 门店部署 → 开机自启 → 排障表）见
+**[`docs/print-agent.md`](docs/print-agent.md)**。
 
 ## 访问入口
 
@@ -214,7 +285,8 @@ sudo nginx -t && sudo nginx -s reload
   - 分类 `category/list|save|update|delete/:id`
   - 菜品 `dish/list|get/:id|save|update|delete/:id`
   - 备注 `remark/list|save|update|delete/:id`
-  - 打印机 `printer/list|save|update|delete/:id|test/:id`（字段对齐目标站：`printerType` 1厨房单/2食客小票、`paperWidth` 32/48、`status` 启停；测试打印真实连接 ESC/POS）
+  - 打印机 `printer/list|save|update|delete/:id|test/:id|probe/:id|status/:id|clear/:id|bind|feie/info|agent/info`（字段对齐目标站：`printerType` 1厨房单/2食客小票、`provider` tcp 直连/feie 飞鹅云/agent 本地代理、`paperWidth` 32/48、`status` 启停；测试打印真实走对应通道）
+  - 打印代理（门店侧程序调用，代理令牌鉴权，不属于管理端）：`agent/print/ping`、`agent/print/pull`、`agent/print/ack`（见 [`docs/print-agent.md`](docs/print-agent.md)）
   - 打印日志 `print/log/list`、`print/log/reprint`、`print/log/clear`（飞鹅云清空队列）
   - 配置 `config/list|save`
   - 订单 `order/list|get/:id|board|status|pay|settle|settle/cancel|credit/settle|finish|cancel|edit`

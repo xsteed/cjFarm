@@ -135,6 +135,9 @@ import pkg from '../../package.json'
 
 const route = useRoute()
 const router = useRouter()
+// isMobile 主断点已扩到 1024px,覆盖手机(iOS 375~430 / 安卓 360~412)与
+// 平板竖屏(iPad mini 768 / iPad 810 / iPad Air 834 / iPad Pro 1024):
+// 平板竖屏用固定侧栏 220px 会把内容区压到不足 600px,统一走抽屉 + 底部 tabbar。
 const { isMobile } = useIsMobile()
 
 // 移动端侧栏抽屉开合状态
@@ -608,9 +611,12 @@ async function submitChangePwd() {
 }
 
 /* ============================================================
-   移动端:侧栏由常驻列改为左侧抽屉
+   紧凑布局(手机 + 平板竖屏):侧栏由常驻列改为左侧抽屉。
+   断点取 1024px 而非 767px,是为了覆盖 iPad 竖屏(iPad mini 768 /
+   iPad 810 / iPad Air 834 / iPad Pro 1024)——固定侧栏 220px 会把这些
+   宽度的内容区压到不足 600px,体验还不如抽屉。
    ============================================================ */
-@media (max-width: 767px) {
+@media (max-width: 1024px) {
   .side {
     position: fixed;
     top: 0;
@@ -648,6 +654,13 @@ async function submitChangePwd() {
 
   .content {
     padding: 12px;
+  }
+
+  /* 平板竖屏(768~1024px)内容区更宽,留白恢复到接近桌面,避免卡片顶满整屏 */
+  @media (min-width: 768px) {
+    .content {
+      padding: 20px;
+    }
   }
 
   /* ---------- 底部 tabbar ---------- */

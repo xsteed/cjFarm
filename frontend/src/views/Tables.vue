@@ -45,6 +45,10 @@
       </div>
     </div>
 
+    <div v-if="h5BaseWarn" class="h5-warn">
+      <b>二维码地址提示：</b>{{ h5BaseWarn }}
+    </div>
+
     <div class="tip-bar">
       桌台二维码由「H5 访问地址 + 点餐码」生成，点餐码在桌台创建时即固定、永不变更，可放心印制成桌牌。
       <br />
@@ -288,6 +292,8 @@ const canReadConfig = computed(() => hasPerm('config:view'))
 
 const shopLogo = ref('')
 const h5Base = ref('')
+// 配置里的 H5 地址不可用(如仍是出厂的 localhost)时的提示文案,空串表示无需提示。
+const h5BaseWarn = ref('')
 const allCount = ref(0)
 
 // 顶部总览:基于全量桌台统计(忽略分页/搜索),反映整层楼面桌况
@@ -636,15 +642,40 @@ async function runBatch(kind) {
   }
 }
 
+// 回环地址:localhost / 127.0.0.1 / 0.0.0.0 / ::1。
+const LOOPBACK_RE = /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?(?:\/|$)/i
+// 当前页面自身是否就是从回环地址打开的(本地开发)。
+const PAGE_ON_LOOPBACK = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname)
+
+// 归一化配置里的 H5 地址:补协议、去末尾斜杠。
+// 少了这一步,「111.230.154.50」这种裸地址会直接进二维码,手机可能识别不出。
+function normalizeBaseUrl(raw) {
+  let v = String(raw || '').trim().replace(/\/+$/, '')
+  if (v && !/^https?:\/\//i.test(v)) v = 'http://' + v
+  return v
+}
+
 async function loadConfig() {
   // 顾客端与后台同源部署,先用当前地址兜底:即便读不到配置,二维码也能扫。
   h5Base.value = window.location.origin.replace(/\/+$/, '')
+  h5BaseWarn.value = ''
   if (!canReadConfig.value) return
   try {
     const cfg = await getConfig()
     shopLogo.value = cfg.shop_logo || ''
     shopTitle.value = cfg.shop_name || ''
-    if (cfg.h5_base_url) h5Base.value = cfg.h5_base_url.replace(/\/+$/, '')
+    const configured = normalizeBaseUrl(cfg.h5_base_url)
+    if (!configured) return
+    // 出厂默认的 H5 地址是 http://localhost:8080。生产环境照搬,二维码就会指向
+    // 服务器自己,手机扫出来必然「访问不通」。回环地址只在「当前页面也是本机
+    // 打开」(本地开发)时才有意义;其余情况一律忽略它,退回当前访问地址
+    // (顾客端与后台同源部署,这个默认值通常就是对的),并给出醒目提示。
+    if (LOOPBACK_RE.test(configured) && !PAGE_ON_LOOPBACK) {
+      h5BaseWarn.value = `系统配置中的「H5 访问地址」是 ${configured}，属于本机地址，手机扫码会访问不通。`
+        + `已临时改用当前访问地址 ${h5Base.value}；请到「系统配置 → H5 访问地址」改成手机能访问到的公网域名或服务器 IP。`
+      return
+    }
+    h5Base.value = configured
   } catch (e) {
     /* 配置读取失败不阻断列表展示,沿用手上的兜底地址 */
   }
@@ -657,6 +688,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* H5 地址不可用(仍是 localhost)时的醒目提示:比 tip-bar 更重,避免店员直接印出扫不通的桌牌 */
+.h5-warn {
+  background: #fff8e6;
+  border: 1px solid #ffe1a8;
+  color: #a86a00;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+.h5-warn b {
+  font-weight: 600;
+}
 .tip-bar {
   background: #fff7f3;
   border: 1px solid #ffe0d2;
@@ -745,6 +791,19 @@ onMounted(async () => {
   /* 移动端屏窄,卡片视图仍单列,避免 180px 格子被压太窄、内部信息挤作一团 */
   .tcard-grid {
     grid-template-columns: 1fr;
+  }
+}
+/* 超窄屏(320~360px):顶部总览 5 张统计卡收紧,数字字号下调避免换行 */
+@media (max-width: 360px) {
+  .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .stat {
+    padding: 12px 12px;
+  }
+  .stat .num {
+    font-size: 20px;
   }
 }
 .code-chip {

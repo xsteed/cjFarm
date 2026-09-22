@@ -55,6 +55,9 @@ backend/_t_*.db*
 backend/_mig_test*.db*
 backend/_verify_*.py
 
+# 发布配置（含服务器地址等本地信息，绝不入库）
+.release.env
+
 # 环境变量文件（可能含数据库密码、支付密钥等，绝不入库）
 # .env.example 是模板，需要入库，放在最后一行以覆盖上面的排除规则。
 .env
@@ -95,6 +98,11 @@ frontend/_dist_*/
 frontend/_old_dist_*
 frontend/*.timestamp-*.mjs
 frontend/dev.log
+
+# ---------------- 发布 / 更新包产物 ----------------
+# deploy/build-update.sh 的输出目录与打包文件（均为编译产物，不入库）
+release/
+*.tar.gz
 
 # ---------------- 文档 / 预览产物 ----------------
 outputs/

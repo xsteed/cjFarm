@@ -248,6 +248,63 @@ func TestGenSQLCheck(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// 图片/收款码路径前缀统一
+// ============================================================================
+
+// TestSeedUploadPathsUseUnifiedPrefix 种子数据里的图片与收款码必须统一使用
+// UploadURLPrefix(/uploads/)。历史上菜品图写入 /picture/、上传接口返回 /uploads/,
+// 两套前缀并存导致线上图片 404(请求落进前端 SPA 兜底),这里把「新种子数据写错前缀」
+// 拦在提交前。若将来再改前缀,只需改 UploadURLPrefix 一处,本测试会同步守住。
+func TestSeedUploadPathsUseUnifiedPrefix(t *testing.T) {
+	for _, d := range seedDishRows {
+		if !strings.HasPrefix(d.img, UploadURLPrefix) {
+			t.Errorf("菜品 %q 的图片路径 %q 未使用 %s 前缀", d.name, d.img, UploadURLPrefix)
+		}
+	}
+	for _, k := range []string{"pay_qr_wx", "pay_qr_ali"} {
+		if v := cfgDefaults[k]; !strings.HasPrefix(v, UploadURLPrefix) {
+			t.Errorf("配置 %s 默认值 %q 未使用 %s 前缀", k, v, UploadURLPrefix)
+		}
+	}
+}
+
+// TestMigrateUploadPrefix 老库里的 /picture/ 路径必须在启动迁移时被改写为 /uploads/,
+// 且重复执行幂等 —— 这是删掉 /picture 静态路由后存量图片与收款码不 404 的前提。
+func TestMigrateUploadPrefix(t *testing.T) {
+	Init(filepath.Join(t.TempDir(), "upload-prefix.db"))
+	defer func() { _ = DB.Close() }()
+
+	const legacyDish = "/picture/dining_20260918_001.jpeg"
+	if _, err := DB.Exec(`INSERT INTO tb_dish(category_id, dish_name, dish_image, del_flag)
+		VALUES(1, '存量菜品', ?, '0')`, legacyDish); err != nil {
+		t.Fatalf("写入存量菜品失败: %v", err)
+	}
+	if _, err := DB.Exec(`UPDATE tb_config SET cfg_value=? WHERE cfg_key='pay_qr_wx'`, legacyUploadPrefix+"pay_wx.png"); err != nil {
+		t.Fatalf("写入存量收款码失败: %v", err)
+	}
+
+	// 跑两遍:验证改写正确且幂等。
+	migrateUploadPrefix()
+	migrateUploadPrefix()
+
+	var dishImg, qrImg string
+	DB.QueryRow(`SELECT dish_image FROM tb_dish WHERE dish_name='存量菜品'`).Scan(&dishImg)
+	DB.QueryRow(`SELECT cfg_value FROM tb_config WHERE cfg_key='pay_qr_wx'`).Scan(&qrImg)
+	if want := UploadURLPrefix + "dining_20260918_001.jpeg"; dishImg != want {
+		t.Errorf("菜品图片路径未改写: got %q, want %q", dishImg, want)
+	}
+	if want := UploadURLPrefix + "pay_wx.png"; qrImg != want {
+		t.Errorf("收款码路径未改写: got %q, want %q", qrImg, want)
+	}
+
+	var left int
+	DB.QueryRow(`SELECT COUNT(*) FROM tb_dish WHERE dish_image LIKE ?`, legacyUploadPrefix+"%").Scan(&left)
+	if left != 0 {
+		t.Errorf("仍有 %d 条菜品图片使用废弃前缀 %s", left, legacyUploadPrefix)
+	}
+}
+
 // snapshotSchema 抓取库中所有表的列清单与索引清单。
 func snapshotSchema(t *testing.T, db *sql.DB) map[string][]string {
 	t.Helper()

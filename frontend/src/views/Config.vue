@@ -19,7 +19,17 @@
       </t-form-item>
 
       <t-form-item label="H5 访问地址" name="h5_base_url">
-        <t-input v-model="form.h5_base_url" placeholder="如 http://localhost:8080（不带末尾斜杠）" />
+        <t-space direction="vertical" style="align-items: flex-start; width: 100%">
+          <t-input
+            v-model="form.h5_base_url"
+            placeholder="如 http://1.2.3.4 或 https://dining.example.com（不带末尾斜杠）"
+            style="width: 520px; max-width: 100%"
+          />
+          <span class="tip">
+            桌台二维码会指向这个地址，必须是<b>手机能访问到</b>的公网域名或服务器 IP。
+            填 localhost / 127.0.0.1 手机扫了会「访问不通」；留空则自动使用当前访问地址。
+          </span>
+        </t-space>
       </t-form-item>
 
       <t-form-item label="店铺 Logo" name="shop_logo">
@@ -163,6 +173,30 @@
         </span>
       </t-form-item>
 
+      <t-divider>本地打印代理（后端部署在云服务器、门店已有 9100 网络机时用）</t-divider>
+
+      <t-form-item label="代理令牌" name="agent_token">
+        <t-space>
+          <t-input
+            v-model="form.agent_token"
+            type="password"
+            style="width: 320px"
+            placeholder="留空表示不修改；未配置时「本地代理」通道的打印机不会出纸"
+          />
+          <t-button variant="outline" @click="genAgentToken">生成随机令牌</t-button>
+        </t-space>
+      </t-form-item>
+      <t-form-item label=" ">
+        <span class="tip">
+          把它填到门店内网那台常开机设备的 print-agent 上（<code>--token</code> 或 agent.env）。
+          代理是<b>出站</b>连云端的：门店不需要公网 IP、不需要端口映射、不需要 VPN，
+          也不需要安装任何打印机驱动（9100 是 RAW 端口，打印机直接收字节流）。
+          <br />
+          改动令牌后，所有已部署的代理都要同步更新，否则会一直报「代理令牌不正确」。
+          完整步骤见 <code>docs/print-agent.md</code>。
+        </span>
+      </t-form-item>
+
       <t-form-item>
         <t-button theme="primary" :loading="saving" :disabled="!loaded || !canEdit" @click="save">保存配置</t-button>
         <span v-if="!canEdit" class="tip" style="margin-left: 10px">当前账号只能查看配置，不能修改</span>
@@ -193,7 +227,9 @@ const form = reactive({
   wxpay_pubkey_id: '', wxpay_pubkey_path: '', wxpay_notify_url: '',
   alipay_appid: '', alipay_private_key_path: '', alipay_public_key: '', alipay_notify_url: '',
   print_enabled: '1', print_kitchen_show_price: '0',
-  feie_user: '', feie_ukey: '', feie_api_url: 'https://api.de.feieyun.com/Api/Open/'
+  feie_user: '', feie_ukey: '', feie_api_url: 'https://api.de.feieyun.com/Api/Open/',
+  // 敏感项：后端不回显，留空表示不修改（与飞鹅 UKEY 同一套语义）
+  agent_token: ''
 })
 const logoFiles = ref([])
 const wxFiles = ref([])
@@ -276,11 +312,27 @@ async function save() {
     MessagePlugin.success('保存成功')
     // 保存后重新拉取,保证界面与库里的真实值一致
     await load()
+    // 代理令牌是敏感项、后端不回显:保存后清空输入框,避免它一直明文挂在页面上,
+    // 也避免下次保存时把同一个值再提交一遍(虽然后端是幂等的,但看着容易误解)。
+    form.agent_token = ''
   } catch (e) {
     MessagePlugin.error(e?.message || '保存失败，请稍后重试')
   } finally {
     saving.value = false
   }
+}
+
+// 生成随机代理令牌。
+//
+// 代理令牌等同于「一台打印机的操作权限」:拿到它就能把待打印队列整个拉走
+// (含订单金额),所以不能手填成 123456 这种。字符集剔除 0/O/1/I/l 等易混字符,
+// 便于门店在另一台设备上照着敲。
+function genAgentToken() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const buf = new Uint8Array(32)
+  crypto.getRandomValues(buf)
+  form.agent_token = Array.from(buf, (b) => chars[b % chars.length]).join('')
+  MessagePlugin.info('已生成随机令牌：保存配置后，把它填到门店那台设备的 print-agent 上')
 }
 
 onMounted(load)

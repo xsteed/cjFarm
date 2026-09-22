@@ -17,7 +17,7 @@ if %errorlevel%==0 (
 )
 
 echo [1/2] 正在启动后端服务（最小化窗口，请勿关闭）...
-start "dining-server" /min bin\dining-server.exe
+start "dining-backend" /min bin\dining-backend.exe
 timeout /t 2 /nobreak >nul
 
 :open
