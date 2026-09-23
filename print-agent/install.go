@@ -45,6 +45,11 @@ const (
 	// darwinDataDirName Application Support 下的数据目录名:agent.env / 状态 / 日志。
 	// 刻意放在 bundle 之外 —— 见 dataDir 的注释。
 	darwinDataDirName = "PrintAgent"
+	// darwinBundleIconSrc 内嵌的图标资源(部署时写进 App 的 Resources)。
+	darwinBundleIconSrc = "deploy/PrintAgent.icns"
+	// darwinBundleIconName App 内图标文件名。去掉 .icns 后缀后的部分必须与
+	// Info.plist 的 CFBundleIconFile 一致,否则 Dock/Finder 里会是个白板图标。
+	darwinBundleIconName = "AppIcon.icns"
 )
 
 // stdinReader 复用同一个 bufio.Reader:避免管道一次喂入多行时,askServer 与
@@ -58,12 +63,29 @@ func runInstall(cfg config) {
 		fatalf("无法确定程序自身路径: %v", err)
 	}
 
-	// 优先级:--server/--token flag → 环境变量 → 交互询问。
+	// 先定「实际会被拉起的程序路径」再定配置文件路径:macOS 上这一步会把自身部署进
+	// ~/Applications/PrintAgent.app,程序路径随之改变,agent.env 也跟着落到该程序的
+	// 数据目录 —— 顺序反了就会写到一个新程序根本不会去读的位置。
+	// 这一步必须在询问之前:下面要先去目标配置文件里找已有的地址/令牌。
+	runExe := prepareInstallTarget(exe)
+	dataDir := dataDirFor(runExe)
+	envPath := filepath.Join(dataDir, "agent.env")
+
+	// 优先级:--server/--token flag → 环境变量 → **目标配置文件里已有的值** → 交互询问。
 	// parseFlags 已把 flag 与环境变量合并进 cfg,这里只补真正缺失的项。
 	// serverExplicit/tokenExplicit 表示「本次显式给出」;交互补输的也算显式 —
 	// 店员当场敲进去的值,当然是要它生效的那个值。
 	server, token := cfg.server, cfg.token
 	serverGiven, tokenGiven := cfg.serverExplicit, cfg.tokenExplicit
+	// 为什么要读目标配置文件:装成 App 之后配置落在 Application Support,而门店重装时
+	// 站在解压目录里执行 —— 那里没有 agent.env,于是「重装一次」会被追问一遍已经填过的
+	// 令牌,而门店手里往往只剩一个旧令牌。先沿用,别问。
+	if server == "" {
+		server = readEnvValue(envPath, "PRINT_AGENT_SERVER")
+	}
+	if token == "" {
+		token = readEnvValue(envPath, "PRINT_AGENT_TOKEN")
+	}
 	if server == "" {
 		server = askServer()
 		serverGiven = true
@@ -73,12 +95,6 @@ func runInstall(cfg config) {
 		tokenGiven = true
 	}
 
-	// 先定「实际会被拉起的程序路径」再定配置文件路径:macOS 上这一步会把自身部署进
-	// ~/Applications/PrintAgent.app,程序路径随之改变,agent.env 也跟着落到该程序的
-	// 数据目录 —— 顺序反了就会写到一个新程序根本不会去读的位置。
-	runExe := prepareInstallTarget(exe)
-	dataDir := dataDirFor(runExe)
-	envPath := filepath.Join(dataDir, "agent.env")
 	migrateFromOldDir(filepath.Dir(exe), dataDir)
 
 	updated, err := writeAgentEnv(envPath, server, token, serverGiven, tokenGiven)
@@ -143,6 +159,71 @@ func writeAgentEnv(path, server, token string, overrideServer, overrideToken boo
 		return nil, err
 	}
 	return updated, nil
+}
+
+// upsertEnvKey 就地把 agent.env 里的某个键设为指定值。
+//
+// 与 writeAgentEnv 的分工:后者只管 SERVER/TOKEN/LOG 这组「安装期」键;本函数给
+// 「事后单独改一项」用(--setup-cups 要打开打印通道)。修改顺序刻意如此:
+//  1. 有生效行就直接改写它;
+//  2. 没有生效行、但有模板里那行注释掉的提示(如 `# PRINT_AGENT_PRINT_VIA=auto`),
+//     就地把它激活 —— 否则文件里会同时留着「注释版」和「生效版」两行,门店看着困惑;
+//  3. 都没有才追加到末尾。
+func upsertEnvKey(path, key, value string) error {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	lines := splitEnvLines(string(data))
+	newLine := key + "=" + value
+
+	replaceFirst := func(match func(string) bool) bool {
+		for i, line := range lines {
+			if match(strings.TrimSpace(line)) {
+				lines[i] = newLine
+				return true
+			}
+		}
+		return false
+	}
+	active := func(t string) bool { return strings.HasPrefix(t, key+"=") }
+	commented := func(t string) bool {
+		return strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(t, "#")), key+"=")
+	}
+	if !replaceFirst(active) && !replaceFirst(commented) {
+		lines = append(lines, newLine)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
+// readEnvValue 从指定的 agent.env 里读一个键;文件不存在、键缺失或值为空都返回空串。
+//
+// 刻意不复用 loadEnvFile:那个函数会把键值灌进进程环境(全局副作用),而这里只是想
+// 看一眼目标文件里已有什么。注释行一律跳过 —— 模板里带了不少 `# KEY=示例` 的提示。
+func readEnvValue(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range splitEnvLines(string(data)) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if v, ok := strings.CutPrefix(line, key+"="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// splitEnvLines 按行切分配置内容;空内容返回 nil(避免写出一行空行)。
+func splitEnvLines(s string) []string {
+	s = strings.TrimRight(s, "\n")
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }
 
 // buildAgentEnv 合并/生成 agent.env 内容。existing 为空表示新文件。
@@ -418,27 +499,47 @@ func deployDarwinBundle(exe string) (string, error) {
 	}
 	target := darwinBundleExePath(app)
 
-	// 已经在 bundle 内(由 launchd 拉起的实例再执行 --install):原地不动,只重签一次
-	// 以防上一次被升级流程改过文件。
-	if samePath(exe, target) {
-		signDarwinBundle(app)
-		return target, nil
-	}
-
 	for _, d := range []string{filepath.Join(app, "Contents", "MacOS"), filepath.Join(app, "Contents", "Resources")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return "", err
 		}
 	}
-	if err := copyFile(exe, target, 0o755); err != nil {
-		return "", err
+	// 已经在 bundle 内(由 launchd 拉起的实例再执行 --install):可执行文件原地不动 ——
+	// 覆盖自己会破坏正在运行的进程映射。但描述文件与图标照常刷新:升级可能带来新的
+	// 图标与文案,而它们写在签名之前,不影响正确性。
+	if !samePath(exe, target) {
+		if err := copyFile(exe, target, 0o755); err != nil {
+			return "", err
+		}
 	}
-	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"),
-		[]byte(renderDarwinInfoPlist(deployTemplate("deploy/PrintAgent-Info.plist"))), 0o644); err != nil {
+	if err := writeDarwinBundleFiles(app); err != nil {
 		return "", err
 	}
 	signDarwinBundle(app)
 	return target, nil
+}
+
+// writeDarwinBundleFiles 写入 App 的描述文件与图标。
+//
+// 必须排在签名之前:签完名再动 bundle 里任何文件都会让签名失效,而签名正是系统识别
+// 本 App 的依据(LaunchServices 关联、「本地网络」授权都挂在它上面)。
+//
+// 图标写失败只告警不阻断:没有图标的 App 照样能跑,只是难看;而 Info.plist 缺了
+// 这个 App 就不成立了,必须报错。
+func writeDarwinBundleFiles(app string) error {
+	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"),
+		[]byte(renderDarwinInfoPlist(deployTemplate("deploy/PrintAgent-Info.plist"))), 0o644); err != nil {
+		return err
+	}
+	icon, err := deployFS.ReadFile(darwinBundleIconSrc)
+	if err != nil {
+		logvf("内嵌图标缺失(%v),App 将使用系统默认图标", err)
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(app, "Contents", "Resources", darwinBundleIconName), icon, 0o644); err != nil {
+		logf("[警告] 写入 App 图标失败(不影响运行): %v", err)
+	}
+	return nil
 }
 
 // renderDarwinInfoPlist 把模板里的 __VERSION__ 换成当前版本号。

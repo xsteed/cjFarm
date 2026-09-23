@@ -128,6 +128,24 @@ func TestBundleRenderedPlistIsWellFormed(t *testing.T) {
 	}
 }
 
+func TestBundleIconAsset(t *testing.T) {
+	icon, err := deployFS.ReadFile(darwinBundleIconSrc)
+	if err != nil {
+		t.Fatalf("内嵌图标缺失(%s),App 会变成白板图标: %v", darwinBundleIconSrc, err)
+	}
+	// icns 文件头是 4 字节魔数 "icns" + 4 字节长度。图标坏掉只会在门店机器上、
+	// 以「图标变白板」的形式暴露,所以在这里钉住。
+	if len(icon) < 8 || string(icon[:4]) != "icns" {
+		t.Fatalf("内嵌图标不是合法 icns(前 8 字节: %q)", icon[:min(8, len(icon))])
+	}
+	// Info.plist 里的 CFBundleIconFile 必须与写进 Resources 的文件名对应,
+	// 否则系统找不到图标 —— 同样是「只在真机上看得见」的问题。
+	want := strings.TrimSuffix(darwinBundleIconName, ".icns")
+	if !strings.Contains(deployTemplate("deploy/PrintAgent-Info.plist"), "<string>"+want+"</string>") {
+		t.Fatalf("Info.plist 的 CFBundleIconFile 应为 %q(与 %s 对应)", want, darwinBundleIconName)
+	}
+}
+
 func TestBundleRenderedInfoPlistIsWellFormed(t *testing.T) {
 	got := renderDarwinInfoPlist(deployTemplate("deploy/PrintAgent-Info.plist"))
 	assertWellFormedXML(t, "渲染后的 App Info.plist", got)
@@ -285,6 +303,104 @@ func TestBundleSleepSwitchCommands(t *testing.T) {
 	}
 	if got := darwinEnableSleepCommand(); got != "sudo pmset -a disablesleep 0" {
 		t.Fatalf("恢复合盖睡眠的命令不符: %q", got)
+	}
+}
+
+// ============================================================================
+// agent.env 单项改写(--setup-cups 打开通道时用)
+// ============================================================================
+
+func TestBundleUpsertEnvKey(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "agent.env")
+
+	t.Run("文件不存在时新建", func(t *testing.T) {
+		if err := upsertEnvKey(p, "PRINT_AGENT_PRINT_VIA", "auto"); err != nil {
+			t.Fatalf("写入失败: %v", err)
+		}
+		got, _ := os.ReadFile(p)
+		if string(got) != "PRINT_AGENT_PRINT_VIA=auto\n" {
+			t.Fatalf("新文件内容不符: %q", got)
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat 失败: %v", err)
+		}
+		// 内含云端地址/令牌的同级信息,权限必须收紧。
+		if fi.Mode().Perm() != 0o600 {
+			t.Fatalf("权限应为 0600, got %v", fi.Mode().Perm())
+		}
+	})
+
+	t.Run("已有生效行则就地改写", func(t *testing.T) {
+		_ = os.WriteFile(p, []byte("PRINT_AGENT_SERVER=http://x\nPRINT_AGENT_PRINT_VIA=tcp\n"), 0o600)
+		if err := upsertEnvKey(p, "PRINT_AGENT_PRINT_VIA", "auto"); err != nil {
+			t.Fatalf("写入失败: %v", err)
+		}
+		got, _ := os.ReadFile(p)
+		if strings.Count(string(got), "PRINT_AGENT_PRINT_VIA=") != 1 ||
+			!strings.Contains(string(got), "PRINT_AGENT_PRINT_VIA=auto") ||
+			strings.Contains(string(got), "PRINT_AGENT_PRINT_VIA=tcp") {
+			t.Fatalf("应就地改写且不重复, got %q", got)
+		}
+	})
+
+	t.Run("模板里注释掉的提示行就地激活", func(t *testing.T) {
+		// --install 生成的 agent.env 里带着 `# PRINT_AGENT_PRINT_VIA=auto` 这类提示。
+		// 直接再追加一行会同时留下「注释版」和「生效版」,门店看着困惑。
+		_ = os.WriteFile(p, []byte("# 打印通道说明\n# PRINT_AGENT_PRINT_VIA=auto\nPRINT_AGENT_SERVER=http://x\n"), 0o600)
+		if err := upsertEnvKey(p, "PRINT_AGENT_PRINT_VIA", "cups"); err != nil {
+			t.Fatalf("写入失败: %v", err)
+		}
+		got, _ := os.ReadFile(p)
+		if strings.Contains(string(got), "# PRINT_AGENT_PRINT_VIA=") {
+			t.Fatalf("注释行应被激活,不该留两行: %q", got)
+		}
+		if !strings.Contains(string(got), "\nPRINT_AGENT_PRINT_VIA=cups\n") {
+			t.Fatalf("应写入 active 行, got %q", got)
+		}
+		if !strings.Contains(string(got), "# 打印通道说明") {
+			t.Fatalf("无关注释不应被删, got %q", got)
+		}
+	})
+
+	t.Run("不误伤同名前缀的其它键", func(t *testing.T) {
+		_ = os.WriteFile(p, []byte("PRINT_AGENT_PRINT_VIA_EXTRA=keep\n"), 0o600)
+		if err := upsertEnvKey(p, "PRINT_AGENT_PRINT_VIA", "auto"); err != nil {
+			t.Fatalf("写入失败: %v", err)
+		}
+		got, _ := os.ReadFile(p)
+		if !strings.Contains(string(got), "PRINT_AGENT_PRINT_VIA_EXTRA=keep") {
+			t.Fatalf("同前缀的键不应被改写: %q", got)
+		}
+	})
+}
+
+func TestBundleReadEnvValue(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "agent.env")
+	// 模板里带了不少 `# KEY=示例` 的提示行。若把它们也当生效值读出来,重装时会
+	// 悄悄把示例地址(或示例令牌)写进配置 —— 那是「装完就连不上云端」的经典成因。
+	content := "# PRINT_AGENT_SERVER=https://示例地址\n" +
+		"PRINT_AGENT_SERVER=https://real.example.com\n" +
+		"PRINT_AGENT_TOKEN=  abc123  \n" +
+		"PRINT_AGENT_OTHER=x\n"
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatalf("写文件失败: %v", err)
+	}
+	for _, c := range []struct{ key, want string }{
+		{"PRINT_AGENT_SERVER", "https://real.example.com"},
+		{"PRINT_AGENT_TOKEN", "abc123"},
+		{"PRINT_AGENT_MISSING", ""},
+		{"PRINT_AGENT_SERVE", ""}, // 不做前缀模糊匹配
+	} {
+		if got := readEnvValue(p, c.key); got != c.want {
+			t.Fatalf("readEnvValue(%s)=%q, want %q", c.key, got, c.want)
+		}
+	}
+	// 文件不存在时返回空串(首次安装的正常路径),不该报错。
+	if got := readEnvValue(filepath.Join(dir, "nope"), "PRINT_AGENT_SERVER"); got != "" {
+		t.Fatalf("文件不存在应返回空串, got %q", got)
 	}
 }
 

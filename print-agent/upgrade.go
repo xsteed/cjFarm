@@ -23,7 +23,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -105,9 +104,9 @@ func syncDarwinBundleAfterUpgrade(exe string) {
 		}
 		logf("[提示] 已同步更新 App: %s", app)
 	}
-	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"),
-		[]byte(renderDarwinInfoPlist(deployTemplate("deploy/PrintAgent-Info.plist"))), 0o644); err != nil {
-		logvf("刷新 App 版本号失败(不影响运行): %v", err)
+	// 描述文件与图标一起刷新(必须在签名之前 —— 理由见 writeDarwinBundleFiles)。
+	if err := writeDarwinBundleFiles(app); err != nil {
+		logvf("刷新 App 描述文件失败(不影响运行): %v", err)
 	}
 	signDarwinBundle(app)
 }

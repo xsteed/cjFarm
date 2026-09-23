@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -230,6 +231,16 @@ var cupsQueueCache struct {
 	fetched time.Time
 }
 
+// invalidateCUPSQueueCache 清掉队列发现缓存。
+//
+// 刚建完队列必须清:发现结果带 5 分钟 TTL,不清的话「建好队列 → 立刻核对」会读到
+// 建之前那份空结果,门店看到的是「建了却还是说没找到」。
+func invalidateCUPSQueueCache() {
+	cupsQueueCache.Lock()
+	cupsQueueCache.byAddr, cupsQueueCache.fetched = nil, time.Time{}
+	cupsQueueCache.Unlock()
+}
+
 // parseCUPSQueues 解析 `lpstat -v` 的输出为「ip:port → 队列名」。
 //
 // 只认 socket:// 设备:CUPS 里它就是 AppSocket/HP JetDirect,与直连 IP:9100 是同一条
@@ -244,9 +255,13 @@ var cupsQueueCache struct {
 // 为什么要额外写一条「本地化兜底」:macOS 上的 lpstat 走 CoreFoundation 本地化,
 // **完全无视 LC_ALL / LANG / LANGUAGE**(实测中文系统上设了这些仍然输出
 // 「未添加目的位置。」),所以英文前缀 "device for " 在中文门店机器上一行都匹配不到,
-// 而那恰好是本功能最需要工作的场景。兜底只依赖语言无关的部分:设备 URI(socket://
-// 原样输出)与队列名的形态 —— 本地化文案里的标签词通常是非 ASCII 词,队列名则多半是
-// ASCII 标识符,取 URI 之前**最后一个像队列名的词**即可两者兼顾。
+// 而那恰好是本功能最需要工作的场景。中文环境下的实际输出形如:
+//
+//	用于CjfarmKitchen的设备：socket://192.168.1.133:9100
+//
+// 兜底只依赖语言无关的部分:设备 URI(socket:// 原样输出),以及「标签词几乎都是
+// 非 ASCII、队列名通常是 ASCII」这一规律(见 guessLocalizedQueue)。**注意标签词与
+// 队列名之间没有空格** —— 按空格分词在中文下会整行变成一个词,永远认不出队列名。
 func parseCUPSQueues(out string) map[string]string {
 	type entry struct{ addr, queue string }
 
@@ -301,30 +316,41 @@ func parseCUPSQueues(out string) map[string]string {
 func guessLocalizedQueue(prefix string) string {
 	// 队列名与 URI 之间由本地化文案分隔,可能带半角/全角冒号。
 	prefix = strings.TrimRight(strings.TrimRight(prefix, " \t"), ":：")
-	fields := strings.Fields(prefix)
-	// 句式逐语言不同(「device for X:」/「设备 X:」/「X 的设备:」),靠字符集定序:
-	// 本地化标签词几乎都是非 ASCII(中/日/韩/俄…),而队列名通常不是 ——
-	// 取最后一个「像队列名的 ASCII 词」两种语序都能命中。队列名本身是中文时这里
-	// 会放弃,交给 system_profiler 那条语言无关的路。
-	for i := len(fields) - 1; i >= 0; i-- {
-		if isASCIIWord(fields[i]) {
-			return fields[i]
-		}
+
+	// 各语言句式不同。实测中文版 CUPS 输出的是(注意标签与队列名之间 **没有空格**):
+	//
+	//	用于CjfarmKitchen的设备：socket://192.168.1.133:9100
+	//
+	// 所以不能靠「空格分词后取某一段」——那一条在中文下整行是一个词,永远取不到。
+	// 可用的规律是两条:
+	//  1. 本地化标签词几乎都是非 ASCII,而队列名通常是 ASCII —— 把非 ASCII 字符全丢掉,
+	//     剩下的就是队列名(前头可能还夹着 ASCII 的标签词,如法语的 "apparaat voor");
+	//  2. 各语言里队列名都排在标签词之后(「用于 X 的设备」/「device for X」),
+	//     故取去除非 ASCII 之后的**最后一个词**。
+	fields := strings.Fields(dropNonASCII(prefix))
+	if len(fields) == 0 {
+		// 队列名本身是中文时必然走到这里(去除非 ASCII 后什么都不剩)。
+		// 不硬猜:由 PRINT_AGENT_CUPS_QUEUE 显式指定。
+		return ""
 	}
-	return ""
+	return fields[len(fields)-1]
 }
 
-// isASCIIWord 判断一个词是否是可打印的 ASCII 串(不含斜杠 —— CUPS 不允许队列名里有它)。
-func isASCIIWord(s string) bool {
-	if s == "" {
-		return false
-	}
+// dropNonASCII 剔除不可打印 ASCII 与斜杠,但保留空格作为词边界。
+//
+// 斜杠要去掉:CUPS 不允许队列名里含它,留着只会在后面拼 argv 时添乱。
+func dropNonASCII(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
 	for _, r := range s {
-		if r < 33 || r >= 127 || r == '/' {
-			return false
+		switch {
+		case r == ' ':
+			b.WriteRune(' ') // 词边界必须留下,否则 "apparaat voor Kitchen" 会粘连成一个词
+		case r >= 33 && r < 127 && r != '/':
+			b.WriteRune(r)
 		}
 	}
-	return true
+	return b.String()
 }
 
 // ============================================================================
@@ -517,8 +543,12 @@ func planChannel(addr string) channelPlan {
 // 失败归因提示
 // ============================================================================
 
-// dialFailureHintOnce 保证该提示每个进程只输出一次。
-var dialFailureHintOnce sync.Once
+// dialFailureHintShown 保证该提示每个进程只输出一次。
+//
+// 用 atomic.Bool 而不是 sync.Once:Once 没有 Reset,测试在多轮运行(go test -count=2)
+// 之间无法复位,断言「首次非空、之后为空」的用例会莫名失败。语义上我们只需要「标记过
+// 没有」,不需要 Once 的阻塞保证。
+var dialFailureHintShown atomic.Bool
 
 // dialFailureHint 针对「连接被本机策略瞬间拒绝」给出一次性处置提示。
 //
@@ -531,15 +561,14 @@ func dialFailureHint(err error) string {
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "no route to host") {
 		return ""
 	}
-	hint := ""
-	dialFailureHintOnce.Do(func() {
-		hint = "连接被瞬间拒绝(no route to host)且耗时极短:若本机是 macOS 15 及以上," +
-			"这通常是系统的「本地网络」隐私权限拦下了自启动的代理,而不是打印机故障 —— " +
-			"在终端里手工执行 --probe 能通即可确认(终端不受该权限限制)。" +
-			"处置:优先改用 CUPS 通道(PRINT_AGENT_PRINT_VIA=auto 并先在「系统设置 → 打印机与扫描仪」里以 IP 方式添加打印机)," +
-			"或按部署手册 macOS 一节给本 App 授予「本地网络」权限。"
-	})
-	return hint
+	if !dialFailureHintShown.CompareAndSwap(false, true) {
+		return ""
+	}
+	return "连接被瞬间拒绝(no route to host)且耗时极短:若本机是 macOS 15 及以上," +
+		"这通常是系统的「本地网络」隐私权限拦下了自启动的代理,而不是打印机故障 —— " +
+		"在终端里手工执行 --probe 能通即可确认(终端不受该权限限制)。" +
+		"处置:优先改用 CUPS 通道(执行 --setup-cups <打印机IP> 一条命令即可)," +
+		"或按部署手册 macOS 一节给本 App 授予「本地网络」权限。"
 }
 
 // ============================================================================

@@ -33,6 +33,10 @@
     <key>CFBundleExecutable</key>
     <string>print-agent</string>
 
+    <!-- 与安装时写进 Contents/Resources/AppIcon.icns 的文件名对应(不带扩展名)。 -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
     <key>CFBundlePackageType</key>
     <string>APPL</string>
 

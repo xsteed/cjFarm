@@ -64,6 +64,11 @@ type config struct {
 	probe        string
 	probeTimeout time.Duration // 单台拨号超时(默认 5s)
 	probePrint   bool          // 自检时真的吐一张 ASCII 自检页(默认只探端口 + 读状态)
+	// doctor 一条命令体检(见 doctor.go):把「代理自身会出问题的地方」一次查完。
+	// 不要求 server/token —— 配置缺失正是要查出来的问题。
+	doctor bool
+	// setupCUPS macOS 自助配好系统打印队列(见 cups_setup.go)。
+	setupCUPS string
 	// printVia 打印通道:tcp(默认,直连 IP:9100)/ cups(一律走本机 CUPS 队列)/ auto
 	// (先直连,失败且找得到队列时改投 CUPS)。macOS 15+ 的「本地网络隐私」会拦下由
 	// LaunchAgent 托管的直连,cups/auto 是绕开它的办法,详见 cups.go 与部署手册。
@@ -114,6 +119,17 @@ func main() {
 	if cfg.showVersion {
 		printVersion()
 		return
+	}
+	if cfg.doctor {
+		// 体检(见 doctor.go):配置/自启动/通道/防睡眠/云端一次查完。
+		// 通道与探测设置都要就位,它会一并报告「实际走哪条通道、队列找到没有」。
+		configurePrintChannel(cfg)
+		os.Exit(runDoctor(cfg))
+	}
+	if cfg.setupCUPS != "" {
+		// 自助配好 CUPS 通道(见 cups_setup.go),要按目标地址判断通道,故先就位。
+		configurePrintChannel(cfg)
+		os.Exit(runSetupCUPS(cfg))
 	}
 	if cfg.probe != "" {
 		// 连通性自检是纯本地操作,不需要(也不应要求)云端地址与令牌 ——

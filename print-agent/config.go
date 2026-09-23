@@ -46,8 +46,11 @@ func snapshotEnv() {
 
 func parseFlags() (config, error) {
 	var (
-		server       = flag.String("server", envOr("PRINT_AGENT_SERVER", ""), "云端地址,如 https://dining.example.com")
-		token        = flag.String("token", envOr("PRINT_AGENT_TOKEN", ""), "代理令牌(系统配置 → 小票打印 → 代理令牌)")
+		// server/token 刻意**不**把配置值写进 flag 默认值:flag 会把默认值回显在用法
+		// 输出里,于是门店敲错一个参数(甚至只是 --help)就会把代理令牌明文打到终端、
+		// 连同截屏一起进工单。取值改在 Parse 之后从环境补齐(见下方 cmdLine 那段)。
+		server       = flag.String("server", "", "云端地址,如 https://dining.example.com")
+		token        = flag.String("token", "", "代理令牌(系统配置 → 小票打印 → 代理令牌)")
 		interval     = flag.Int("interval", envInt("PRINT_AGENT_INTERVAL", defaultInterval), "轮询间隔(秒)")
 		limit        = flag.Int("limit", envInt("PRINT_AGENT_LIMIT", defaultLimit), "单次最多取几条任务(1-50)")
 		wait         = flag.Int("wait", envInt("PRINT_AGENT_WAIT", defaultWait), "长轮询等待秒数(0-30,默认25;--once 强制0;环境变量 PRINT_AGENT_WAIT)")
@@ -65,6 +68,8 @@ func parseFlags() (config, error) {
 		probe        = flag.String("probe", "", "只做打印机连通性自检:直接拨 ip[:port](多个用逗号分隔,端口缺省 9100),打印「可达/不可达 + 状态回读」;不连云端、不入队、不消耗重试次数")
 		probeTimeout = flag.Int("probe-timeout", envInt("PRINT_AGENT_PROBE_TIMEOUT", defaultProbeTimeoutSec), "自检时单台打印机的拨号超时(秒,1-30)")
 		probePrint   = flag.Bool("probe-print", false, "自检时吐一张纯 ASCII 自检页(默认只探端口 + 读状态,不吐纸)")
+		doctor       = flag.Bool("doctor", false, "一条命令体检:一次查完配置/自启动/打印通道/防睡眠与合盖/云端连通,并给出处置命令;可再带 --probe <打印机IP> 把打印机那一段一起查")
+		setupCUPS    = flag.String("setup-cups", "", "macOS:为指定打印机建好系统打印队列并打开 CUPS 通道(直连被系统「本地网络」权限拦下时用),形如 192.168.1.133 或 192.168.1.133:9100")
 		printVia     = flag.String("print-via", envOr("PRINT_AGENT_PRINT_VIA", channelTCP), "打印通道: tcp=直连打印机 IP:9100(默认);cups=一律走本机 CUPS 打印队列;auto=先直连、失败且找得到队列时改投 CUPS(macOS 15+ 被「本地网络」权限拦下时用 cups/auto)")
 		cupsQueue    = flag.String("cups-queue", envOr("PRINT_AGENT_CUPS_QUEUE", ""), "CUPS 队列映射(仅 cups/auto 通道): 形如 192.168.1.133=厨房打印机,多个用逗号分隔;只写队列名则作为所有打印机的默认队列。留空时用 lpstat -v 自动发现")
 		// 声明但不在此处使用:--env 已在 main() 开头(loadEnvFile)按 os.Args 处理,
@@ -82,7 +87,9 @@ func parseFlags() (config, error) {
 	// 值若来自已存在的 agent.env(见 snapshotEnv)则不算,以免重装时误改配置。
 	serverExplicit := envSnapshot.server != ""
 	tokenExplicit := envSnapshot.token != ""
+	cmdLine := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) {
+		cmdLine[f.Name] = true
 		switch f.Name {
 		case "no-sleep":
 			noSleepExplicit = true
@@ -92,6 +99,15 @@ func parseFlags() (config, error) {
 			tokenExplicit = true
 		}
 	})
+
+	// 命令行没给时,回退到环境变量(含已加载的 agent.env)。放在这里而不是 flag 默认值,
+	// 就是为了不让它们出现在用法输出里 —— 见上面 server/token 的声明处。
+	if !cmdLine["server"] {
+		*server = envOr("PRINT_AGENT_SERVER", "")
+	}
+	if !cmdLine["token"] {
+		*token = envOr("PRINT_AGENT_TOKEN", "")
+	}
 
 	cfg := config{
 		server:          strings.TrimSpace(*server),
@@ -118,26 +134,36 @@ func parseFlags() (config, error) {
 		noSleepExplicit: noSleepExplicit,
 		serverExplicit:  serverExplicit,
 		tokenExplicit:   tokenExplicit,
+		doctor:          *doctor,
+		setupCUPS:       *setupCUPS,
 	}
 	if cfg.showVersion {
 		return cfg, nil
 	}
+	// --doctor 必须排在 --probe 之前:体检允许顺带带上 --probe,若先命中下面那个分支
+	// 就只剩打印机那一段,代理自身的配置/自启动/防睡眠全被跳过 —— 那就不是体检了。
+	if cfg.doctor {
+		// 体检不要求 --server/--token:配置缺失正是要查出来的问题之一。
+		normalizeChannelOrDefault(&cfg)
+		normalizeProbeTimeout(&cfg)
+		return cfg, nil
+	}
+	// --setup-cups 同理:它只在「打不出纸」时才用,那时配置可能正好是坏的。
+	if cfg.setupCUPS != "" {
+		normalizeChannelOrDefault(&cfg)
+		return cfg, nil
+	}
+	// --probe-print 是 --probe 的修饰开关,单独给出来会「什么都不探测」却照常进入
+	// 常驻模式 —— 那等于在门店机器上又起一个代理实例,与开机自启的那个抢同一批任务,
+	// 表现为小票被打两遍。这里直接拦掉,不给这个手滑的机会。
+	if cfg.probePrint && cfg.probe == "" {
+		return cfg, errors.New("--probe-print 需要与 --probe <打印机IP> 一起使用(单独使用会进入常驻模式,再起一个代理实例)")
+	}
 	if cfg.probe != "" {
 		// 连通性自检是纯本地操作(拨 IP:9100),与云端地址/令牌无关:
 		// 断网时更要能查内网这一段,故跳过 server/token 校验。
-		if cfg.probeTimeout < time.Second {
-			cfg.probeTimeout = time.Second
-		}
-		if cfg.probeTimeout > 30*time.Second {
-			cfg.probeTimeout = 30 * time.Second
-		}
-		// 通道取值也在这里归一化:自检会报告「代理实际走哪条通道」,拿到未归一化的
-		// 原值会打出误导性结论。非法值不该让排障命令本身失败,退回 tcp 即可。
-		if via, err := normalizePrintVia(cfg.printVia); err == nil {
-			cfg.printVia = via
-		} else {
-			cfg.printVia = channelTCP
-		}
+		normalizeProbeTimeout(&cfg)
+		normalizeChannelOrDefault(&cfg)
 		return cfg, nil
 	}
 	if cfg.install || cfg.uninstall {
@@ -196,6 +222,28 @@ func parseFlags() (config, error) {
 }
 
 // newHTTPClient 构造 HTTP 客户端。
+// normalizeChannelOrDefault 归一化打印通道;取值非法时退回 tcp 且不报错。
+//
+// 专给排障类命令(--probe / --doctor / --setup-cups)用:它们本身不该因为一个配错的
+// 通道取值而失败,何况「当前通道是什么、队列找到没有」正是它们要报告的结论。
+func normalizeChannelOrDefault(cfg *config) {
+	if via, err := normalizePrintVia(cfg.printVia); err == nil {
+		cfg.printVia = via
+	} else {
+		cfg.printVia = channelTCP
+	}
+}
+
+// normalizeProbeTimeout 把自检拨号超时收敛到 1-30 秒。
+func normalizeProbeTimeout(cfg *config) {
+	if cfg.probeTimeout < time.Second {
+		cfg.probeTimeout = time.Second
+	}
+	if cfg.probeTimeout > 30*time.Second {
+		cfg.probeTimeout = 30 * time.Second
+	}
+}
+
 func newHTTPClient(insecure bool) *http.Client {
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,

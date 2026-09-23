@@ -291,6 +291,18 @@ func TestCfgParseFlagsProbe(t *testing.T) {
 			t.Fatalf("未开启自检时应照常校验, got %v", err)
 		}
 	})
+
+	t.Run("--probe-print 单独使用必须被拦下", func(t *testing.T) {
+		// 少了 --probe 时它什么都不探测,却会照常进入常驻模式 —— 那等于在门店机器上
+		// 再起一个代理实例,与开机自启的那个抢同一批任务(小票被打两遍)。
+		cfg, err := cfgParseFlags(t, "--probe-print", "--server", "https://x.example.com", "--token", "t")
+		if err == nil {
+			t.Fatalf("应报错而不是进入常驻模式, got cfg.probe=%q probePrint=%v", cfg.probe, cfg.probePrint)
+		}
+		if !strings.Contains(err.Error(), "需要与 --probe") {
+			t.Fatalf("报错应说明与 --probe 搭配使用, got %v", err)
+		}
+	})
 }
 
 // ============================================================================

@@ -16,7 +16,9 @@ print-agent/
 ├── api.go               # 云端接口:pull/ack/ping 与请求/响应结构
 ├── print.go             # 打印机 TCP 会话、DLE EOT 状态、拨号熔断(含写入超时冷却)
 ├── cups.go              # CUPS 打印通道(--print-via cups/auto):绕开 macOS 15+ 的「本地网络」隐私限制
+├── cups_setup.go        # --setup-cups:一条命令建好 CUPS 队列并打开通道(macOS)
 ├── probe.go             # --probe 打印机连通性自检:拨 IP:9100 + 状态回读 + 可选自检页
+├── doctor.go            # --doctor 一条命令体检:配置/自启动/通道/防睡眠/云端,逐项给处置命令
 ├── state.go             # 本地幂等去重状态(落盘)
 ├── watchdog.go          # 假死看门狗(卡死自杀退出,交由守护拉起)
 ├── log.go               # 日志与致命错误输出(stdout + 日志文件双写)
@@ -37,7 +39,10 @@ print-agent/
 │   ├── print-agent.service               # Linux systemd 自启动单元(--install 通过 go:embed 复用)
 │   ├── print-agent.plist                 # macOS launchd 自启动模板(--install 通过 go:embed 复用)
 │   ├── PrintAgent-Info.plist             # macOS .app bundle 的 Info.plist 模板(--install 部署 App 时复用)
+│   ├── PrintAgent.icns                   # App 图标(10 个尺寸;--install 写进 App 的 Resources)
 │   └── print-agent-windows-task.xml      # Windows 任务计划(开机自启+失败重启;--install 通过 go:embed 复用)
+├── assets/
+│   └── PrintAgent-1024.png               # 图标母版(不参与编译内嵌;改图标从这里重出 .icns)
 ├── bin/                 # 编译产物(五平台二进制;gitignore 排除)
 └── dist/                # make package 组装的各平台部署包(压缩包带版本号+sha256;gitignore 排除)
 ```
@@ -123,6 +128,8 @@ AGENT=print-agent-darwin-arm64        # Intel Mac 用 darwin-amd64;Windows 用 w
 ./$AGENT --once                                       # 自检(应打印「云端自检通过」)
 ./$AGENT --upgrade                                    # 自助升级(云端配好最新版本号后一条命令)
 ./$AGENT --probe 192.168.1.100                        # 连通性自检:到打印机这段通不通(不用装 nc)
+./$AGENT --doctor                                     # 体检:配置/自启动/通道/防睡眠/云端一次查完(加 --probe IP 连打印机一起查)
+./$AGENT --setup-cups 192.168.1.100                   # macOS:一条命令建好系统打印队列并打开 CUPS 通道(不需要管理员密码)
 tail -f print-agent.log                               # 看日志(未装成 App 时在程序同目录)
 ./$AGENT --uninstall                                  # 卸载自启(内置命令,保留 agent.env)
 ./uninstall.sh                                        # 卸载脚本版:停进程 + 移除自启 + 清运行文件(--all 连产物一起删)
@@ -134,6 +141,11 @@ tail -f print-agent.log                               # 看日志(未装成 App 
 > 若日志反复出现 `无法连接打印机 … no route to host`、而手工 `--probe` 却能通，就属于这种
 > 情况 —— 三条处置办法（推荐改用 CUPS 通道 `PRINT_AGENT_PRINT_VIA=auto`）见
 > [`../docs/print-agent.md`](../docs/print-agent.md) 的「macOS 15+ 的「本地网络」权限」一节。
+
+> **macOS 出问题先跑 `--doctor`**：一次查完「配置 / 自启动 / 打印通道与 CUPS 队列 /
+> 防睡眠与合盖 / 云端连通」，每一项都直接给出该敲的命令；有 `[问题]` 项时退出码为 1。
+> 打不出纸且报 `no route to host` 时，`./print-agent --setup-cups <打印机IP>` 一条命令
+> 就能配好系统打印通道（建队列 + 开通道 + 重启 + 核对，可重复执行、不需要管理员密码）。
 
 > **macOS 合盖继续运行必读**：合盖能不能继续打单取决于**两件独立的事** ——
 > ① `caffeinate` 顶住空闲睡眠（`--install` 时选「防睡眠」）；
@@ -158,7 +170,8 @@ tail -f print-agent.log                               # 看日志(未装成 App 
   - `--probe 192.168.1.100[,192.168.1.101:9100]`：**只查「本机 → 打印机」这一段**，
     直接拨 `IP:9100` 并回读状态，一台一行结论（可达/不可达 + 缺纸/盖板开）。
     纯本地、不连云端（断网也能查）、不入队不回执（不消耗云端重试次数）；
-    全部可达退出码 0，有不可达为 1。加 `--probe-print` 会真的吐一张 ASCII 自检页。
+    全部可达退出码 0，有不可达为 1。在同一条命令上加 `--probe-print`
+    （即 `--probe IP --probe-print`）会真的吐一张 ASCII 自检页；注意它不能单独使用。
     可选 `--probe-timeout`（1–30 秒，默认 5）。
   - `--once`：只跑一轮并打印详细日志（含 v2 的打印机状态回读原文）。
     注意它验证的是**云端**连通；是否拨打印机取决于队列里有没有任务，

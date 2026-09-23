@@ -34,10 +34,19 @@
 ./install.sh https://你的管理后台域名 你的令牌   # 安装:写配置 + 注册开机自启
                                                 # (省略参数则交互式询问,令牌不落命令行历史)
 ./print-agent --once                             # 自检一轮(应打印「云端自检通过」)
+
+# ---- 以下两条主要针对 macOS ----
+./print-agent --setup-cups 192.168.1.133         # 把打印机交给系统打印服务(换成门店打印机 IP)
+                                                 # 一条命令、不需要管理员密码;详见 §3.5.1
+./print-agent --doctor                           # 体检:一次查完配置/自启动/打印通道/防睡眠与合盖/云端
+                                                 # 加 --probe 192.168.1.133 可把打印机那段一起查
 ```
 
 > 也可以直接用产物安装（与脚本等价）：`./print-agent-darwin-arm64 --install --server https://... --token ...`；
 > Windows 双击 `install.bat`；Linux 用 `sudo ./install.sh ...`。产物名见 §三 产物表。
+> macOS 上 `install` 会把程序部署成 `~/Applications/PrintAgent.app`（自带图标），
+> 配置文件与日志在 `~/Library/Application Support/PrintAgent/`（数据刻意放在 App 之外，
+> 往 App 里写文件会破坏它的代码签名）。
 
 ### 2. 日常运维（同一套脚本，复制即用）
 
@@ -59,6 +68,13 @@
 **连通性自检** `./print-agent --probe 192.168.1.100`（多个用逗号分隔，端口缺省 9100）：
 只查「本机 → 打印机」这一段，不用在门店电脑上装 `nc`；实时日志 `tail -f print-agent.log`；
 想连产物一起删：脚本后加 `--all`。
+
+**出问题先跑这两条，能省掉大半来回**：
+
+| 命令 | 用途 |
+|---|---|
+| `./print-agent --doctor` | **体检**：配置、自启动、打印通道与 CUPS 队列、防睡眠与合盖、云端连通，一次查完并直接给出处置命令。不要求 `--server`/`--token`（配置坏了也要能查）。有「[问题]」项时退出码为 1 |
+| `./print-agent --setup-cups <打印机IP>` | **一条命令配好 macOS 的系统打印通道**：建好 CUPS 队列 + 打开 `auto` 通道 + 重启代理 + 核对结果。可重复执行，不需要管理员密码 |
 
 各平台原生命令（了解原理用）：
 
@@ -480,30 +496,51 @@ launchctl print system/org.cups.cupsd | grep -E "type|program|domain"
 （它是按需启动的，平时打印任务为空时 `state = not running` 属正常现象，提交作业时由
 launchd 拉起。）
 
-三步：
+一条命令（推荐，不需要管理员密码）：
+
+```bash
+./print-agent --setup-cups 192.168.1.133
+```
+
+它做四件事：建 CUPS 队列 → 打开 `auto` 通道 → 重启代理 → 核对结果。可重复执行，
+已有队列时直接复用。输出形如：
+
+```
+===== 为 192.168.1.133:9100 配置 CUPS 打印通道 =====
+[完成] 已创建打印队列 Cjfarm-192.168.1.133 → socket://192.168.1.133:9100
+[完成] 已把打印通道设为 auto(仍优先直连,直连失败再改投 CUPS);配置:~/Library/Application Support/PrintAgent/agent.env
+[完成] 已重启自启动的代理,新配置即刻生效
+[完成] 核对通过:192.168.1.133:9100 → 队列 Cjfarm-192.168.1.133;代理现在可以经系统打印服务出纸
+```
+
+想手工做（或要换成自己的队列名，比如中文名）时，等价的三步是：
 
 ```bash
 # 1) 把打印机加进系统打印服务(IP 方式,协议选 Socket / HP JetDirect / LPD)
 #    图形界面:「系统设置 → 打印机与扫描仪 → 添加打印机 → IP」
-#    命令行等价(队列名 Kitchen,可自定义):
-lpadmin -p Kitchen -E -v socket://192.168.1.133:9100 -m everywhere
-
+lpadmin -p Kitchen -E -v socket://192.168.1.133:9100
 # 2) 确认队列存在(设备 URI 是 socket:// 的才会被自动识别)
 lpstat -v
-
 # 3) 打开 CUPS 通道
-#    编辑 ~/Library/Application Support/PrintAgent/agent.env,加一行:
-#      PRINT_AGENT_PRINT_VIA=auto
+#    编辑 ~/Library/Application Support/PrintAgent/agent.env,加一行 PRINT_AGENT_PRINT_VIA=auto
 ./start.sh
 ```
+
+> **别给 `lpadmin` 加 `-m`**（实测结论）：`-m raw` 在 macOS 26 上被直接拒绝
+> （「macOS不再支持原始队列」）；`-m everywhere` 要求打印机支持 IPP Everywhere，
+> 而 ESC/POS 网口机通常只开 9100（实测 631 连接被拒），也用不了。
+> **不带 `-m` 反而成功**；内容靠 `lp -o raw` 原样透传，所以队列没有驱动不影响出纸。
 
 - `auto`（推荐）：仍**优先直连** `IP:9100`，只在直连失败且本机确有对应队列时改投 CUPS；
 - `cups`：一律交给 CUPS；CUPS 不可用时**不会**退回直连（避免又撞上权限，报错更直白）；
 - 队列自动发现（两个来源并用，谁先认出来以谁为准）：
   1. `lpstat -v` 的 `socket://` 设备 URI —— 快，但 **macOS 的 lpstat 输出随系统语言变化
-     且无视 `LC_ALL`/`LANG`**（实测中文系统上设了也没用），所以另有一条：
+     且无视 `LC_ALL`/`LANG`**（实测中文系统上设了也没用）。中文下的实际输出是
+     `用于CjfarmKitchen的设备：socket://...`，**标签词和队列名之间没有空格**，
+     解析不能按空格分词（实测踩过这个坑，已修）。
   2. `system_profiler -json SPPrintersDataType` —— JSON 键名是固定英文标识符
-     （`uri` / `_name`），任何系统语言下都成立，实测耗时约 0.2 秒，**中文门店靠它**。
+     （`uri` / `_name`），任何系统语言下都成立，实测耗时约 0.2 秒。
+     但它对「用 `lpadmin` 建的无驱动队列」只报 `no_info_found`（实测），所以只是补充来源。
 
   有了自动发现，门店只要在系统设置里加过打印机，这一步什么都不用配。只认 `socket://`：
   `ipp://`、`lpd://` 走的是别的协议，`lp -o raw` 投过去要么被拒要么打出乱码，与其
@@ -519,8 +556,8 @@ lpstat -v
 
 ```bash
 APP=~/Applications/PrintAgent.app/Contents/MacOS/print-agent
-"$APP" --probe 192.168.1.133         # 列出发现到的队列 + 每个目标会走哪条通道(不出纸)
-"$APP" --probe-print 192.168.1.133   # 真的出纸:先走直连一张,再经 CUPS 送一张
+"$APP" --probe 192.168.1.133                # 列出发现到的队列 + 每个目标会走哪条通道(不出纸)
+"$APP" --probe 192.168.1.133 --probe-print  # 真的出纸:直连那张多半会被拦,由 CUPS 送出一张
 ```
 
 `--probe` 的输出形如：
@@ -735,6 +772,8 @@ agent 通道的 `ok=true` 始终表示「字节成功写进打印机 socket」�
 
 | 现象 | 原因与处理 |
 |---|---|
+| **不知从哪查起 / 想一次看全** | 先跑 `./print-agent --doctor`（**体检**）：配置、自启动、打印通道与 CUPS 队列、防睡眠与合盖、云端连通一次查完，每项都直接给出处置命令；有「[问题]」项时退出码为 1。想连打印机那段一起查就加 `--probe 192.168.1.133` |
+| **macOS 打不出纸，且不想逐步排查** | `./print-agent --setup-cups <打印机IP>`：建队列 + 打开 CUPS 通道 + 重启 + 核对，一条命令（见 §3.5.1，不需要管理员密码） |
 | 前端告警「本地打印代理尚未配置令牌」 | 云端没配代理令牌。去「系统配置 → 打印代理」点「签发新令牌」 |
 | 代理启动即退出，提示「代理令牌不正确」 | 令牌与云端不一致（改过令牌但没同步）。重新复制云端令牌到 `agent.env` |
 | 代理启动即退出，提示「服务端未启用本地打印代理」 | 云端 `agent_token` 为空。去「系统配置 → 打印代理」签发新令牌 |

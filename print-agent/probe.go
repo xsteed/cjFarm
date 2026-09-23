@@ -336,6 +336,11 @@ func runProbe(cfg config) int {
 			for _, h := range probeHints(r) {
 				logf("[自检]   %s", h)
 			}
+			// 直连不通时**更要**验证代理实际走的那条通道:macOS 本地网络权限场景下,
+			// CUPS 正是唯一还能出纸的路。只在「可达」分支里验等于漏掉最该验的一半。
+			if cfg.probePrint {
+				probeCUPSPrint(t.addr())
+			}
 			continue
 		}
 		reachable++

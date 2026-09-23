@@ -394,8 +394,9 @@ func TestCupsDialFailureHint(t *testing.T) {
 		t.Fatalf("超时不应提示本地网络权限, got %q", got)
 	}
 
-	// sync.Once 语义:同一个提示只输出一次(测试进程内共享同一个 Once,故只能
-	// 断言「首次非空、之后为空」这一顺序性质)。
+	// 「只提示一次」的语义:断言「首次非空、之后为空」。先复位标记,否则
+	// go test -count=2(同进程跑两轮)时第二轮必然拿不到提示。
+	dialFailureHintShown.Store(false)
 	first := dialFailureHint(errors.New("dial tcp 192.168.1.133:9100: connect: no route to host"))
 	if first == "" {
 		t.Fatal("no route to host 应给出本地网络权限提示")
@@ -434,8 +435,18 @@ func TestCupsParseCUPSQueuesEmpty(t *testing.T) {
 // ============================================================================
 
 func TestCupsParseCUPSQueuesLocalized(t *testing.T) {
-	// 本地化文案里标签词在前、队列名在后。
-	got := parseCUPSQueues("设备 Kitchen：socket://192.168.1.133:9100\n")
+	// 真实夹具:macOS 26 中文环境下 `lpstat -v` 的原样输出(逐字节取自实测)。
+	// 关键点:标签词与队列名之间**没有空格**,整行是一个词 —— 靠空格分词的实现
+	// 在这里必然一个队列都认不出,这正是线上踩到的那个回归。
+	// 另注:即便设了 LC_ALL=C,这行仍然是中文(macOS 的 lpstat 走 CoreFoundation 本地化)。
+	const realLine = "用于CjfarmKitchen的设备：socket://192.168.1.133:9100\n"
+	got := parseCUPSQueues(realLine)
+	if got["192.168.1.133:9100"] != "CjfarmKitchen" {
+		t.Fatalf("应能从真实中文输出里认出队列名, got %v", got)
+	}
+
+	// 标签词在前(带空格)。
+	got = parseCUPSQueues("设备 Kitchen：socket://192.168.1.133:9100\n")
 	if got["192.168.1.133:9100"] != "Kitchen" {
 		t.Fatalf("「设备 X:」语序应能认出队列名, got %v", got)
 	}
@@ -447,9 +458,8 @@ func TestCupsParseCUPSQueuesLocalized(t *testing.T) {
 	}
 
 	// 英文行照旧优先,且不该被本地化兜底覆盖。
-	got = parseCUPSQueues("device for Front: socket://192.168.1.100:9100\n" +
-		"设备 Kitchen：socket://192.168.1.133:9100\n")
-	if got["192.168.1.100:9100"] != "Front" || got["192.168.1.133:9100"] != "Kitchen" {
+	got = parseCUPSQueues("device for Front: socket://192.168.1.100:9100\n" + realLine)
+	if got["192.168.1.100:9100"] != "Front" || got["192.168.1.133:9100"] != "CjfarmKitchen" {
 		t.Fatalf("混排时应各自认对, got %v", got)
 	}
 }
@@ -464,14 +474,21 @@ func TestCupsParseCUPSQueuesLocalizedErrorLine(t *testing.T) {
 
 func TestCupsGuessLocalizedQueue(t *testing.T) {
 	tests := map[string]string{
-		"设备 ":                     "",
+		// 真实夹具:中文标签与队列名之间没有空格(见 parseCUPSQueues 的说明)。
+		"用于CjfarmKitchen的设备：": "CjfarmKitchen",
+		// 带空格的语序也要照常命中。
 		"设备 Kitchen：":             "Kitchen",
 		"Kitchen 的设备：":            "Kitchen",
 		"apparaat voor Kitchen: ": "Kitchen",
 		"Кириллица Kitchen: ":     "Kitchen",
-		// 队列名本身是中文且标签词也是中文:无从判断语序,宁可放弃 ——
-		// 由 system_profiler 那条语言无关的路兜住。
-		"设备 厨房打印机：": "",
+		// 纯标签、没有队列名。
+		"设备 ": "",
+		// 队列名本身是中文:去除非 ASCII 后什么都不剩,放弃 ——
+		// 这种门店必须用 PRINT_AGENT_CUPS_QUEUE 显式指定,不在这里硬猜。
+		"设备 厨房打印机：":   "",
+		"用于厨房打印机的设备：": "",
+		// URI 之前什么都没有(不该 panic,也不该编出一个队列名)。
+		"": "",
 	}
 	for in, want := range tests {
 		if got := guessLocalizedQueue(in); got != want {
@@ -521,6 +538,23 @@ func TestCupsParseSystemProfilerPrinters(t *testing.T) {
 	}
 }
 
+func TestCupsParseSystemProfilerPrintersRealNoInfoFound(t *testing.T) {
+	// 真实夹具:macOS 26 上存在一个队列,但 system_profiler 仍然只报 no_info_found
+	// （实测于用 lpadmin 建的「无驱动」socket 队列）。也就是说这条来源对这类队列
+	// **什么都给不出来** —— 所以它只是补充,不能当作主来源。
+	const real = `{
+  "SPPrintersDataType" : [
+    {
+      "cupsversion" : "CUPS/2.3.4 (macOS 26.6.2; arm64) IPP/2.0",
+      "status" : "no_info_found"
+    }
+  ]
+}`
+	if got := parseSystemProfilerPrinters([]byte(real)); got != nil {
+		t.Fatalf("no_info_found 项应被丢弃, got %v", got)
+	}
+}
+
 func TestCupsParseSystemProfilerPrintersBadInput(t *testing.T) {
 	for _, in := range []string{"", "不是 JSON", "{}", `{"SPPrintersDataType": "不是数组"}`, `{"Other":[]}`} {
 		if got := parseSystemProfilerPrinters([]byte(in)); got != nil {
@@ -563,6 +597,38 @@ func TestCupsProbeCUPSPrint(t *testing.T) {
 			t.Fatalf("找不到队列时不应投递, got %v", *calls)
 		}
 	})
+}
+
+func TestCupsProbePrintVerifiesCUPSEvenWhenDirectFails(t *testing.T) {
+	// 回归:曾经把 CUPS 验证放在「直连通」的分支里,结果直连被拦(恰恰是最需要
+	// 验证 CUPS 的场景)时它根本不会执行。直接驱动 runProbe 钉住这个顺序。
+	const addr = "192.168.1.133:9100"
+	clearDialCooldown(addr)
+
+	origDial := dialTCP
+	t.Cleanup(func() { dialTCP = origDial })
+	dialTCP = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return nil, errors.New("dial tcp " + addr + ": connect: no route to host")
+	}
+	// runProbe 会经由 logProbeChannels 触发队列发现,必须把两个来源都打桩:
+	// 否则会去执行真实的 lpstat/system_profiler,把本机的队列写进全局缓存,
+	// 后面依赖该缓存的用例就会读到脏数据(实测踩到过)。
+	withCupsList(t, "", nil)
+	withPrintChannel(t, channelAuto, map[string]string{addr: "CjfarmKitchen"})
+	calls := withCupsSubmit(t, "request id is CjfarmKitchen-9 (1 file(s))", nil)
+
+	code := runProbe(config{
+		probe:        "192.168.1.133",
+		probeTimeout: time.Second,
+		probePrint:   true,
+		printVia:     channelAuto,
+	})
+	if code != 1 {
+		t.Fatalf("直连不可达时退出码应为 1, got %d", code)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("直连失败时仍应经 CUPS 验证一次, got %v", *calls)
+	}
 }
 
 func TestCupsDiscoveryMergesSources(t *testing.T) {

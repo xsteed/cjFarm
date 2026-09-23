@@ -363,6 +363,43 @@ func cfgParseFlagsRaw(t *testing.T, args ...string) (config, error) {
 	return parseFlags()
 }
 
+func TestCfgSecretsNotEchoedInFlagUsage(t *testing.T) {
+	// flag 在用法输出里回显每个开关的默认值。若把 PRINT_AGENT_TOKEN / SERVER 的值直接
+	// 当默认值,门店敲错一个参数(或只是 --help)就会把代理令牌明文打印到终端 ——
+	// 这种输出经常连同截屏一起进工单,属于实打实的泄露。取值必须改在 Parse 之后补。
+	const secret = "SECRET-TOKEN-VALUE-FOR-TEST"
+	oldArgs, oldCmdLine := os.Args, flag.CommandLine
+	oldToken, hadToken := os.LookupEnv("PRINT_AGENT_TOKEN")
+	flag.CommandLine = flag.NewFlagSet("print-agent", flag.ContinueOnError)
+	var out strings.Builder
+	flag.CommandLine.SetOutput(&out)
+	os.Args = []string{"print-agent"}
+	_ = os.Setenv("PRINT_AGENT_TOKEN", secret)
+	t.Cleanup(func() {
+		os.Args, flag.CommandLine = oldArgs, oldCmdLine
+		if hadToken {
+			_ = os.Setenv("PRINT_AGENT_TOKEN", oldToken)
+		} else {
+			_ = os.Unsetenv("PRINT_AGENT_TOKEN")
+		}
+	})
+
+	cfg, err := parseFlags()
+	// 本用例只关心「注册与取值」,缺 --server 报错属预期。
+	if err == nil && cfg.token != secret {
+		t.Fatalf("环境里的令牌应被取到, got %q", cfg.token)
+	}
+	flag.CommandLine.PrintDefaults()
+	if strings.Contains(out.String(), secret) {
+		t.Fatalf("用法输出泄露了代理令牌:\n%s", out.String())
+	}
+	for _, name := range []string{"token", "server"} {
+		if f := flag.CommandLine.Lookup(name); f != nil && f.DefValue != "" {
+			t.Fatalf("--%s 的默认值不应回显配置内容(当前 DefValue=%q)", name, f.DefValue)
+		}
+	}
+}
+
 func TestCfgParseFlags(t *testing.T) {
 	t.Run("缺少 server 报错", func(t *testing.T) {
 		_, err := cfgParseFlags(t)

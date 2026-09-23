@@ -109,23 +109,18 @@ else
 fi
 
 echo ""
-echo "== macOS 本地网络权限 =="
+echo "== 出问题时先跑这一条 =="
 APP="$HOME/Applications/PrintAgent.app"
+echo "  ./print-agent --doctor"
+echo "  会一次查完:配置 / 自启动 / 打印通道与 CUPS 队列 / 防睡眠与合盖 / 云端连通,"
+echo "  并针对每一项直接给出该敲的命令(加 --probe <打印机IP> 可把打印机那段一起查)。"
 if [ -d "$APP" ]; then
-  echo "App 已安装: $APP"
-  echo "  数据目录: $DATA_DIR"
-  echo "  若日志反复出现「无法连接打印机 ... no route to host」,而本目录里手工执行"
-  echo "  --probe 却能通,说明是系统的「本地网络」隐私权限拦下了自启动的代理(终端不受限制)。"
-  echo "  处置(二选一):"
-  echo "    ① 改用系统打印服务(推荐,不受该权限影响):"
-  echo "       在「系统设置 → 打印机与扫描仪」以 IP 方式添加本店打印机,"
-  echo "       再在 $DATA_DIR/agent.env 里加 PRINT_AGENT_PRINT_VIA=auto 后重启;"
-  echo "    ② 授予权限:「系统设置 → 隐私与安全性 → 本地网络」里允许本 App。"
-  echo "  打开权限面板: open \"x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork\""
+  echo "  App: $APP    数据目录: $DATA_DIR"
 else
-  echo "未发现 $APP(尚未按 .app 形态安装)"
-  echo "  重装可执行: ./install.sh   # 会自动部署 App,便于系统识别与授权"
+  echo "  未发现 $APP(尚未按 .app 形态安装);重装执行 ./install.sh"
 fi
+echo "  打不出小票且报「无法连接打印机 ... no route to host」时,一条命令解决:"
+echo "      ./print-agent --setup-cups <打印机IP>"
 
 echo ""
 echo "== 云端连通自检 =="
