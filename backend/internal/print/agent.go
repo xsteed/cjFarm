@@ -28,12 +28,16 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"dining-system/internal/logger"
-	"dining-system/internal/model"
-	"dining-system/internal/store"
+	"dining-system/infra"
+	"dining-system/infra/logger"
+	"dining-system/internal/conf"
+	"dining-system/internal/dto"
+	"dining-system/internal/po"
+	"dining-system/internal/service"
 )
 
 // agentClaimLeaseSeconds 取单租约(秒)。
@@ -48,16 +52,55 @@ const agentRetryBackoffSeconds = 10
 // 约合 80mm 小票 75 行;超出时按行拆成多条任务依次下发(与飞鹅云超长内容分段推送同一策略)。
 const jobPayloadMaxChars = 3600
 
+// PrinterStatus 代理回读的打印机实时状态(DLE EOT)。
+// Queried=false 表示机型不应答或代理未查询(不影响 ok 判定,仅观测数据)。
+type PrinterStatus struct {
+	Queried      bool   `json:"queried"`
+	Raw          string `json:"raw"`
+	PaperOut     bool   `json:"paperOut"`
+	PaperNearEnd bool   `json:"paperNearEnd"`
+	CoverOpen    bool   `json:"coverOpen"`
+	Paused       bool   `json:"paused"`
+	Error        bool   `json:"error"`
+}
+
+// Summary 返回人读摘要;nil 安全;全正常/未查询返回空串。
+func (s *PrinterStatus) Summary() string {
+	if s == nil {
+		return ""
+	}
+	parts := []string{}
+	if s.PaperOut {
+		parts = append(parts, "缺纸")
+	}
+	if s.PaperNearEnd {
+		parts = append(parts, "纸将尽")
+	}
+	if s.CoverOpen {
+		parts = append(parts, "盖板开")
+	}
+	if s.Paused {
+		parts = append(parts, "已暂停")
+	}
+	if s.Error {
+		parts = append(parts, "打印机错误")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "打印机报告:" + strings.Join(parts, "、")
+}
+
 // ============================================================================
 // 令牌与心跳
 // ============================================================================
 
 // AgentConfigured 报告代理通道是否可用(令牌已配置)。
-func AgentConfigured() bool { return strings.TrimSpace(store.GetCfg("agent_token")) != "" }
+func AgentConfigured() bool { return strings.TrimSpace(service.GetSetting("agent_token")) != "" }
 
 // VerifyAgentToken 校验代理提交的令牌(恒定时间比较,避免长度/前缀被逐字节探测)。
 func VerifyAgentToken(tok string) bool {
-	want := strings.TrimSpace(store.GetCfg("agent_token"))
+	want := strings.TrimSpace(service.GetSetting("agent_token"))
 	if want == "" {
 		return false
 	}
@@ -80,6 +123,9 @@ func VerifyAgentToken(tok string) bool {
 var (
 	agentLastSeenNano    int64 // 内存中的最近心跳(纳秒)
 	agentSeenPersistNano int64 // 上次落库的纳秒时间,用于 15s 限流
+	perAgentSeenMu       sync.Mutex
+	perAgentSeenNano     = map[int]int64{} // 每台 v2 代理上次落库心跳(纳秒)
+	agentJobNotify       = make(chan struct{}, 1)
 )
 
 // agentSeenPersistInterval 心跳落库间隔:15 秒写一次,兼顾「跨实例一致」与「不写爆库」。
@@ -95,9 +141,33 @@ func MarkAgentSeen() {
 	if nowNano-last >= int64(agentSeenPersistInterval) &&
 		atomic.CompareAndSwapInt64(&agentSeenPersistNano, last, nowNano) {
 		// 心跳是状态值不是配置项:AgentConfig 无关、不会回显、也不会被配置保存覆盖。
-		if err := store.SetCfg("agent_last_seen", now.Format("2006-01-02 15:04:05")); err != nil {
-			logger.Warnf("打印: 心跳落库失败: %v", err)
+		if err := service.SetSetting("agent_last_seen", now.Format(conf.TimeLayout)); err != nil {
+			logger.AgentWarnf("打印代理: 心跳落库失败: %v", err)
 		}
+	}
+}
+
+// MarkAgentSeenFor 记录 v2 per-agent 代理心跳。
+//
+// per-agent 心跳只落 tb_print_agent:管理端需要看每台代理自己的 last_seen/report,
+// 不能再写全局 agent_last_seen,否则新旧代理的在线状态会互相覆盖。高频轮询仍沿用
+// 15 秒限流,避免代理每次 pull/ack/ping 都写库。
+func MarkAgentSeenFor(agentID int, report string) {
+	if agentID <= 0 {
+		return
+	}
+	nowNano := time.Now().UnixNano()
+	perAgentSeenMu.Lock()
+	last := perAgentSeenNano[agentID]
+	if nowNano-last < int64(agentSeenPersistInterval) {
+		perAgentSeenMu.Unlock()
+		return
+	}
+	perAgentSeenNano[agentID] = nowNano
+	perAgentSeenMu.Unlock()
+
+	if err := service.TouchPrintAgent(agentID, report); err != nil {
+		logger.AgentWarnf("打印代理: 代理[%d]心跳落库失败: %v", agentID, err)
 	}
 }
 
@@ -108,8 +178,8 @@ func AgentLastSeen() time.Time {
 	if v := atomic.LoadInt64(&agentLastSeenNano); v != 0 {
 		return time.Unix(0, v)
 	}
-	if s := strings.TrimSpace(store.GetCfg("agent_last_seen")); s != "" {
-		if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local); err == nil {
+	if s := strings.TrimSpace(service.GetSetting("agent_last_seen")); s != "" {
+		if t, err := time.ParseInLocation(conf.TimeLayout, s, time.Local); err == nil {
 			return t
 		}
 	}
@@ -120,28 +190,53 @@ func AgentLastSeen() time.Time {
 // 取轮询间隔(默认 3 秒)的数十倍,允许门店网络抖动几次不误报离线。
 const agentOnlineWindow = 90 * time.Second
 
-// AgentOnline 报告代理是否仍在正常轮询。
+// AgentOnline 报告 legacy 全局代理是否仍在正常轮询。
 func AgentOnline() bool {
 	seen := AgentLastSeen()
 	return !seen.IsZero() && time.Since(seen) < agentOnlineWindow
+}
+
+// AnyAgentOnline 报告 legacy 或任一启用中的 v2 per-agent 代理是否在线。
+func AnyAgentOnline() bool {
+	if AgentOnline() {
+		return true
+	}
+	for _, a := range service.ListPrintAgents() {
+		if a.Status == 1 && agentSeenWithin(a.LastSeen, agentOnlineWindow) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentSeenWithin(seen string, window time.Duration) bool {
+	seen = strings.TrimSpace(seen)
+	if seen == "" {
+		return false
+	}
+	t, err := time.ParseInLocation(conf.TimeLayout, seen, time.Local)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < window
 }
 
 // probeAgent 检查代理通道是否可用。
 //
 // 云端永远连不到门店内网,因此这里能回答的不是「打印机通不通」,而是
 // 「代理还在不在轮询 + 有多少单积压」——这已经足够区分「没人跑代理」与「打印机坏了」。
-func probeAgent(p model.Printer) (string, error) {
+func probeAgent(p po.Printer) (string, error) {
 	if !AgentConfigured() {
 		return "", errors.New("本地打印代理未启用:请到「系统配置 → 小票打印」填写代理令牌,并在门店内网运行代理程序")
 	}
-	pending := store.PendingJobCountByPrinter(p.PrinterID)
+	pending := service.PendingJobCountByPrinter(p.PrinterID)
 	seen := AgentLastSeen()
 	if seen.IsZero() {
 		return "", fmt.Errorf("云端尚未收到任何代理心跳(门店内需运行 print-agent);本机当前积压 %d 单", pending)
 	}
 	if !AgentOnline() {
 		return "", fmt.Errorf("打印代理已离线(最近心跳 %s);本机当前积压 %d 单",
-			seen.Format("2006-01-02 15:04:05"), pending)
+			seen.Format(conf.TimeLayout), pending)
 	}
 	return fmt.Sprintf("本地打印代理在线(最近心跳 %s);本机积压 %d 单",
 		seen.Format("15:04:05"), pending), nil
@@ -150,6 +245,18 @@ func probeAgent(p model.Printer) (string, error) {
 // ============================================================================
 // 入队
 // ============================================================================
+
+// AgentJobNotify 返回本实例的新任务通知通道,供长轮询 handler 等待。
+// 多实例部署下他实例入队不会写到本实例内存通道,因此 handler 侧仍需 2s DB 兜底扫描。
+func AgentJobNotify() <-chan struct{} { return agentJobNotify }
+
+// notifyAgentJob 非阻塞投递新任务通知;已有 pending 通知时无需重复投递。
+func notifyAgentJob() {
+	select {
+	case agentJobNotify <- struct{}{}:
+	default:
+	}
+}
 
 // enqueueAgentJob 把一张订单票据写入代理队列(替代直连的「立刻发出去」)。
 func enqueueAgentJob(j job) error {
@@ -161,11 +268,11 @@ func enqueueAgentJob(j job) error {
 // 顺序很重要:先记打印日志拿到 log_id,再带着 log_id 入队。
 // 这样即便入队那步失败,商家在「打印日志」里也能看到一条失败记录,
 // 而不是「下单了、什么都没发生、日志里也查不到」。
-func enqueueAgentTicket(p model.Printer, lines []string, docType string,
-	o model.Order, triggerBy, operator string) error {
+func enqueueAgentTicket(p po.Printer, lines []string, docType string,
+	o po.Order, triggerBy, operator string) error {
 
 	copies := p.EffectiveCopies()
-	logID, err := store.InsertPrintLogReturningID(model.PrintLog{
+	logID, err := service.InsertPrintLogReturningID(po.PrintLog{
 		OrderID:     o.OrderID,
 		OrderNo:     o.OrderNo,
 		TableNo:     o.TableNo,
@@ -173,22 +280,22 @@ func enqueueAgentTicket(p model.Printer, lines []string, docType string,
 		PrinterID:   p.PrinterID,
 		PrinterName: p.PrinterName,
 		PrinterType: p.PrinterType,
-		Provider:    model.PrinterProviderAgent,
+		Provider:    po.PrinterProviderAgent,
 		DocType:     docType,
 		Copies:      copies,
-		Status:      model.PrintStatusQueued,
+		Status:      po.PrintStatusQueued,
 		Detail:      "已入队,等待门店打印代理取单",
 		TriggerBy:   triggerBy,
 		Operator:    operator,
-		CreateTime:  store.Now(),
+		CreateTime:  service.Now(),
 	})
 	if err != nil {
-		logger.Warnf("打印: 写打印日志失败(仍继续入队): %v", err)
+		logger.AgentWarnf("打印代理: 写打印日志失败(仍继续入队): %v", err)
 	}
 
 	chunks := splitJobPayload(lines)
 	for i, chunk := range chunks {
-		if _, err := store.InsertPrintJob(model.PrintJob{
+		if _, err := service.InsertPrintJob(po.PrintJob{
 			PrinterID:   p.PrinterID,
 			PrinterName: p.PrinterName,
 			PrinterType: p.PrinterType,
@@ -203,14 +310,21 @@ func enqueueAgentTicket(p model.Printer, lines []string, docType string,
 			Payload:     chunk,
 			TriggerBy:   triggerBy,
 			Operator:    operator,
-			CreateTime:  store.Now(),
+			CreateTime:  service.Now(),
 		}); err != nil {
-			logger.Warnf("打印: 入队失败(第 %d/%d 段): %v", i+1, len(chunks), err)
-			store.UpdatePrintLogResult(logID, model.PrintStatusFailed, "入队失败: "+err.Error())
-			return err
+			logger.AgentWarnf("打印代理: 入队失败(第 %d/%d 段): %v", i+1, len(chunks), err)
+			// 分段入队失败时,前面已成功的段可能已经被代理取走打印,不能只写一句
+			// 「入队失败」让台账误以为整单都没送出去 —— 明确标注哪些段可能已打、哪段失败。
+			detail := "入队失败: " + err.Error()
+			if i > 0 {
+				detail = fmt.Sprintf("第 %d 段入队失败: %v;第 1..%d 段已入队,可能已被代理取走打印", i+1, err, i)
+			}
+			service.UpdatePrintLogResult(logID, po.PrintStatusFailed, detail, -1)
+			return fmt.Errorf("第 %d/%d 段入队失败: %w", i+1, len(chunks), err)
 		}
 	}
-	logger.Infof("打印: 已入队 %d 段,等待代理取单 -> 打印机[%s](%s) 单据 %s(%s)",
+	notifyAgentJob()
+	logger.AgentInfof("打印代理: 已入队 %d 段,等待代理取单 -> 打印机[%s](%s) 单据 %s(%s)",
 		len(chunks), p.PrinterName, providerAddr(p), o.OrderNo, docType)
 	return nil
 }
@@ -246,12 +360,12 @@ func splitJobPayload(lines []string) []string {
 // 与飞鹅云的「清空队列」语义对齐:已打印出来的单据不受影响,只丢弃还没送出的。
 // 同时把对应的打印日志改为失败,否则日志会永远停在「排队中」。
 func ClearAgentQueue(printerID int) (int, error) {
-	n, logIDs, err := store.CancelPrintJobsByPrinter(printerID)
+	n, logIDs, err := service.CancelPrintJobsByPrinter(printerID)
 	if err != nil {
 		return 0, err
 	}
 	for _, id := range logIDs {
-		store.UpdatePrintLogResult(id, model.PrintStatusFailed, "队列已被人工清空,该单据未送出")
+		service.UpdatePrintLogResult(id, po.PrintStatusFailed, "队列已被人工清空,该单据未送出", -1)
 	}
 	return n, nil
 }
@@ -261,29 +375,23 @@ func ClearAgentQueue(printerID int) (int, error) {
 // ============================================================================
 
 // PullAgentJobs 代理取单:抢占任务并把文本行编码成 ESC/POS 字节下发。
-func PullAgentJobs(agentID string, limit int) ([]model.AgentJob, error) {
+// printerIDs 为 per-agent 授权域(空=全部):授权域在 SQL 层过滤,错配代理
+// 根本不会 claim 到域外任务,避免「claim 后丢弃」白白消耗租约与 attempts。
+func PullAgentJobs(agentID string, limit int, printerIDs []int) ([]dto.AgentJob, error) {
 	if agentID == "" {
 		agentID = "unknown"
 	}
-	jobs, err := store.ClaimPrintJobs(agentID, limit, agentClaimLeaseSeconds)
+	kitchenCutoff, guestCutoff, otherCutoff := agentExpireCutoffs()
+	jobs, err := service.ClaimPrintJobs(agentID, limit, agentClaimLeaseSeconds, kitchenCutoff, guestCutoff, otherCutoff, printerIDs)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]model.AgentJob, 0, len(jobs))
+	out := make([]dto.AgentJob, 0, len(jobs))
 	for _, j := range jobs {
-		out = append(out, model.AgentJob{
-			JobID:       j.JobID,
-			PrinterID:   j.PrinterID,
-			PrinterName: j.PrinterName,
-			IP:          j.IP,
-			Port:        effectivePort(j.Port),
-			Copies:      j.Copies,
-			DocType:     j.DocType,
-			OrderNo:     j.OrderNo,
-			TableNo:     j.TableNo,
-			DeliveryID:  j.DeliveryID,
-			Payload:     base64.StdEncoding.EncodeToString(EncodeTicket(strings.Split(j.Payload, "\n"))),
-		})
+		payload := base64.StdEncoding.EncodeToString(EncodeTicket(strings.Split(j.Payload, "\n")))
+		job := dto.FromPrintJobWithPayload(j, payload)
+		job.Port = effectivePort(job.Port)
+		out = append(out, job)
 	}
 	return out, nil
 }
@@ -292,19 +400,33 @@ func PullAgentJobs(agentID string, limit int) ([]model.AgentJob, error) {
 //
 // 失败不是终点:未用尽重试次数的任务会被重新放回队列(带退避),
 // 打印机缺纸/关机这类瞬时问题在换纸开机后会自己补上;次数用尽才置为放弃。
-func AckAgentJob(jobID int, ok bool, detail string) error {
-	j, err := store.LoadPrintJob(jobID)
+//
+// agentID 是鉴权后的代理身份(v2 令牌);legacy 令牌没有 per-agent 身份,传入空串,
+// 只依赖下方 dao 层的条件更新做状态守卫 —— 历史兼容:老代理共用一把全局令牌,
+// claimed_by 只是取单时自报的 agentId,不能当作强身份校验。
+func AckAgentJob(agentID string, jobID int, ok bool, detail string, st *PrinterStatus) error {
+	j, err := service.LoadPrintJob(jobID)
 	if err != nil {
 		return err
 	}
+	// 归属校验:v2 代理只能回执自己取走的任务,防止代理 A 把代理 B 的任务改状态。
+	if agentID != "" && j.ClaimedBy != agentID {
+		return errors.New("任务由其他代理持有")
+	}
 	detail = strings.TrimSpace(detail)
 	if ok {
-		if err := store.MarkPrintJobDone(jobID); err != nil {
+		if err := service.MarkPrintJobDone(jobID); err != nil {
 			return err
 		}
-		store.UpdatePrintLogResult(j.PrintLogID, model.PrintStatusSuccess,
-			"本地打印代理已送出("+addrOf(j.IP, effectivePort(j.Port))+")")
-		logger.Infof("打印: 代理已送出任务 #%d → 打印机[%s](%s) 单据 %s",
+		logDetail := "本地打印代理已送出(" + addrOf(j.IP, effectivePort(j.Port)) + ")"
+		if summary := st.Summary(); summary != "" {
+			logDetail += "，但" + summary
+			if raw := strings.TrimSpace(st.Raw); raw != "" {
+				logDetail += "(raw " + raw + ")"
+			}
+		}
+		service.UpdatePrintLogResult(j.PrintLogID, po.PrintStatusSuccess, logDetail, agentJobCostMs(j.CreateTime))
+		logger.AgentInfof("打印代理: 代理已送出任务 #%d → 打印机[%s](%s) 单据 %s",
 			jobID, j.PrinterName, addrOf(j.IP, effectivePort(j.Port)), j.OrderNo)
 		return nil
 	}
@@ -312,20 +434,66 @@ func AckAgentJob(jobID int, ok bool, detail string) error {
 	if detail == "" {
 		detail = "代理上报失败(未提供原因)"
 	}
-	retrying, err := store.RetryPrintJob(jobID, detail, agentRetryBackoffSeconds)
+	retrying, err := service.RetryPrintJob(jobID, detail, agentRetryBackoffSeconds)
 	if err != nil {
 		return err
 	}
 	if retrying {
-		store.UpdatePrintLogResult(j.PrintLogID, model.PrintStatusQueued,
-			"第 "+strconv.Itoa(j.Attempts)+" 次失败,已安排重试: "+detail)
+		service.UpdatePrintLogResult(j.PrintLogID, po.PrintStatusQueued,
+			"第 "+strconv.Itoa(j.Attempts)+" 次失败,已安排重试: "+detail, -1)
 	} else {
-		store.UpdatePrintLogResult(j.PrintLogID, model.PrintStatusFailed,
-			"已放弃("+strconv.Itoa(j.Attempts)+" 次失败): "+detail)
+		service.UpdatePrintLogResult(j.PrintLogID, po.PrintStatusFailed,
+			"已放弃("+strconv.Itoa(j.Attempts)+" 次失败): "+detail, -1)
 	}
-	logger.Warnf("打印: 代理上报任务 #%d 打印失败(第 %d 次,仍会重试=%v): %s",
+	// 这条是「转述代理上报」:真正拨打印机失败的是门店侧代理进程,本进程只是收到
+	// ack(ok=false) 后代为记一笔并安排重试。文案必须写明失败方,否则排障时会被
+	// 误读成「云端后端直连打印机失败」,从而怀疑链路接错。
+	logger.AgentWarnf("打印代理: 收到代理上报,任务 #%d 在代理侧打印失败(第 %d 次,仍会重试=%v): %s",
 		jobID, j.Attempts, retrying, detail)
 	return nil
+}
+
+// ReleaseAgentJob 代理回报「本机未真正尝试」(熔断冷却中,没有拨过打印机)。
+//
+// 与 AckAgentJob(ok=false) 的关键区别:**不消耗重试次数**。
+// attempts 是在 claim 取单时就 +1 的,冷却期内若按失败处理,打印机只是短暂不可达
+// (刚上电 / WiFi 未就绪)也会被判成「已放弃」而永久丢单。这里把额度还回去,
+// 使 attempts 严格等于真实尝试次数。
+//
+// 归属校验与 AckAgentJob 一致:v2 代理只能操作自己取走的任务。
+func ReleaseAgentJob(agentID string, jobID int, detail string, retryAfterSeconds int) error {
+	j, err := service.LoadPrintJob(jobID)
+	if err != nil {
+		return err
+	}
+	if agentID != "" && j.ClaimedBy != agentID {
+		return errors.New("任务由其他代理持有")
+	}
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		detail = "代理未尝试打印(打印机连接冷却中)"
+	}
+	if err := service.ReleasePrintJob(jobID, detail, retryAfterSeconds); err != nil {
+		return err
+	}
+	// 打印日志维持「排队中」:任务没被放弃,商家看到的是「还在等打印机恢复」。
+	service.UpdatePrintLogResult(j.PrintLogID, po.PrintStatusQueued,
+		"打印机连接冷却中,约 "+strconv.Itoa(retryAfterSeconds)+
+			" 秒后重试(尚未尝试打印,不消耗重试次数)", -1)
+	logger.AgentDebugf("打印代理: 任务 #%d 在代理侧未尝试(熔断冷却中),%d 秒后重新下发", jobID, retryAfterSeconds)
+	return nil
+}
+
+func agentJobCostMs(createTime string) int {
+	created, err := time.ParseInLocation(conf.TimeLayout, createTime, time.Local)
+	if err != nil {
+		return -1
+	}
+	now, err := time.ParseInLocation(conf.TimeLayout, service.Now(), time.Local)
+	if err != nil {
+		return -1
+	}
+	return int(now.Sub(created).Milliseconds())
 }
 
 // ============================================================================
@@ -335,27 +503,88 @@ func AckAgentJob(jobID int, ok bool, detail string) error {
 // agentCleanupInterval 任务清理周期。
 const agentCleanupInterval = 10 * time.Minute
 
-// StartAgentCleanup 启动后台定时清理已结案的老任务(供 main 启动一次)。
+// StartAgentCleanup 启动后台定时清理代理任务(供 main 启动一次)。
 //
 // tb_print_job 是「待办」,done/dead 的行只对「事后翻账」有用,而翻账看的是
 // tb_print_log(长期保留),队列行本身没有长期价值。不清理的话,日积月累这张表会
-// 越滚越大,拖慢取单与报表。保留天数由 AGENT_JOB_RETENTION_DAYS 控制(默认 7 天)。
+// 越滚越大,拖慢取单与报表。每轮先把超过 TTL 的未送出任务置 dead,再按
+// AGENT_JOB_RETENTION_DAYS(默认 7 天)清理已结案任务。
 func StartAgentCleanup() {
-	go func() {
+	goSafe("agentCleanup", func() {
 		for {
 			time.Sleep(agentCleanupInterval)
-			n := store.CleanDonePrintJobs(agentJobRetentionDays())
-			if n > 0 {
-				logger.Infof("打印: 已清理 %d 条超过保留期的代理任务", n)
-			}
+			// 逐轮 recover:外层 goSafe 的 recover 在 goroutine 最外层,若不在循环内
+			// 兜住,单轮 panic 会穿透 for 直接终止协程,此后清理永久停摆(过期任务
+			// 不再作废、队列越滚越大)。
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Errorf("打印: agentCleanup 单轮清理 panic(已跳过本轮): %v", r)
+					}
+				}()
+				kitchenCutoff, guestCutoff, otherCutoff := agentExpireCutoffs()
+				expired, logIDs := service.ExpireOverduePrintJobs(agentClaimLeaseSeconds, kitchenCutoff, guestCutoff, otherCutoff)
+				for _, id := range logIDs {
+					service.UpdatePrintLogResult(id, po.PrintStatusFailed, "任务未在有效期内送出,已自动作废,可人工补打", -1)
+				}
+				if expired > 0 {
+					logger.AgentInfof("打印代理: 已作废 %d 条过期代理任务", expired)
+				}
+
+				n := service.CleanDonePrintJobs(agentJobRetentionDays())
+				if n > 0 {
+					logger.AgentInfof("打印代理: 已清理 %d 条超过保留期的代理任务", n)
+				}
+			}()
 		}
-	}()
+	})
 }
 
 // agentJobRetentionDays 返回代理任务保留天数(AGENT_JOB_RETENTION_DAYS,默认 7,<=0 视为不清理)。
 func agentJobRetentionDays() int {
-	if v, err := strconv.Atoi(strings.TrimSpace(store.Getenv("AGENT_JOB_RETENTION_DAYS", "7"))); err == nil {
+	if v, err := strconv.Atoi(strings.TrimSpace(infra.Getenv(conf.EnvAgentJobRetentionDays, conf.DefaultAgentJobRetentionDays))); err == nil {
 		return v
 	}
 	return 7
+}
+
+// agentJobTTL 返回不同单据类型允许滞留在代理队列中的时长。
+// <=0 表示该类型不过期:用于极少数门店临时关闭 TTL,避免需要改代码或迁移表结构。
+func agentJobTTL(docType string) time.Duration {
+	key, def := conf.EnvAgentJobTTLTestMin, conf.DefaultAgentJobTTLTestMin
+	switch docType {
+	case po.PrintDocKitchen:
+		key, def = conf.EnvAgentJobTTLKitchenMin, conf.DefaultAgentJobTTLKitchenMin
+	case po.PrintDocGuest:
+		key, def = conf.EnvAgentJobTTLGuestMin, conf.DefaultAgentJobTTLGuestMin
+	}
+	mins, err := strconv.Atoi(strings.TrimSpace(infra.Getenv(key, def)))
+	if err != nil {
+		mins, _ = strconv.Atoi(def)
+	}
+	if mins <= 0 {
+		return 0
+	}
+	return time.Duration(mins) * time.Minute
+}
+
+// agentExpireCutoffs 计算三类单据的过期边界。
+//
+// create_time 以固定宽度字符串存储,因此 cutoff 也必须使用同一格式,才能在 SQL 中
+// 直接做字典序比较。空串表示该类型关闭 TTL 过滤。
+func agentExpireCutoffs() (kitchen, guest, other string) {
+	now := service.Now()
+	base, err := time.ParseInLocation(conf.TimeLayout, now, time.Local)
+	if err != nil {
+		base = time.Now()
+	}
+	cutoff := func(ttl time.Duration) string {
+		if ttl <= 0 {
+			return ""
+		}
+		return base.Add(-ttl).Format(conf.TimeLayout)
+	}
+	return cutoff(agentJobTTL(po.PrintDocKitchen)),
+		cutoff(agentJobTTL(po.PrintDocGuest)),
+		cutoff(agentJobTTL(""))
 }

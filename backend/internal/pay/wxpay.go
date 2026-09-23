@@ -33,6 +33,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"dining-system/infra/logger"
 )
 
 const wxBase = "https://api.mch.weixin.qq.com"
@@ -216,8 +218,12 @@ func (p *Wxpay) VerifyNotify(headers map[string]string, body []byte) (PayNotify,
 		return n, err
 	}
 
-	// 3) 解析支付结果
+	// 3) 解析支付结果。微信 APIv3 回调解密后的明文带有 mchid/appid,
+	// 必须校验它们与本商户配置一致 —— 验签只能证明消息来自微信,不能证明属于本商户,
+	// 平台级部署(共享平台证书/微信支付公钥)下串单会直接错账。
 	var ev struct {
+		Mchid         string `json:"mchid"`
+		Appid         string `json:"appid"`
 		OutTradeNo    string `json:"out_trade_no"`
 		TransactionID string `json:"transaction_id"`
 		TradeState    string `json:"trade_state"`
@@ -227,6 +233,16 @@ func (p *Wxpay) VerifyNotify(headers map[string]string, body []byte) (PayNotify,
 	}
 	if err := json.Unmarshal(plain, &ev); err != nil {
 		return n, err
+	}
+	if ev.Mchid != cfg("wxpay_mchid") {
+		logger.Warnf("[pay] 微信回调商户归属不符 out_trade_no=%s mchid=%s", ev.OutTradeNo, ev.Mchid)
+		return n, fmt.Errorf("微信回调商户归属不符")
+	}
+	// appid 为可选强校验:历史部署可能未配置 wxpay_appid,仅在配置了的情况下校验,
+	// 避免旧配置直接升级后回调全部失败;只要配置了就必须与回调一致。
+	if wantAppid := cfg("wxpay_appid"); wantAppid != "" && ev.Appid != wantAppid {
+		logger.Warnf("[pay] 微信回调商户归属不符 out_trade_no=%s appid=%s", ev.OutTradeNo, ev.Appid)
+		return n, fmt.Errorf("微信回调商户归属不符")
 	}
 	n.OrderNo = ev.OutTradeNo
 	n.ChannelTradeNo = ev.TransactionID

@@ -10,7 +10,7 @@
 #   bash deploy/check-health.sh -H 10.0.0.5         # 指定主机(默认 127.0.0.1)
 #   bash deploy/check-health.sh --json              # JSON 输出(便于监控解析)
 #   bash deploy/check-health.sh --quiet             # 静默, 仅以退出码表达结果
-#   bash deploy/check-health.sh -u http://IP:8080/prod-api/api/dining/config
+#   bash deploy/check-health.sh -u http://IP:8080/api/customer/config
 #
 # 退出码:
 #   0  服务在线(健康接口返回 HTTP 200)
@@ -25,7 +25,7 @@ set -uo pipefail
 SERVICE_NAME="${SERVICE_NAME:-dining-backend}"
 HOST="127.0.0.1"
 PORT=""
-HEALTH_PATH="${HEALTH_PATH:-/prod-api/api/dining/config}"
+HEALTH_PATH="${HEALTH_PATH:-/api/customer/config}"
 TIMEOUT="${TIMEOUT:-3}"
 RETRIES="${RETRIES:-3}"
 URL=""
@@ -73,8 +73,9 @@ command -v curl >/dev/null 2>&1 || die "缺少 curl, 无法进行 HTTP 探测"
 # ---------------------------- 组装探测地址 ----------------------------
 if [ -z "$URL" ]; then
   if [ -z "$PORT" ]; then
-    # 优先从 systemd 服务单元里读端口(与 deploy.sh 安装的配置保持一致)
-    PORT="$(grep -oE 'Environment=PORT=[0-9]+' "/etc/systemd/system/${SERVICE_NAME}.service" 2>/dev/null | head -1 | cut -d= -f3 || true)"
+    # 优先从 systemd 服务单元里读端口(与 deploy.sh 安装的配置保持一致);
+    # 锚定行首, 避免命中单元里被注释掉的示例行(# Environment=PORT=8080)。
+    PORT="$(grep -oE '^Environment=PORT=[0-9]+' "/etc/systemd/system/${SERVICE_NAME}.service" 2>/dev/null | head -1 | cut -d= -f3 || true)"
     PORT="${PORT:-8080}"
   fi
   URL="http://${HOST}:${PORT}${HEALTH_PATH}"

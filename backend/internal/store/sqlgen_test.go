@@ -67,7 +67,7 @@ func TestGeneratedScriptMatchesRuntimeSchema(t *testing.T) {
 	got := map[string]int{}
 	// 表名与 SeedCounts 的键一一对应;新增种子表时两处一起加。
 	for k, table := range map[string]string{
-		"config":   "tb_config",
+		"setting":  "tb_config",
 		"role":     "tb_role",
 		"table":    "tb_table",
 		"category": "tb_category",
@@ -263,7 +263,7 @@ func TestSeedUploadPathsUseUnifiedPrefix(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"pay_qr_wx", "pay_qr_ali"} {
-		if v := cfgDefaults[k]; !strings.HasPrefix(v, UploadURLPrefix) {
+		if v := settingDefaults[k]; !strings.HasPrefix(v, UploadURLPrefix) {
 			t.Errorf("配置 %s 默认值 %q 未使用 %s 前缀", k, v, UploadURLPrefix)
 		}
 	}

@@ -1,12 +1,10 @@
 package store
 
 import (
-	"dining-system/internal/logger"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"dining-system/internal/model"
+	"dining-system/infra/logger"
+	"dining-system/internal/po"
 )
 
 // 种子数据的「时间戳」口径:与目标站一致,固定值便于各环境数据一致。
@@ -19,22 +17,19 @@ const (
 // seed 首次初始化种子数据。
 //
 // 幂等策略:以「分类表是否为空」作为整体短路条件 —— 只要库里已有业务数据
-// 就不再灌种子,避免覆盖商户后续的增删改。配置项除外,它每次启动都要补齐
-// (见 EnsureConfigDefaults)。
+// 就不再灌业务种子,避免覆盖商户后续的增删改。配置项除外,它们
+// 每次启动都要补齐(见 EnsureSettingDefaults)。
 func seed() {
 	// 配置项默认值必须「每次启动」都补齐:老库(建库时还没有某个配置键)不会走下面的
-	// 种子分支,若不补齐,GetCfg 对缺失键返回空串,前端开关组件会因此报错并卡死路由渲染。
-	EnsureConfigDefaults()
+	// 种子分支,若不补齐,GetSetting 对缺失键返回空串,前端开关组件会因此报错并卡死路由渲染。
+	EnsureSettingDefaults()
 	// 启动审计:任何「出厂默认非空、当前却被清空」的配置项都会打 [warn]。
 	// 这是之前 8 个配置项静默失效的根因 —— INSERT OR IGNORE 不会回填已存在的空键。
-	AuditConfigEmpties()
+	AuditSettingEmpties()
 
-	// ---- 员工与权限体系引导(需每次启动执行,幂等) ----
-	// 顺序不可颠倒:SyncBuiltinRoles 先保证角色存在(含把 admin 权限恢复为全量),
-	// EnsureAdminUser 才能把管理员账号挂到 admin 角色上。
-	SyncBuiltinRoles()
-	EnsureAdminUser()
-	NormalizeRolePerms()
+	// 角色/管理员引导已由 dao.BootstrapRoles 负责,由 main 在 store.Init 之后调用。
+	// 这里不再调用 SyncBuiltinRoles / EnsureAdminUser / NormalizeRolePerms,
+	// 以避免 store 根包反向依赖 dao 包。
 
 	var n int
 	DB.QueryRow(`SELECT COUNT(*) FROM tb_category`).Scan(&n)
@@ -49,10 +44,10 @@ func seed() {
 	logger.Infof("种子数据已初始化")
 }
 
-// cfgDefaults 配置项出厂默认值。
+// settingDefaults 配置项出厂默认值。
 // 既用于首次初始化,也用于每次启动补齐「缺失」的键(冲突则忽略,绝不覆盖已有值)。
 // 该表同时是 migrations/*/seed.sql 中 tb_config 部分的数据来源。
-var cfgDefaults = map[string]string{
+var settingDefaults = map[string]string{
 	"shop_name":           "长健农场 柴火农家土菜",
 	"shop_logo":           "",
 	"seat_fee_enabled":    "1",
@@ -66,8 +61,14 @@ var cfgDefaults = map[string]string{
 	// 小票打印(默认开启:没有打印机时下单也不会报错,只是日志里记一条「无可用打印机」)。
 	//   print_enabled             打印总开关,关闭后所有自动打印一律跳过(手动补打仍可用);
 	//   print_kitchen_show_price  厨房单是否带单价与金额(默认不打,后厨只看菜名和数量);
-	"print_enabled":            "1",
-	"print_kitchen_show_price": "0",
+	//   print_guest_footer        食客小票页脚文案,清空则不打印页脚(门店可改成自己的口号);
+	//   print_guest_show_seat_fee 食客小票是否显示餐位费行(默认显示,对账透明);
+	//   print_guest_show_discount 食客小票是否显示优惠行(默认显示,有优惠时才出现该行)。
+	"print_enabled":             "1",
+	"print_kitchen_show_price":  "0",
+	"print_guest_footer":        "谢谢惠顾,欢迎再次光临",
+	"print_guest_show_seat_fee": "1",
+	"print_guest_show_discount": "1",
 	// 飞鹅云打印(provider=feie 的打印机使用)。
 	//   feie_user    飞鹅云后台注册账号(手机号/邮箱);
 	//   feie_ukey    开发者 UKEY —— 敏感项,落库前自动加密,接口不回显;
@@ -98,35 +99,41 @@ var cfgDefaults = map[string]string{
 	"alipay_notify_url":        "",
 }
 
-// EnsureConfigDefaults 补齐缺失的配置项(幂等,已存在的键保持原值)。
+// SettingDefault 返回配置项出厂默认值(不存在时返回空串)。
+// 供 dao 包读取配置项默认值,避免直接暴露 settingDefaults map。
+func SettingDefault(key string) string {
+	return settingDefaults[key]
+}
+
+// EnsureSettingDefaults 补齐缺失的配置项(幂等,已存在的键保持原值)。
 // 语句由方言层生成:SQLite 为 INSERT OR IGNORE,MySQL 为 INSERT IGNORE。
-func EnsureConfigDefaults() {
+func EnsureSettingDefaults() {
 	stmt := InsertIgnoreInto("tb_config", "cfg_key", "cfg_value")
 	var added, existed int
-	for k, v := range cfgDefaults {
+	for k, v := range settingDefaults {
 		res, err := DB.Exec(stmt, k, v)
 		if err != nil {
-			logger.Warnf("[config] 补全默认配置项 %s 失败: %v", k, err)
+			logger.Warnf("[setting] 补全默认配置项 %s 失败: %v", k, err)
 			continue
 		}
 		// INSERT OR IGNORE:新插入返回 1 行受影响,已存在则 0(不会覆盖现值为空)。
 		if n, e := res.RowsAffected(); e == nil && n > 0 {
 			added++
-			logger.Infof("[config] 新增缺失配置项 %s = %q", k, v)
+			logger.Infof("[setting] 新增缺失配置项 %s = %q", k, v)
 		} else {
 			existed++
 		}
 	}
-	logger.Infof("[config] 配置项补齐完成: 新增 %d 项, 已存在 %d 项", added, existed)
+	logger.Infof("[setting] 配置项补齐完成: 新增 %d 项, 已存在 %d 项", added, existed)
 }
 
-// AuditConfigEmpties 扫描配置表,对「出厂默认非空但当前为空」的键打 [warn]。
+// AuditSettingEmpties 扫描配置表,对「出厂默认非空但当前为空」的键打 [warn]。
 // 这类键是上次事故的根因:配置项被清空后 INSERT OR IGNORE 不会回填,导致功能静默失效。
 // 出厂默认本就为空的项(shop_logo / 各类密钥占位)不计入,避免误报。
-func AuditConfigEmpties() {
+func AuditSettingEmpties() {
 	rows, err := DB.Query(`SELECT cfg_key, cfg_value FROM tb_config`)
 	if err != nil {
-		logger.Warnf("[config][告警] 读取配置表失败,无法审计空值: %v", err)
+		logger.Warnf("[setting][告警] 读取配置表失败,无法审计空值: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -134,54 +141,21 @@ func AuditConfigEmpties() {
 	for rows.Next() {
 		var k, v string
 		rows.Scan(&k, &v)
-		if v == "" && cfgDefaults[k] != "" {
+		if v == "" && settingDefaults[k] != "" {
 			empties = append(empties, k)
 		}
 	}
 	if len(empties) == 0 {
-		logger.Infof("[config] 配置审计通过: 无「应非空却为空」的配置项")
+		logger.Infof("[setting] 配置审计通过: 无「应非空却为空」的配置项")
 		return
 	}
-	logger.Warnf("[config][告警] 发现 %d 个配置项被清空(出厂默认非空,当前为空): %s",
+	logger.Warnf("[setting][告警] 发现 %d 个配置项被清空(出厂默认非空,当前为空): %s",
 		len(empties), strings.Join(empties, ", "))
 }
 
 // UploadURLPrefix 是图片/收款码在库里存储的路径前缀,与后端静态路由、Nginx 反代、
 // 上传接口返回值三处必须一致。存量库中的 /picture/ 前缀由 migrateUploadPrefix 改写。
 const UploadURLPrefix = "/uploads/"
-
-// AuditDishImages 校验菜品图片是否都在磁盘上,缺失则打 [warn]。
-// 用于回答「不能少东西」—— 引用在库里、文件却不在盘上,会表现为菜品图 404。
-func AuditDishImages(uploadDir string) {
-	if entries, err := os.ReadDir(uploadDir); err == nil {
-		logger.Infof("[static] 上传目录 %s 现有文件 %d 个", uploadDir, len(entries))
-	} else {
-		logger.Warnf("[static][告警] 读取上传目录失败 %s: %v", uploadDir, err)
-	}
-	rows, err := DB.Query(`SELECT dish_image FROM tb_dish WHERE dish_image IS NOT NULL AND dish_image <> '' AND del_flag='0'`)
-	if err != nil {
-		logger.Warnf("[static][告警] 读取菜品图片失败: %v", err)
-		return
-	}
-	defer rows.Close()
-	var missing []string
-	n := 0
-	for rows.Next() {
-		var img string
-		rows.Scan(&img)
-		n++
-		name := filepath.Base(strings.TrimPrefix(img, UploadURLPrefix))
-		if _, err := os.Stat(filepath.Join(uploadDir, name)); err != nil {
-			missing = append(missing, img)
-		}
-	}
-	if len(missing) == 0 {
-		logger.Infof("[static] 菜品图片审计通过: %d 张图片均在 %s", n, uploadDir)
-		return
-	}
-	logger.Warnf("[static][告警] 发现 %d 张菜品图片缺失(库里有引用,磁盘无文件): %s",
-		len(missing), strings.Join(missing, ", "))
-}
 
 // ============================================================================
 // 种子数据定义(业务数据唯一来源)
@@ -190,11 +164,11 @@ func AuditDishImages(uploadDir string) {
 //  1. 运行期 seedXxx():首次启动时写入数据库;
 //  2. cmd/gensql:生成 migrations/*/seed.sql 脚本。
 //
-// 因此新增/修改种子数据只需改这里一处,SQL 脚本用 `make gensql` 重新生成。
+// 因此新增/修改种子数据只需改这里一处,SQL 脚本用 `go run ./cmd/gensql` 重新生成。
 // ============================================================================
 
 // seedTableRows 桌台(8 张):01~04 大厅桌、07~08 包间、09~10 露台桌。
-var seedTableRows = []model.Table{
+var seedTableRows = []po.Table{
 	{TableNo: "01", TableName: "大厅01桌", Capacity: 10, Status: 0, SortOrder: 1},
 	{TableNo: "02", TableName: "大厅02桌", Capacity: 10, Status: 0, SortOrder: 2},
 	{TableNo: "03", TableName: "大厅03桌", Capacity: 10, Status: 0, SortOrder: 3},
@@ -206,7 +180,7 @@ var seedTableRows = []model.Table{
 }
 
 // seedCategoryRows 菜品分类(6 个)。
-var seedCategoryRows = []model.Category{
+var seedCategoryRows = []po.Category{
 	{CategoryName: "凉菜素菜", SortOrder: 1},
 	{CategoryName: "荤菜", SortOrder: 2},
 	{CategoryName: "特色农家菜", SortOrder: 3},

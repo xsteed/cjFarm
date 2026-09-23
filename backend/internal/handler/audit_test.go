@@ -9,8 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"dining-system/internal/model"
+	"dining-system/internal/po"
+	"dining-system/internal/service"
 	"dining-system/internal/store"
+	"dining-system/internal/store/dao"
 )
 
 // initAuditTestDB 建一个临时库跑完迁移(含 tb_oper_log),供审计中间件测试使用。
@@ -28,18 +30,18 @@ func newAuditRouter(handler gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
-		setAuth(c, &store.AuthInfo{
+		setAuth(c, &dao.AuthInfo{
 			UserID: 1, Username: "boss", RealName: "张老板",
-			RoleID: 1, RoleKey: "admin", RoleName: "超级管理员", Status: model.UserStatusEnabled,
+			RoleID: 1, RoleKey: "admin", RoleName: "超级管理员", Status: po.UserStatusEnabled,
 		})
 		c.Next()
 	}, AuditLog())
-	r.POST("/prod-api/dining/order/settle", handler)
+	r.POST("/api/admin/order/settle", handler)
 	return r
 }
 
 func doPost(r *gin.Engine, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/prod-api/dining/order/settle", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/order/settle", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "10.0.0.7:12345"
 	w := httptest.NewRecorder()
@@ -47,15 +49,17 @@ func doPost(r *gin.Engine, body string) *httptest.ResponseRecorder {
 	return w
 }
 
-// lastOperLog 取最新一条操作日志。
-func lastOperLog(t *testing.T) model.OperLog {
+// lastOperLog 取最新一条操作日志(经 service 查询,与 handler 共用同一数据访问路径)。
+func lastOperLog(t *testing.T) po.OperLog {
 	t.Helper()
-	l, err := store.ScanOperLog(store.DB.QueryRow(`SELECT ` + store.OperLogCols +
-		` FROM tb_oper_log ORDER BY log_id DESC LIMIT 1`))
+	_, list, err := service.ListOperLogs(service.OperLogFilter{}, 1, 1)
 	if err != nil {
 		t.Fatalf("未读到操作日志: %v", err)
 	}
-	return l
+	if len(list) == 0 {
+		t.Fatal("未读到操作日志")
+	}
+	return list[0]
 }
 
 // TestAuditLogRecordsWriteOperation 管理端写操作必须落一条日志,且参数已脱敏。
@@ -66,6 +70,7 @@ func TestAuditLogRecordsWriteOperation(t *testing.T) {
 		var p struct {
 			OrderID int    `json:"orderId"`
 			Secret  string `json:"wxpay_apiv3_key"`
+			Key     string `json:"key"`
 		}
 		if err := c.ShouldBindJSON(&p); err != nil || p.OrderID != 88 {
 			fail(c, "参数错误")
@@ -75,7 +80,7 @@ func TestAuditLogRecordsWriteOperation(t *testing.T) {
 		okMsg(c, "免单成功")
 	})
 
-	w := doPost(r, `{"orderId":88,"wxpay_apiv3_key":"deadbeef"}`)
+	w := doPost(r, `{"orderId":88,"wxpay_apiv3_key":"deadbeef","key":"feie-key-456"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("请求应成功(证明请求体被正确塞回), got %d: %s", w.Code, w.Body.String())
 	}
@@ -93,17 +98,19 @@ func TestAuditLogRecordsWriteOperation(t *testing.T) {
 	if l.Detail != "免单 ¥128.00，原因：客户投诉" {
 		t.Errorf("语义摘要丢失: %q", l.Detail)
 	}
-	if l.Status != model.OperStatusSuccess {
+	if l.Status != po.OperStatusSuccess {
 		t.Errorf("成功请求应记为成功, got %d", l.Status)
 	}
 	if l.OperIP != "10.0.0.7" {
 		t.Errorf("来源 IP 错误: %q", l.OperIP)
 	}
-	// 密钥进了日志就等于把支付密钥发给所有能看日志的人。
-	if strings.Contains(l.OperParam, "deadbeef") || !strings.Contains(l.OperParam, "******") {
+	// 密钥进了日志就等于把支付密钥发给所有能看日志的人;
+	// 打印机识别码 key 同理(配合 SN 就能把打印机绑到攻击者账号)。
+	if strings.Contains(l.OperParam, "deadbeef") || strings.Contains(l.OperParam, "feie-key-456") ||
+		!strings.Contains(l.OperParam, "******") {
 		t.Errorf("请求参数未脱敏: %s", l.OperParam)
 	}
-	if !strings.Contains(l.Method, "POST /prod-api/dining/order/settle") {
+	if !strings.Contains(l.Method, "POST /api/admin/order/settle") {
 		t.Errorf("方法/路由记录错误: %q", l.Method)
 	}
 }
@@ -123,7 +130,7 @@ func TestAuditLogRecordsFailure(t *testing.T) {
 		t.Fatalf("预期 400, got %d", w.Code)
 	}
 	l := lastOperLog(t)
-	if l.Status != model.OperStatusFail {
+	if l.Status != po.OperStatusFail {
 		t.Errorf("失败请求应记为失败, got %d", l.Status)
 	}
 	if l.ErrorMsg != "免单必须填写原因" {
@@ -135,10 +142,10 @@ func TestAuditLogRecordsFailure(t *testing.T) {
 func TestAuditLogSkipsGetByDefault(t *testing.T) {
 	initAuditTestDB(t)
 	r := newAuditRouter(func(c *gin.Context) { okMsg(c, "ok") })
-	r.GET("/prod-api/dining/order/list", func(c *gin.Context) { okMsg(c, "ok") })
+	r.GET("/api/admin/order/list", func(c *gin.Context) { okMsg(c, "ok") })
 
 	before := countOperLogs(t)
-	req := httptest.NewRequest(http.MethodGet, "/prod-api/dining/order/list", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/order/list", nil)
 	r.ServeHTTP(httptest.NewRecorder(), req)
 	if got := countOperLogs(t); got != before {
 		t.Errorf("默认不应记录 GET 请求, 日志从 %d 条变成 %d 条", before, got)

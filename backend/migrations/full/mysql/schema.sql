@@ -22,7 +22,7 @@
 --   3. 与 SQLite 版的唯一语义差异:MySQL 会强制校验 VARCHAR 长度,
 --      SQLite 不校验,导入超长数据时 MySQL 会报 'Data too long'。
 --
--- 金额约定:所有金额字段以「分」为单位存 INT,API 层由 model.ToYuan 转元。
+-- 金额约定:所有金额字段以「分」为单位存 INT,API 层由 po.ToYuan 转元。
 -- ============================================================================
 
 SET NAMES utf8mb4;
@@ -141,6 +141,18 @@ CREATE TABLE IF NOT EXISTS tb_print_job (
         create_time  VARCHAR(32),
         done_time    VARCHAR(32)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE IF NOT EXISTS tb_print_agent (
+        agent_id    INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        agent_name  VARCHAR(64)  DEFAULT '',
+        token_hash  VARCHAR(64)  DEFAULT '',
+        token_hint  VARCHAR(8)   DEFAULT '',
+        printer_ids VARCHAR(255) DEFAULT '',
+        status      INTEGER      DEFAULT 1,
+        last_seen   VARCHAR(32),
+        last_report VARCHAR(64)  DEFAULT '',
+        create_time VARCHAR(32),
+        update_time VARCHAR(32)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_oper_log (
         log_id        INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         module        VARCHAR(32)   DEFAULT '',
@@ -202,7 +214,11 @@ CREATE TABLE IF NOT EXISTS tb_order (
         credit_amount   INTEGER      DEFAULT 0,
         credit_settle_time VARCHAR(32),
         credit_settle_by   VARCHAR(64) DEFAULT '',
-        paid_amount     INTEGER      DEFAULT 0
+        paid_amount     INTEGER      DEFAULT 0,
+        -- 结账时(状态被置 4 前)的订单状态快照:撤销结算时恢复到结账前的真实状态,
+        -- 而不是无条件回到 3(订单可能在 1/2 状态被提前结账,撤销后应回到 1/2 继续制作流程)。
+        -- 0 表示历史数据未记录(撤销时回退为 3)。
+        pre_settle_status INTEGER     DEFAULT 0
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_order_item (
         item_id   INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -256,7 +272,11 @@ CREATE TABLE IF NOT EXISTS tb_refund (
         operator          VARCHAR(64)  DEFAULT '',
         fail_reason       VARCHAR(255) DEFAULT '',
         create_time       VARCHAR(32),
-        update_time       VARCHAR(32)
+        update_time       VARCHAR(32),
+        -- 1 = 重复支付自动退回(顾客在两个渠道各付了一笔,后到的一笔原路退回)。
+        -- 这类退款的金额从未计入订单营收(paid_amount),因此不计入订单退款额度、
+        -- 也不扣减订单实收 —— 与普通退款(SumRefunded/applyRefundSuccess)严格区分。
+        is_duplicate      INTEGER      DEFAULT 0
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_role (
         role_id     INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -296,19 +316,32 @@ CREATE TABLE IF NOT EXISTS tb_remember_token (
         token_id       INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         user_id        INTEGER      NOT NULL,
         token          VARCHAR(64)  NOT NULL,
+        token_prefix   VARCHAR(8)   DEFAULT '',
         expire_time    VARCHAR(32)  NOT NULL,
         create_time    VARCHAR(32),
-        last_used_time VARCHAR(32)
+        last_used_time VARCHAR(32),
+        ua             VARCHAR(255) DEFAULT ''
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE IF NOT EXISTS tb_image (
+        img_id       INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        img_name     VARCHAR(128) NOT NULL,
+        content_type VARCHAR(32)  DEFAULT '',
+        img_data     LONGBLOB,
+        file_size    INTEGER      DEFAULT 0,
+        create_time  VARCHAR(32)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE UNIQUE INDEX idx_order_no ON tb_order(order_no);
 CREATE INDEX idx_order_table ON tb_order(table_id);
 CREATE INDEX idx_order_status ON tb_order(order_status);
 CREATE INDEX idx_order_create_time ON tb_order(create_time);
+CREATE INDEX idx_order_pay_time ON tb_order(pay_time);
+CREATE INDEX idx_order_credit_settle_time ON tb_order(credit_settle_time);
 CREATE INDEX idx_order_item_order ON tb_order_item(order_id);
 CREATE INDEX idx_payment_order ON tb_payment(order_no);
 CREATE UNIQUE INDEX idx_payment_channel_trade ON tb_payment(channel, channel_trade_no);
 CREATE UNIQUE INDEX idx_refund_no ON tb_refund(refund_no);
 CREATE INDEX idx_refund_order ON tb_refund(order_id);
+CREATE INDEX idx_refund_update_time ON tb_refund(update_time);
 CREATE INDEX idx_urge_status ON tb_order_urge(status, create_time);
 CREATE INDEX idx_urge_order ON tb_order_urge(order_id);
 CREATE INDEX idx_print_log_order ON tb_print_log(order_id);
@@ -316,6 +349,7 @@ CREATE INDEX idx_print_log_time ON tb_print_log(create_time);
 CREATE INDEX idx_print_log_status ON tb_print_log(status, create_time);
 CREATE INDEX idx_print_job_pick ON tb_print_job(status, next_try_time, job_id);
 CREATE INDEX idx_print_job_printer ON tb_print_job(printer_id, status);
+CREATE INDEX idx_print_agent_token ON tb_print_agent(token_hash, status);
 CREATE INDEX idx_table_code ON tb_table(table_code);
 CREATE INDEX idx_user_username ON tb_user(username);
 CREATE INDEX idx_user_role ON tb_user(role_id);
@@ -325,3 +359,4 @@ CREATE INDEX idx_operlog_operator ON tb_oper_log(operator_id, create_time);
 CREATE INDEX idx_operlog_target ON tb_oper_log(target_type, target_id);
 CREATE INDEX idx_operlog_status ON tb_oper_log(status, create_time);
 CREATE UNIQUE INDEX idx_remember_token ON tb_remember_token(token);
+CREATE UNIQUE INDEX idx_image_name ON tb_image(img_name);

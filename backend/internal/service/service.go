@@ -1,6 +1,10 @@
-// Package service 承载核心业务逻辑:订单金额重算、订单明细服务端校验、订单号生成。
+// Package service 承载全店业务用例层,按域划分:订单、认证与用户、顾客端、
+// 菜单(菜品/分类/备注)、支付、打印、报表、设置、桌台、上传、审计与权限。
 //
-// 依赖方向:service 依赖 model + store,不依赖 handler/print。
+// 数据访问统一经 store/dao 下沉,本层只做业务判断与编排。
+//
+// 依赖方向:service 依赖 po + dto + store + dao(及 infra 基础设施),
+// 不依赖 handler/print/pay;handler 与 pay/print 反向依赖 service。
 package service
 
 import (
@@ -12,8 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"dining-system/internal/model"
-	"dining-system/internal/store"
+	"dining-system/internal/dto"
+	"dining-system/internal/po"
+	"dining-system/internal/store/dao"
 )
 
 // GenOrderNo 生成订单号:"D" + 秒级时间戳 + 64bit 密码学安全随机数(16 位十六进制)。
@@ -32,7 +37,7 @@ func randHex(n int) string {
 }
 
 // ---- 订单状态机 ----
-// 状态定义:1已下单 2制作中 3已上齐(用餐中) 4已完成 5已取消(与 model.Order.OrderStatus 一致)。
+// 状态定义:1已下单 2制作中 3已上齐(用餐中) 4已完成 5已取消(与 po.Order.OrderStatus 一致)。
 const (
 	OrderStatusPlaced   = 1 // 已下单
 	OrderStatusCooking  = 2 // 制作中
@@ -139,25 +144,25 @@ func CalcSettle(settleType string, totalCents int64) SettleResult {
 }
 
 // RecalcAmount 金额重算:菜品金额 + 餐位费 - 优惠,返回(菜品金额, 餐位费, 优惠, 合计)。
-func RecalcAmount(personCount int, items []model.OrderItem) (dishAmount, seatFee, discount, total float64) {
+func RecalcAmount(personCount int, items []dto.OrderItem) (dishAmount, seatFee, discount, total float64) {
 	for _, it := range items {
 		dishAmount += it.Amount
 	}
-	cfg := store.LoadConfig()
-	if cfg["seat_fee_enabled"] == "1" {
-		f, _ := strconv.ParseFloat(cfg["seat_fee"], 64)
-		seatFee = model.Round2(float64(personCount) * f)
+	settings := dao.LoadSettings()
+	if settings["seat_fee_enabled"] == "1" {
+		f, _ := strconv.ParseFloat(settings["seat_fee"], 64)
+		seatFee = po.Round2(float64(personCount) * f)
 	}
-	if cfg["promotion_enabled"] == "1" {
-		threshold, _ := strconv.ParseFloat(cfg["promotion_threshold"], 64)
-		d, _ := strconv.ParseFloat(cfg["promotion_discount"], 64)
+	if settings["promotion_enabled"] == "1" {
+		threshold, _ := strconv.ParseFloat(settings["promotion_threshold"], 64)
+		d, _ := strconv.ParseFloat(settings["promotion_discount"], 64)
 		// 每满 threshold 减 d(可叠加),优惠不超过菜品金额本身。
 		if threshold > 0 && d > 0 && dishAmount >= threshold {
-			discount = model.Round2(math.Min(math.Floor(dishAmount/threshold)*d, dishAmount))
+			discount = po.Round2(math.Min(math.Floor(dishAmount/threshold)*d, dishAmount))
 		}
 	}
-	dishAmount = model.Round2(dishAmount)
-	total = model.Round2(dishAmount + seatFee - discount)
+	dishAmount = po.Round2(dishAmount)
+	total = po.Round2(dishAmount + seatFee - discount)
 	if total < 0 {
 		total = 0
 	}
@@ -171,41 +176,57 @@ const (
 )
 
 // ResolveOrderItems 以数据库为准校验并重建订单明细,防止客户端篡改价格/名称。
-func ResolveOrderItems(items []model.OrderItem) ([]model.OrderItem, error) {
+//
+// 菜品/规格信息改为一次 IN 查询批量取出(见 dao.LoadSpecsForOrder):单次下单最多
+// 50 条明细,旧实现逐条 GetSpecForOrder 会发起 50 次查询,这里固定 1 次。
+// 校验语义不变:规格必须存在且归属请求的菜品,菜品须在售(未删除且 status=1),
+// 数量须在上限内。
+func ResolveOrderItems(items []dto.OrderItem) ([]dto.OrderItem, error) {
 	if len(items) == 0 {
 		return nil, fmt.Errorf("订单明细不能为空")
 	}
 	if len(items) > maxOrderItems {
 		return nil, fmt.Errorf("单次点菜过多(最多%d项)", maxOrderItems)
 	}
-	out := make([]model.OrderItem, 0, len(items))
+
+	// 收集全部规格 ID(去重),并先做不依赖数据库的参数校验。
+	specIDs := make([]int, 0, len(items))
+	seen := map[int]bool{}
 	for _, it := range items {
 		if it.SpecID == 0 {
 			return nil, fmt.Errorf("菜品规格无效")
 		}
+		if !seen[it.SpecID] {
+			seen[it.SpecID] = true
+			specIDs = append(specIDs, it.SpecID)
+		}
+	}
+	specMap, err := dao.LoadSpecsForOrder(specIDs)
+	if err != nil {
+		return nil, fmt.Errorf("部分菜品不存在，请刷新后重试")
+	}
+
+	out := make([]dto.OrderItem, 0, len(items))
+	for _, it := range items {
 		if it.Quantity < 1 {
 			it.Quantity = 1
 		}
-		var dishName, specName, delFlag string
-		var priceCents int64
-		var dishStatus int
-		err := store.DB.QueryRow(`SELECT d.dish_name, d.status, d.del_flag, s.spec_name, s.price
-			FROM tb_spec s JOIN tb_dish d ON d.dish_id = s.dish_id
-			WHERE s.spec_id=? AND s.dish_id=?`, it.SpecID, it.DishID).
-			Scan(&dishName, &dishStatus, &delFlag, &specName, &priceCents)
-		if err != nil {
+		info, ok := specMap[it.SpecID]
+		// 规格不存在,或规格不属于请求的菜品,均等价于旧查询
+		// s.spec_id=? AND s.dish_id=? 未命中:提示刷新。
+		if !ok || info.DishID != it.DishID {
 			return nil, fmt.Errorf("部分菜品不存在，请刷新后重试")
 		}
-		if delFlag != "0" || dishStatus != 1 {
-			return nil, fmt.Errorf("菜品【%s】已下架", dishName)
+		if info.DelFlag != po.DelFlagOK || info.DishStatus != 1 {
+			return nil, fmt.Errorf("菜品【%s】已下架", info.DishName)
 		}
 		if it.Quantity > maxItemQuantity {
-			return nil, fmt.Errorf("菜品【%s】数量超出上限(%d)", dishName, maxItemQuantity)
+			return nil, fmt.Errorf("菜品【%s】数量超出上限(%d)", info.DishName, maxItemQuantity)
 		}
-		it.DishName = dishName
-		it.SpecName = specName
-		it.Price = model.ToYuan(priceCents)
-		it.Amount = model.Round2(it.Price * float64(it.Quantity))
+		it.DishName = info.DishName
+		it.SpecName = info.SpecName
+		it.Price = po.ToYuan(info.PriceCents)
+		it.Amount = po.Round2(it.Price * float64(it.Quantity))
 		out = append(out, it)
 	}
 	return out, nil

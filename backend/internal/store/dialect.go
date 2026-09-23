@@ -21,11 +21,14 @@ package store
 
 import (
 	"database/sql"
-	"dining-system/internal/logger"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"dining-system/infra"
+	"dining-system/infra/logger"
+	"dining-system/internal/conf"
 
 	// 数据库驱动:两者都通过 database/sql 注册,按运行期方言选用。
 	_ "github.com/go-sql-driver/mysql"
@@ -71,6 +74,16 @@ func tableOptionsFor(d Dialect) string {
 		return " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
 	}
 	return ""
+}
+
+// blobTypeFor 返回「大二进制列」的类型定义。
+// SQLite: BLOB(最长 2GB,无小类区分)
+// MySQL : LONGBLOB(4GB;BLOB/MEDIUMBLOB 分别只有 64KB/16MB,装不下 5MB 单图)
+func blobTypeFor(d Dialect) string {
+	if d == DialectMySQL {
+		return "LONGBLOB"
+	}
+	return "BLOB"
 }
 
 // InsertIgnoreInto 生成「插入,遇主键/唯一键冲突则忽略」的语句。
@@ -172,28 +185,32 @@ type dbConfig struct {
 // 因此放进 DSN 才能保证所有连接行为一致。
 //
 // 路径转换:Windows 盘符路径统一转成正斜杠(C:\x\y → C:/x/y),SQLite 的
-// URI 解析器可直接接受;相对路径(如 ./dining.db)同样合法。
+// URI 解析器可直接接受;相对路径(如 ./data/dining.db)同样合法。
+// filepath.ToSlash 只在 Windows 上转换反斜杠,Unix 上反斜杠是合法文件名字符、
+// 不会被动;这里显式再替换一次,保证「配置文件里写 Windows 风格路径」在任何
+// 平台上都得到一致的 URI(Unix 文件名含反斜杠属异常场景,不做保留)。
 // 注意:路径中若包含 '?' 或 '#' 会破坏 URI,属异常场景,不做处理。
 func sqliteDSN(path string) string {
 	p := filepath.ToSlash(strings.TrimSpace(path))
+	p = strings.ReplaceAll(p, "\\", "/")
 	return "file:" + p + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
 }
 
 // resolveDBConfig 解析环境变量得到连接配置。
 //
 //	DB_DRIVER   sqlite | mysql   (默认 sqlite;未显式指定但设置了 DB_DSN 时按 mysql 处理)
-//	DB_PATH     SQLite 数据文件   (默认 ./dining.db)
+//	DB_PATH     SQLite 数据文件   (默认 ./data/dining.db)
 //	DB_DSN      MySQL 连接串      (设置后优先于下面的分项配置)
 //	DB_HOST     MySQL 主机        (默认 127.0.0.1)
 //	DB_PORT     MySQL 端口        (默认 3306)
 //	DB_USER     MySQL 用户        (默认 root)
 //	DB_PASSWORD MySQL 密码        (默认空)
 //	DB_NAME     MySQL 库名        (默认 dining)
-//	DB_PARAMS   MySQL 附加参数    (默认 charset=utf8mb4&parseTime=true&loc=Local)
+//	DB_PARAMS   MySQL 附加参数    (默认 charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864)
 func resolveDBConfig(sqlitePath string) (dbConfig, error) {
-	drv := strings.ToLower(strings.TrimSpace(Getenv("DB_DRIVER", "")))
+	drv := strings.ToLower(strings.TrimSpace(infra.Getenv(conf.EnvDBDriver, "")))
 	if drv == "" {
-		if strings.TrimSpace(Getenv("DB_DSN", "")) != "" {
+		if strings.TrimSpace(infra.Getenv(conf.EnvDBDSN, "")) != "" {
 			drv = string(DialectMySQL)
 		} else {
 			drv = string(DialectSQLite)
@@ -202,15 +219,18 @@ func resolveDBConfig(sqlitePath string) (dbConfig, error) {
 
 	switch Dialect(drv) {
 	case DialectMySQL:
-		dsn := strings.TrimSpace(Getenv("DB_DSN", ""))
+		dsn := strings.TrimSpace(infra.Getenv(conf.EnvDBDSN, ""))
 		if dsn == "" {
-			params := Getenv("DB_PARAMS", "charset=utf8mb4&parseTime=true&loc=Local")
+			// 图片内容存库后单条 INSERT 可达 5MB,客户端需放行大包(驱动参数用字节数,
+			// 67108864=64MB);服务端 max_allowed_packet 仍需 DBA 配合,见 docs/mysql-migration.md。
+			// 只有走「分项配置拼 DSN」路径才使用该默认值,显式 DB_PARAMS/DB_DSN 不受影响。
+			params := infra.Getenv(conf.EnvDBParams, conf.DefaultDBParams)
 			dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?%s",
-				Getenv("DB_USER", "root"),
-				Getenv("DB_PASSWORD", ""),
-				Getenv("DB_HOST", "127.0.0.1"),
-				Getenv("DB_PORT", "3306"),
-				Getenv("DB_NAME", "dining"),
+				infra.Getenv(conf.EnvDBUser, conf.DefaultDBUser),
+				infra.Getenv(conf.EnvDBPassword, conf.DefaultDBPassword),
+				infra.Getenv(conf.EnvDBHost, conf.DefaultDBHost),
+				infra.Getenv(conf.EnvDBPort, conf.DefaultDBPort),
+				infra.Getenv(conf.EnvDBName, conf.DefaultDBName),
 				params,
 			)
 		}
@@ -219,7 +239,7 @@ func resolveDBConfig(sqlitePath string) (dbConfig, error) {
 	case DialectSQLite:
 		p := strings.TrimSpace(sqlitePath)
 		if p == "" {
-			p = Getenv("DB_PATH", "./dining.db")
+			p = infra.Getenv(conf.EnvDBPath, conf.DefaultDBPath)
 		}
 		return dbConfig{Dialect: DialectSQLite, Driver: "sqlite", DSN: sqliteDSN(p), SafeDSN: p}, nil
 
@@ -292,6 +312,12 @@ func Init(sqlitePath string) {
 	logger.Infof("[db] 已连接 %s 后端: %s", cfg.Dialect, cfg.SafeDSN)
 	migrate()
 	seed()
+	// 图片内容初始化:先导入旧磁盘存量(权威内容先入库),再补内嵌出厂图(只填缺)。
+	// 顺序不可颠倒:老部署磁盘上被商户实际使用的同名文件(如手工换过的收款码)
+	// 必须胜过内嵌出厂图,否则升级会改变已可见的图片内容。
+	imgDir := infra.Getenv(conf.EnvUploadDir, conf.DefaultUploadDir)
+	ImportDiskImages(imgDir)
+	EnsureSeedImages()
 }
 
 // mysqlHint 针对最常见的 MySQL 连接失败给出中文排查提示。

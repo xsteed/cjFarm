@@ -28,9 +28,29 @@ backend/bin/
 backend/*.exe
 backend/*.test
 backend/dining-server
+backend/dining-system
 coverage.out
 coverage.txt
 *.cover
+
+# ---------------- 打印代理 (独立 Go module) ----------------
+# 防止在 print-agent/ 目录直接 go build . 把二进制留在源码目录
+print-agent/print-agent
+print-agent/print-agent.exe
+# 门店真实配置(含令牌),绝不入库;模板见 agent.env.example
+# 注意:gitignore 不支持行尾注释,「# 之后的文字」会被当成模式的一部分导致规则失效,注释必须单列一行
+print-agent/agent.env
+# 代理本地幂等去重状态,运行期生成
+print-agent/print-agent.state
+# 编译产物(五平台二进制,make build/build-all 输出)
+print-agent/bin/
+# 打包制品(按操作系统分目录的部署包,make package 输出)
+print-agent/dist/
+# 自助升级(--upgrade)的下载临时文件与 Windows 替换备份(产物在根目录运行时的防御)
+print-agent/print-agent.upgrade
+print-agent/print-agent.upgrade.exe
+print-agent/print-agent.old
+print-agent/print-agent.exe.old
 *.coverprofile
 
 # Go 工作区（本地开发可能产生，不共享）
@@ -107,3 +127,7 @@ release/
 # ---------------- 文档 / 预览产物 ----------------
 outputs/
 *.local
+
+# ---------------- AI 辅助开发 ----------------
+# 规划 / 任务 / 中间产物（plan.md、tasks.md 等），本机工作区数据，不入库
+.agent/

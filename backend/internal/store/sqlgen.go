@@ -51,7 +51,7 @@ func SeedCounts() map[string]int {
 		specs += len(d.specs)
 	}
 	return map[string]int{
-		"config":   len(cfgDefaults),
+		"setting":  len(settingDefaults),
 		"role":     len(builtinRoleSeeds),
 		"table":    len(seedTableRows),
 		"category": len(seedCategoryRows),
@@ -70,15 +70,15 @@ func SeedSQL(d Dialect) []string {
 	out := []string{}
 
 	// ---- 系统配置(主键是 cfg_key,按 key 排序保证生成的脚本稳定) ----
-	keys := make([]string, 0, len(cfgDefaults))
-	for k := range cfgDefaults {
+	keys := make([]string, 0, len(settingDefaults))
+	for k := range settingDefaults {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		out = append(out, fmt.Sprintf(
 			"INSERT%s INTO tb_config(cfg_key, cfg_value) VALUES(%s, %s);%s",
-			ignoreClause(d), sqlStr(k), sqlStr(cfgDefaults[k]), commentIf(k == "wxpay_apiv3_key", "敏感项,落库前会自动加密")))
+			ignoreClause(d), sqlStr(k), sqlStr(settingDefaults[k]), commentIf(k == "wxpay_apiv3_key", "敏感项,落库前会自动加密")))
 	}
 
 	// ---- 桌台(固定桌台码,便于提前印制二维码) ----

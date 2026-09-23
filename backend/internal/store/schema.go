@@ -1,7 +1,7 @@
 package store
 
 import (
-	"dining-system/internal/logger"
+	"dining-system/infra/logger"
 	"fmt"
 	"strings"
 )
@@ -15,6 +15,8 @@ import (
 //	{{PK}}   自增主键列定义   SQLite: INTEGER PRIMARY KEY AUTOINCREMENT
 //	                          MySQL : INT NOT NULL AUTO_INCREMENT PRIMARY KEY
 //	{{OPTS}} 建表尾选项       MySQL : ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ...
+//	{{BLOB}} 大二进制列类型   SQLite: BLOB
+//	                          MySQL : LONGBLOB(BLOB 上限 64KB,装不下单张上传图)
 //
 // 类型选择原则(两库语义尽量对齐):
 //   - 主键/外键/金额/计数 一律 INTEGER:SQLite 原生 64 位,MySQL 映射为 INT(≈±21 亿,
@@ -176,6 +178,22 @@ var schemaTemplate = []string{
 		done_time    VARCHAR(32)
 	){{OPTS}}`,
 
+	// 本地打印代理身份(per-agent 令牌)。
+	// 全局 agent_token 继续作为 legacy 兼容通道;新表给 v2 代理逐台签发令牌,
+	// 可单独吊销、可限定 printer_ids 授权范围,降低单台代理令牌泄漏后的队列暴露面。
+	`CREATE TABLE IF NOT EXISTS tb_print_agent (
+		agent_id    {{PK}},
+		agent_name  VARCHAR(64)  DEFAULT '',
+		token_hash  VARCHAR(64)  DEFAULT '',
+		token_hint  VARCHAR(8)   DEFAULT '',
+		printer_ids VARCHAR(255) DEFAULT '',
+		status      INTEGER      DEFAULT 1,
+		last_seen   VARCHAR(32),
+		last_report VARCHAR(64)  DEFAULT '',
+		create_time VARCHAR(32),
+		update_time VARCHAR(32)
+	){{OPTS}}`,
+
 	// 操作日志(审计留痕):管理端每次写操作落一行,只追加、不修改。
 	//
 	// 业务表上的 create_by / update_by 只回答「谁改的」,回答不了
@@ -247,7 +265,11 @@ var schemaTemplate = []string{
 		credit_amount   INTEGER      DEFAULT 0,
 		credit_settle_time VARCHAR(32),
 		credit_settle_by   VARCHAR(64) DEFAULT '',
-		paid_amount     INTEGER      DEFAULT 0
+		paid_amount     INTEGER      DEFAULT 0,
+		-- 结账时(状态被置 4 前)的订单状态快照:撤销结算时恢复到结账前的真实状态,
+		-- 而不是无条件回到 3(订单可能在 1/2 状态被提前结账,撤销后应回到 1/2 继续制作流程)。
+		-- 0 表示历史数据未记录(撤销时回退为 3)。
+		pre_settle_status INTEGER     DEFAULT 0
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_order_item (
@@ -305,7 +327,11 @@ var schemaTemplate = []string{
 		operator          VARCHAR(64)  DEFAULT '',
 		fail_reason       VARCHAR(255) DEFAULT '',
 		create_time       VARCHAR(32),
-		update_time       VARCHAR(32)
+		update_time       VARCHAR(32),
+		-- 1 = 重复支付自动退回(顾客在两个渠道各付了一笔,后到的一笔原路退回)。
+		-- 这类退款的金额从未计入订单营收(paid_amount),因此不计入订单退款额度、
+		-- 也不扣减订单实收 —— 与普通退款(SumRefunded/applyRefundSuccess)严格区分。
+		is_duplicate      INTEGER      DEFAULT 0
 	){{OPTS}}`,
 
 	// ---- 员工与权限(见 docs/user-permission-design.md) ----
@@ -355,14 +381,31 @@ var schemaTemplate = []string{
 	// 记住登录令牌(实现「记住我(7/30 天免登录)」)。
 	// 令牌为后端生成的随机串,存本地后仅用于向后端换取新登录态;
 	// 是否过期由 expire_time 决定(后端查库裁决,前端无法篡改),与后端访问令牌(默认 24h)解耦。
+	// token 列存 SHA-256 哈希(库内不落明文),token_prefix 存原令牌前 8 位供设备管理页识别。
 	// 改密/停用/删除账号时删掉对应行,该账号全部「记住我」会话立即失效。
 	`CREATE TABLE IF NOT EXISTS tb_remember_token (
 		token_id       {{PK}},
 		user_id        INTEGER      NOT NULL,
 		token          VARCHAR(64)  NOT NULL,
+		token_prefix   VARCHAR(8)   DEFAULT '',
 		expire_time    VARCHAR(32)  NOT NULL,
 		create_time    VARCHAR(32),
-		last_used_time VARCHAR(32)
+		last_used_time VARCHAR(32),
+		ua             VARCHAR(255) DEFAULT ''
+	){{OPTS}}`,
+
+	// 图片内容存储:菜品图/收款码/店铺 Logo 的二进制内容随数据库走(磁盘不再是
+	// 运行时依赖),业务表(tb_dish/tb_config)仍存 /uploads/<img_name> 相对路径,
+	// 由本表按名字解析。设计详见 docs/design-docs/store/image-db-storage/spec.md。
+	// img_data 类型按方言生成({{BLOB}}):SQLite BLOB 无上限差异;MySQL 用 LONGBLOB
+	// (BLOB 上限 64KB,装不下 5MB 的单张上传图)。
+	`CREATE TABLE IF NOT EXISTS tb_image (
+		img_id       {{PK}},
+		img_name     VARCHAR(128) NOT NULL,
+		content_type VARCHAR(32)  DEFAULT '',
+		img_data     {{BLOB}},
+		file_size    INTEGER      DEFAULT 0,
+		create_time  VARCHAR(32)
 	){{OPTS}}`,
 }
 
@@ -372,6 +415,7 @@ func schemaStatements(d Dialect) []string {
 	for _, tpl := range schemaTemplate {
 		s := strings.ReplaceAll(tpl, "{{PK}}", autoIncPKFor(d))
 		s = strings.ReplaceAll(s, "{{OPTS}}", tableOptionsFor(d))
+		s = strings.ReplaceAll(s, "{{BLOB}}", blobTypeFor(d))
 		out = append(out, s)
 	}
 	return out
@@ -389,7 +433,7 @@ type indexDef struct {
 	Where string
 }
 
-// indexDefs 全部索引(共 25 个)。
+// indexDefs 全部索引(共 30 个)。
 // 唯一索引保证 order_no / refund_no / 渠道交易号不重复;
 // 其余索引用于订单查询、看板与报表加速。
 var indexDefs = []indexDef{
@@ -397,11 +441,17 @@ var indexDefs = []indexDef{
 	{Name: "idx_order_table", Table: "tb_order", Columns: "table_id"},
 	{Name: "idx_order_status", Table: "tb_order", Columns: "order_status"},
 	{Name: "idx_order_create_time", Table: "tb_order", Columns: "create_time"},
+	// 报表按「钱到账时间」过滤(见 dao.RangeAmount):正常收款按 pay_time、
+	// 挂账核销按 credit_settle_time 归属,补索引避免区间统计逐日扫全表。
+	{Name: "idx_order_pay_time", Table: "tb_order", Columns: "pay_time"},
+	{Name: "idx_order_credit_settle_time", Table: "tb_order", Columns: "credit_settle_time"},
 	{Name: "idx_order_item_order", Table: "tb_order_item", Columns: "order_id"},
 	{Name: "idx_payment_order", Table: "tb_payment", Columns: "order_no"},
 	{Name: "idx_payment_channel_trade", Table: "tb_payment", Columns: "channel, channel_trade_no", Unique: true},
 	{Name: "idx_refund_no", Table: "tb_refund", Columns: "refund_no", Unique: true},
 	{Name: "idx_refund_order", Table: "tb_refund", Columns: "order_id"},
+	// 退款按「退款到账时间(update_time)」归属并扣减(见 dao.RangeAmount),补索引加速区间聚合。
+	{Name: "idx_refund_update_time", Table: "tb_refund", Columns: "update_time"},
 	{Name: "idx_urge_status", Table: "tb_order_urge", Columns: "status, create_time"},
 	{Name: "idx_urge_order", Table: "tb_order_urge", Columns: "order_id"},
 	// 打印日志:按订单倒查(「这单到底打了没」)、按时间翻页、按失败筛选。
@@ -412,6 +462,8 @@ var indexDefs = []indexDef{
 	// 打印日志页按「打印机 + 状态」看某台机器的积压。
 	{Name: "idx_print_job_pick", Table: "tb_print_job", Columns: "status, next_try_time, job_id"},
 	{Name: "idx_print_job_printer", Table: "tb_print_job", Columns: "printer_id, status"},
+	// per-agent 令牌鉴权按 hash 精确查找,并只接受启用中的身份。
+	{Name: "idx_print_agent_token", Table: "tb_print_agent", Columns: "token_hash, status"},
 	{Name: "idx_table_code", Table: "tb_table", Columns: "table_code", Unique: true, Where: "table_code!=''"},
 	// 用户名/角色标识的唯一性只约束「未删除」的行 —— 删掉员工后可以重新使用同名账号。
 	// 与 idx_table_code 同理:MySQL 不支持部分索引会降级为普通索引,
@@ -425,6 +477,8 @@ var indexDefs = []indexDef{
 	{Name: "idx_operlog_target", Table: "tb_oper_log", Columns: "target_type, target_id"},
 	{Name: "idx_operlog_status", Table: "tb_oper_log", Columns: "status, create_time"},
 	{Name: "idx_remember_token", Table: "tb_remember_token", Columns: "token", Unique: true},
+	// 名字唯一 = 同名内容幂等写入的前提。
+	{Name: "idx_image_name", Table: "tb_image", Columns: "img_name", Unique: true},
 }
 
 // indexStatements 返回指定方言下的全部建索引语句。
@@ -479,9 +533,17 @@ var alterCols = []alterCol{
 	{Table: "tb_order", Name: "credit_status", Def: "INTEGER DEFAULT 0"},
 	{Table: "tb_order", Name: "credit_amount", Def: "INTEGER DEFAULT 0"},
 	{Table: "tb_order", Name: "credit_settle_time", Def: "VARCHAR(32)"},
+	// 记住登录:环境指纹(设备管理页展示 + 免登录环境绑定)。
+	{Table: "tb_remember_token", Name: "ua", Def: "VARCHAR(255) DEFAULT ''"},
+	// 记住登录令牌改为哈希存储后,新增 token_prefix 保存原令牌前 8 位(设备管理页识别用)。
+	{Table: "tb_remember_token", Name: "token_prefix", Def: "VARCHAR(8) DEFAULT ''"},
 	{Table: "tb_order", Name: "credit_settle_by", Def: "VARCHAR(64) DEFAULT ''"},
 	// 实收金额(分): 免单=0;挂账核销前=0,核销后为应收金额;退款时相应扣减。
 	{Table: "tb_order", Name: "paid_amount", Def: "INTEGER DEFAULT 0"},
+	// 撤销结算回退用:结账时记录结账前状态,撤销时恢复(0=历史数据,回退为 3)。
+	{Table: "tb_order", Name: "pre_settle_status", Def: "INTEGER DEFAULT 0"},
+	// 重复支付自动原路退回的退款单标记:不占订单退款额度、不扣订单实收。
+	{Table: "tb_refund", Name: "is_duplicate", Def: "INTEGER DEFAULT 0"},
 	// 桌台稳定码: 创建时生成、永不变更的随机码,二维码内容使用它(而非自增 ID)。
 	{Table: "tb_table", Name: "table_code", Def: "VARCHAR(16) DEFAULT ''"},
 	// 打印机厂商与云打印: provider 默认 'tcp' —— 老库里的打印机都是直连网络机,

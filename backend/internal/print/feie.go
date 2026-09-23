@@ -6,13 +6,13 @@
 //
 // 接口规范(据官方开放平台文档):
 //   - 地址: http://api.de.feieyun.com/Api/Open/
-//           https://api.de.feieyun.com:443/Api/Open/
+//     https://api.de.feieyun.com:443/Api/Open/
 //   - 方式: POST,表单编码(Content-Type: application/x-www-form-urlencoded)
 //   - 公共参数:
-//       user    飞鹅云后台注册用户名
-//       stime   当前 UNIX 时间戳,10 位,精确到秒(与标准时间偏差过大会报 -3)
-//       sig     sha1(user + UKEY + stime) 的 40 位小写十六进制
-//       apiname 接口名,如 Open_printMsg
+//     user    飞鹅云后台注册用户名
+//     stime   当前 UNIX 时间戳,10 位,精确到秒(与标准时间偏差过大会报 -3)
+//     sig     sha1(user + UKEY + stime) 的 40 位小写十六进制
+//     apiname 接口名,如 Open_printMsg
 //   - 返回: {"msg":..., "ret":..., "data":..., "serverExecutedTime":...},
 //     ret=0 为成功,其余为错误码(见 feieErrorMessage)。
 //
@@ -34,8 +34,8 @@ import (
 	"strings"
 	"time"
 
-	"dining-system/internal/model"
-	"dining-system/internal/store"
+	"dining-system/internal/po"
+	"dining-system/internal/service"
 )
 
 // feieDefaultAPI 飞鹅开放平台默认接口地址(海外/私有云可在系统配置里改)。
@@ -56,12 +56,12 @@ type FeieClient struct {
 
 // NewFeieClient 用系统配置里的飞鹅账号构造客户端。
 func NewFeieClient() (*FeieClient, error) {
-	user := strings.TrimSpace(store.GetCfg("feie_user"))
-	ukey := strings.TrimSpace(store.GetCfg("feie_ukey"))
+	user := strings.TrimSpace(service.GetSetting("feie_user"))
+	ukey := strings.TrimSpace(service.GetSetting("feie_ukey"))
 	if user == "" || ukey == "" {
 		return nil, errors.New("未配置飞鹅账号:请在「系统配置 → 小票打印」填写飞鹅账号与 UKEY")
 	}
-	api := strings.TrimSpace(store.GetCfg("feie_api_url"))
+	api := strings.TrimSpace(service.GetSetting("feie_api_url"))
 	if api == "" {
 		api = feieDefaultAPI
 	}
@@ -75,8 +75,8 @@ func NewFeieClient() (*FeieClient, error) {
 
 // FeieConfigured 报告飞鹅账号是否已配置完整(供前端提示与状态判断)。
 func FeieConfigured() bool {
-	return strings.TrimSpace(store.GetCfg("feie_user")) != "" &&
-		strings.TrimSpace(store.GetCfg("feie_ukey")) != ""
+	return strings.TrimSpace(service.GetSetting("feie_user")) != "" &&
+		strings.TrimSpace(service.GetSetting("feie_ukey")) != ""
 }
 
 // feieResp 飞鹅统一响应体。
@@ -313,7 +313,7 @@ func (c *FeieClient) DelPrinter(sn string) error {
 
 // sendViaFeie 把渲染好的文本行推给飞鹅云。
 // 内容超过单次上限时按行拆成多单依次推送;任一段失败即中止并返回已累计的云端单号。
-func sendViaFeie(c *FeieClient, p model.Printer, lines []string) (string, error) {
+func sendViaFeie(c *FeieClient, p po.Printer, lines []string) (string, error) {
 	sn := strings.TrimSpace(p.FeieSN)
 	if sn == "" {
 		return "", newPermError("未填写飞鹅打印机编号(SN)")

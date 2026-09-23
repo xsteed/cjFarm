@@ -40,7 +40,7 @@
 server:
   # 监听端口（默认 8080）
   port: 8080
-  # 上传文件目录（默认 ./uploads）
+  # 旧版本升级时的存量图片导入源目录（启动自动导入数据库后不再使用；运行时图片存储于数据库）（默认 ./uploads）
   # upload_dir: ./uploads
   # 前端构建产物目录（默认 ../frontend/dist）
   # static_dir: ../frontend/dist
@@ -52,6 +52,9 @@ server:
   # 否则登录限流取不到真实客户端 IP（会退化成全局粒度）
   # trusted_proxies:
   #   - 127.0.0.1
+  # 雪花算法节点号（0~1023），requestID 生成器使用（默认 1）；
+  # 单实例部署无需配置；多实例部署时每个实例必须不同，否则可能生成重复 requestID
+  # snowflake_node_id: 1
 
 # ---------------------------------------------------------------------------
 # 数据库后端
@@ -63,21 +66,21 @@ database:
 
   # ---- SQLite（默认） ----
   sqlite:
-    # 数据文件路径（默认 ./dining.db）
-    path: ./dining.db
+    # 数据文件路径（默认 ./data/dining.db）
+    path: ./data/dining.db
 
   # ---- MySQL（driver 设为 mysql 时生效） ----
   mysql:
     # 方式 A（推荐）：完整 DSN，非空时优先于下面的分项配置
-    # dsn: root:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local
+    # dsn: root:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
     # 方式 B：分项配置，程序自动拼接 DSN
     # host: 127.0.0.1
     # port: 3306
     # user: root
     # password: ""
     # name: dining
-    # 附加参数，loc=Local 保证写入的时间字符串是本地时间
-    # params: charset=utf8mb4&parseTime=true&loc=Local
+    # 附加参数，loc=Local 保证写入的时间字符串是本地时间，maxAllowedPacket 放行 5MB 图片写入
+    # params: charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
 
 # ---------------------------------------------------------------------------
 # 敏感配置加密与登录令牌
@@ -89,6 +92,10 @@ security:
   # 支持格式：原始 32 字符 / 64 位十六进制 / base64。留空即用文件方式。
   # master_key: ""
   # master_key_path: ./data/master.key
+  # 主密钥轮换：换了新主密钥（或新环境自动生成了新密钥）而库里还是旧密钥加密的
+  # 密文时，在这里声明旧密钥——启动时会自动把敏感配置改写为新密钥加密。
+  # 格式与 master_key 相同；轮换完成后请删除本项，避免旧密钥长期留存。
+  # master_key_old: ""
   # 管理端登录令牌有效期，单位小时（默认 24）
   # token_ttl_hours: 24
   # 是否收紧主密钥文件 ACL（Windows 下仅保留当前用户；非 Windows 忽略）

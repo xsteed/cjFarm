@@ -24,13 +24,13 @@
 | 连接池 | 小池（16） | 大池（64）+ 生命周期控制 | `applyPool` |
 | 连接串 | 文件路径 | `user:pass@tcp(host:port)/db?params` | `resolveDBConfig` |
 
-> 已经在 MySQL 协议兼容服务端上做过实测：建表 15 张、18 个索引、
+> 已经在 MySQL 协议兼容服务端上做过实测：建表 20 张、27 个索引、
 > 下单 / 加菜 / 催菜 / 改单 / 状态流转 / 结账 / 报表全链路跑通，
 > 迁移脚本与数据搬运逐表核对一致。详见 `backend/migrations/README.md` 第八节。
 
 ---
 
-## 二、动手前必读的三件事
+## 二、动手前必读的四件事
 
 ### 1. 主密钥 `data/master.key` 必须一起带走 ⚠️
 
@@ -52,6 +52,17 @@
 库、表、连接三处都要 `utf8mb4`，否则中文菜品名会乱码或直接插入失败。
 建库语句里已指定 `DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci`，
 连接串里已默认带 `charset=utf8mb4`。
+
+### 4. MySQL 大图写入需调大 `max_allowed_packet`
+
+`tb_image` 单条 `INSERT` 可达 5MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝，
+需提前执行：
+
+```sql
+SET GLOBAL max_allowed_packet=64M;
+```
+
+客户端侧后端默认 DSN 已带 `maxAllowedPacket=67108864`，无需额外配置。
 
 ---
 
@@ -87,7 +98,7 @@ Windows 下写路径请用 `C:/path/config.yaml` 形式。
 | config.yaml | 等价环境变量 | 默认值 | 说明 |
 |---|---|---|---|
 | `server.port` | `PORT` | `8080` | HTTP 端口 |
-| `server.upload_dir` | `UPLOAD_DIR` | `./uploads` | 上传目录 |
+| `server.upload_dir` | `UPLOAD_DIR` | `./uploads` | 存量磁盘图片导入源（旧版本升级时自动导入数据库；运行时图片从数据库读取） |
 | `server.static_dir` | `STATIC_DIR` | `../frontend/dist` | 前端产物目录 |
 | `server.cors_origins[]` | `CORS_ORIGINS` | 空 | 跨域白名单（列表自动拼成逗号分隔） |
 | `server.trusted_proxies[]` | `TRUSTED_PROXIES` | 空 | 可信代理，**经 Nginx 反代时必须配置** |
@@ -99,7 +110,7 @@ Windows 下写路径请用 `C:/path/config.yaml` 形式。
 | `database.mysql.user` | `DB_USER` | `root` | MySQL 账号 |
 | `database.mysql.password` | `DB_PASSWORD` | 空 | MySQL 密码 |
 | `database.mysql.name` | `DB_NAME` | `dining` | MySQL 库名 |
-| `database.mysql.params` | `DB_PARAMS` | `charset=utf8mb4&parseTime=true&loc=Local` | 连接附加参数 |
+| `database.mysql.params` | `DB_PARAMS` | `charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864` | 连接附加参数 |
 | `security.master_key` | `CONFIG_MASTER_KEY` | 空 | 敏感配置加密主密钥（优先级高于 `data/master.key`） |
 | `security.master_key_path` | `MASTER_KEY_PATH` | `./data/master.key` | 主密钥文件路径 |
 | `security.token_ttl_hours` | `TOKEN_TTL_HOURS` | `24` | 登录令牌有效期（小时） |
@@ -215,20 +226,20 @@ python scripts/sqlite2mysql.py --sqlite dining.db --out /tmp/tb_data.sql
 
 输出示例：
 ```
-已导出 15 张表 / NNN 行 -> /tmp/tb_data.sql
+已导出 N 张表 / NNN 行 -> /tmp/tb_data.sql
 
 迁移后请核对行数：
-  tb_config              30
-  tb_role                 4
+  tb_config              31
   tb_table                8
   tb_category             6
   tb_dish                21
   ...
-  tb_user                 N   ← 员工账号(含引导超管),按实际库为准
+  tb_image               N   ← 图片内容，按实际库为准
 ```
 
 > 脚本特点：金额（整数分）、时间（字符串）、AES 密文（`enc:v1:` 前缀）全部**原样搬运**，
 > 不做任何类型推断，避免把密文改坏。默认用 `INSERT IGNORE`，重复导入不会报错。
+> 图片内容在 `tb_image` 表里随数据一起迁移，无需搬文件。
 
 ### 步骤 4 · 导入 MySQL
 
@@ -259,17 +270,18 @@ vi backend/.env                 # 见第四节第 3 步
 | # | 检查项 | 方法 | 期望 |
 |---|---|---|---|
 | 1 | 连的是 MySQL | 看启动日志 `[db] 已连接 mysql 后端` | ✅ |
-| 2 | 表建全了 | `mysql -e "SHOW TABLES FROM dining"` | 15 张表 |
+| 2 | 表建全了 | `mysql -e "SHOW TABLES FROM dining"` | 20 张表 |
 | 3 | 关键数据行数 | `SELECT COUNT(*) FROM tb_table;` | 与源库一致（种子 8） |
-| 4 | 中文无乱码 | 管理端看菜品名 | 正常中文 |
-| 5 | 敏感配置可解密 | 系统配置页看微信支付密钥字段 | 不报错、值正确 |
-| 6 | 能登录 | `admin / admin123` | 进入后台 |
-| 7 | 能下单 | 顾客端点餐提交 | 返回订单号 |
-| 8 | 能结账 | 管理端订单 → 结账 | 订单变已完成、桌台释放 |
-| 9 | 报表正常 | 报表页 | 有数据、金额正确 |
-| 10 | 桌台码唯一 | 新增桌台 | 自动分配 8 位码，无重复 |
-| 11 | 内置角色齐 | `SELECT role_key FROM tb_role;` | admin/manager/cashier/staff 4 个 |
-| 12 | 有可用超管 | `SELECT username FROM tb_user WHERE status=1;` | 至少 1 个（默认 `admin`） |
+| 4 | 图片表有数据 | `SELECT COUNT(*) FROM tb_image;` | 首次启动后应 ≥23（21 菜品图 + 2 收款码） |
+| 5 | 中文无乱码 | 管理端看菜品名 | 正常中文 |
+| 6 | 敏感配置可解密 | 系统配置页看微信支付密钥字段 | 不报错、值正确 |
+| 7 | 能登录 | `admin / admin123` | 进入后台 |
+| 8 | 能下单 | 顾客端点餐提交 | 返回订单号 |
+| 9 | 能结账 | 管理端订单 → 结账 | 订单变已完成、桌台释放 |
+| 10 | 报表正常 | 报表页 | 有数据、金额正确 |
+| 11 | 桌台码唯一 | 新增桌台 | 自动分配 8 位码，无重复 |
+| 12 | 内置角色齐 | `SELECT role_key FROM tb_role;` | admin/manager/cashier/staff 4 个 |
+| 13 | 有可用超管 | `SELECT username FROM tb_user WHERE status=1;` | 至少 1 个（默认 `admin`） |
 
 命令行快速自检：
 
@@ -280,11 +292,12 @@ SELECT COUNT(*) AS tables FROM information_schema.tables WHERE table_schema='din
 SELECT 'table' t,COUNT(*) n FROM tb_table
 UNION ALL SELECT 'dish',COUNT(*) FROM tb_dish
 UNION ALL SELECT 'config',COUNT(*) FROM tb_config
+UNION ALL SELECT 'image',COUNT(*) FROM tb_image
 UNION ALL SELECT 'order',COUNT(*) FROM tb_order;"
 
 # 接口自检
-curl -s http://localhost:8080/prod-api/api/dining/table/1
-curl -s -X POST http://localhost:8080/prod-api/auth/login \
+curl -s http://localhost:8080/api/customer/table/1
+curl -s -X POST http://localhost:8080/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"admin123"}'
 ```
@@ -317,6 +330,7 @@ curl -s -X POST http://localhost:8080/prod-api/auth/login \
 | **VARCHAR 长度强校验** | SQLite 不校验长度（超长会静默通过），MySQL 严格模式下**直接报错**。字段长度见 `migrations/full/mysql/schema.sql`；如需放宽请改 Go 定义后重新生成（`go run ./cmd/gensql`）。 |
 | **严格模式** | MySQL 默认 `sql_mode` 含 `STRICT_TRANS_TABLES`，类型不匹配（如把空串写进 INT）会报错而非静默转换。 |
 | **重复执行建索引会报错** | MySQL 无 `CREATE INDEX IF NOT EXISTS`，重复跑 `schema.sql` 会报 `Duplicate key name`，正常现象，可忽略。 |
+| **大图写入包大小** | `tb_image` 单条 `INSERT` 可达 5MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝；需 `SET GLOBAL max_allowed_packet=64M`。客户端侧后端默认 DSN 已带 `maxAllowedPacket=67108864`，无需配置。 |
 | **加列脚本不幂等** | `ALTER TABLE ADD COLUMN` 两库都没有 `IF NOT EXISTS`，列已存在会报 `Duplicate column name`，同样可忽略。执行前用 `SHOW COLUMNS FROM 表名;` 自查。 |
 | **部分索引降级** | `idx_table_code` 在 SQLite 是部分唯一索引，MySQL 降级为普通索引；唯一性由 `store.NewUniqueTableCode()` 在应用层保证。 |
 | **时区** | 时间统一存 `VARCHAR(32)` 本地时间字符串，不依赖数据库时区。连接参数 `loc=Local` 保证一致；若容器时区不对，改 `TZ` 环境变量而不是改数据库。 |
@@ -353,7 +367,7 @@ curl -s -X POST http://localhost:8080/prod-api/auth/login \
 **Q7：想直接用连接串而不想拆成一堆变量**
 ```ini
 DB_DRIVER=mysql
-DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local
+DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
 ```
 设置了 `DB_DSN` 后，`DB_HOST` / `DB_USER` 等分项不再生效。
 （注意：密码里若含 `@` `:` `/` 等字符需要 URL 转义。）
@@ -408,8 +422,8 @@ DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&lo
 | `backend/config.yaml` | 实际部署配置（**已被 .gitignore 排除，勿提交**） |
 | `backend/.env.example` | 环境变量模板（复制为 `.env` 使用） |
 | `backend/internal/store/dialect.go` | 数据库方言层（连接配置、方言差异） |
-| `backend/internal/store/configfile.go` | `config.yaml` 解析 + 三层来源优先级编排 |
-| `backend/internal/store/env.go` | `.env` 轻量加载器 |
+| `backend/internal/infra/deploy.go` | `config.yaml` 解析 + 三层来源优先级编排 |
+| `backend/internal/infra/env.go` | `.env` 轻量加载器 |
 | `backend/internal/store/schema.go` | 表结构定义（两库共用来源） |
 | `backend/migrations/full/mysql/schema.sql` | MySQL 全量建表脚本（含建库语句） |
 | `backend/migrations/full/mysql/seed.sql` | MySQL 种子数据 |

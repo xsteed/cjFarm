@@ -1,23 +1,19 @@
 package handler
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
-	"dining-system/internal/model"
-	"dining-system/internal/store"
+	"dining-system/internal/dto"
+	"dining-system/internal/service"
 )
 
 // ============ 员工管理 ============
 //
 // 权限点:user:view(列表) / user:edit(新增、修改、重置密码、启停用、删除)。
-// 防锁死规则集中在 store 层(见 store/user.go),handler 只做入参校验与错误翻译。
-
-// usernamePattern 用户名允许的字符集。禁止 '|' 是因为令牌载荷用它做字段分隔符。
-var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_.@-]{2,32}$`)
+// 业务规则与数据访问已下沉到 service(auth_service.go),handler 只做入参解析与出参组装。
 
 func UserList(c *gin.Context) {
 	pageNum, pageSize := pageParams(c)
@@ -29,16 +25,16 @@ func UserList(c *gin.Context) {
 			status = &v
 		}
 	}
-	total, list, err := store.ListUsers(store.UserQuery{
-		Keyword: strings.TrimSpace(c.Query("keyword")),
-		RoleID:  roleID,
-		Status:  status,
-	}, pageNum, pageSize)
+	total, list, err := service.ListUsers(c.Query("keyword"), roleID, status, pageNum, pageSize)
 	if err != nil {
 		fail(c, err.Error())
 		return
 	}
-	tableResult(c, total, list)
+	items := make([]dto.User, 0, len(list))
+	for _, u := range list {
+		items = append(items, dto.FromUser(u.User, u.RoleKey, u.RoleName, nil))
+	}
+	tableResult(c, total, items)
 }
 
 func UserSave(c *gin.Context) {
@@ -55,25 +51,7 @@ func UserSave(c *gin.Context) {
 		return
 	}
 	username := strings.TrimSpace(p.Username)
-	if !usernamePattern.MatchString(username) {
-		fail(c, "用户名只能包含字母、数字、下划线、点、@ 或连字符，长度 2~32 位")
-		return
-	}
-	if err := validatePassword(p.Password); err != nil {
-		fail(c, err.Error())
-		return
-	}
-	if err := validateRole(p.RoleID); err != nil {
-		fail(c, err.Error())
-		return
-	}
-	id, err := store.InsertUser(model.User{
-		Username: username,
-		RealName: strings.TrimSpace(p.RealName),
-		RoleID:   p.RoleID,
-		Phone:    strings.TrimSpace(p.Phone),
-		Remark:   strings.TrimSpace(p.Remark),
-	}, store.HashPassword(p.Password), adminName(c))
+	id, err := service.CreateUser(username, p.Password, p.RealName, p.RoleID, p.Phone, p.Remark, adminName(c))
 	if err != nil {
 		fail(c, err.Error())
 		return
@@ -95,17 +73,7 @@ func UserUpdate(c *gin.Context) {
 		fail(c, "参数错误")
 		return
 	}
-	if err := validateRole(p.RoleID); err != nil {
-		fail(c, err.Error())
-		return
-	}
-	err := store.UpdateUserProfile(model.User{
-		UserID:   p.UserID,
-		RealName: strings.TrimSpace(p.RealName),
-		RoleID:   p.RoleID,
-		Phone:    strings.TrimSpace(p.Phone),
-		Remark:   strings.TrimSpace(p.Remark),
-	}, currentUID(c), adminName(c))
+	err := service.UpdateUser(p.UserID, p.RealName, p.RoleID, p.Phone, p.Remark, currentUID(c), adminName(c))
 	if err != nil {
 		fail(c, err.Error())
 		return
@@ -123,16 +91,10 @@ func UserResetPassword(c *gin.Context) {
 		fail(c, "参数错误")
 		return
 	}
-	if err := validatePassword(p.Password); err != nil {
+	if err := service.ResetUserPassword(p.UserID, p.Password, adminName(c)); err != nil {
 		fail(c, err.Error())
 		return
 	}
-	if err := store.SetUserPassword(p.UserID, store.HashPassword(p.Password), adminName(c)); err != nil {
-		fail(c, err.Error())
-		return
-	}
-	// 密码被重置:作废该账号的全部「记住我」会话,强制用新密码重新登录。
-	store.DeleteRememberTokensByUser(p.UserID)
 	// 新密码不落日志(请求体已脱敏),只留「谁重置了谁的密码」。
 	SetAuditDetail(c, "user", strconv.Itoa(p.UserID), "重置员工密码")
 	okMsg(c, "密码已重置，请通知该员工使用新密码登录")
@@ -147,19 +109,12 @@ func UserToggleStatus(c *gin.Context) {
 		fail(c, "参数错误")
 		return
 	}
-	if err := store.SetUserStatus(p.UserID, p.Status, currentUID(c), adminName(c)); err != nil {
+	detail, msg, err := service.SetUserStatus(p.UserID, p.Status, currentUID(c), adminName(c))
+	if err != nil {
 		fail(c, err.Error())
 		return
 	}
-	action := "停用员工"
-	if p.Status == model.UserStatusEnabled {
-		action = "启用员工"
-	}
-	SetAuditDetail(c, "user", strconv.Itoa(p.UserID), action)
-	msg := "已停用"
-	if p.Status == model.UserStatusEnabled {
-		msg = "已启用"
-	}
+	SetAuditDetail(c, "user", strconv.Itoa(p.UserID), detail)
 	okMsg(c, msg)
 }
 
@@ -168,36 +123,10 @@ func UserDelete(c *gin.Context) {
 	if !valid {
 		return
 	}
-	if err := store.SoftDeleteUser(id, currentUID(c), adminName(c)); err != nil {
+	if err := service.DeleteUser(id, currentUID(c), adminName(c)); err != nil {
 		fail(c, err.Error())
 		return
 	}
 	SetAuditDetail(c, "user", strconv.Itoa(id), "删除员工")
 	okMsg(c, "删除成功")
-}
-
-// validatePassword 密码长度校验(与修改密码保持一致)。
-func validatePassword(pw string) error {
-	if len(pw) < 6 {
-		return &store.RuleError{Msg: "密码至少 6 位"}
-	}
-	if len(pw) > 64 {
-		return &store.RuleError{Msg: "密码过长"}
-	}
-	return nil
-}
-
-// validateRole 校验角色存在且启用。
-func validateRole(roleID int) error {
-	if roleID <= 0 {
-		return &store.RuleError{Msg: "请选择角色"}
-	}
-	r, err := store.GetRoleByID(roleID)
-	if err != nil || r == nil {
-		return &store.RuleError{Msg: "所选角色不存在"}
-	}
-	if r.Status != model.UserStatusEnabled {
-		return &store.RuleError{Msg: "所选角色已停用"}
-	}
-	return nil
 }

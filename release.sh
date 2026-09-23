@@ -19,9 +19,9 @@
 # 产物结构(与仓库相对路径一致, 包内 deploy/deploy.sh 可直接执行):
 #   dining-<版本>-<时间戳>/
 #   ├── backend/bin/dining-backend-linux-*   # 后端二进制
-#   ├── backend/uploads/                     # 种子图
+#   ├── print-agent/bin/print-agent-*        # 门店打印代理五平台产物
 #   ├── frontend/dist/                       # 前端产物
-#   ├── deploy/                              # 部署物料(含 deploy.sh)
+#   ├── deploy/                              # 部署物料(含 deploy.sh / print-agent 自启动模板)
 #   └── VERSION
 # ============================================================================
 set -euo pipefail
@@ -103,7 +103,8 @@ log "Go: $GO_BIN ($("$GO_BIN" env GOVERSION))  |  架构: $ARCH  |  版本: $VER
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 PKG_DIR="$STAGE/$PKG_NAME"
-mkdir -p "$PKG_DIR/backend/bin" "$PKG_DIR/frontend" "$PKG_DIR/deploy"
+mkdir -p "$PKG_DIR/backend/bin" "$PKG_DIR/frontend" "$PKG_DIR/deploy" \
+  "$PKG_DIR/print-agent/bin" "$PKG_DIR/print-agent/deploy" "$PKG_DIR/print-agent/op"
 
 # ---------------------------- 编译后端 ----------------------------
 build_backend() {
@@ -120,6 +121,22 @@ if [ "$ARCH" = "both" ]; then
 else
   build_backend "$ARCH"
 fi
+
+# ---------------------------- 编译门店打印代理 ----------------------------
+build_print_agent() {
+  local goos="$1" goarch="$2" suffix="$3"
+  log "编译门店打印代理 ($goos/$goarch) ..."
+  ( cd "$ROOT_DIR/print-agent"
+    GOTOOLCHAIN=local CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+      "$GO_BIN" build -trimpath \
+      -ldflags "-s -w -X main.version=$VERSION -X main.buildTime=$BUILD_TIME -X main.gitCommit=$VERSION" \
+      -o "$PKG_DIR/print-agent/bin/print-agent-$suffix" . )
+}
+build_print_agent linux amd64 linux-amd64
+build_print_agent linux arm64 linux-arm64
+build_print_agent windows amd64 windows-amd64.exe
+build_print_agent darwin amd64 darwin-amd64
+build_print_agent darwin arm64 darwin-arm64
 
 # ---------------------------- 构建前端 ----------------------------
 log "构建前端 ..."
@@ -138,12 +155,18 @@ copy_tree() {
 }
 
 copy_tree "$ROOT_DIR/frontend/dist" "$PKG_DIR/frontend/dist"
-[ -d "$ROOT_DIR/backend/uploads" ] || die "缺少 backend/uploads(菜品图与收款码), 线上会 404"
-copy_tree "$ROOT_DIR/backend/uploads" "$PKG_DIR/backend/uploads"
 
 for f in deploy.sh setup-nginx.sh check-health.sh dining-backend.service nginx-production.conf; do
   [ -f "$ROOT_DIR/deploy/$f" ] && cp -f "$ROOT_DIR/deploy/$f" "$PKG_DIR/deploy/"
 done
+# 打印代理物料与源码同目录,发布包里也归到 print-agent/ 下(自启动模板 + 运维脚本 + 配置模板)。
+for f in print-agent.service print-agent.plist print-agent-windows-task.xml; do
+  [ -f "$ROOT_DIR/print-agent/deploy/$f" ] && cp -f "$ROOT_DIR/print-agent/deploy/$f" "$PKG_DIR/print-agent/deploy/"
+done
+copy_tree "$ROOT_DIR/print-agent/op" "$PKG_DIR/print-agent/op"
+cp -f "$ROOT_DIR/print-agent/agent.env.example" "$PKG_DIR/print-agent/"
+cp -f "$ROOT_DIR/print-agent/门店安装说明.md" "$PKG_DIR/print-agent/"
+cp -f "$ROOT_DIR/print-agent/README.md" "$PKG_DIR/print-agent/"
 chmod +x "$PKG_DIR/deploy"/*.sh 2>/dev/null || true
 
 cat > "$PKG_DIR/VERSION" <<EOF

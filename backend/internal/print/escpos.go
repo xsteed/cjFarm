@@ -18,7 +18,8 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 
-	"dining-system/internal/model"
+	"dining-system/infra/logger"
+	"dining-system/internal/po"
 )
 
 // ValidatePrinterAddr 校验打印机目标地址,防止把打印功能当 SSRF 跳板:
@@ -49,10 +50,35 @@ func ValidatePrinterAddr(ip string, port int) error {
 func gbk(s string) []byte {
 	enc := simplifiedchinese.GBK.NewEncoder()
 	out, _, err := transform.Bytes(enc, []byte(s))
-	if err != nil {
-		return []byte(s)
+	if err == nil {
+		return out
 	}
-	return out
+
+	// GBK 无法表示 emoji、生僻字等字符。失败时不能回退 UTF-8 字节,
+	// 否则打印机会按 GBK 解码出乱码;改为逐字替换不可映射字符。
+	fallback := make([]byte, 0, len(s))
+	replaced := false
+	for _, r := range s {
+		part, _, rerr := transform.Bytes(simplifiedchinese.GBK.NewEncoder(), []byte(string(r)))
+		if rerr != nil {
+			fallback = append(fallback, '?')
+			replaced = true
+			continue
+		}
+		fallback = append(fallback, part...)
+	}
+	if replaced {
+		logger.Warnf("打印: 文本行含 GBK 无法表示的字符,已替换为 ?: %q", truncateRunesForLog(s, 80))
+	}
+	return fallback
+}
+
+func truncateRunesForLog(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
 }
 
 // EncodeTicket 把渲染好的文本行组装成 ESC/POS 字节流(含初始化、GBK 文本、切纸)。
@@ -63,12 +89,22 @@ func gbk(s string) []byte {
 func EncodeTicket(lines []string) []byte { return encodeESCPOS(lines) }
 
 // encodeESCPOS 组装一份单据的 ESC/POS 字节流,入参为已对齐/折行后的文本行。
+//
+// 强调行(店名/标题/合计,见 BoldLine)用 ESC E 重打加粗:重打不占额外宽度,
+// 与渲染层的等宽对齐完全兼容。
 func encodeESCPOS(lines []string) []byte {
 	var b []byte
 	b = append(b, 0x1B, 0x40) // ESC @ 初始化
 	for _, ln := range lines {
+		bold := BoldLine(ln)
+		if bold {
+			b = append(b, 0x1B, 0x45, 0x01) // ESC E 1 开启加粗
+		}
 		b = append(b, gbk(ln)...)
 		b = append(b, '\n')
+		if bold {
+			b = append(b, 0x1B, 0x45, 0x00) // ESC E 0 关闭加粗
+		}
 	}
 	b = append(b, 0x1D, 0x56, 0x42, 0x00) // GS V m n: 切纸(部分切)
 	return b
@@ -78,7 +114,7 @@ func encodeESCPOS(lines []string) []byte {
 //
 // 连接前做地址校验兜底:即使数据在写入前被绕过 handler 直接入库,
 // 也不会发起敏感连接。
-func sendViaTCP(p model.Printer, lines []string) (string, error) {
+func sendViaTCP(p po.Printer, lines []string) (string, error) {
 	ip := strings.TrimSpace(p.IP)
 	if ip == "" {
 		return "", errors.New("打印机 IP 为空")
@@ -114,7 +150,7 @@ func addrOf(ip string, port int) string {
 }
 
 // ProbeTCP 只做一次 TCP 连通性探测,用于「测试连接」——不落地任何打印内容。
-func ProbeTCP(p model.Printer) error {
+func ProbeTCP(p po.Printer) error {
 	ip := strings.TrimSpace(p.IP)
 	port := p.Port
 	if port <= 0 {

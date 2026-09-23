@@ -7,72 +7,26 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"dining-system/internal/model"
+	"dining-system/internal/dto"
+	"dining-system/internal/po"
 	"dining-system/internal/print"
-	"dining-system/internal/store"
+	"dining-system/internal/service"
 )
 
 // ============ 打印机 ============
-
-// printerCols 打印机表完整列(与 scanPrinter 顺序一一对应)。
-const printerCols = `printer_id, printer_name, printer_type, provider, ip, port,
-	feie_sn, paper_width, copies, category_ids, status, del_flag, create_time, update_time`
-
-// scanPrinter 扫描一行打印机记录,并把分类 CSV 解析成 ID 列表。
-func scanPrinter(rows interface{ Scan(...interface{}) error }) (model.Printer, error) {
-	var p model.Printer
-	err := rows.Scan(&p.PrinterID, &p.PrinterName, &p.PrinterType, &p.Provider, &p.IP, &p.Port,
-		&p.FeieSN, &p.PaperWidth, &p.Copies, &p.CategoryIDs, &p.Status, &p.DelFlag,
-		&p.CreateTime, &p.UpdateTime)
-	if err != nil {
-		return p, err
-	}
-	p.CategoryIDList = store.ParseIDList(p.CategoryIDs)
-	p.CategoryNames = categoryNamesOf(p.CategoryIDList)
-	return p, nil
-}
-
-// categoryNamesOf 把分类 ID 列表翻成中文名,拼成展示串(供列表页直接显示)。
-func categoryNamesOf(ids []int) *string {
-	if len(ids) == 0 {
-		return nil
-	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]interface{}, 0, len(ids))
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	rows, err := store.DB.Query(`SELECT category_name FROM tb_category WHERE category_id IN (`+placeholders+`)`, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	names := []string{}
-	for rows.Next() {
-		var n string
-		if rows.Scan(&n) == nil {
-			names = append(names, n)
-		}
-	}
-	s := strings.Join(names, "、")
-	if s == "" {
-		return nil
-	}
-	return &s
-}
 
 // normalizePrinter 规范化打印机的可枚举字段,避免非法值入库。
 //
 // 开关型字段(此处是 status)必须归一化成 0/1:前端 t-switch 收到其它值会直接
 // 抛异常并中断整棵路由树的渲染(历史上踩过配置页开关脏值的坑)。
-func normalizePrinter(p *model.Printer) {
-	if p.PrinterType != model.PrinterTypeKitchen && p.PrinterType != model.PrinterTypeGuest {
-		p.PrinterType = model.PrinterTypeKitchen
+func normalizePrinter(p *dto.Printer) {
+	if p.PrinterType != po.PrinterTypeKitchen && p.PrinterType != po.PrinterTypeGuest {
+		p.PrinterType = po.PrinterTypeKitchen
 	}
 	// 接入方式只接受三种已知取值,其余(含历史上可能出现的中文/空值)一律回落到网络直连 ——
 	// 存进库的枚举值会直接决定「走哪条发送路径」,不能让脏值漏进去。
-	if p.Provider != model.PrinterProviderFeie && p.Provider != model.PrinterProviderAgent {
-		p.Provider = model.PrinterProviderTCP
+	if p.Provider != po.PrinterProviderFeie && p.Provider != po.PrinterProviderAgent {
+		p.Provider = po.PrinterProviderTCP
 	}
 	if p.Port == 0 {
 		p.Port = 9100
@@ -90,15 +44,15 @@ func normalizePrinter(p *model.Printer) {
 		p.Status = 1
 	}
 	// 分类分单只对厨房单有意义 —— 食客小票必须含全部菜品,否则金额合计对不上。
-	if p.PrinterType == model.PrinterTypeGuest {
+	if p.PrinterType == po.PrinterTypeGuest {
 		p.CategoryIDList = nil
 		p.CategoryIDs = ""
 		return
 	}
 	if len(p.CategoryIDList) > 0 {
-		p.CategoryIDs = store.JoinIDList(p.CategoryIDList)
+		p.CategoryIDs = service.JoinIDList(p.CategoryIDList)
 	} else {
-		p.CategoryIDs = store.JoinIDList(store.ParseIDList(p.CategoryIDs))
+		p.CategoryIDs = service.JoinIDList(service.ParseIDList(p.CategoryIDs))
 	}
 }
 
@@ -110,12 +64,12 @@ func normalizePrinter(p *model.Printer) {
 //   - agent 必须填 IP —— 它是「打印机在门店内网的地址」,由门店代理使用。
 //     虽然云后端自己不会去连它(SSRF 面不存在),仍按同一规则校验:
 //     地址写错时在保存阶段就报错,比让代理一遍遍连不上、堆一队列任务要好得多。
-func validatePrinter(c *gin.Context, p *model.Printer) bool {
+func validatePrinter(c *gin.Context, p *dto.Printer) bool {
 	if strings.TrimSpace(p.PrinterName) == "" {
 		fail(c, "请填写打印机名称")
 		return false
 	}
-	if p.IsFeie() {
+	if p.Provider == po.PrinterProviderFeie {
 		if strings.TrimSpace(p.FeieSN) == "" {
 			fail(c, "请填写飞鹅打印机编号(SN),机身标签上有")
 			return false
@@ -123,7 +77,7 @@ func validatePrinter(c *gin.Context, p *model.Printer) bool {
 		return true
 	}
 	if strings.TrimSpace(p.IP) == "" {
-		if p.IsAgent() {
+		if p.Provider == po.PrinterProviderAgent {
 			fail(c, "请填写打印机在门店内网的 IP 地址(格式如 192.168.1.8)")
 			return false
 		}
@@ -138,23 +92,39 @@ func validatePrinter(c *gin.Context, p *model.Printer) bool {
 }
 
 func PrinterList(c *gin.Context) {
-	rows, err := store.DB.Query(`SELECT ` + printerCols + ` FROM tb_printer WHERE del_flag='0' ORDER BY printer_id`)
+	list, err := service.ListPrinters()
 	if err != nil {
 		fail(c, err.Error())
 		return
 	}
-	defer rows.Close()
-	list := []model.Printer{}
-	for rows.Next() {
-		if p, err := scanPrinter(rows); err == nil {
-			list = append(list, p)
-		}
+	cats, _ := service.ListCategories()
+	nameMap := map[int]string{}
+	for _, ct := range cats {
+		nameMap[ct.CategoryID] = ct.CategoryName
 	}
-	tableResult(c, len(list), list)
+	items := make([]dto.Printer, 0, len(list))
+	for _, p := range list {
+		ids := service.ParseIDList(p.CategoryIDs)
+		var names *string
+		if len(ids) > 0 {
+			parts := make([]string, 0, len(ids))
+			for _, id := range ids {
+				if n, ok := nameMap[id]; ok {
+					parts = append(parts, n)
+				}
+			}
+			if len(parts) > 0 {
+				s := strings.Join(parts, "、")
+				names = &s
+			}
+		}
+		items = append(items, dto.FromPrinter(p, ids, "", names))
+	}
+	tableResult(c, len(items), items)
 }
 
 func PrinterSave(c *gin.Context) {
-	var p model.Printer
+	var p dto.Printer
 	if err := c.ShouldBindJSON(&p); err != nil {
 		fail(c, "参数错误")
 		return
@@ -163,21 +133,16 @@ func PrinterSave(c *gin.Context) {
 	if !validatePrinter(c, &p) {
 		return
 	}
-	res, err := store.DB.Exec(`INSERT INTO tb_printer(printer_name, printer_type, provider, ip, port,
-		feie_sn, paper_width, copies, category_ids, status, del_flag, create_time, update_time)
-		VALUES(?,?,?,?,?,?,?,?,?,?,'0',?,?)`,
-		p.PrinterName, p.PrinterType, p.Provider, p.IP, p.Port,
-		p.FeieSN, p.PaperWidth, p.Copies, p.CategoryIDs, p.Status, store.Now(), store.Now())
+	id, err := service.InsertPrinter(p.ToPO())
 	if err != nil {
 		fail(c, err.Error())
 		return
 	}
-	id, _ := res.LastInsertId()
 	ok(c, gin.H{"printerId": id})
 }
 
 func PrinterUpdate(c *gin.Context) {
-	var p model.Printer
+	var p dto.Printer
 	if err := c.ShouldBindJSON(&p); err != nil || p.PrinterID == 0 {
 		fail(c, "参数错误")
 		return
@@ -186,10 +151,10 @@ func PrinterUpdate(c *gin.Context) {
 	if !validatePrinter(c, &p) {
 		return
 	}
-	store.DB.Exec(`UPDATE tb_printer SET printer_name=?, printer_type=?, provider=?, ip=?, port=?,
-		feie_sn=?, paper_width=?, copies=?, category_ids=?, status=?, update_time=? WHERE printer_id=?`,
-		p.PrinterName, p.PrinterType, p.Provider, p.IP, p.Port,
-		p.FeieSN, p.PaperWidth, p.Copies, p.CategoryIDs, p.Status, store.Now(), p.PrinterID)
+	if err := service.UpdatePrinter(p.ToPO()); err != nil {
+		fail(c, err.Error())
+		return
+	}
 	okMsg(c, "修改成功")
 }
 
@@ -198,7 +163,10 @@ func PrinterDelete(c *gin.Context) {
 	if !okid {
 		return
 	}
-	store.DB.Exec(`UPDATE tb_printer SET del_flag='1', update_time=? WHERE printer_id=?`, store.Now(), id)
+	if err := service.DeletePrinter(id); err != nil {
+		fail(c, err.Error())
+		return
+	}
 	okMsg(c, "删除成功")
 }
 
@@ -209,7 +177,7 @@ func PrinterTest(c *gin.Context) {
 	if !okp {
 		return
 	}
-	if err := print.SendTestPrint(p); err != nil {
+	if err := print.SendTestPrint(p.ToPO()); err != nil {
 		fail(c, "测试打印失败:"+err.Error())
 		return
 	}
@@ -223,7 +191,7 @@ func PrinterProbe(c *gin.Context) {
 	if !okp {
 		return
 	}
-	msg, err := print.ProbePrinter(p)
+	msg, err := print.ProbePrinter(p.ToPO())
 	if err != nil {
 		fail(c, "连接失败:"+err.Error())
 		return
@@ -240,7 +208,7 @@ func PrinterStatus(c *gin.Context) {
 	if !okid {
 		return
 	}
-	p, err := store.LoadPrinter(id)
+	p, err := service.LoadPrinter(id)
 	if err != nil {
 		fail(c, "打印机不存在")
 		return
@@ -254,7 +222,7 @@ func PrinterStatus(c *gin.Context) {
 		if err != nil {
 			res := gin.H{"provider": provider, "online": false, "status": err.Error()}
 			if p.IsAgent() {
-				res["pending"] = store.PendingJobCountByPrinter(p.PrinterID)
+				res["pending"] = service.PendingJobCountByPrinter(p.PrinterID)
 			}
 			ok(c, res)
 			return
@@ -262,7 +230,7 @@ func PrinterStatus(c *gin.Context) {
 		res := gin.H{"provider": provider, "online": true, "status": "端口可达(直连打印机无状态查询接口)"}
 		if p.IsAgent() {
 			res["status"] = msg
-			res["pending"] = store.PendingJobCountByPrinter(p.PrinterID)
+			res["pending"] = service.PendingJobCountByPrinter(p.PrinterID)
 		}
 		ok(c, res)
 		return
@@ -347,7 +315,7 @@ func PrinterClear(c *gin.Context) {
 	if !okp {
 		return
 	}
-	if p.IsAgent() {
+	if p.Provider == po.PrinterProviderAgent {
 		// 代理掉线 / IP 填错时队列会一直堆积,必须给商家一个止损手段。
 		n, err := print.ClearAgentQueue(p.PrinterID)
 		if err != nil {
@@ -357,7 +325,7 @@ func PrinterClear(c *gin.Context) {
 		okMsg(c, "已清空「"+p.PrinterName+"」的待打印队列(丢弃 "+strconv.Itoa(n)+" 条未送出任务)")
 		return
 	}
-	if !p.IsFeie() {
+	if p.Provider != po.PrinterProviderFeie {
 		fail(c, "清空队列仅支持飞鹅云 / 本地打印代理打印机")
 		return
 	}
@@ -376,29 +344,29 @@ func PrinterClear(c *gin.Context) {
 // FeieInfo 返回飞鹅账号配置概况(不回显 UKEY)。
 func FeieInfo(c *gin.Context) {
 	ok(c, gin.H{
-		"user":       store.GetCfg("feie_user"),
-		"apiUrl":     store.GetCfg("feie_api_url"),
+		"user":       service.GetSetting("feie_user"),
+		"apiUrl":     service.GetSetting("feie_api_url"),
 		"configured": print.FeieConfigured(),
 	})
 }
 
 // loadPrinterParam 按路径 :id 读取打印机,失败时已写入错误响应。
-func loadPrinterParam(c *gin.Context) (model.Printer, bool) {
+func loadPrinterParam(c *gin.Context) (dto.Printer, bool) {
 	id, okid := idParam(c)
 	if !okid {
-		return model.Printer{}, false
+		return dto.Printer{}, false
 	}
-	p, err := store.LoadPrinter(id)
+	p, err := service.LoadPrinter(id)
 	if err != nil {
 		fail(c, "打印机不存在")
-		return model.Printer{}, false
+		return dto.Printer{}, false
 	}
-	return p, true
+	return dto.FromPrinter(p, service.ParseIDList(p.CategoryIDs), "", nil), true
 }
 
 // printerTarget 日志/提示里用的打印机定位串。
-func printerTarget(p model.Printer) string {
-	if p.IsFeie() {
+func printerTarget(p dto.Printer) string {
+	if p.Provider == po.PrinterProviderFeie {
 		return "飞鹅 SN " + p.FeieSN
 	}
 	port := p.Port
@@ -406,7 +374,7 @@ func printerTarget(p model.Printer) string {
 		port = 9100
 	}
 	addr := p.IP + ":" + strconv.Itoa(port)
-	if p.IsAgent() {
+	if p.Provider == po.PrinterProviderAgent {
 		return "门店内网 " + addr + "(由本地打印代理转发)"
 	}
 	return addr

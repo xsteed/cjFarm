@@ -93,7 +93,7 @@ func main() {
 func seedSummary() string {
 	c := store.SeedCounts()
 	return fmt.Sprintf("系统配置 %d 项、内置角色 %d 个、桌台 %d 张、分类 %d 个、菜品 %d 道、规格 %d 条、备注 %d 项、打印机 %d 台",
-		c["config"], c["role"], c["table"], c["category"], c["dish"], c["spec"], c["remark"], c["printer"])
+		c["setting"], c["role"], c["table"], c["category"], c["dish"], c["spec"], c["remark"], c["printer"])
 }
 
 // render 拼接「头部说明 + 生成的语句」。
@@ -124,10 +124,10 @@ func sqliteSchemaHeader() []string {
 		"--",
 		"-- 适用场景:全新部署 / 从零建库,执行后得到与后端代码完全一致的库结构",
 		"--           (已包含历史上通过 ALTER TABLE 追加的所有列)。",
-		"-- 执行方式:sqlite3 dining.db < schema.sql",
+		"-- 执行方式:sqlite3 data/dining.db < schema.sql",
 		"-- 幂等性  :全部使用 IF NOT EXISTS,可重复执行。",
 		"--",
-		"-- 金额约定:所有金额字段以「分」为单位存 INTEGER,API 层由 model.ToYuan 转元。",
+		"-- 金额约定:所有金额字段以「分」为单位存 INTEGER,API 层由 po.ToYuan 转元。",
 		"-- ============================================================================",
 		"",
 		"PRAGMA foreign_keys = OFF;",
@@ -160,7 +160,7 @@ func mysqlSchemaHeader() []string {
 		"--   3. 与 SQLite 版的唯一语义差异:MySQL 会强制校验 VARCHAR 长度,",
 		"--      SQLite 不校验,导入超长数据时 MySQL 会报 'Data too long'。",
 		"--",
-		"-- 金额约定:所有金额字段以「分」为单位存 INT,API 层由 model.ToYuan 转元。",
+		"-- 金额约定:所有金额字段以「分」为单位存 INT,API 层由 po.ToYuan 转元。",
 		"-- ============================================================================",
 		"",
 		"SET NAMES utf8mb4;",
@@ -177,11 +177,12 @@ func sqliteSeedHeader() []string {
 		"-- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。",
 		"--",
 		"-- 内容:" + seedSummary() + "。",
-		"-- 执行方式:sqlite3 dining.db < seed.sql",
+		"-- 执行方式:sqlite3 data/dining.db < seed.sql",
 		"-- 幂等性  :全部使用 INSERT OR IGNORE + 显式主键,可重复执行不会产生重复数据。",
 		"--",
-		"-- 注意:金额一律为「分」;菜品图片与收款码存的是 /uploads/ 虚拟路径,",
-		"--       需将 backend/uploads/ 下对应文件放到后端静态托管的 /uploads/ 目录才能显示。",
+		"-- 注意:金额一律为「分」;图片内容存于 tb_image 表(数据库),",
+		"--       出厂图片内嵌后端二进制、首次启动自动写入;业务表仅存 /uploads/<文件名> 虚拟路径,",
+		"--       展示时由后端从库读取,seed.sql 不含图片数据。",
 		"-- ============================================================================",
 	}
 }
@@ -199,8 +200,9 @@ func mysqlSeedHeader() []string {
 		"-- 执行方式:mysql -u dining -p dining < seed.sql",
 		"-- 幂等性  :全部使用 INSERT IGNORE + 显式主键,可重复执行不会产生重复数据。",
 		"--",
-		"-- 注意:金额一律为「分」;菜品图片与收款码存的是 /uploads/ 虚拟路径,",
-		"--       需将 backend/uploads/ 下对应文件放到后端静态托管的 /uploads/ 目录才能显示。",
+		"-- 注意:金额一律为「分」;图片内容存于 tb_image 表(数据库),",
+		"--       出厂图片内嵌后端二进制、首次启动自动写入;业务表仅存 /uploads/<文件名> 虚拟路径,",
+		"--       展示时由后端从库读取,seed.sql 不含图片数据。",
 		"-- ============================================================================",
 		"",
 		"SET NAMES utf8mb4;",

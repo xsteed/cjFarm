@@ -90,7 +90,7 @@ func TestAdminWriteRoutesHaveAuditMeta(t *testing.T) {
 	r := gin.New()
 	setupAPI(r)
 
-	const auditPrefix = "/prod-api/dining"
+	const auditPrefix = "/api/admin"
 	missing := []string{}
 	for _, rt := range r.Routes() {
 		if !strings.HasPrefix(rt.Path, auditPrefix) {
@@ -145,20 +145,20 @@ func TestCustomerRoutesStayPublic(t *testing.T) {
 	setupAPI(r)
 
 	mustExist := []string{
-		"POST /prod-api/auth/login",
-		"GET /prod-api/api/dining/menu",
-		"GET /prod-api/api/dining/table/:id",
-		"POST /prod-api/api/dining/order",
-		"POST /prod-api/api/dining/order/append",
-		"GET /prod-api/api/dining/order/no/:orderNo",
-		"POST /prod-api/api/dining/order/urge",
-		"GET /prod-api/api/dining/config",
-		"GET /prod-api/api/dining/remarks",
-		"GET /prod-api/api/dining/pay/qr",
-		"POST /prod-api/api/dining/pay/create",
-		"POST /prod-api/api/dining/pay/notify/wxpay",
-		"POST /prod-api/api/dining/pay/notify/alipay",
-		"GET /prod-api/api/dining/pay/query",
+		"POST /api/auth/login",
+		"GET /api/customer/menu",
+		"GET /api/customer/table/:id",
+		"POST /api/customer/order",
+		"POST /api/customer/order/append",
+		"GET /api/customer/order/no/:orderNo",
+		"POST /api/customer/order/urge",
+		"GET /api/customer/config",
+		"GET /api/customer/remarks",
+		"GET /api/customer/pay/qr",
+		"POST /api/customer/pay/create",
+		"POST /api/customer/pay/notify/wxpay",
+		"POST /api/customer/pay/notify/alipay",
+		"GET /api/customer/pay/query",
 	}
 	alive := map[string]bool{}
 	for _, rt := range r.Routes() {

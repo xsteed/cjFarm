@@ -2,7 +2,6 @@ package handler
 
 import (
 	"bytes"
-	"dining-system/internal/logger"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,8 +14,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"dining-system/internal/model"
-	"dining-system/internal/store"
+	"dining-system/infra/logger"
+	"dining-system/internal/dto"
+	"dining-system/internal/po"
+	"dining-system/internal/service"
 )
 
 // ============================================================================
@@ -38,7 +39,7 @@ import (
 type auditMeta struct {
 	Module string // 模块中文名
 	Action string // 动作中文名
-	Type   string // 操作类型(见 model.OperType*)
+	Type   string // 操作类型(见 po.OperType*)
 	Target string // 业务对象类型:order / user / dish ...
 	IDKey  string // 从请求体取对象标识的键名(如 orderId);路径 :id 优先
 }
@@ -49,65 +50,74 @@ type auditMeta struct {
 // 打开 AUDIT_LOG_GET 时才记,未登记的 GET 走默认元信息。
 var routeAudit = map[string]auditMeta{
 	// ---- 登录者自身 ----
-	"POST /prod-api/dining/auth/password": {Module: "登录账号", Action: "修改密码", Type: model.OperTypeUpdate, Target: "user", IDKey: "userId"},
+	"POST /api/admin/auth/password":        {Module: "登录账号", Action: "修改密码", Type: po.OperTypeUpdate, Target: "user", IDKey: "userId"},
+	"POST /api/admin/auth/remember/revoke": {Module: "登录账号", Action: "吊销记住登录", Type: po.OperTypeDelete, Target: "user"},
 
 	// ---- 员工与权限(最高危:权限被谁放大过必须能查) ----
-	"POST /prod-api/dining/user/save":          {Module: "员工管理", Action: "新增员工", Type: model.OperTypeInsert, Target: "user"},
-	"POST /prod-api/dining/user/update":        {Module: "员工管理", Action: "修改员工", Type: model.OperTypeUpdate, Target: "user", IDKey: "userId"},
-	"POST /prod-api/dining/user/resetPassword": {Module: "员工管理", Action: "重置员工密码", Type: model.OperTypeGrant, Target: "user", IDKey: "userId"},
-	"POST /prod-api/dining/user/toggleStatus":  {Module: "员工管理", Action: "启停用员工", Type: model.OperTypeGrant, Target: "user", IDKey: "userId"},
-	"DELETE /prod-api/dining/user/:id":         {Module: "员工管理", Action: "删除员工", Type: model.OperTypeDelete, Target: "user", IDKey: "id"},
-	"POST /prod-api/dining/role/save":          {Module: "角色权限", Action: "新增角色", Type: model.OperTypeInsert, Target: "role"},
-	"POST /prod-api/dining/role/update":        {Module: "角色权限", Action: "修改角色权限", Type: model.OperTypeGrant, Target: "role", IDKey: "roleId"},
-	"DELETE /prod-api/dining/role/:id":         {Module: "角色权限", Action: "删除角色", Type: model.OperTypeDelete, Target: "role", IDKey: "id"},
+	"POST /api/admin/user/save":          {Module: "员工管理", Action: "新增员工", Type: po.OperTypeInsert, Target: "user"},
+	"POST /api/admin/user/update":        {Module: "员工管理", Action: "修改员工", Type: po.OperTypeUpdate, Target: "user", IDKey: "userId"},
+	"POST /api/admin/user/resetPassword": {Module: "员工管理", Action: "重置员工密码", Type: po.OperTypeGrant, Target: "user", IDKey: "userId"},
+	"POST /api/admin/user/toggleStatus":  {Module: "员工管理", Action: "启停用员工", Type: po.OperTypeGrant, Target: "user", IDKey: "userId"},
+	"DELETE /api/admin/user/:id":         {Module: "员工管理", Action: "删除员工", Type: po.OperTypeDelete, Target: "user", IDKey: "id"},
+	"POST /api/admin/role/save":          {Module: "角色权限", Action: "新增角色", Type: po.OperTypeInsert, Target: "role"},
+	"POST /api/admin/role/update":        {Module: "角色权限", Action: "修改角色权限", Type: po.OperTypeGrant, Target: "role", IDKey: "roleId"},
+	"DELETE /api/admin/role/:id":         {Module: "角色权限", Action: "删除角色", Type: po.OperTypeDelete, Target: "role", IDKey: "id"},
 
 	// ---- 基础资料 ----
-	"POST /prod-api/dining/table/save":      {Module: "桌台管理", Action: "新增桌台", Type: model.OperTypeInsert, Target: "table"},
-	"POST /prod-api/dining/table/update":    {Module: "桌台管理", Action: "修改桌台", Type: model.OperTypeUpdate, Target: "table", IDKey: "tableId"},
-	"DELETE /prod-api/dining/table/:id":     {Module: "桌台管理", Action: "删除桌台", Type: model.OperTypeDelete, Target: "table", IDKey: "id"},
-	"POST /prod-api/dining/category/save":   {Module: "分类管理", Action: "新增分类", Type: model.OperTypeInsert, Target: "category"},
-	"POST /prod-api/dining/category/update": {Module: "分类管理", Action: "修改分类", Type: model.OperTypeUpdate, Target: "category", IDKey: "categoryId"},
-	"DELETE /prod-api/dining/category/:id":  {Module: "分类管理", Action: "删除分类", Type: model.OperTypeDelete, Target: "category", IDKey: "id"},
-	"POST /prod-api/dining/dish/save":       {Module: "菜品管理", Action: "新增菜品", Type: model.OperTypeInsert, Target: "dish"},
-	"POST /prod-api/dining/dish/update":     {Module: "菜品管理", Action: "修改菜品", Type: model.OperTypeUpdate, Target: "dish", IDKey: "dishId"},
-	"DELETE /prod-api/dining/dish/:id":      {Module: "菜品管理", Action: "删除菜品", Type: model.OperTypeDelete, Target: "dish", IDKey: "id"},
-	"POST /prod-api/dining/remark/save":     {Module: "备注管理", Action: "新增备注", Type: model.OperTypeInsert, Target: "remark"},
-	"POST /prod-api/dining/remark/update":   {Module: "备注管理", Action: "修改备注", Type: model.OperTypeUpdate, Target: "remark", IDKey: "remarkId"},
-	"DELETE /prod-api/dining/remark/:id":    {Module: "备注管理", Action: "删除备注", Type: model.OperTypeDelete, Target: "remark", IDKey: "id"},
+	"POST /api/admin/table/save":      {Module: "桌台管理", Action: "新增桌台", Type: po.OperTypeInsert, Target: "table"},
+	"POST /api/admin/table/update":    {Module: "桌台管理", Action: "修改桌台", Type: po.OperTypeUpdate, Target: "table", IDKey: "tableId"},
+	"DELETE /api/admin/table/:id":     {Module: "桌台管理", Action: "删除桌台", Type: po.OperTypeDelete, Target: "table", IDKey: "id"},
+	"POST /api/admin/category/save":   {Module: "分类管理", Action: "新增分类", Type: po.OperTypeInsert, Target: "category"},
+	"POST /api/admin/category/update": {Module: "分类管理", Action: "修改分类", Type: po.OperTypeUpdate, Target: "category", IDKey: "categoryId"},
+	"DELETE /api/admin/category/:id":  {Module: "分类管理", Action: "删除分类", Type: po.OperTypeDelete, Target: "category", IDKey: "id"},
+	"POST /api/admin/dish/save":       {Module: "菜品管理", Action: "新增菜品", Type: po.OperTypeInsert, Target: "dish"},
+	"POST /api/admin/dish/update":     {Module: "菜品管理", Action: "修改菜品", Type: po.OperTypeUpdate, Target: "dish", IDKey: "dishId"},
+	"DELETE /api/admin/dish/:id":      {Module: "菜品管理", Action: "删除菜品", Type: po.OperTypeDelete, Target: "dish", IDKey: "id"},
+	"POST /api/admin/remark/save":     {Module: "备注管理", Action: "新增备注", Type: po.OperTypeInsert, Target: "remark"},
+	"POST /api/admin/remark/update":   {Module: "备注管理", Action: "修改备注", Type: po.OperTypeUpdate, Target: "remark", IDKey: "remarkId"},
+	"DELETE /api/admin/remark/:id":    {Module: "备注管理", Action: "删除备注", Type: po.OperTypeDelete, Target: "remark", IDKey: "id"},
 
 	// ---- 打印机(注意 test/probe/bind/clear 会改动打印机或出纸,同样留痕) ----
-	"POST /prod-api/dining/printer/save":      {Module: "打印机管理", Action: "新增打印机", Type: model.OperTypeInsert, Target: "printer"},
-	"POST /prod-api/dining/printer/update":    {Module: "打印机管理", Action: "修改打印机", Type: model.OperTypeUpdate, Target: "printer", IDKey: "printerId"},
-	"DELETE /prod-api/dining/printer/:id":     {Module: "打印机管理", Action: "删除打印机", Type: model.OperTypeDelete, Target: "printer", IDKey: "id"},
-	"POST /prod-api/dining/printer/test/:id":  {Module: "打印机管理", Action: "打印测试页", Type: model.OperTypePrint, Target: "printer", IDKey: "id"},
-	"POST /prod-api/dining/printer/probe/:id": {Module: "打印机管理", Action: "探测打印机", Type: model.OperTypeOther, Target: "printer", IDKey: "id"},
-	"POST /prod-api/dining/printer/bind":      {Module: "打印机管理", Action: "绑定飞鹅账号", Type: model.OperTypeUpdate, Target: "printer"},
-	"POST /prod-api/dining/printer/clear/:id": {Module: "打印机管理", Action: "清空云端队列", Type: model.OperTypeUpdate, Target: "printer", IDKey: "id"},
+	"POST /api/admin/printer/save":      {Module: "打印机管理", Action: "新增打印机", Type: po.OperTypeInsert, Target: "printer"},
+	"POST /api/admin/printer/update":    {Module: "打印机管理", Action: "修改打印机", Type: po.OperTypeUpdate, Target: "printer", IDKey: "printerId"},
+	"DELETE /api/admin/printer/:id":     {Module: "打印机管理", Action: "删除打印机", Type: po.OperTypeDelete, Target: "printer", IDKey: "id"},
+	"POST /api/admin/printer/test/:id":  {Module: "打印机管理", Action: "打印测试页", Type: po.OperTypePrint, Target: "printer", IDKey: "id"},
+	"POST /api/admin/printer/probe/:id": {Module: "打印机管理", Action: "探测打印机", Type: po.OperTypeOther, Target: "printer", IDKey: "id"},
+	"POST /api/admin/printer/bind":      {Module: "打印机管理", Action: "绑定飞鹅账号", Type: po.OperTypeUpdate, Target: "printer"},
+	"POST /api/admin/printer/clear/:id": {Module: "打印机管理", Action: "清空云端队列", Type: po.OperTypeUpdate, Target: "printer", IDKey: "id"},
+	// per-agent 身份管理:签发令牌等同授予打印权限,启停等同收回,必须留痕。
+	"POST /api/admin/printer/agent/save":       {Module: "打印机管理", Action: "新增打印代理", Type: po.OperTypeInsert, Target: "print_agent"},
+	"POST /api/admin/printer/agent/status/:id": {Module: "打印机管理", Action: "变更代理状态", Type: po.OperTypeUpdate, Target: "print_agent", IDKey: "id"},
+	"POST /api/admin/printer/agent/update/:id": {Module: "打印机管理", Action: "修改打印代理", Type: po.OperTypeUpdate, Target: "print_agent", IDKey: "id"},
+	"DELETE /api/admin/printer/agent/:id":      {Module: "打印机管理", Action: "删除打印代理", Type: po.OperTypeDelete, Target: "print_agent", IDKey: "id"},
 
 	// ---- 打印留痕与补打 ----
-	"POST /prod-api/dining/print/log/reprint": {Module: "打印记录", Action: "补打小票", Type: model.OperTypePrint, Target: "print", IDKey: "printId"},
-	"POST /prod-api/dining/order/reprint":     {Module: "打印记录", Action: "补打订单小票", Type: model.OperTypePrint, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/print/log/reprint":    {Module: "打印记录", Action: "补打小票", Type: po.OperTypePrint, Target: "print", IDKey: "printId"},
+	"POST /api/admin/order/reprint":        {Module: "打印记录", Action: "补打订单小票", Type: po.OperTypePrint, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/print/preview/sample": {Module: "打印记录", Action: "预览票据模板", Type: po.OperTypeOther, Target: "print"},
 
 	// ---- 系统配置 ----
-	"POST /prod-api/dining/config/save": {Module: "系统配置", Action: "修改系统配置", Type: model.OperTypeUpdate, Target: "config"},
+	"POST /api/admin/config/save": {Module: "系统配置", Action: "修改系统配置", Type: po.OperTypeUpdate, Target: "config"},
+	// 令牌值敏感,摘要由 handler 显式给出且不含明文。
+	"POST /api/admin/config/agent/token": {Module: "系统配置", Action: "签发打印代理全局令牌", Type: po.OperTypeUpdate, Target: "config"},
 
 	// ---- 订单(金额相关,必须留痕) ----
-	"POST /prod-api/dining/order/status":        {Module: "订单管理", Action: "订单流转", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/order/finish":        {Module: "订单管理", Action: "完成订单", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/order/urge/handle":   {Module: "订单管理", Action: "处理催菜", Type: model.OperTypeUpdate, Target: "urge", IDKey: "urgeId"},
-	"POST /prod-api/dining/order/pay":           {Module: "订单管理", Action: "订单收款", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/order/settle":        {Module: "订单管理", Action: "订单结账", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/order/credit/settle": {Module: "挂账管理", Action: "挂账核销", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/order/settle/cancel": {Module: "订单管理", Action: "撤销结算", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/order/edit":          {Module: "订单管理", Action: "订单改单", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/order/cancel":        {Module: "订单管理", Action: "取消订单", Type: model.OperTypeDelete, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/status":        {Module: "订单管理", Action: "订单流转", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/finish":        {Module: "订单管理", Action: "完成订单", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/urge/handle":   {Module: "订单管理", Action: "处理催菜", Type: po.OperTypeUpdate, Target: "urge", IDKey: "urgeId"},
+	"POST /api/admin/order/pay":           {Module: "订单管理", Action: "订单收款", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/settle":        {Module: "订单管理", Action: "订单结账", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/credit/settle": {Module: "挂账管理", Action: "挂账核销", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/settle/cancel": {Module: "订单管理", Action: "撤销结算", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/edit":          {Module: "订单管理", Action: "订单改单", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/order/cancel":        {Module: "订单管理", Action: "取消订单", Type: po.OperTypeDelete, Target: "order", IDKey: "orderId"},
 
 	// ---- 退款 ----
-	"POST /prod-api/dining/pay/refund":       {Module: "退款管理", Action: "发起退款", Type: model.OperTypeUpdate, Target: "order", IDKey: "orderId"},
-	"POST /prod-api/dining/pay/refund/query": {Module: "退款管理", Action: "同步退款状态", Type: model.OperTypeOther, Target: "refund", IDKey: "refundId"},
+	"POST /api/admin/pay/refund":       {Module: "退款管理", Action: "发起退款", Type: po.OperTypeUpdate, Target: "order", IDKey: "orderId"},
+	"POST /api/admin/pay/refund/query": {Module: "退款管理", Action: "同步退款状态", Type: po.OperTypeOther, Target: "refund", IDKey: "refundId"},
 
 	// ---- 操作日志自身 ----
-	"POST /prod-api/dining/log/clean": {Module: "操作日志", Action: "清理操作日志", Type: model.OperTypeDelete, Target: "operlog"},
+	"POST /api/admin/log/clean": {Module: "操作日志", Action: "清理操作日志", Type: po.OperTypeDelete, Target: "operlog"},
 }
 
 // AuditMetaForRoute 查询某路由的审计元信息,第二个返回值表示是否已登记。
@@ -171,19 +181,19 @@ const maxAuditBody = 256 << 10
 // 写入失败只打 stderr:审计是旁路数据,绝不能因为记日志把业务搞挂。
 func AuditLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !store.AuditEnabled() {
+		if !service.AuditEnabled() {
 			c.Next()
 			return
 		}
 		method, path := c.Request.Method, c.FullPath()
 		meta, ok := AuditMetaForRoute(method, path)
-		if method == http.MethodGet && !store.AuditLogGet() {
+		if method == http.MethodGet && !service.AuditLogGet() {
 			c.Next()
 			return
 		}
 		if !ok {
 			// 未登记:用路由本身兜底记一条,保证「不漏」优先于「好看」。
-			meta = auditMeta{Module: moduleOfRoute(path), Action: method, Type: model.OperTypeOther}
+			meta = auditMeta{Module: moduleOfRoute(path), Action: method, Type: po.OperTypeOther}
 		}
 
 		start := time.Now()
@@ -214,7 +224,7 @@ func AuditLog() gin.HandlerFunc {
 			}
 		}
 		auth := currentAuth(c)
-		entry := model.OperLog{
+		entry := po.OperLog{
 			Module:       meta.Module,
 			BusinessType: meta.Type,
 			Action:       meta.Action,
@@ -223,15 +233,15 @@ func AuditLog() gin.HandlerFunc {
 			OperIP:       c.ClientIP(),
 			TargetType:   targetType,
 			TargetID:     targetID,
-			OperParam:    store.MaskParams(raw),
+			OperParam:    service.MaskParams(raw),
 			Detail:       detail,
-			Status:       model.OperStatusSuccess,
+			Status:       po.OperStatusSuccess,
 			ErrorMsg:     errMsg,
 			CostMs:       int(time.Since(start).Milliseconds()),
-			CreateTime:   store.Now(),
+			CreateTime:   service.Now(),
 		}
 		if !success {
-			entry.Status = model.OperStatusFail
+			entry.Status = po.OperStatusFail
 		}
 		if auth != nil {
 			entry.OperatorID = auth.UserID
@@ -241,7 +251,7 @@ func AuditLog() gin.HandlerFunc {
 			// 理论上不会发生(中间件在 AdminAuth 之后),兜底从令牌取用户名。
 			entry.Operator = usernameFromToken(c)
 		}
-		if err := store.InsertOperLog(entry); err != nil {
+		if err := service.InsertOperLog(entry); err != nil {
 			logger.Warnf("[audit] 写入操作日志失败(%s): %v", entry.Method, err)
 		}
 	}
@@ -287,12 +297,43 @@ func readAuditBody(c *gin.Context) string {
 	if c.Request.ContentLength > maxAuditBody {
 		return ""
 	}
+	// chunked 传输(ContentLength == -1)拿不到总长,不能用 io.ReadAll 无上限读取:
+	// 超大 body 会让审计副本与 handler 的 ShouldBindJSON 各占一份完整内存。
+	// 这里最多读 maxAuditBody+1 字节 —— 多读 1 字节用于判断是否超限,审计只保留
+	// 前 maxAuditBody 字节(超限即截断);读到的前缀与剩余流拼回,handler 仍能拿到
+	// 完整请求体。
+	if c.Request.ContentLength == -1 {
+		raw, err := io.ReadAll(io.LimitReader(c.Request.Body, maxAuditBody+1))
+		body := c.Request.Body
+		c.Request.Body = &restoreReadCloser{Reader: io.MultiReader(bytes.NewReader(raw), body), body: body}
+		if err != nil {
+			return ""
+		}
+		if len(raw) > maxAuditBody {
+			return string(raw[:maxAuditBody])
+		}
+		return string(raw)
+	}
 	raw, err := io.ReadAll(c.Request.Body)
 	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
 	if err != nil {
 		return ""
 	}
 	return string(raw)
+}
+
+// restoreReadCloser 把「已读的审计前缀」和「剩余请求体流」拼成一个可关闭的读流。
+//
+// 不能直接用 io.NopCloser(io.MultiReader(...)):那样 Close 是 no-op,chunked body
+// 读了一半时原 Body 不会随请求结束被关闭,连接无法正确回收。这里把 Close 转发回
+// 原 Body,handler 读完拼接流后由 server 正常触发回收。
+type restoreReadCloser struct {
+	io.Reader
+	body io.Closer
+}
+
+func (r *restoreReadCloser) Close() error {
+	return r.body.Close()
 }
 
 // resolveTargetID 确定操作对象标识:路径 :id 优先,其次请求体里的 ID 字段。
@@ -362,7 +403,7 @@ func responseMsg(body string) string {
 func moduleOfRoute(path string) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	for _, p := range parts {
-		if p == "dining" || p == "prod-api" {
+		if p == "admin" || p == "api" {
 			continue
 		}
 		return p
@@ -377,8 +418,8 @@ func moduleOfRoute(path string) string {
 // WriteOperLog 写入一条操作日志(补全 IP / URL / 时间)。
 //
 // 用于「不在管理端中间件链上」的场景:登录是公开接口,走不到 AuditLog。
-func WriteOperLog(c *gin.Context, l model.OperLog) {
-	if !store.AuditEnabled() {
+func WriteOperLog(c *gin.Context, l po.OperLog) {
+	if !service.AuditEnabled() {
 		return
 	}
 	if l.RequestURL == "" {
@@ -388,9 +429,9 @@ func WriteOperLog(c *gin.Context, l model.OperLog) {
 		l.OperIP = c.ClientIP()
 	}
 	if l.CreateTime == "" {
-		l.CreateTime = store.Now()
+		l.CreateTime = service.Now()
 	}
-	if err := store.InsertOperLog(l); err != nil {
+	if err := service.InsertOperLog(l); err != nil {
 		logger.Warnf("[audit] 写入操作日志失败(%s): %v", l.Action, err)
 	}
 }
@@ -400,15 +441,15 @@ func WriteOperLog(c *gin.Context, l model.OperLog) {
 // 失败尝试是安全审计的关键证据:连续密码错误可能是撞库,
 // 而 tb_user 上的 last_login_time 只保留最后一次成功,看不出这些。
 func WriteLoginLog(c *gin.Context, userID int, username string, success bool, msg string) {
-	status := model.OperStatusFail
+	status := po.OperStatusFail
 	if success {
-		status = model.OperStatusSuccess
+		status = po.OperStatusSuccess
 	}
-	WriteOperLog(c, model.OperLog{
+	WriteOperLog(c, po.OperLog{
 		Module:       "登录账号",
-		BusinessType: model.OperTypeLogin,
+		BusinessType: po.OperTypeLogin,
 		Action:       "登录系统",
-		Method:       "POST /prod-api/auth/login",
+		Method:       "POST /api/auth/login",
 		OperatorID:   userID,
 		Operator:     username,
 		Status:       status,
@@ -422,7 +463,7 @@ func WriteLoginLog(c *gin.Context, userID int, username string, success bool, ms
 // 中间件看不到。「谁在尝试越权」恰恰是最该留痕的一类,故在此单独埋点。
 // 匿名请求(没有令牌)不记 —— 否则任何人扫一下端口就能灌满日志。
 func writeDeniedLog(c *gin.Context, action, msg string) {
-	if !store.AuditEnabled() {
+	if !service.AuditEnabled() {
 		return
 	}
 	operator, operatorID := "", 0
@@ -434,14 +475,14 @@ func writeDeniedLog(c *gin.Context, action, msg string) {
 	if operator == "" {
 		return
 	}
-	WriteOperLog(c, model.OperLog{
+	WriteOperLog(c, po.OperLog{
 		Module:       "系统安全",
-		BusinessType: model.OperTypeOther,
+		BusinessType: po.OperTypeOther,
 		Action:       action,
 		Method:       c.Request.Method + " " + c.FullPath(),
 		OperatorID:   operatorID,
 		Operator:     operator,
-		Status:       model.OperStatusFail,
+		Status:       po.OperStatusFail,
 		ErrorMsg:     msg,
 	})
 }
@@ -459,21 +500,25 @@ func LogList(c *gin.Context) {
 			status = &v
 		}
 	}
-	total, list, err := store.ListOperLogs(store.OperLogQuery{
-		Operator:     strings.TrimSpace(c.Query("operator")),
-		Module:       strings.TrimSpace(c.Query("module")),
-		BusinessType: strings.TrimSpace(c.Query("businessType")),
-		TargetType:   strings.TrimSpace(c.Query("targetType")),
-		TargetID:     strings.TrimSpace(c.Query("targetId")),
+	total, list, err := service.ListOperLogs(service.OperLogFilter{
+		Operator:     c.Query("operator"),
+		Module:       c.Query("module"),
+		BusinessType: c.Query("businessType"),
+		TargetType:   c.Query("targetType"),
+		TargetID:     c.Query("targetId"),
 		Status:       status,
-		BeginTime:    strings.TrimSpace(c.Query("beginTime")),
-		EndTime:      strings.TrimSpace(c.Query("endTime")),
+		BeginTime:    c.Query("beginTime"),
+		EndTime:      c.Query("endTime"),
 	}, pageNum, pageSize)
 	if err != nil {
 		fail(c, err.Error())
 		return
 	}
-	tableResult(c, total, list)
+	items := make([]dto.OperLog, 0, len(list))
+	for _, l := range list {
+		items = append(items, dto.FromOperLog(l))
+	}
+	tableResult(c, total, items)
 }
 
 // LogClean 按保留天数清理过期日志。
@@ -484,15 +529,9 @@ func LogList(c *gin.Context) {
 // 「清理动作本身有留痕」救不回被删掉的数据。
 // 清理动作本身会被 AuditLog 中间件记一条,谁清的、清了多少仍有据可查。
 func LogClean(c *gin.Context) {
-	days := store.AuditRetentionDays()
-	if days <= 0 {
-		fail(c, "未配置保留天数(AUDIT_RETENTION_DAYS),已禁用清理")
-		return
-	}
-	cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
-	n, err := store.CleanOperLogs(cutoff)
+	days, cutoff, n, err := service.CleanExpiredOperLogs()
 	if err != nil {
-		fail(c, "清理失败: "+err.Error())
+		fail(c, err.Error())
 		return
 	}
 	SetAuditDetail(c, "operlog", "", fmt.Sprintf("清理 %s 之前的记录，共 %d 条（保留 %d 天）", cutoff, n, days))

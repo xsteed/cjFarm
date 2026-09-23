@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  门店本地打印代理 macOS LaunchAgent 模板(普通版)。
+
+  使用方法：
+    1. 将 /usr/local/bin/print-agent 改为实际路径（CHANGEME 系列按需替换）。
+    2. 保存到 ~/Library/LaunchAgents/com.cjfarm.print-agent.plist。
+    3. 执行 launchctl load ~/Library/LaunchAgents/com.cjfarm.print-agent.plist 启动。
+
+  也可以改用与 print-agent 同目录的 agent.env 配置文件，并去掉 server/token 两组命令行参数；
+  print-agent 支持读取同目录 agent.env。
+
+  关于盒盖防睡眠(可选项)：默认(本模板)不防睡眠，Mac 合盖进入系统睡眠、
+  代理停摆，唤醒后自动续上。若需要合盖后继续打单，把 ProgramArguments
+  改成用 caffeinate 包装代理:
+
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-i</string>
+        <string>-s</string>
+        <string>/usr/local/bin/print-agent</string>
+    </array>
+
+  用 print-agent 的 install 模式安装时，程序会交互询问是否启用；
+  （也可用 no-sleep 参数或 PRINT_AGENT_NO_SLEEP=1 环境变量显式指定）。
+
+  但请务必看清一点：**caffeinate 挡不住合盖睡眠**，单靠上面这个包装配不出
+  「合盖继续打单」。
+
+    合盖触发的是 Clamshell Sleep，属于电源管理层的独立触发器，IOPMAssertion
+    （caffeinate 用的就是它）抑制不了。电源日志里能直接看到接了电源照样睡：
+
+      Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using AC (Charge:100%)
+
+  真正关掉合盖触发器的是 pmset 的 disablesleep（需要 root，代理自己设不了）：
+
+      sudo pmset -a disablesleep 1      # 关闭合盖睡眠
+      sudo pmset -a disablesleep 0      # 改回来
+
+  免 sudo 核对当前状态：
+
+      ioreg -r -c IOPMrootDomain -d 1 | grep SleepDisabled     # 期望 SleepDisabled = Yes
+
+  caffeinate 仍然必要：合盖后没有任何输入，空闲睡眠计时器会到点，它负责挡住这一路。
+  这里用 -i 与 -s 两个开关而不是只有 -s，因为 man caffeinate 写明 -s 的断言
+  「仅在交流电源下有效」，只有 -s 时电池供电仍会空闲睡眠。
+
+  另外：合盖长时间运行会持续耗电与发热，门店请务必接交流电源、留出散热空间。
+
+  关于 AssociatedBundleIdentifiers（必读，macOS 15 及以上）：
+
+  这一项由 print-agent 的 install 模式自动写入，手工部署时也**不能省**。
+  macOS 15 起访问局域网需要「本地网络」授权，而授权按代码签名识别程序身份。
+  Apple TN3179 明确：launchd **daemon** 自动放行，但 launchd **agent 不在豁免之列**
+  —— 不使用 SMAppService 安装的 agent，必须在此声明 AssociatedBundleIdentifiers，
+  系统才能定位到 responsible code（本程序对应的 App）。
+
+  少了这一段，系统找不到可授权的责任主体：既不弹授权窗口，「系统设置 → 隐私与安全性
+  → 本地网络」里也不会出现本程序，局域网连接会被直接拒绝，报错为
+
+      dial tcp 192.168.x.x:9100: connect: no route to host
+
+  与「打印机没开机 / 网段不同」完全同形，门店只能靠猜。install 模式会同时把程序部署成
+  ~/Applications/PrintAgent.app，以保证这里能指到一个真实存在的 App。
+
+  注：本注释里提到命令行选项时一律省略前面的短横线 —— XML 注释中不允许出现连续两个
+  连字符，写了会让某些 plist 解析器（Go/Python/Swift，虽然 plutil 与 launchd 宽容）
+  直接报错。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cjfarm.print-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/print-agent</string>
+        <string>--server</string>
+        <string>https://localhost:8080</string>
+        <string>--token</string>
+        <string>CHANGEME_TOKEN</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/print-agent.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/print-agent.log</string>
+</dict>
+</plist>

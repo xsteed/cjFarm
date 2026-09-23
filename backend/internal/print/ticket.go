@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"dining-system/internal/model"
-	"dining-system/internal/store"
+	"dining-system/internal/po"
+	"dining-system/internal/service"
 )
 
 // LineWidth 根据纸宽(32=58mm, 48=80mm)返回每行可容纳的半角字符数(估测值)。
@@ -109,7 +109,7 @@ func twoCol(left, right string, width int) []string {
 func money(v float64) string { return fmt.Sprintf("%.2f", v) }
 
 // itemQtyLabel 菜品左侧文案:「菜名 (规格) x2」。
-func itemQtyLabel(it model.OrderItem) string {
+func itemQtyLabel(it po.OrderItem) string {
 	label := it.DishName
 	if strings.TrimSpace(it.SpecName) != "" {
 		label += " (" + it.SpecName + ")"
@@ -118,7 +118,7 @@ func itemQtyLabel(it model.OrderItem) string {
 }
 
 // appendItemRemark 把单菜备注作为缩进子行追加(如「加辣」)。
-func appendItemRemark(lines []string, it model.OrderItem, width int) []string {
+func appendItemRemark(lines []string, it po.OrderItem, width int) []string {
 	if strings.TrimSpace(it.Remark) == "" {
 		return lines
 	}
@@ -127,9 +127,9 @@ func appendItemRemark(lines []string, it model.OrderItem, width int) []string {
 
 // ticketHeader 单据公共抬头:店名 + 单据名 + 单号 + 桌台/人数/时间 + 分隔线。
 // noLabel 为单号前缀(食客小票用「订单号」、厨房单用「单号」),留空则不打印单号行。
-func ticketHeader(o model.Order, width int, title, noLabel string) []string {
+func ticketHeader(o po.Order, width int, title, noLabel string) []string {
 	lines := []string{
-		pad(store.GetCfg("shop_name"), width),
+		pad(service.GetSetting("shop_name"), width),
 		pad(title, width),
 	}
 	if noLabel != "" && strings.TrimSpace(o.OrderNo) != "" {
@@ -148,7 +148,7 @@ func ticketHeader(o model.Order, width int, title, noLabel string) []string {
 // title 用于区分「厨房单」与加菜时的「加菜单」——后厨看到加菜单就知道
 // 只需要补做这几道,不必重新核对整桌。
 // showPrice 打开时带出单价小计,便于后厨或传菜核对(默认关闭,后厨只看菜名数量)。
-func RenderKitchenTicket(o model.Order, items []model.OrderItem, paperWidth int, showPrice bool, title string) []string {
+func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, showPrice bool, title string) []string {
 	w := LineWidth(paperWidth)
 	if strings.TrimSpace(title) == "" {
 		title = "【厨房单】"
@@ -156,7 +156,7 @@ func RenderKitchenTicket(o model.Order, items []model.OrderItem, paperWidth int,
 	lines := ticketHeader(o, w, title, "单号")
 	for _, it := range items {
 		if showPrice {
-			lines = append(lines, twoCol(itemQtyLabel(it), money(it.Amount), w)...)
+			lines = append(lines, twoCol(itemQtyLabel(it), money(po.ToYuan(it.Amount)), w)...)
 		} else {
 			lines = append(lines, splitLines(itemQtyLabel(it), w)...)
 		}
@@ -170,21 +170,46 @@ func RenderKitchenTicket(o model.Order, items []model.OrderItem, paperWidth int,
 	return lines
 }
 
-// RenderGuestTicket 渲染食客小票(含金额、结算方式标注)。
-func RenderGuestTicket(o model.Order, paperWidth int) []string {
+// guestTicketConfig 食客小票的模板配置快照。
+// 渲染只消费快照,不直接读库——既保证一张票内配置一致,也让「示例预览」
+// 能注入未保存的表单值(所见即所改)。
+type guestTicketConfig struct {
+	footer       string // 页脚文案,空 = 不打印
+	showSeatFee  bool
+	showDiscount bool
+}
+
+// currentGuestTicketConfig 从配置读取当前快照(实际打印路径)。
+func currentGuestTicketConfig() guestTicketConfig {
+	return guestTicketConfig{
+		footer:       guestFooter(),
+		showSeatFee:  guestShowSeatFee(),
+		showDiscount: guestShowDiscount(),
+	}
+}
+
+// RenderGuestTicket 渲染食客小票(含金额、结算方式标注),使用当前库配置。
+func RenderGuestTicket(o po.Order, items []po.OrderItem, paperWidth int) []string {
+	return renderGuestTicketWith(o, items, paperWidth, currentGuestTicketConfig())
+}
+
+// renderGuestTicketWith 按给定模板配置渲染食客小票(配置可由预览注入)。
+func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg guestTicketConfig) []string {
 	w := LineWidth(paperWidth)
 	lines := ticketHeader(o, w, "【食客小票】", "订单号")
-	for _, it := range o.Items {
-		lines = append(lines, twoCol(itemQtyLabel(it), money(it.Amount), w)...)
+	for _, it := range items {
+		lines = append(lines, twoCol(itemQtyLabel(it), money(po.ToYuan(it.Amount)), w)...)
 		lines = appendItemRemark(lines, it, w)
 	}
 	lines = append(lines, hr(w))
-	lines = append(lines, twoCol("菜品金额", money(o.DishAmount), w)...)
-	lines = append(lines, twoCol("餐位费", money(o.SeatFee), w)...)
-	if o.DiscountAmount > 0 {
-		lines = append(lines, twoCol("优惠", "-"+money(o.DiscountAmount), w)...)
+	lines = append(lines, twoCol("菜品金额", money(po.ToYuan(o.DishAmount)), w)...)
+	if cfg.showSeatFee {
+		lines = append(lines, twoCol("餐位费", money(po.ToYuan(o.SeatFee)), w)...)
 	}
-	lines = append(lines, twoCol("合计", money(o.TotalAmount), w)...)
+	if o.DiscountAmount > 0 && cfg.showDiscount {
+		lines = append(lines, twoCol("优惠", "-"+money(po.ToYuan(o.DiscountAmount)), w)...)
+	}
+	lines = append(lines, twoCol("合计", money(po.ToYuan(o.TotalAmount)), w)...)
 	lines = append(lines, hr(w))
 	if strings.TrimSpace(o.OrderRemark) != "" {
 		lines = append(lines, splitLines("备注: "+o.OrderRemark, w)...)
@@ -200,22 +225,57 @@ func RenderGuestTicket(o model.Order, paperWidth int) []string {
 	case "credit":
 		switch o.CreditStatus {
 		case 1:
-			lines = append(lines, pad("【挂账】待收 "+money(o.CreditAmount), w))
+			lines = append(lines, pad("【挂账】待收 "+money(po.ToYuan(o.CreditAmount)), w))
 			if o.SettleRemark != "" {
 				lines = append(lines, splitLines("挂账人: "+o.SettleRemark, w)...)
 			}
 			lines = append(lines, pad("(挂账未结,请尽快至前台核销)", w))
 		case 2:
-			lines = append(lines, pad("【挂账已结】"+money(o.CreditAmount), w))
+			lines = append(lines, pad("【挂账已结】"+money(po.ToYuan(o.CreditAmount)), w))
 		}
 	}
-	lines = append(lines, hr(w))
-	lines = append(lines, pad("谢谢惠顾,欢迎再次光临", w))
+	// 页脚文案可配置(管理端「系统配置 → 小票打印」),清空则整段省略(含分隔线)。
+	if cfg.footer != "" {
+		lines = append(lines, hr(w))
+		lines = append(lines, splitLines(cfg.footer, w)...)
+	} else {
+		// 页脚省略时,裁掉尾部残留的分隔线(备注/金额区后的 hr 会成为孤行收尾)。
+		for len(lines) > 0 && lines[len(lines)-1] == hr(w) {
+			lines = lines[:len(lines)-1]
+		}
+	}
 	return lines
 }
 
+// BoldLine 报告一行是否按「票据排版惯例」加粗强调。
+//
+// 规则基于模板生成行的固定形态(而非渲染结构),因此可被所有消费方共用:
+//   - 店名行:整行等于系统配置里的店铺名(票头第一行);
+//   - 单据标题行:整行恰为「【…】」形态(【厨房单】/【加菜单】/【食客小票】等);
+//   - 合计行:以「合计」开头的两列行。
+//
+// 各通道的落地:
+//   - ESC/POS(直连 + 本地代理):ESC E 重打加粗,不占额外宽度,列对齐不受影响;
+//   - 飞鹅云:<B> 标签实为放大(倍宽)会破坏等宽对齐,故保持纯文本;
+//   - 预览:按行标记渲染 font-weight。
+//
+// 菜名/备注里偶现的【】都会带前后缀(数量/备注前缀),不会整行恰为标题形态。
+func BoldLine(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	if strings.HasPrefix(t, "【") && strings.HasSuffix(t, "】") {
+		return true
+	}
+	if strings.HasPrefix(t, "合计") {
+		return true
+	}
+	return t != "" && t == strings.TrimSpace(service.GetSetting("shop_name"))
+}
+
 // RenderTestTicket 渲染测试页:一眼能看出「这台机器是谁、走哪条通道」。
-func RenderTestTicket(p model.Printer) []string {
+func RenderTestTicket(p po.Printer) []string {
 	w := LineWidth(p.PaperWidth)
 	route := "IP: " + addrOf(p.IP, p.Port)
 	if p.IsFeie() {
@@ -224,19 +284,19 @@ func RenderTestTicket(p model.Printer) []string {
 	return []string{
 		pad("测试打印", w),
 		hr(w),
-		pad("店铺: "+store.GetCfg("shop_name"), w),
+		pad("店铺: "+service.GetSetting("shop_name"), w),
 		pad("打印机: "+p.PrinterName, w),
 		pad("通道: "+route, w),
 		pad("类型: "+printerTypeName(p.PrinterType)+"  纸宽: "+paperWidthName(p.PaperWidth), w),
 		pad("份数: "+strconv.Itoa(p.EffectiveCopies()), w),
-		pad("时间: "+store.Now(), w),
+		pad("时间: "+service.Now(), w),
 		hr(w),
 	}
 }
 
 // printerTypeName 打印机类型中文名。
 func printerTypeName(t int) string {
-	if t == model.PrinterTypeGuest {
+	if t == po.PrinterTypeGuest {
 		return "食客小票"
 	}
 	return "厨房单"

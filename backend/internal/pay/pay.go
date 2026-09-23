@@ -6,13 +6,13 @@
 //     待商户申请好 key 并填入配置后自动启用在线支付,无需改代码;
 //   - 金额统一以「分」(int64) 在边界传递,由各渠道自行转换为微信(分)/支付宝(元)。
 //
-// 依赖方向:pay 依赖 store 读取配置,不依赖 handler/service,避免循环依赖。
+// 依赖方向:pay 依赖 service 读取配置,不依赖 handler;service 不依赖 pay,避免循环依赖。
 package pay
 
 import (
 	"fmt"
 
-	"dining-system/internal/store"
+	"dining-system/internal/service"
 )
 
 // 渠道常量,与 tb_payment.channel 字段取值一致。
@@ -97,7 +97,7 @@ func Get(channel string) (Provider, error) {
 
 // cfg 便捷读取配置项(空值返回空串)。
 func cfg(key string) string {
-	return store.GetCfg(key)
+	return service.GetSetting(key)
 }
 
 // cfgEnabled 判断开关类配置("1" 为开启)。

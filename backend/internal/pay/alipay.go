@@ -22,6 +22,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dining-system/infra/logger"
+	"dining-system/internal/conf"
 )
 
 const aliGateway = "https://openapi.alipay.com/gateway.do"
@@ -51,7 +54,7 @@ func (p *Alipay) Create(req PayReq) (PayResult, error) {
 		"format":      "JSON",
 		"charset":     "utf-8",
 		"sign_type":   "RSA2",
-		"timestamp":   time.Now().Format("2006-01-02 15:04:05"),
+		"timestamp":   time.Now().Format(conf.TimeLayout),
 		"version":     "1.0",
 		"notify_url":  cfg("alipay_notify_url"),
 		"biz_content": string(biz),
@@ -95,7 +98,10 @@ func (p *Alipay) Query(orderNo string) (PayQuery, error) {
 	if err := json.Unmarshal(resp, &out); err != nil {
 		return PayQuery{}, err
 	}
-	paid := yuanToCents(out.Resp.TotalAmount)
+	paid, err := yuanToCents(out.Resp.TotalAmount)
+	if err != nil {
+		return PayQuery{}, fmt.Errorf("支付宝查单金额解析失败: %v", err)
+	}
 	return PayQuery{
 		ChannelTradeNo: out.Resp.TradeNo,
 		Success:        out.Resp.TradeStatus == "TRADE_SUCCESS" || out.Resp.TradeStatus == "TRADE_FINISHED",
@@ -150,7 +156,11 @@ func (p *Alipay) Refund(orderNo, refundNo string, refundCents, totalCents int64)
 	if out.Resp.Code != "10000" {
 		return RefundResult{}, fmt.Errorf("支付宝退款失败: %s", out.Resp.Msg)
 	}
-	return RefundResult{RefundNo: out.Resp.TradeNo, Success: true, Refunded: yuanToCents(out.Resp.RefundFee)}, nil
+	refunded, err := yuanToCents(out.Resp.RefundFee)
+	if err != nil {
+		return RefundResult{}, fmt.Errorf("支付宝退款金额解析失败: %v", err)
+	}
+	return RefundResult{RefundNo: out.Resp.TradeNo, Success: true, Refunded: refunded}, nil
 }
 
 // QueryRefund 查询退款状态(支付宝退款一般同步返回,此接口用于对账/兜底)。
@@ -176,9 +186,16 @@ func (p *Alipay) QueryRefund(orderNo, refundNo string) (RefundQuery, error) {
 	if err := json.Unmarshal(resp, &out); err != nil {
 		return RefundQuery{}, err
 	}
-	q := RefundQuery{ChannelRefundNo: out.Resp.TradeNo, Refunded: yuanToCents(out.Resp.RefundAmount)}
+	q := RefundQuery{ChannelRefundNo: out.Resp.TradeNo}
 	if out.Resp.Code == "10000" {
 		q.Status = RefundSuccess
+		// 只有退款成功时 refund_amount 才有意义;处理中/失败时支付宝不携带该字段,
+		// 金额默认为 0,解析失败说明响应异常,须报错而非静默当 0 元。
+		refunded, err := yuanToCents(out.Resp.RefundAmount)
+		if err != nil {
+			return RefundQuery{}, fmt.Errorf("支付宝退款查询金额解析失败: %v", err)
+		}
+		q.Refunded = refunded
 	} else if out.Resp.Code == "40004" || out.Resp.SubCode == "ACQ.TRADE_NOT_EXIST" {
 		// 退款记录尚未生成:视为处理中,稍后重试。
 		q.Status = RefundProcessing
@@ -226,10 +243,27 @@ func (p *Alipay) VerifyNotify(_ map[string]string, body []byte) (PayNotify, erro
 		return n, fmt.Errorf("支付宝回调验签失败")
 	}
 
+	// 验签只能证明「消息来自支付宝」,不能证明「属于本商户应用」:在平台级公钥/共享证书
+	// 部署下,验签公钥可能被多个应用共享,必须再比对回调里的 app_id 与本应用配置一致,
+	// 否则其它应用的订单会串到本系统入账。支付宝当面付回调不携带 seller_id,且本系统
+	// 也未配置商户号相关键(仅 alipay_appid 标识应用),因此归属校验只比对 app_id。
+	if appID := form.Get("app_id"); appID != cfg("alipay_appid") {
+		logger.Warnf("[pay] 支付宝回调商户归属不符 out_trade_no=%s app_id=%s", form.Get("out_trade_no"), appID)
+		return n, fmt.Errorf("支付宝回调商户归属不符")
+	}
+
+	// 金额解析失败必须拒绝:yuanToCents 解析失败若静默返回 0,0 元可能被误判为
+	// 「金额一致」或「免费单」而错误入账,这里显式拦截。
+	amountCents, err := yuanToCents(form.Get("total_amount"))
+	if err != nil {
+		logger.Warnf("[pay] 支付宝回调金额解析失败 out_trade_no=%s total_amount=%s: %v", form.Get("out_trade_no"), form.Get("total_amount"), err)
+		return n, fmt.Errorf("支付宝回调金额解析失败: %v", err)
+	}
+
 	status := form.Get("trade_status")
 	n.OrderNo = form.Get("out_trade_no")
 	n.ChannelTradeNo = form.Get("trade_no")
-	n.AmountCents = yuanToCents(form.Get("total_amount"))
+	n.AmountCents = amountCents
 	n.Success = status == "TRADE_SUCCESS" || status == "TRADE_FINISHED"
 	return n, nil
 }
@@ -246,7 +280,7 @@ func (p *Alipay) base(method, bizContent string) map[string]string {
 		"format":      "JSON",
 		"charset":     "utf-8",
 		"sign_type":   "RSA2",
-		"timestamp":   time.Now().Format("2006-01-02 15:04:05"),
+		"timestamp":   time.Now().Format(conf.TimeLayout),
 		"version":     "1.0",
 		"notify_url":  cfg("alipay_notify_url"),
 		"biz_content": bizContent,
@@ -329,11 +363,12 @@ func centsToYuan(cents int64) string {
 	return strconv.FormatFloat(float64(cents)/100.0, 'f', 2, 64)
 }
 
-// yuanToCents 元字符串 -> 分,解析失败返回 0。
-func yuanToCents(yuan string) int64 {
+// yuanToCents 元字符串 -> 分。解析失败返回 error,而不是静默返回 0:
+// 0 元在金额比较中可能被误判为「金额一致」或「免费单」,导致错误的支付成功入账。
+func yuanToCents(yuan string) (int64, error) {
 	f, err := strconv.ParseFloat(yuan, 64)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("金额解析失败(%q): %v", yuan, err)
 	}
-	return int64(f*100 + 0.5)
+	return int64(f*100 + 0.5), nil
 }

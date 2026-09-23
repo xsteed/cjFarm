@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"dining-system/internal/service"
 	"dining-system/internal/store"
 )
 
@@ -52,7 +53,7 @@ func writePEM(t *testing.T, path, blockType string, der []byte) {
 	}
 }
 
-// initPayDB 为支付测试准备独立的配置库(配置项统一走 store 读取)。
+// initPayDB 为支付测试准备独立的配置库(配置项统一走 service 读写)。
 func initPayDB(t *testing.T) {
 	t.Helper()
 	store.Init(filepath.Join(t.TempDir(), "pay.db"))
@@ -90,7 +91,7 @@ func TestPlatformCertDirRouting(t *testing.T) {
 	serialOld, privOld := newTestCert(t, dir, "wechatpay_old.pem", 1001)
 	serialNew, privNew := newTestCert(t, dir, "wechatpay_new.pem", 2002)
 
-	if err := store.SetCfg("wxpay_platform_cert_path", dir); err != nil {
+	if err := service.SetSetting("wxpay_platform_cert_path", dir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,7 +130,7 @@ func TestPlatformCertSingleFile(t *testing.T) {
 	initPayDB(t)
 	dir := t.TempDir()
 	serial, priv := newTestCert(t, dir, "cert.pem", 3003)
-	if err := store.SetCfg("wxpay_platform_cert_path", filepath.Join(dir, "cert.pem")); err != nil {
+	if err := service.SetSetting("wxpay_platform_cert_path", filepath.Join(dir, "cert.pem")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,10 +162,10 @@ func TestVerifyPubKeyMode(t *testing.T) {
 	writePEM(t, pubPath, "PUBLIC KEY", der)
 
 	const pubKeyID = "PUB_KEY_ID_0112345678901234"
-	if err := store.SetCfg("wxpay_pubkey_id", pubKeyID); err != nil {
+	if err := service.SetSetting("wxpay_pubkey_id", pubKeyID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetCfg("wxpay_pubkey_path", pubPath); err != nil {
+	if err := service.SetSetting("wxpay_pubkey_path", pubPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -204,7 +205,7 @@ func TestWxpayEnabledRequiresVerifyMaterial(t *testing.T) {
 		"wxpay_serial_no":        "ABCDEF123456",
 		"wxpay_private_key_path": "/tmp/apiclient_key.pem",
 	} {
-		if err := store.SetCfg(k, v); err != nil {
+		if err := service.SetSetting(k, v); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -213,7 +214,7 @@ func TestWxpayEnabledRequiresVerifyMaterial(t *testing.T) {
 	if p.Enabled() {
 		t.Fatal("未配置任何验签材料时不应判定为已开通")
 	}
-	if err := store.SetCfg("wxpay_platform_cert_path", "/tmp/certs"); err != nil {
+	if err := service.SetSetting("wxpay_platform_cert_path", "/tmp/certs"); err != nil {
 		t.Fatal(err)
 	}
 	if !p.Enabled() {

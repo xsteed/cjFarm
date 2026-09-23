@@ -5,12 +5,13 @@
 -- 本文件由 `go run ./cmd/gensql` 从 backend/internal/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 31 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
--- 执行方式:sqlite3 dining.db < seed.sql
+-- 内容:系统配置 34 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 执行方式:sqlite3 data/dining.db < seed.sql
 -- 幂等性  :全部使用 INSERT OR IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
--- 注意:金额一律为「分」;菜品图片与收款码存的是 /uploads/ 虚拟路径,
---       需将 backend/uploads/ 下对应文件放到后端静态托管的 /uploads/ 目录才能显示。
+-- 注意:金额一律为「分」;图片内容存于 tb_image 表(数据库),
+--       出厂图片内嵌后端二进制、首次启动自动写入;业务表仅存 /uploads/<文件名> 虚拟路径,
+--       展示时由后端从库读取,seed.sql 不含图片数据。
 -- ============================================================================
 
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('agent_token', '');
@@ -26,6 +27,9 @@ INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('h5_base_url', 'http:
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_ali', '/uploads/pay_ali.jpg');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_wx', '/uploads/pay_wx.png');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_enabled', '1');
+INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_footer', '谢谢惠顾,欢迎再次光临');
+INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_discount', '1');
+INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_seat_fee', '1');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_show_price', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_discount', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_enabled', '0');

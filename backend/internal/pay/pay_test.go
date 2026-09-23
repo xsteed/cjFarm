@@ -62,10 +62,10 @@ func TestAmountConvert(t *testing.T) {
 	if v := centsToYuan(2800); v != "28.00" {
 		t.Fatalf("centsToYuan(2800)=%s 期望 28.00", v)
 	}
-	if v := yuanToCents("12.34"); v != 1234 {
-		t.Fatalf("yuanToCents(12.34)=%d 期望 1234", v)
+	if v, err := yuanToCents("12.34"); err != nil || v != 1234 {
+		t.Fatalf("yuanToCents(12.34)=%d err=%v 期望 1234", v, err)
 	}
-	if v := yuanToCents(""); v != 0 {
-		t.Fatalf("yuanToCents(\"\")=%d 期望 0", v)
+	if _, err := yuanToCents(""); err == nil {
+		t.Fatalf("yuanToCents(\"\") 应报错,而不是静默返回 0")
 	}
 }

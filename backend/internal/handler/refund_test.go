@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"dining-system/internal/store/dao"
 	"path/filepath"
 	"testing"
 
+	"dining-system/internal/po"
+	"dining-system/internal/service"
 	"dining-system/internal/store"
 )
 
@@ -19,7 +22,7 @@ func TestApplyRefundSuccess(t *testing.T) {
 		t.Fatalf("初始化订单失败: %v", err)
 	}
 	if _, err := store.DB.Exec(`INSERT INTO tb_payment(order_no, channel, channel_trade_no, amount, status, create_time, update_time)
-		VALUES(?,?,?,?,?,?,?)`, orderNo, "wxpay", "TXN1", 10000, store.PayStatusPaid, store.Now(), store.Now()); err != nil {
+		VALUES(?,?,?,?,?,?,?)`, orderNo, "wxpay", "TXN1", 10000, dao.PayStatusPaid, store.Now(), store.Now()); err != nil {
 		t.Fatalf("初始化支付流水失败: %v", err)
 	}
 	var orderID int
@@ -40,56 +43,60 @@ func TestApplyRefundSuccess(t *testing.T) {
 	}
 
 	// 1) 部分退款 30 元
-	rid, err := store.InsertRefund(store.Refund{
+	rid, err := dao.InsertRefund(po.Refund{
 		OrderNo: orderNo, OrderID: orderID, PaymentID: paymentID,
-		RefundNo: "HR1", Channel: "wxpay", Amount: 3000, Status: store.RefundStatusProcessing,
+		RefundNo: "HR1", Channel: "wxpay", Amount: 3000, Status: po.RefundStatusProcessing,
 	})
 	if err != nil {
 		t.Fatalf("登记退款单失败: %v", err)
 	}
-	applyRefundSuccess(rid, orderID, paymentID, orderNo, 3000, "WXR1")
+	if err := service.ApplyRefundSuccess(rid, paymentID, orderNo, 3000, "WXR1"); err != nil {
+		t.Fatalf("退款入账失败: %v", err)
+	}
 
-	if got := store.SumRefunded(orderNo); got != 3000 {
+	if got := dao.SumRefunded(orderNo); got != 3000 {
 		t.Fatalf("累计已退=%d 期望 3000", got)
 	}
 	refundCents, paidCents := orderState()
 	if refundCents != 3000 || paidCents != 7000 {
 		t.Fatalf("部分退款后 refund_amount=%d paid_amount=%d 期望 3000/7000(营收应扣减退款)", refundCents, paidCents)
 	}
-	r, err := store.GetRefund(rid)
-	if err != nil || r.Status != store.RefundStatusSuccess || r.ChannelRefundNo != "WXR1" {
+	r, err := dao.GetRefund(rid)
+	if err != nil || r.Status != po.RefundStatusSuccess || r.ChannelRefundNo != "WXR1" {
 		t.Fatalf("退款单状态异常: %+v err=%v", r, err)
 	}
 	var payStatus int
-	if err := store.DB.QueryRow(`SELECT status FROM tb_payment WHERE payment_id=?`, paymentID).Scan(&payStatus); err != nil || payStatus != store.PayStatusPaid {
+	if err := store.DB.QueryRow(`SELECT status FROM tb_payment WHERE payment_id=?`, paymentID).Scan(&payStatus); err != nil || payStatus != dao.PayStatusPaid {
 		t.Fatalf("部分退款后支付流水状态=%d 期望仍为已支付", payStatus)
 	}
 
 	// 2) 退完剩余 70 元
-	rid2, err := store.InsertRefund(store.Refund{
+	rid2, err := dao.InsertRefund(po.Refund{
 		OrderNo: orderNo, OrderID: orderID, PaymentID: paymentID,
-		RefundNo: "HR2", Channel: "wxpay", Amount: 7000, Status: store.RefundStatusProcessing,
+		RefundNo: "HR2", Channel: "wxpay", Amount: 7000, Status: po.RefundStatusProcessing,
 	})
 	if err != nil {
 		t.Fatalf("登记第二笔退款失败: %v", err)
 	}
-	applyRefundSuccess(rid2, orderID, paymentID, orderNo, 7000, "WXR2")
+	if err := service.ApplyRefundSuccess(rid2, paymentID, orderNo, 7000, "WXR2"); err != nil {
+		t.Fatalf("退款入账失败: %v", err)
+	}
 
-	if got := store.SumRefunded(orderNo); got != 10000 {
+	if got := dao.SumRefunded(orderNo); got != 10000 {
 		t.Fatalf("全额退款后累计已退=%d 期望 10000", got)
 	}
 	refundCents, paidCents = orderState()
 	if refundCents != 10000 || paidCents != 0 {
 		t.Fatalf("全额退款后 refund_amount=%d paid_amount=%d 期望 10000/0(营收归零)", refundCents, paidCents)
 	}
-	if err := store.DB.QueryRow(`SELECT status FROM tb_payment WHERE payment_id=?`, paymentID).Scan(&payStatus); err != nil || payStatus != store.PayStatusRefunded {
-		t.Fatalf("全额退款后支付流水状态=%d 期望已退款(%d)", payStatus, store.PayStatusRefunded)
+	if err := store.DB.QueryRow(`SELECT status FROM tb_payment WHERE payment_id=?`, paymentID).Scan(&payStatus); err != nil || payStatus != dao.PayStatusRefunded {
+		t.Fatalf("全额退款后支付流水状态=%d 期望已退款(%d)", payStatus, dao.PayStatusRefunded)
 	}
 
 	// 3) 退无可退:可退余额为 0
 	var totalCents int64
 	_ = store.DB.QueryRow(`SELECT total_amount FROM tb_order WHERE order_no=?`, orderNo).Scan(&totalCents)
-	if remain := totalCents - store.SumRefunded(orderNo); remain != 0 {
+	if remain := totalCents - dao.SumRefunded(orderNo); remain != 0 {
 		t.Fatalf("剩余可退=%d 期望 0(应拒绝再次退款)", remain)
 	}
 }

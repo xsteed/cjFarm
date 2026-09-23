@@ -52,7 +52,7 @@
 | **后端强制** | 前端隐藏按钮只是体验优化；所有权限都必须由后端接口校验。 |
 | **单一事实来源** | 权限点定义在 Go 代码里一处（`store/permission.go`），前端从接口拉取，不各自硬编码。 |
 | **沿用既有风格** | 软删除 `del_flag`、时间存 `VARCHAR(32)`、金额存分、响应体 `{code,msg,data}`、错误用中文 msg。 |
-| **不破坏现有 API** | 顾客端接口、登录接口路径、响应结构全部保持兼容。 |
+| **不破坏现有 API** | 顾客端接口、登录接口的响应结构与鉴权语义全部保持兼容。 |
 | **可测试** | 权限矩阵、路由覆盖率、防锁死规则全部要有自动化测试。 |
 
 ---
@@ -240,57 +240,57 @@ tb_user       ──→ tb_refund.operator(退款操作人 = real_name)
 
 | 方法 + 路径 | 权限点 |
 |---|---|
-| `POST /prod-api/dining/auth/password` | （免权限，登录即可改自己密码） |
-| `GET /prod-api/dining/auth/profile` | （免权限，返回自己的信息与权限，见 5.4） |
-| `GET /prod-api/dining/table/list` | `table:view` |
-| `POST /prod-api/dining/table/save` / `update` | `table:edit` |
-| `DELETE /prod-api/dining/table/:id` | `table:edit` |
-| `GET /prod-api/dining/category/list` | `category:view` |
-| `POST /prod-api/dining/category/save` / `update` | `category:edit` |
-| `DELETE /prod-api/dining/category/:id` | `category:edit` |
-| `GET /prod-api/dining/dish/list` / `dish/:id` | `dish:view` |
-| `POST /prod-api/dining/dish/save` / `update` | `dish:edit` |
-| `DELETE /prod-api/dining/dish/:id` | `dish:edit` |
-| `GET /prod-api/dining/remark/list` | `remark:view` |
-| `POST /prod-api/dining/remark/save` / `update` | `remark:edit` |
-| `DELETE /prod-api/dining/remark/:id` | `remark:edit` |
-| `GET /prod-api/dining/printer/list` | `printer:view` |
-| `POST /prod-api/dining/printer/save` / `update` / `test/:id` | `printer:edit` |
-| `DELETE /prod-api/dining/printer/:id` | `printer:edit` |
-| `GET /prod-api/dining/order/list` / `board` / `order/:id` | `order:view` |
-| `GET /prod-api/dining/order/urge/list` | `order:view` |
-| `POST /prod-api/dining/order/status` | `order:operate` |
-| `POST /prod-api/dining/order/urge/handle` | `order:operate` |
-| `POST /prod-api/dining/order/finish` | `order:operate` |
-| `POST /prod-api/dining/order/pay` | `order:settle` |
-| `POST /prod-api/dining/order/settle` | `order:settle` |
-| `POST /prod-api/dining/order/settle/cancel` | `order:settle` |
-| `POST /prod-api/dining/order/credit/settle` | `credit:settle` |
-| `POST /prod-api/dining/order/edit` | `order:edit` |
-| `GET /prod-api/dining/log/list` | `log:view` |
-| `POST /prod-api/dining/log/clean` | `log:manage` |
-| `POST /prod-api/dining/order/cancel` | `order:cancel` |
-| `POST /prod-api/dining/pay/refund` / `refund/query` | `refund:operate` |
-| `GET /prod-api/dining/pay/refund/list` | `refund:view` |
-| `GET /prod-api/dining/report/summary` / `dailyTrend` / `monthlyTrend` / `dishRank` | `report:view` |
-| `GET /prod-api/dining/config/list` | `config:view` |
-| `POST /prod-api/dining/config/save` | `config:edit` |
-| `GET /prod-api/dining/user/list` | `user:view` |
-| `POST /prod-api/dining/user/save` / `update` / `resetPassword` / `toggleStatus` | `user:edit` |
-| `DELETE /prod-api/dining/user/:id` | `user:edit` |
-| `GET /prod-api/dining/role/list` | `role:view` |
-| `POST /prod-api/dining/role/save` / `update` | `role:edit` |
-| `DELETE /prod-api/dining/role/:id` | `role:edit` |
-| `GET /prod-api/dining/perm/catalog` | `role:view`（权限目录，给角色编辑页用） |
-| `POST /prod-api/common/upload` | （保持现状：登录即可，不额外收紧） |
+| `POST /api/admin/auth/password` | （免权限，登录即可改自己密码） |
+| `GET /api/admin/auth/profile` | （免权限，返回自己的信息与权限，见 5.4） |
+| `GET /api/admin/table/list` | `table:view` |
+| `POST /api/admin/table/save` / `update` | `table:edit` |
+| `DELETE /api/admin/table/:id` | `table:edit` |
+| `GET /api/admin/category/list` | `category:view` |
+| `POST /api/admin/category/save` / `update` | `category:edit` |
+| `DELETE /api/admin/category/:id` | `category:edit` |
+| `GET /api/admin/dish/list` / `dish/:id` | `dish:view` |
+| `POST /api/admin/dish/save` / `update` | `dish:edit` |
+| `DELETE /api/admin/dish/:id` | `dish:edit` |
+| `GET /api/admin/remark/list` | `remark:view` |
+| `POST /api/admin/remark/save` / `update` | `remark:edit` |
+| `DELETE /api/admin/remark/:id` | `remark:edit` |
+| `GET /api/admin/printer/list` | `printer:view` |
+| `POST /api/admin/printer/save` / `update` / `test/:id` | `printer:edit` |
+| `DELETE /api/admin/printer/:id` | `printer:edit` |
+| `GET /api/admin/order/list` / `board` / `order/:id` | `order:view` |
+| `GET /api/admin/order/urge/list` | `order:view` |
+| `POST /api/admin/order/status` | `order:operate` |
+| `POST /api/admin/order/urge/handle` | `order:operate` |
+| `POST /api/admin/order/finish` | `order:operate` |
+| `POST /api/admin/order/pay` | `order:settle` |
+| `POST /api/admin/order/settle` | `order:settle` |
+| `POST /api/admin/order/settle/cancel` | `order:settle` |
+| `POST /api/admin/order/credit/settle` | `credit:settle` |
+| `POST /api/admin/order/edit` | `order:edit` |
+| `GET /api/admin/log/list` | `log:view` |
+| `POST /api/admin/log/clean` | `log:manage` |
+| `POST /api/admin/order/cancel` | `order:cancel` |
+| `POST /api/admin/pay/refund` / `refund/query` | `refund:operate` |
+| `GET /api/admin/pay/refund/list` | `refund:view` |
+| `GET /api/admin/report/summary` / `dailyTrend` / `monthlyTrend` / `dishRank` | `report:view` |
+| `GET /api/admin/config/list` | `config:view` |
+| `POST /api/admin/config/save` | `config:edit` |
+| `GET /api/admin/user/list` | `user:view` |
+| `POST /api/admin/user/save` / `update` / `resetPassword` / `toggleStatus` | `user:edit` |
+| `DELETE /api/admin/user/:id` | `user:edit` |
+| `GET /api/admin/role/list` | `role:view` |
+| `POST /api/admin/role/save` / `update` | `role:edit` |
+| `DELETE /api/admin/role/:id` | `role:edit` |
+| `GET /api/admin/perm/catalog` | `role:view`（权限目录，给角色编辑页用） |
+| `POST /api/common/upload` | （保持现状：登录即可，不额外收紧） |
 
 **实现方式：集中式路由→权限映射表（fail-closed）**
 
 ```go
 // internal/handler/perm.go
 var routePerms = map[string]string{
-    "GET /prod-api/dining/table/list": "table:view",
-    "POST /prod-api/dining/user/save": "user:edit",
+    "GET /api/admin/table/list": "table:view",
+    "POST /api/admin/user/save": "user:edit",
     // ... 与上表一一对应
 }
 
@@ -314,7 +314,7 @@ func RequirePerm() gin.HandlerFunc {
 }
 ```
 
-- 采用 `c.FullPath()`（返回路由模板而非真实路径），`/dining/table/:id` 与映射表 key 精确匹配。
+- 采用 `c.FullPath()`（返回路由模板而非真实路径），`/api/admin/table/:id` 与映射表 key 精确匹配。
 - 集中式而非逐路由挂中间件：一屏可审计全部权限，且**可以写覆盖率测试**（见 9.1）。
 - 兜底白名单显式列出：`POST .../auth/password`、`GET .../auth/profile` 映射到空串 `""`（= 登录即可）。
 
@@ -335,7 +335,7 @@ func RequirePerm() gin.HandlerFunc {
 ### 5.1 登录流程（改造 `AdminLogin`）
 
 ```
-POST /prod-api/auth/login { username, password }
+POST /api/auth/login { username, password }
   ↓
 1. loginGuard 限流检查（沿用现状：同 IP 5 次失败锁 15 分钟）
   ↓
@@ -400,7 +400,7 @@ RequirePerm: 查 routePerms[method + FullPath]，判定 perms 是否包含
 - SQLite 已开 WAL（`dining.db-wal` 可见），读操作不阻塞。
 - 若将来确有性能压力，再加一层「按 uid 的短 TTL 缓存 + 写操作主动失效"，接口无需改动。
 
-### 5.4 新增接口：`GET /prod-api/dining/auth/profile`
+### 5.4 新增接口：`GET /api/admin/auth/profile`
 
 前端刷新页面、或从 localStorage 拿到过期权限时，用它重新拉取自己的身份与权限：
 
@@ -487,7 +487,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 | `tb_config.admin_pass_hash` | 密码来源 | 首次启动迁移进 `tb_user.password_hash`；之后不再读写 |
 | `TOKEN_TTL_HOURS` | 令牌有效期 | 不变，继续生效 |
 
-**改密码的写入目标变化**：`POST /dining/auth/password` 从「写 `tb_config`」
+**改密码的写入目标变化**：`POST /api/admin/auth/password` 从「写 `tb_config`」
 改为「写当前登录员工的 `password_hash`」并 `token_version+1`。
 这样才符合多员工语义（张三改密不该影响李四）。
 
@@ -499,7 +499,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 老用户的 localStorage 里只有 `admin_token` / `admin_user`，没有 `admin_role` / `admin_perms`。
 处理：
 
-1. 路由守卫发现「有 token 但缺 perms」→ 调 `/dining/auth/profile` 补一次；失败则跳登录页。
+1. 路由守卫发现「有 token 但缺 perms」→ 调 `/api/admin/auth/profile` 补一次；失败则跳登录页。
 2. 绝不允许「perms 为空数组」被当成「有 token 但没权限」而白屏 ——
    区分「未加载（null）」与「已加载但为空（`[]`）」两种状态，前者先加载，后者展示无权限页。
 
@@ -540,18 +540,18 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| `GET` | `/prod-api/dining/auth/profile` | 登录即可 | 我的信息与权限（5.4） |
-| `GET` | `/prod-api/dining/user/list` | `user:view` | 员工列表（分页 + 关键字 + 角色/状态筛选） |
-| `POST` | `/prod-api/dining/user/save` | `user:edit` | 新增员工（含初始密码） |
-| `POST` | `/prod-api/dining/user/update` | `user:edit` | 修改员工（姓名/角色/手机/备注） |
-| `POST` | `/prod-api/dining/user/resetPassword` | `user:edit` | 重置指定员工密码 |
-| `POST` | `/prod-api/dining/user/toggleStatus` | `user:edit` | 启用 / 停用 |
-| `DELETE` | `/prod-api/dining/user/:id` | `user:edit` | 删除（软删除） |
-| `GET` | `/prod-api/dining/role/list` | `role:view` | 角色列表（含员工数统计） |
-| `POST` | `/prod-api/dining/role/save` | `role:edit` | 新增角色 |
-| `POST` | `/prod-api/dining/role/update` | `role:edit` | 修改角色（名称/权限/排序/备注） |
-| `DELETE` | `/prod-api/dining/role/:id` | `role:edit` | 删除角色 |
-| `GET` | `/prod-api/dining/perm/catalog` | `role:view` | 权限点目录（含模块分组与中文名，供前端渲染勾选框） |
+| `GET` | `/api/admin/auth/profile` | 登录即可 | 我的信息与权限（5.4） |
+| `GET` | `/api/admin/user/list` | `user:view` | 员工列表（分页 + 关键字 + 角色/状态筛选） |
+| `POST` | `/api/admin/user/save` | `user:edit` | 新增员工（含初始密码） |
+| `POST` | `/api/admin/user/update` | `user:edit` | 修改员工（姓名/角色/手机/备注） |
+| `POST` | `/api/admin/user/resetPassword` | `user:edit` | 重置指定员工密码 |
+| `POST` | `/api/admin/user/toggleStatus` | `user:edit` | 启用 / 停用 |
+| `DELETE` | `/api/admin/user/:id` | `user:edit` | 删除（软删除） |
+| `GET` | `/api/admin/role/list` | `role:view` | 角色列表（含员工数统计） |
+| `POST` | `/api/admin/role/save` | `role:edit` | 新增角色 |
+| `POST` | `/api/admin/role/update` | `role:edit` | 修改角色（名称/权限/排序/备注） |
+| `DELETE` | `/api/admin/role/:id` | `role:edit` | 删除角色 |
+| `GET` | `/api/admin/perm/catalog` | `role:view` | 权限点目录（含模块分组与中文名，供前端渲染勾选框） |
 
 ---
 
@@ -650,7 +650,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 
 | 测试 | 断言内容 |
 |---|---|
-| `TestAdminRoutePermCoverage` | 遍历 `r.Routes()`，断言每条 `/prod-api/dining/*` 路由都在 `routePerms` 中登记 —— **新增路由忘登记权限会直接测试失败**（fail-closed 下会线上 403）。当前覆盖 65 条 |
+| `TestAdminRoutePermCoverage` | 遍历 `r.Routes()`，断言每条 `/api/admin/*` 路由都在 `routePerms` 中登记 —— **新增路由忘登记权限会直接测试失败**（fail-closed 下会线上 403）。当前覆盖 65 条 |
 | `TestRoutePermsHaveNoDeadEntries` | 反向校验：权限表里的条目必须真实存在于路由树（防「删了接口忘删条目」与路径拼错） |
 | `TestCustomerRoutesStayPublic` | 14 条顾客端/登录公开路由必须存在**且**不得出现在权限表里（防误挂 AdminAuth 把扫码点餐打断） |
 | `TestEveryPermCodeIsUsedOrDeclaredMenuOnly` | 目录里 28 个权限码，每个都要么被至少一条路由引用、要么在 `handler.menuOnlyPerms` 显式声明为菜单级（当前 27 + 1）。**这是补上 `credit:view` 那类「权限码没人用」漏洞的守卫** |

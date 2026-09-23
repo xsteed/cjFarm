@@ -1,0 +1,12 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "strict": true,
+    "moduleResolution": "bundler",
+    "allowJs": false,
+    "checkJs": false,
+    "noEmit": true,
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "vite.config.ts", "vitest.config.ts"]
+}

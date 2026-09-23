@@ -237,6 +237,73 @@ check_syntax() {   # $1 = 待校验的完整配置文件
   return 1
 }
 
+check_api_proxy_timeout() {   # $1 = 待检查的完整配置文件
+  local conf="$1" findings
+  findings="$(awk '
+    function trim(s) { sub(/^[ \t\r\n]+/, "", s); sub(/[ \t\r\n]+$/, "", s); return s }
+    function timeout_seconds(v,   n, unit) {
+      v = trim(v)
+      unit = v
+      gsub(/[0-9.]/, "", unit)
+      n = v + 0
+      if (unit == "ms") return n / 1000
+      if (unit == "m") return n * 60
+      if (unit == "h") return n * 3600
+      return n
+    }
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      if (line ~ /^[[:space:]]*location[[:space:]]+\/api\/[[:space:]]*\{/) {
+        in_block = 1
+        depth = 0
+        found = 1
+        has_timeout = 0
+        timeout = ""
+        seconds = -1
+      }
+      if (in_block) {
+        for (i = 1; i <= length(line); i++) {
+          ch = substr(line, i, 1)
+          if (ch == "{") depth++
+          if (ch == "}") depth--
+        }
+        if (line ~ /^[[:space:]]*proxy_read_timeout[[:space:]]+/) {
+          timeout = line
+          sub(/^[[:space:]]*proxy_read_timeout[[:space:]]+/, "", timeout)
+          sub(/;.*/, "", timeout)
+          timeout = trim(timeout)
+          seconds = timeout_seconds(timeout)
+          has_timeout = 1
+        }
+        if (depth <= 0) {
+          if (has_timeout) {
+            if (seconds < 40) print "low " timeout
+            else print "ok " timeout
+          } else {
+            print "missing"
+          }
+          in_block = 0
+        }
+      }
+    }
+    END { if (!found) print "none" }
+  ' "$conf")"
+
+  if printf '%s\n' "$findings" | grep -q '^none$'; then
+    warn "未找到 /api/ 反代 location, 请确认打印代理 v2 长轮询路径会经过后端反代"
+    return 0
+  fi
+  if printf '%s\n' "$findings" | grep -q '^low '; then
+    printf '%s\n' "$findings" | awk '/^low / { sub(/^low /, ""); print }' | while read -r timeout; do
+      warn "/api/ proxy_read_timeout=$timeout 小于 40s; 打印代理 v2 长轮询 wait 最长 30s, 建议至少 40s"
+    done
+  fi
+  if printf '%s\n' "$findings" | grep -q '^missing$'; then
+    info "/api/ 未显式配置 proxy_read_timeout; nginx 默认 60s 已满足打印代理 v2 长轮询(最长 30s + 余量)"
+  fi
+}
+
 log "校验生成结果 ..."
 if ! check_syntax "$TMP_CONF"; then
   if [ "$DRY_RUN" = "1" ]; then
@@ -246,6 +313,7 @@ if ! check_syntax "$TMP_CONF"; then
   die "生成的配置未通过语法校验, 未做任何改动"
 fi
 log "语法校验通过"
+check_api_proxy_timeout "$TMP_CONF"
 
 if [ "$DRY_RUN" = "1" ]; then
   info "dry-run 模式: 未写入 $CONF_DST, 未重载 nginx"
@@ -348,7 +416,7 @@ fi
 
 # ---------------------------- 线上自检 ----------------------------
 SITE_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $SERVER_NAME" http://127.0.0.1/ 2>/dev/null || echo 000)"
-API_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $SERVER_NAME" http://127.0.0.1/prod-api/api/dining/config 2>/dev/null || echo 000)"
+API_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $SERVER_NAME" http://127.0.0.1/api/customer/config 2>/dev/null || echo 000)"
 
 case "$SITE_CODE" in
   200|301|302) log "前端自检通过 (HTTP $SITE_CODE)" ;;
@@ -370,7 +438,7 @@ cat <<EOF
   server_name: $SERVER_NAME
   访问地址   : $SCHEME://$SERVER_NAME/
   管理后台   : $SCHEME://$SERVER_NAME/dining/dashboard
-  后端反代   : /prod-api/ -> 127.0.0.1:$BACKEND_PORT
+  后端反代   : /api/ -> 127.0.0.1:$BACKEND_PORT
 
 后续操作:
   切到 HTTPS : sudo bash deploy/setup-nginx.sh --domain <域名> --cert <证书> --key <私钥>

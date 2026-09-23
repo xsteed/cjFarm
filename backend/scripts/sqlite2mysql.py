@@ -16,10 +16,12 @@
     mysql -u dining -p dining < migrations/full/mysql/schema.sql
 
     # 2) 导出数据
-    python scripts/sqlite2mysql.py --sqlite dining.db --out /tmp/tb_data.sql
+    python scripts/sqlite2mysql.py --sqlite data/dining.db --out /tmp/tb_data.sql
 
     # 3) 导入 MySQL
     mysql -u dining -p dining < /tmp/tb_data.sql
+
+说明：tb_image 的图片二进制以 X'..' 十六进制导出，导入 MySQL 无损。
 
 常用参数：
     --tables a,b,c   只迁移指定表（默认全部）
@@ -51,6 +53,7 @@ DEFAULT_TABLES = [
     "tb_order_urge",
     "tb_payment",
     "tb_refund",
+    "tb_image",
 ]
 
 
@@ -68,7 +71,7 @@ def q_value(v) -> str:
     if isinstance(v, (int, float)):
         return repr(v)
     if isinstance(v, (bytes, bytearray)):
-        return "X'" + bytes(v).hex() + "'"
+        return "X'" + v.hex() + "'"
     s = str(v)
     # 反斜杠与单引号是 MySQL 字符串里唯二需要转义的字符；
     # 换行/制表符在 MySQL 字符串字面量中可直接出现，但为可读性这里也转义。
@@ -95,7 +98,7 @@ def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="SQLite -> MySQL 数据导出")
-    ap.add_argument("--sqlite", default="dining.db", help="SQLite 数据库文件路径")
+    ap.add_argument("--sqlite", default="data/dining.db", help="SQLite 数据库文件路径")
     ap.add_argument("--out", required=True, help="输出 .sql 文件路径")
     ap.add_argument("--tables", default="", help="只迁移指定表，逗号分隔")
     ap.add_argument("--batch", type=int, default=200, help="每条 INSERT 合并的行数")
@@ -151,12 +154,30 @@ def main() -> int:
 
         col_sql = ", ".join(q_ident(c) for c in cols)
         insert_verb = "INSERT INTO" if args.truncate else "INSERT IGNORE INTO"
-        for i in range(0, len(rows), args.batch):
-            chunk = rows[i : i + args.batch]
-            values = ",\n  ".join(
-                "(" + ", ".join(q_value(v) for v in row) + ")" for row in chunk
+        # 切块双重上限:行数上限沿用 --batch;字节上限防 tb_image 的二进制行
+        # (X'..' 十六进制约 2×blob 体积)被合并成超 max_allowed_packet(64M) 的巨型
+        # INSERT,mysql 客户端导入会直接报 ER_NET_PACKET_TOO_LARGE,违背「迁移无损」。
+        # 48MB 预算给 64M 服务端上限留出余量。
+        max_packet = 48 * 1024 * 1024
+        chunk: list[str] = []
+        cur = 0
+        for row in rows:
+            row_s = "(" + ", ".join(q_value(v) for v in row) + ")"
+            if chunk and (len(chunk) >= args.batch or cur + len(row_s) + 2 > max_packet):
+                lines.append(
+                    f"{insert_verb} {q_ident(t)} ({col_sql}) VALUES\n  "
+                    + ",\n  ".join(chunk)
+                    + ";"
+                )
+                chunk, cur = [], 0
+            chunk.append(row_s)
+            cur += len(row_s) + 2
+        if chunk:
+            lines.append(
+                f"{insert_verb} {q_ident(t)} ({col_sql}) VALUES\n  "
+                + ",\n  ".join(chunk)
+                + ";"
             )
-            lines.append(f"{insert_verb} {q_ident(t)} ({col_sql}) VALUES\n  {values};")
         lines.append("")
 
     lines.append("SET FOREIGN_KEY_CHECKS = 1;")

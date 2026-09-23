@@ -23,13 +23,19 @@
 #   --rebuild      强制重新编译(仓库内开发时用)
 #   默认: 有产物就直接用, 没有才编译(更新包内天然走这条路)
 #
+# 切换 MySQL(DB_* 变量仅首次安装时写入 /etc/dining-backend.env,
+# 更新模式已有该文件则保留不动, 需切换时手动编辑; 详见 docs/mysql-migration.md):
+#   sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_USER=dining \
+#     DB_PASSWORD=xxx DB_NAME=dining bash deploy/deploy.sh
+#   或一行完整连接串: sudo DB_DSN='dining:pw@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh
+#
 # 产物来源(相对项目/包根目录):
 #   backend/bin/dining-backend-linux-<arch>   后端二进制
 #   frontend/dist/                            前端构建产物
-#   backend/uploads/                          种子图(仅补齐缺失, 不覆盖线上已有)
 #
 # 说明: 更新时只覆盖「程序产物」(bin / dist), 绝不触碰
-#       dining.db、uploads 里的用户图片、data/master.key、config.yaml、/etc/dining-backend.env
+#       data/dining.db、uploads 目录(仅作升级时存量图片导入源, 不删除、不再写入)、
+#       data/master.key、config.yaml、/etc/dining-backend.env
 # ============================================================================
 set -euo pipefail
 
@@ -42,10 +48,9 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"  # 项目/包 根
 
 BIN_DIR="$INSTALL_DIR/bin"
 FRONTEND_DIST="$INSTALL_DIR/frontend/dist"
-UPLOAD_DIR="$INSTALL_DIR/uploads"
-DB_PATH="$INSTALL_DIR/dining.db"
+DB_PATH="$INSTALL_DIR/data/dining.db"
 KEEP_BACKUPS="${KEEP_BACKUPS:-5}"                    # 保留最近几份备份
-HEALTH_PATH="${HEALTH_PATH:-/prod-api/api/dining/config}"
+HEALTH_PATH="${HEALTH_PATH:-/api/customer/config}"
 
 # ---------------------------- 参数解析 ----------------------------
 FORCE_REBUILD=0
@@ -81,7 +86,6 @@ esac
 
 BIN_SRC="$PROJECT_DIR/backend/bin/dining-backend-linux-$ARCH"
 DIST_SRC="$PROJECT_DIR/frontend/dist"
-UPLOADS_SRC="$PROJECT_DIR/backend/uploads"
 
 # ---------------------------- 模式判定 ----------------------------
 if [ -x "$BIN_DIR/dining-backend" ]; then
@@ -103,6 +107,68 @@ if [ -z "${ADMIN_PASS:-}" ]; then
     ADMIN_PASS=""
   fi
 fi
+
+# ---------------------------- 数据库后端(可选) ----------------------------
+# 默认 SQLite(与代码默认一致)。部署命令传 DB_DRIVER=mysql 或 DB_DSN 时,
+# 首次安装会把这些变量写进 /etc/dining-backend.env(权限 600),由 systemd 的
+# EnvironmentFile 加载; 不传则完全不写 DB 配置, 保持单机 SQLite 开箱即用。
+
+# db_env_block 生成要追加到 env 文件的数据库配置段。
+db_env_block() {
+  if [ "${DB_DRIVER:-}" != "mysql" ] && [ -z "${DB_DSN:-}" ]; then
+    return 0
+  fi
+  printf '# ---- 数据库后端(deploy.sh 注入, 详见 docs/mysql-migration.md) ----\n'
+  if [ -n "${DB_DSN:-}" ]; then
+    printf 'DB_DSN=%s\n' "$DB_DSN"
+    if [ "${DB_DRIVER:-}" = "mysql" ]; then
+      printf 'DB_DRIVER=mysql\n'
+    fi
+    return 0
+  fi
+  printf 'DB_DRIVER=mysql\n'
+  [ -n "${DB_HOST:-}" ]     && printf 'DB_HOST=%s\n' "$DB_HOST"
+  [ -n "${DB_PORT:-}" ]     && printf 'DB_PORT=%s\n' "$DB_PORT"
+  [ -n "${DB_USER:-}" ]     && printf 'DB_USER=%s\n' "$DB_USER"
+  [ -n "${DB_PASSWORD:-}" ] && printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD"
+  [ -n "${DB_NAME:-}" ]     && printf 'DB_NAME=%s\n' "$DB_NAME"
+  [ -n "${DB_PARAMS:-}" ]   && printf 'DB_PARAMS=%s\n' "$DB_PARAMS"
+  return 0
+}
+
+# mask_dsn 隐藏连接串密码(root:secret@tcp(...) -> root:***@tcp(...)),
+# 避免在部署总结里明文输出。与后端 store.maskDSN 逻辑一致。
+mask_dsn() {
+  local dsn="$1" cred="${dsn%@*}"
+  [ "$cred" = "$dsn" ] && { printf '%s' "$dsn"; return 0; }   # 无 @,原样返回
+  case "$cred" in
+    *:*) printf '%s' "${cred%%:*}:***@${dsn#*@}" ;;
+    *)   printf '%s' "$dsn" ;;
+  esac
+}
+
+# db_summary 输出部署总结里的「数据库后端」一行:
+#   1. 本次命令传了 DB_DRIVER/DB_DSN → 用它;
+#   2. 否则看既有 env 文件(更新模式, 配置可能已写在其中);
+#   3. 都没有 → SQLite。若服务器上另有 config.yaml 配了 MySQL, 以实际日志为准。
+db_summary() {
+  local env_file="/etc/${SERVICE_NAME}.env"
+  local drv="${DB_DRIVER:-}" dsn="${DB_DSN:-}"
+  if [ "$drv" != "mysql" ] && [ -z "$dsn" ] && [ -f "$env_file" ]; then
+    drv="$(sed -n 's/^DB_DRIVER=//p' "$env_file" | head -1)"
+    dsn="$(sed -n 's/^DB_DSN=//p' "$env_file" | head -1)"
+  fi
+  if [ "$drv" = "mysql" ] || [ -n "$dsn" ]; then
+    if [ -n "$dsn" ]; then
+      printf 'MySQL 连接串: %s' "$(mask_dsn "$dsn")"
+    else
+      printf 'MySQL: %s@%s:%s/%s' \
+        "${DB_USER:-root}" "${DB_HOST:-127.0.0.1}" "${DB_PORT:-3306}" "${DB_NAME:-dining}"
+    fi
+    return 0
+  fi
+  printf 'SQLite 文件: %s' "$DB_PATH"
+}
 
 # ---------------------------- 产物准备 ----------------------------
 prepare_artifacts() {
@@ -158,7 +224,7 @@ rollback() {
 
 # ---------------------------- 安装产物 ----------------------------
 install_artifacts() {
-  mkdir -p "$BIN_DIR" "$FRONTEND_DIST" "$UPLOAD_DIR" "$INSTALL_DIR/logs"
+  mkdir -p "$BIN_DIR" "$FRONTEND_DIST" "$INSTALL_DIR/logs"
 
   log "安装后端二进制 ..."
   # 先写临时文件再原子替换: 直接 cp 到运行中的二进制会报 Text file busy
@@ -173,20 +239,18 @@ install_artifacts() {
     cp -r "$DIST_SRC/." "$FRONTEND_DIST/"
   fi
 
-  if [ -d "$UPLOADS_SRC" ]; then
-    log "补齐种子图片(菜品图与收款码, 不覆盖线上已有) ..."
-    if command -v rsync >/dev/null 2>&1; then
-      rsync -a --ignore-existing "$UPLOADS_SRC/" "$UPLOAD_DIR/"
-    else
-      cp -rn "$UPLOADS_SRC/." "$UPLOAD_DIR/" 2>/dev/null || true
-    fi
-  else
-    warn "未找到种子图目录 $UPLOADS_SRC, 线上菜品图可能 404"
-  fi
-
   # 运维脚本(check-health.sh)随包更新, 便于服务器上直接跑
   if [ -f "$PROJECT_DIR/deploy/check-health.sh" ]; then
     install -m 0755 "$PROJECT_DIR/deploy/check-health.sh" "$BIN_DIR/check-health.sh"
+  fi
+
+  # 打印代理产物: 供门店侧 print-agent --upgrade 自助升级下载。
+  # 后端默认 AGENT_BIN_DIR=print-agent/bin(相对 WorkingDirectory=/opt/dining-system),
+  # 部署到这里即与默认路径对齐, 无需额外配置。
+  if [ -d "$PROJECT_DIR/print-agent/bin" ]; then
+    mkdir -p "$INSTALL_DIR/print-agent/bin"
+    cp -f "$PROJECT_DIR"/print-agent/bin/* "$INSTALL_DIR/print-agent/bin/"
+    log "安装打印代理产物 -> $INSTALL_DIR/print-agent/bin"
   fi
 }
 
@@ -227,10 +291,18 @@ ADMIN_PASS=$ADMIN_PASS
 # 其他设备(尤其手机端)会跟着被锁 15 分钟, 表现为「突然所有人都登不上」。
 TRUSTED_PROXIES=127.0.0.1
 EOF
+    # 数据库后端: 部署命令传了 DB_* 时一并写入(未传则保持默认 SQLite, 不写 DB 键)
+    db_env_block >> "$env_file"
+    if grep -q '^DB_DRIVER=mysql$' "$env_file"; then
+      log "已写入 MySQL 数据库配置(DB_* 变量)"
+    fi
     chown "$SERVICE_USER:$SERVICE_USER" "$env_file" 2>/dev/null || true
     chmod 600 "$env_file"
   else
     log "保留已有凭据文件 $env_file"
+    if [ "${DB_DRIVER:-}" = "mysql" ] || [ -n "${DB_DSN:-}" ]; then
+      warn "本次传入了 DB_* 但 $env_file 已存在(更新模式不覆盖), 变量未生效; 如需切换请手动编辑该文件后重启服务"
+    fi
   fi
 
   systemctl daemon-reload
@@ -264,6 +336,25 @@ setup_nginx() {
   fi
   log "生成 Nginx 配置 (server_name=$name) ..."
   bash "$setup" "${args[@]}" || warn "Nginx 配置安装失败, 可手动重跑: sudo bash deploy/setup-nginx.sh --help"
+}
+
+# ---------------------------- 旧 Nginx 前缀检查(仅更新) ----------------------------
+# 后端路由已从 /prod-api 迁移到 /api。本脚本只在首次安装时生成 Nginx 配置,
+# 更新模式不覆盖线上配置(避免冲掉自定义的域名/HTTPS), 因此从旧版本升级上来的
+# 服务器若不做这一步, Nginx 仍反代 /prod-api/, 前端所有接口会 404。
+check_nginx_legacy_prefix() {
+  [ "$MODE" = "update" ] || return 0
+  local conf="/etc/nginx/conf.d/dining-system.conf"
+  [ -f "$conf" ] || return 0
+  # 只匹配生效的 location 行(行首无注释), 避免命中模板注释里的加固示例。
+  grep -Eq '^[[:space:]]*location[^#]*/prod-api/' "$conf" || return 0
+
+  warn "检测到线上 Nginx 配置仍反代旧 API 前缀 /prod-api/(后端已切换到 /api/)"
+  warn "更新模式不会自动覆盖 Nginx 配置, 不处理会导致前端所有接口 404。二选一修复:"
+  warn "  1) 最小改动(只换前缀, 保留线上自定义):"
+  warn "     sudo sed -i 's|/prod-api/|/api/|g' $conf && sudo nginx -t && sudo nginx -s reload"
+  warn "  2) 重新生成(会备份旧配置): 把发布包解压后以 root 执行"
+  warn "     sudo bash deploy/setup-nginx.sh --server-name <线上 server_name> [--domain <域名> --cert <证书> --key <私钥>]"
 }
 
 # ---------------------------- 重启 + 健康检查 ----------------------------
@@ -316,6 +407,8 @@ setup_service
 
 if [ "$MODE" = "install" ]; then
   setup_nginx
+else
+  check_nginx_legacy_prefix
 fi
 
 restart_and_verify
@@ -326,13 +419,14 @@ if [ "$MODE" = "install" ]; then
 else
   log "更新完成!"
 fi
+DB_SUMMARY="$(db_summary)"
 cat <<EOF
 
   安装目录   : $INSTALL_DIR
   后端二进制 : $BIN_DIR/dining-backend
   前端产物   : $FRONTEND_DIST
-  上传目录   : $UPLOAD_DIR
-  数据库文件 : $DB_PATH
+  图片存储   : 数据库 tb_image（旧目录 $INSTALL_DIR/uploads 仅作升级导入源）
+  数据库后端 : $DB_SUMMARY
   后端端口   : $BACKEND_PORT
   本次模式   : $MODE
 

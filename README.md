@@ -4,7 +4,7 @@
 
 - **前端**：Vue 3 + TDesign + Vue Router + Axios + ECharts（Vite 构建）
 - **后端**：Golang + Gin + SQLite / MySQL 双后端（默认 SQLite，纯 Go 驱动 `modernc.org/sqlite`，无需 CGO，天然支持交叉编译；**改环境变量即可切 MySQL**，见 [`docs/mysql-migration.md`](docs/mysql-migration.md)）
-- **接口前缀**：`/prod-api`（与目标站保持一致，RuoYi 风格响应 `{code, msg, data}` / `{total, rows, code, msg}`）
+- **接口前缀**：`/api`（新分组结构：`/api/auth`（登录）、`/api/customer`（顾客端公开）、`/api/admin`（管理端）、`/api/agent/print`（打印代理）、`/api/common/upload`；RuoYi 风格响应 `{code, msg, data, requestId}`，分页数据收在 `data` 下：`{total, items}`）
 - **鉴权**：管理端接口需登录（HMAC 签名的 Token，24h 有效），并按 **角色 → 权限点** 做接口级鉴权（多员工 + 4 个内置角色，见下文「员工与权限」）；顾客点餐端、打印页为公开访问
 
 ## 目录结构
@@ -22,13 +22,15 @@ dining-system/
 │   │   ├── print/          # ESC/POS 网络打印（异步，失败不影响下单）
 │   │   └── handler/        # HTTP 层：响应封装/鉴权/各资源处理器/上传
 │   ├── cmd/gensql/         # SQL 脚本生成器（改表结构后重新生成两库脚本）
-│   ├── cmd/print-agent/    # 门店本地打印代理（跑在门店内网，出站拉单后直发 9100）
 │   ├── scripts/            # 运维脚本（sqlite2mysql.py：SQLite→MySQL 数据搬运）
 │   ├── migrations/         # 数据库迁移脚本（SQLite / MySQL 各一套）
 │   │   ├── README.md       #   迁移说明、命名规则与表/索引清单
 │   │   ├── full/           #   全量：{sqlite,mysql}/schema.sql + seed.sql
 │   │   └── incr/           #   增量：{sqlite,mysql}/日期时间_表名_动作.sql
 │   └── Makefile            # 构建/打包/交叉编译脚本（输出到 bin/）
+├── print-agent/            # 门店本地打印代理（独立 Go module，零依赖静态编译，跑在门店内网出站拉单后直发 9100）
+│   ├── agent.env.example   #   门店配置模板（复制为 agent.env 与程序同目录）
+│   └── deploy/             #   自启动物料：service(linux)/plist(macOS)/任务计划 xml(Windows)
 ├── frontend/               # Vue 3 + TDesign 前端
 │   ├── vite.config.js      # 构建配置（assetsDir 对齐后端 /static）
 │   └── src/
@@ -42,11 +44,11 @@ dining-system/
 │   ├── setup-nginx.sh      # Nginx 配置一键生成（server_name/HTTPS/校验/回滚/重载）
 │   ├── nginx-production.conf   # Nginx 配置模板（唯一来源，由 setup-nginx.sh 生成）
 │   ├── check-health.sh     # 健康检查（也可用于 cron 探测）
-│   ├── dining-backend.service  # 服务端 systemd 服务单元
-│   └── print-agent.service # 门店本地打印代理 systemd 服务单元
+│   └── dining-backend.service  # 服务端 systemd 服务单元
 ├── docs/                   # 文档
 │   ├── mysql-migration.md  #   切换到 MySQL 操作手册
-│   └── print-agent.md      #   云部署 + 门店 9100 打印机的本地代理方案
+│   ├── print-agent.md      #   云部署 + 门店 9100 打印机的本地代理方案
+│   └── remember-login-design.md  # 「记住我(免登录)」机制:两级令牌/环境绑定/登录设备管理
 ├── start.bat / stop.bat    # Windows 一键启动 / 停止后端（双击运行）
 └── README.md              
 ```
@@ -84,7 +86,7 @@ cp .env.example .env                 # 两者可只用一个
 | config.yaml | 等价环境变量 | 说明 | 默认值 |
 |---|---|---|---|
 | `server.port` | `PORT` | 服务端口 | `8080` |
-| `server.upload_dir` | `UPLOAD_DIR` | 上传文件目录 | `./uploads` |
+| `server.upload_dir` | `UPLOAD_DIR` | 存量磁盘图片导入源（旧版本升级时自动导入数据库；运行时图片从数据库读取） | `./uploads` |
 | `server.static_dir` | `STATIC_DIR` | 前端构建产物目录（后端直接托管时） | `../frontend/dist` |
 | `server.trusted_proxies` | `TRUSTED_PROXIES` | 可信代理 IP/CIDR（Nginx 反代时必须配置） | 空 |
 | `admin.user` / `admin.pass` | `ADMIN_USER` / `ADMIN_PASS` | 管理端账号（仅首次建库生效） | `admin` / `admin123` |
@@ -117,14 +119,14 @@ cp config.example.yaml config.yaml   # 编辑 database.driver=mysql 及下面的
 - 迁移脚本目录（SQLite / MySQL 两套）：`backend/migrations/`，说明见其中的 `README.md`。
 - ⚠️ 搬迁时**务必把 `backend/data/master.key` 一起带走**，否则已加密的支付密钥无法解密。
 
-首次启动自动建表并写入种子数据（6 大分类 21 道菜品、8 张桌台、店铺配置、备注、2 台打印机）。菜品图片与微信/支付宝收款码已从目标站真实下载并打包进 `backend/uploads/`，首次启动即通过 `/uploads/` 路径展示。
+首次启动自动建表并写入种子数据（6 大分类 21 道菜品、8 张桌台、店铺配置、备注、2 台打印机）。菜品图片与微信/支付宝收款码已内嵌进后端二进制，首次启动自动写入数据库并通过 `/uploads/` 路径展示。
 
 ### 2. 前端（开发模式）
 
 ```bash
 cd frontend
 npm install
-npm run dev       # http://localhost:5173，已配置 /prod-api 代理到 8080
+npm run dev       # http://localhost:5173，已配置 /api 代理到 8080
 ```
 
 ### 3. 前端（生产模式，由后端直接托管）
@@ -244,7 +246,7 @@ sudo bash deploy/setup-nginx.sh --domain 你的域名 \
 
 部署完成后访问 `http://服务器IP/` 即进入前端，管理后台 `/dining/dashboard`。
 
-> Nginx 与 Go 后端的分工：Nginx 托管前端静态资源并做 SPA 回退，将 `/prod-api`、`/uploads` 反向代理到 Go 后端（`127.0.0.1:8080`）。
+> Nginx 与 Go 后端的分工：Nginx 托管前端静态资源并做 SPA 回退，将 `/api`、`/uploads` 反向代理到 Go 后端（`127.0.0.1:8080`）。
 
 ### 云部署后，门店的打印机怎么出纸？
 
@@ -279,22 +281,22 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 
 ## 接口清单（与目标站一致）
 
-- 登录 `/prod-api/auth/login`；当前登录者 `/prod-api/dining/auth/profile`、自助改密 `/prod-api/dining/auth/password`
-- 管理端 `/prod-api/dining/*`（需携带 `Authorization: Bearer <token>`，并校验对应**权限点**）
+- 登录 `/api/auth/login`；当前登录者 `/api/admin/auth/profile`、自助改密 `/api/admin/auth/password`
+- 管理端 `/api/admin/*`（需携带 `Authorization: Bearer <token>`，并校验对应**权限点**）
   - 桌台 `table/list|save|update|delete/:id`
   - 分类 `category/list|save|update|delete/:id`
   - 菜品 `dish/list|get/:id|save|update|delete/:id`
   - 备注 `remark/list|save|update|delete/:id`
   - 打印机 `printer/list|save|update|delete/:id|test/:id|probe/:id|status/:id|clear/:id|bind|feie/info|agent/info`（字段对齐目标站：`printerType` 1厨房单/2食客小票、`provider` tcp 直连/feie 飞鹅云/agent 本地代理、`paperWidth` 32/48、`status` 启停；测试打印真实走对应通道）
-  - 打印代理（门店侧程序调用，代理令牌鉴权，不属于管理端）：`agent/print/ping`、`agent/print/pull`、`agent/print/ack`（见 [`docs/print-agent.md`](docs/print-agent.md)）
   - 打印日志 `print/log/list`、`print/log/reprint`、`print/log/clear`（飞鹅云清空队列）
   - 配置 `config/list|save`
   - 订单 `order/list|get/:id|board|status|pay|settle|settle/cancel|credit/settle|finish|cancel|edit`
   - 报表 `report/summary|dailyTrend|monthlyTrend|dishRank`
   - 员工 `user/list|save|update|resetPassword/:id|status/:id|delete/:id`（改密/启停/删除）
   - 角色 `role/list|save|update|delete/:id`、权限点目录 `perm/catalog`
-- 顾客端 `/prod-api/api/dining/*`（公开）：`table/:id`（`id` 同时接受桌台稳定码或数字 ID）、`menu`、`remarks`、`config`、`order`、`order/no/:orderNo`、`pay/qr`
-- 上传 `/prod-api/common/upload`（需登录，仅限图片）
+- 打印代理 `/api/agent/print/*`（门店侧程序调用，代理令牌鉴权，不属于管理端）：`ping`、`pull`、`ack`（见 [`docs/print-agent.md`](docs/print-agent.md)）
+- 顾客端 `/api/customer/*`（公开）：`table/:id`（`id` 同时接受桌台稳定码或数字 ID）、`menu`、`remarks`、`config`、`order`、`order/no/:orderNo`、`pay/qr`
+- 上传 `/api/common/upload`（需登录且具备「菜品管理」或「系统配置修改」权限，仅限图片）
 
 > 鉴权失败状态码：**401** = 未登录/令牌失效（前端清登录态并跳登录页）；**403** = 已登录但无该操作权限（前端仅弹提示，不退出）。业务错误统一 **400**。
 
@@ -327,9 +329,10 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 | `credit` | 挂账（赊账） | 0 | **挂账单位/事由**（≤60字） | 需 `order/credit/settle` 核销收款 |
 
 - **挂账核销**：`order/credit/settle` 对挂账中订单补收欠款，写入 `creditStatus=2`、实收金额与收款方式；已核销的挂账不可再核销、不可撤销结算。
-- **撤销结算**：`order/settle/cancel` 仅对「已结算但未核销」的订单生效，把订单回退为未支付(3 已上齐)，桌台不重新占用（`normal` 收款订单同样可撤销，用于收银误操作纠错）。
-- **营收口径**：营业额只计 `paid_amount`（实收），因此**免单不计入营收**、**挂账在核销前不计入营收**，核销后才计入。报表另给出 `todayFreeAmount`（今日免单让利）、`todayCreditAmount`（今日新增挂账）、`creditPendingAmount/Count`（挂账待收总额与笔数）、`todayCreditSettledAmount/Count`（今日挂账回款）。
-- **加菜限制**：挂账/免单/已结算订单不可再通过顾客端加菜。
+- **撤销结算**：`order/settle/cancel` 仅对「已结算但未核销」的订单生效，把订单回退为未支付并恢复到**结账前状态**（结账时记录状态快照；历史订单无快照则回退为 3 已上齐），桌台重新占用。免单/挂账可撤销纠错；**线下收款（现金等）的正常收款同样可撤销**（钱当场退回客人）；**在线支付订单不可撤销**，请走退款流程（渠道资金须原路退回）。
+- **营收口径**：营业额按**实收资金流**统计 —— 正常收款按收款时间（`pay_time`）、挂账核销按回款时间归属，退款按**退款发生日**单独扣减。因此免单不计入营收、挂账在核销回款当日计入；**一天的数字落定后不再漂移**（历史订单的退款不会追溯改写往日营业额），且「当日营业额 − 当日退款」可直接与渠道账单对账。报表另给出 `todayFreeAmount`（今日免单让利）、`todayCreditAmount`（今日新增挂账）、`creditPendingAmount/Count`（挂账待收总额与笔数）、`todayCreditSettledAmount/Count`（今日挂账回款）。
+- **防重复支付**：切换支付渠道（微信↔支付宝）、收款、结账、取消、改单时都会**自动关闭**旧的待支付渠道单，旧二维码随即失效；万一顾客在两个渠道各付了一笔（重复支付），后到的一笔会**自动原路退回**（落 `is_duplicate=1` 的退款记录，可在退款记录中核对），不影响订单账目。
+- **加菜限制**：挂账/免单/已结算订单不可再通过顾客端加菜；同一桌台存在进行中订单时，顾客端不可再开新单（继续点菜请走「加菜」）。
 - **小票**：免单/挂账的结账单会打印结算方式标识（如「免单」「挂账」）与实收金额，便于给客人留底。
 
 ## 员工与权限（多账号 / 角色 / 接口级鉴权）
@@ -367,12 +370,12 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 - 顾客下单金额由**后端以数据库价格为准重新计算**，不信任前端传入的价格，防止篡改。
 - 订单创建/改单/菜品规格等涉及多表写入的操作均使用**数据库事务**，保证数据一致性。
 - 食客下单成功后**自动触发网络打印机打印**：向启用的厨房单打印机打印厨房单、向食客小票打印机打印食客小票（ESC/POS，GBK 编码，异步执行，打印失败仅记录日志不影响下单）。
-- 上传接口限制**仅图片、单文件 ≤ 5MB**，并对文件内容做**图片魔数嗅探**（防止伪造扩展名）；管理端写接口均有登录鉴权**与权限点校验**。
-- 员工口令以**加盐 SHA-256**（16 字节随机盐，存 `salt$hash`）保存，不存明文；账号不存在时也走一次等价耗时的校验（`WastePasswordVerify`），**防止用户名枚举**。
-- 登录接口内置**防暴力破解限流**（同 IP 连续 5 次失败锁定 15 分钟）；登录令牌为 HMAC-SHA256 签名（含过期时间），服务重启后旧令牌自动失效。
+- 上传接口限制**仅图片、单文件 ≤ 5MB**（按实际读入字节数校验，伪造 multipart 大小头无效），并对文件内容做**图片魔数嗅探**（防止伪造扩展名）；需登录且具备「菜品管理」或「系统配置修改」权限。
+- 员工口令以 **bcrypt**（自适应成本 + 内置随机盐）保存，不存明文，兼容校验历史「加盐 SHA-256」旧哈希并在登录成功后自动升级；账号不存在时也走一次等价耗时的校验（`WastePasswordVerify`），**防止用户名枚举**。
+- 登录接口内置**防暴力破解限流**（IP 与账号双维度：同一 IP 连续 5 次失败锁定 15 分钟；同一真实账号累计 5 次失败也锁定 15 分钟，防止攻击者换 IP 慢速爆破同一账号）；登录令牌为 HMAC-SHA256 签名（含过期时间），服务重启后旧令牌自动失效。启动时会探测引导管理员是否仍在使用默认口令 `admin123` 并打高可见度告警。
 - 前端图标改为**本地打包**（不依赖腾讯 CDN），内网离线环境可正常显示。
 - 服务支持**优雅退出**（收到 SIGINT/SIGTERM 后完成在途请求再关闭）。
 
 ## 说明
 
-本复刻仅基于目标站公开可访问的前端资源与只读接口探测实现，未进行任何写操作或越权利用。种子数据沿用目标站店铺「长健农场 柴火农家土菜」的菜单、桌台、备注与打印机，菜品图片及收款码已从目标站公开资源下载并随项目打包（`backend/uploads/`）。
+本复刻仅基于目标站公开可访问的前端资源与只读接口探测实现，未进行任何写操作或越权利用。种子数据沿用目标站店铺「长健农场 柴火农家土菜」的菜单、桌台、备注与打印机，菜品图片及收款码已从目标站公开资源下载并内嵌于后端二进制（`backend/internal/store/seedimg/`）。

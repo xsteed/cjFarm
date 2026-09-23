@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"dining-system/internal/logger"
+	"dining-system/infra/logger"
 	"encoding/base64"
 	"net/http"
 	"sort"
@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"dining-system/internal/store"
+	"dining-system/internal/service"
 )
 
 // ============================================================================
@@ -35,108 +35,123 @@ const PermFree = ""
 // (路由模板含 :id 之类的参数占位符,而非真实请求路径)。
 var routePerms = map[string]string{
 	// ---- 登录者自身(无需权限点) ----
-	"POST /prod-api/dining/auth/password": PermFree,
-	"GET /prod-api/dining/auth/profile":   PermFree,
+	"POST /api/admin/auth/password": PermFree,
+	"GET /api/admin/auth/profile":   PermFree,
+	// 记住登录会话(登录设备页):查看/吊销自己的「记住我」设备,登录即可。
+	"GET /api/admin/auth/remember/sessions": PermFree,
+	"POST /api/admin/auth/remember/revoke":  PermFree,
 
 	// ---- 员工管理 ----
-	"GET /prod-api/dining/user/list":           "user:view",
-	"POST /prod-api/dining/user/save":          "user:edit",
-	"POST /prod-api/dining/user/update":        "user:edit",
-	"POST /prod-api/dining/user/resetPassword": "user:edit",
-	"POST /prod-api/dining/user/toggleStatus":  "user:edit",
-	"DELETE /prod-api/dining/user/:id":         "user:edit",
+	"GET /api/admin/user/list":           "user:view",
+	"POST /api/admin/user/save":          "user:edit",
+	"POST /api/admin/user/update":        "user:edit",
+	"POST /api/admin/user/resetPassword": "user:edit",
+	"POST /api/admin/user/toggleStatus":  "user:edit",
+	"DELETE /api/admin/user/:id":         "user:edit",
 
 	// ---- 角色与权限 ----
-	"GET /prod-api/dining/role/list":    "role:view",
-	"POST /prod-api/dining/role/save":   "role:edit",
-	"POST /prod-api/dining/role/update": "role:edit",
-	"DELETE /prod-api/dining/role/:id":  "role:edit",
-	"GET /prod-api/dining/perm/catalog": "role:view",
+	"GET /api/admin/role/list":    "role:view",
+	"POST /api/admin/role/save":   "role:edit",
+	"POST /api/admin/role/update": "role:edit",
+	"DELETE /api/admin/role/:id":  "role:edit",
+	"GET /api/admin/perm/catalog": "role:view",
 
 	// ---- 桌台 ----
-	"GET /prod-api/dining/table/list":    "table:view",
-	"POST /prod-api/dining/table/save":   "table:edit",
-	"POST /prod-api/dining/table/update": "table:edit",
-	"DELETE /prod-api/dining/table/:id":  "table:edit",
+	"GET /api/admin/table/list":    "table:view",
+	"POST /api/admin/table/save":   "table:edit",
+	"POST /api/admin/table/update": "table:edit",
+	"DELETE /api/admin/table/:id":  "table:edit",
 
 	// ---- 分类 ----
-	"GET /prod-api/dining/category/list":    "category:view",
-	"POST /prod-api/dining/category/save":   "category:edit",
-	"POST /prod-api/dining/category/update": "category:edit",
-	"DELETE /prod-api/dining/category/:id":  "category:edit",
+	"GET /api/admin/category/list":    "category:view",
+	"POST /api/admin/category/save":   "category:edit",
+	"POST /api/admin/category/update": "category:edit",
+	"DELETE /api/admin/category/:id":  "category:edit",
 
 	// ---- 菜品 ----
-	"GET /prod-api/dining/dish/list":    "dish:view",
-	"GET /prod-api/dining/dish/:id":     "dish:view",
-	"POST /prod-api/dining/dish/save":   "dish:edit",
-	"POST /prod-api/dining/dish/update": "dish:edit",
-	"DELETE /prod-api/dining/dish/:id":  "dish:edit",
+	"GET /api/admin/dish/list":    "dish:view",
+	"GET /api/admin/dish/:id":     "dish:view",
+	"POST /api/admin/dish/save":   "dish:edit",
+	"POST /api/admin/dish/update": "dish:edit",
+	"DELETE /api/admin/dish/:id":  "dish:edit",
 
 	// ---- 备注 ----
-	"GET /prod-api/dining/remark/list":    "remark:view",
-	"POST /prod-api/dining/remark/save":   "remark:edit",
-	"POST /prod-api/dining/remark/update": "remark:edit",
-	"DELETE /prod-api/dining/remark/:id":  "remark:edit",
+	"GET /api/admin/remark/list":    "remark:view",
+	"POST /api/admin/remark/save":   "remark:edit",
+	"POST /api/admin/remark/update": "remark:edit",
+	"DELETE /api/admin/remark/:id":  "remark:edit",
 
 	// ---- 打印机 ----
-	"GET /prod-api/dining/printer/list":      "printer:view",
-	"POST /prod-api/dining/printer/save":     "printer:edit",
-	"POST /prod-api/dining/printer/update":   "printer:edit",
-	"DELETE /prod-api/dining/printer/:id":    "printer:edit",
-	"POST /prod-api/dining/printer/test/:id": "printer:edit",
+	"GET /api/admin/printer/list":      "printer:view",
+	"POST /api/admin/printer/save":     "printer:edit",
+	"POST /api/admin/printer/update":   "printer:edit",
+	"DELETE /api/admin/printer/:id":    "printer:edit",
+	"POST /api/admin/printer/test/:id": "printer:edit",
 
 	// ---- 打印机(探测 / 绑定 / 云打印) ----
 	// 「查看类」给 printer:view;「会触发打印或改动打印机状态」的动作一律给 printer:edit。
-	"GET /prod-api/dining/printer/status/:id": "printer:view",
-	"GET /prod-api/dining/printer/feie/info":  "printer:view",
+	"GET /api/admin/printer/status/:id": "printer:view",
+	"GET /api/admin/printer/feie/info":  "printer:view",
 	// 本地打印代理概况:只读展示(令牌不回显),故归 printer:view。
-	"GET /prod-api/dining/printer/agent/info": "printer:view",
-	"POST /prod-api/dining/printer/probe/:id": "printer:edit",
-	"POST /prod-api/dining/printer/bind":      "printer:edit",
-	"POST /prod-api/dining/printer/clear/:id": "printer:edit",
+	"GET /api/admin/printer/agent/info": "printer:view",
+	// per-agent 身份管理可签发/吊销令牌,按打印机写权限保护。
+	"GET /api/admin/printer/agent/list":        "printer:edit",
+	"POST /api/admin/printer/agent/save":       "printer:edit",
+	"POST /api/admin/printer/agent/status/:id": "printer:edit",
+	"POST /api/admin/printer/agent/update/:id": "printer:edit",
+	"DELETE /api/admin/printer/agent/:id":      "printer:edit",
+	"POST /api/admin/printer/probe/:id":        "printer:edit",
+	"POST /api/admin/printer/bind":             "printer:edit",
+	"POST /api/admin/printer/clear/:id":        "printer:edit",
 
 	// ---- 打印记录与补打 ----
 	// 补打会真的出纸(可能产生耗材成本),因此不归入只读的 printer:view。
-	"GET /prod-api/dining/print/log/list":     "printer:view",
-	"POST /prod-api/dining/print/log/reprint": "printer:edit",
-	"POST /prod-api/dining/order/reprint":     "printer:edit",
+	// 预览不出纸,但返回完整票据内容(含金额、挂账人、免单原因等订单敏感数据,
+	// 敏感度等同 order:view 的订单详情),故同样归 printer:edit —— 不能让
+	// 只有 printer:view 的角色借预览看到订单金额。
+	"GET /api/admin/print/log/list":        "printer:view",
+	"GET /api/admin/print/preview":         "printer:edit",
+	"POST /api/admin/print/preview/sample": "printer:edit",
+	"POST /api/admin/print/log/reprint":    "printer:edit",
+	"POST /api/admin/order/reprint":        "printer:edit",
 
 	// ---- 系统配置 ----
-	"GET /prod-api/dining/config/list":  "config:view",
-	"POST /prod-api/dining/config/save": "config:edit",
+	"GET /api/admin/config/list":         "config:view",
+	"POST /api/admin/config/save":        "config:edit",
+	"POST /api/admin/config/agent/token": "config:edit",
 
 	// ---- 订单 ----
-	"GET /prod-api/dining/order/list":           "order:view",
-	"GET /prod-api/dining/order/board":          "order:view",
-	"GET /prod-api/dining/order/urge/list":      "order:view",
-	"GET /prod-api/dining/order/:id":            "order:view",
-	"POST /prod-api/dining/order/status":        "order:operate",
-	"POST /prod-api/dining/order/finish":        "order:operate",
-	"POST /prod-api/dining/order/urge/handle":   "order:operate",
-	"POST /prod-api/dining/order/pay":           "order:settle",
-	"POST /prod-api/dining/order/settle":        "order:settle",
-	"POST /prod-api/dining/order/settle/cancel": "order:settle",
-	"POST /prod-api/dining/order/credit/settle": "credit:settle",
-	"POST /prod-api/dining/order/edit":          "order:edit",
-	"POST /prod-api/dining/order/cancel":        "order:cancel",
+	"GET /api/admin/order/list":           "order:view",
+	"GET /api/admin/order/board":          "order:view",
+	"GET /api/admin/order/urge/list":      "order:view",
+	"GET /api/admin/order/:id":            "order:view",
+	"POST /api/admin/order/status":        "order:operate",
+	"POST /api/admin/order/finish":        "order:operate",
+	"POST /api/admin/order/urge/handle":   "order:operate",
+	"POST /api/admin/order/pay":           "order:settle",
+	"POST /api/admin/order/settle":        "order:settle",
+	"POST /api/admin/order/settle/cancel": "order:settle",
+	"POST /api/admin/order/credit/settle": "credit:settle",
+	"POST /api/admin/order/edit":          "order:edit",
+	"POST /api/admin/order/cancel":        "order:cancel",
 
 	// ---- 退款 ----
-	"POST /prod-api/dining/pay/refund":       "refund:operate",
-	"POST /prod-api/dining/pay/refund/query": "refund:operate",
-	"GET /prod-api/dining/pay/refund/list":   "refund:view",
+	"POST /api/admin/pay/refund":       "refund:operate",
+	"POST /api/admin/pay/refund/query": "refund:operate",
+	"GET /api/admin/pay/refund/list":   "refund:view",
 
 	// ---- 报表 ----
-	"GET /prod-api/dining/report/summary":      "report:view",
-	"GET /prod-api/dining/report/dailyTrend":   "report:view",
-	"GET /prod-api/dining/report/monthlyTrend": "report:view",
-	"GET /prod-api/dining/report/dishRank":     "report:view",
-	"GET /prod-api/dining/report/hourly":       "report:view",
-	"GET /prod-api/dining/report/settleMix":    "report:view",
+	"GET /api/admin/report/summary":      "report:view",
+	"GET /api/admin/report/dailyTrend":   "report:view",
+	"GET /api/admin/report/monthlyTrend": "report:view",
+	"GET /api/admin/report/dishRank":     "report:view",
+	"GET /api/admin/report/hourly":       "report:view",
+	"GET /api/admin/report/settleMix":    "report:view",
 
 	// ---- 操作日志(审计) ----
 	// 查看只需 log:view;清理会真的删数据,单独收口到 log:manage。
-	"GET /prod-api/dining/log/list":   "log:view",
-	"POST /prod-api/dining/log/clean": "log:manage",
+	"GET /api/admin/log/list":   "log:view",
+	"POST /api/admin/log/clean": "log:manage",
 }
 
 // menuOnlyPerms 声明「不直接对应任何后端路由、只用于管理端菜单/入口显隐」的权限码。
@@ -149,7 +164,7 @@ var routePerms = map[string]string{
 // 目前唯一的成员是 `credit:view`:
 //
 //	挂账页展示的其实就是「settle_type='credit' 的订单」,数据来自
-//	`GET /prod-api/dining/order/list`(需要 `order:view`)。因此 `credit:view`
+//	`GET /api/admin/order/list`(需要 `order:view`)。因此 `credit:view`
 //	只决定左侧菜单里「挂账管理」是否出现,真正的数据读取仍由 `order:view` 把守。
 //
 // ⚠️ 由此带来一个约束:单纯授予 `credit:view` 而不给 `order:view`,用户会看到
@@ -180,7 +195,7 @@ func PermForRoute(method, fullPath string) (string, bool) {
 	return perm, ok
 }
 
-// RegisteredRoutePermKeys 返回权限表里登记的全部键(形如 "GET /prod-api/dining/table/list")。
+// RegisteredRoutePermKeys 返回权限表里登记的全部键(形如 "GET /api/admin/table/list")。
 // 供测试做反向校验:权限表里的条目必须在真实路由树中存在,避免删接口后条目腐化,
 // 也避免路径拼错时覆盖率恰好「通过」(把权限挂到了一条不存在的路由上)。
 func RegisteredRoutePermKeys() []string {
@@ -193,7 +208,7 @@ func RegisteredRoutePermKeys() []string {
 }
 
 // AdminRoutePrefix 管理端路由前缀(覆盖率测试据此筛选需要登记权限的路由)。
-const AdminRoutePrefix = "/prod-api/dining"
+const AdminRoutePrefix = "/api/admin"
 
 // RequirePerm 权限校验中间件,必须挂在 AdminAuth 之后。
 //
@@ -209,10 +224,32 @@ func RequirePerm() gin.HandlerFunc {
 			return
 		}
 		if perm != PermFree && !HasPerm(c, perm) {
-			forbidden(c, "没有操作权限:"+store.PermName(perm))
+			forbidden(c, "没有操作权限:"+service.PermName(perm))
 			return
 		}
 		c.Next()
+	}
+}
+
+// RequireAnyPerm 「任一权限命中即放行」的权限校验中间件,必须挂在 AdminAuth 之后。
+//
+// 用于一个接口服务多个模块的场景:上传接口的产物既供菜品图(dish:edit)
+// 也供店铺 Logo/收款码(config:edit),收紧到单一权限会挡住另一个模块的使用者。
+func RequireAnyPerm(perms ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		for _, p := range perms {
+			if HasPerm(c, p) {
+				c.Next()
+				return
+			}
+		}
+		names := make([]string, 0, len(perms))
+		for _, p := range perms {
+			if n := service.PermName(p); n != "" {
+				names = append(names, n)
+			}
+		}
+		forbidden(c, "没有操作权限:"+strings.Join(names, " 或 "))
 	}
 }
 
@@ -223,14 +260,14 @@ func RequirePerm() gin.HandlerFunc {
 const ctxAuthKey = "dining.auth"
 
 // setAuth 由 AdminAuth 写入当前登录者信息。
-func setAuth(c *gin.Context, auth *store.AuthInfo) {
+func setAuth(c *gin.Context, auth *service.AuthInfo) {
 	c.Set(ctxAuthKey, auth)
 }
 
 // currentAuth 取当前登录者信息(未登录返回 nil)。
-func currentAuth(c *gin.Context) *store.AuthInfo {
+func currentAuth(c *gin.Context) *service.AuthInfo {
 	if v, ok := c.Get(ctxAuthKey); ok {
-		if a, ok := v.(*store.AuthInfo); ok {
+		if a, ok := v.(*service.AuthInfo); ok {
 			return a
 		}
 	}
@@ -251,7 +288,7 @@ func HasPerm(c *gin.Context, code string) bool {
 	if a == nil {
 		return false
 	}
-	return store.HasPermCode(a.Perms, code)
+	return service.HasPermCode(a.Perms, code)
 }
 
 // adminName 当前操作人的留痕显示名:优先中文姓名,未填则回退登录名。
@@ -296,7 +333,7 @@ func usernameFromToken(c *gin.Context) string {
 // 匿名请求(无令牌)不记,免得日志被端口扫描灌满。
 func unauthorized(c *gin.Context, msg string) {
 	writeDeniedLog(c, "未登录访问被拒绝", msg)
-	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": msg})
+	c.AbortWithStatusJSON(http.StatusUnauthorized, injectRequestID(c, &Rsp{Code: 401, Msg: msg}))
 }
 
 // forbidden 已登录但无权限(或角色失效)。前端只弹提示,不跳转。
@@ -305,5 +342,5 @@ func unauthorized(c *gin.Context, msg string) {
 // 而这类请求在 AuditLog 之前就被 Abort,中间件看不到,因此在此埋点。
 func forbidden(c *gin.Context, msg string) {
 	writeDeniedLog(c, "无权限访问被拒绝", msg)
-	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 403, "msg": msg})
+	c.AbortWithStatusJSON(http.StatusForbidden, injectRequestID(c, &Rsp{Code: 403, Msg: msg}))
 }

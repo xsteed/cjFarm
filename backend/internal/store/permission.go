@@ -8,7 +8,7 @@ import (
 // ============================================================================
 // 权限点目录 —— 权限体系的唯一事实来源
 //
-// 后端据此校验权限,前端通过 GET /prod-api/dining/perm/catalog 拉取同一份定义
+// 后端据此校验权限,前端通过 GET /api/admin/perm/catalog 拉取同一份定义
 // 渲染勾选框。两边不各自硬编码,避免「新增权限点后前端漏改」。
 //
 // 命名规则: <模块>:<动作>,动作取值 view / edit / operate / settle / cancel。
@@ -116,7 +116,7 @@ var permNameIndex = func() map[string]string {
 // permImplies 跨模块隐含依赖:拥有 key 会自动连带拥有 value(可传递)。
 //
 // 起因(2026-09-22 审计发现):有些菜单页的数据实际来自别的模块的接口。
-//   - 挂账管理:展示的是 settle_type='credit' 的订单,数据走 GET /dining/order/list,
+//   - 挂账管理:展示的是 settle_type='credit' 的订单,数据走 GET /api/admin/order/list,
 //     需要 order:view。只勾 credit:view → 菜单能进、列表接口 403。
 //   - 员工管理:新增/编辑员工要拉角色下拉框,需要 role:view。只勾 user:view →
 //     角色下拉永远为空,建号改角色静默不可用。

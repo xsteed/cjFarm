@@ -4,13 +4,15 @@
 //   - SQLite(默认):单文件、零外部依赖,适合单机/小规模部署;
 //   - MySQL:适合多实例、高并发或已有 DBA 运维体系的场景。
 //
-// 依赖方向:store 只依赖 model,不依赖 service/handler/print。
+// 依赖方向:store 依赖 po + conf(常量) + infra(env/logger/secret) + store/seedimg(种子图片),
+// 不依赖 dto/service/handler/print。
 package store
 
 import (
 	"database/sql"
-	"os"
 	"time"
+
+	"dining-system/internal/conf"
 )
 
 // DB 全局数据库句柄,由 Init 初始化后供各查询函数使用。
@@ -32,13 +34,5 @@ func WithTx(fn func(tx *sql.Tx) error) error {
 
 // Now 返回当前时间字符串(数据库统一格式)。
 func Now() string {
-	return time.Now().Format("2006-01-02 15:04:05")
-}
-
-// Getenv 返回环境变量值,为空时回退到默认值。
-func Getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
+	return time.Now().Format(conf.TimeLayout)
 }

@@ -4,8 +4,8 @@
 # 安装: 复制到 /etc/systemd/system/dining-backend.service
 #       systemctl daemon-reload && systemctl enable --now dining-backend
 #
-# 说明: 工作目录设为安装目录, 使相对路径(./dining.db、./uploads)稳定可用;
-#       也可通过 Environment 覆盖端口/数据库/上传目录。
+# 说明: 工作目录设为安装目录, 使相对路径(./dining.db、旧版 ./uploads 导入源)稳定可用;
+#       也可通过 Environment 覆盖端口/数据库/存量图片导入源目录。
 # ============================================================================
 
 [Unit]
@@ -24,11 +24,12 @@ WorkingDirectory=/opt/dining-system
 ExecStart=/opt/dining-system/bin/dining-backend
 
 # 环境变量说明:
-#   DB_PATH 使用相对路径(./dining.db),配合 WorkingDirectory 落在 /opt/dining-system 下。
-#   STATIC_DIR / UPLOAD_DIR 显式写死绝对路径:二者后端默认值都是相对路径
-#   (../frontend/dist、./uploads),一旦有人改了 WorkingDirectory、或在别处直接
-#   cd 到 bin 目录启动二进制,就会解析到错误位置(典型症状:菜品图与收款码 404)。
-#   写死绝对路径可彻底消除该歧义,与 WorkingDirectory 解耦。
+#   DB_PATH 使用相对路径(./data/dining.db),配合 WorkingDirectory 落在 /opt/dining-system 下。
+#   STATIC_DIR 显式写死绝对路径:后端默认值是相对路径(../frontend/dist),一旦有人
+#   改了 WorkingDirectory、或在别处直接 cd 到 bin 目录启动二进制,就会解析到错误位置。
+#   UPLOAD_DIR 保留为升级兼容项:旧版本磁盘存量图片会从该目录导入数据库 tb_image,
+#   运行时图片展示改为从数据库读取,不再把该目录作为种子图或新上传图片的分发依赖。
+#   写死绝对路径可让升级导入源与 WorkingDirectory 解耦。
 #   由 deploy.sh 的 sed 将 /opt/dining-system 替换为实际 INSTALL_DIR。
 Environment=STATIC_DIR=/opt/dining-system/frontend/dist
 Environment=UPLOAD_DIR=/opt/dining-system/uploads
@@ -37,6 +38,9 @@ Environment=UPLOAD_DIR=/opt/dining-system/uploads
 # (/etc/dining-backend.env)在其后加载,如需改路径在那边覆盖即可。
 # 默认按 50MB/30 天/7 份轮转并压缩,由程序自带(无需 logrotate)。
 Environment=LOG_PATH=/opt/dining-system/logs/app.log
+# 打印代理(门店取单程序)的 pull/ping/ack 高频轮询日志单独落盘,
+# 不混入主日志 app.log;设为 off 时回落并入主日志文件,保证日志不丢。
+Environment=LOG_AGENT_PATH=/opt/dining-system/logs/agent.log
 
 # 管理端凭据由 deploy.sh 写入 /etc/dining-backend.env(权限 600),
 # 避免在服务单元里明文写密码。文件缺失时 "-" 前缀使其不报错。
@@ -44,7 +48,7 @@ EnvironmentFile=-/etc/dining-backend.env
 
 # 可选环境变量(按需取消注释)
 # Environment=PORT=8080
-# Environment=DB_PATH=/opt/dining-system/dining.db
+# Environment=DB_PATH=/opt/dining-system/data/dining.db
 
 # ---- 切换到 MySQL(详见 docs/mysql-migration.md) ----
 # 只需打开 DB_DRIVER 并填好连接信息,业务代码无需改动。
@@ -55,8 +59,17 @@ EnvironmentFile=-/etc/dining-backend.env
 # Environment=DB_USER=dining
 # Environment=DB_NAME=dining
 # Environment=DB_PASSWORD=改成强密码
-# 也可用一行完整连接串(设置后优先于上面的分项):
-# Environment=DB_DSN=dining:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local
+# 也可用一行完整连接串(设置后优先于上面的分项);maxAllowedPacket 放行单张
+# 大图(≤5MB)写入 tb_image,与 config.example.yaml / .env.example 的示例保持一致:
+# Environment=DB_DSN=dining:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
+#
+# 更省事的写法: 用 deploy.sh 注入(仅首次安装写入 EnvironmentFile):
+#   sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_USER=dining \
+#     DB_PASSWORD=xxx DB_NAME=dining bash deploy/deploy.sh
+# ⚠️ 注意: EnvironmentFile 带 "-" 前缀, 文件缺失或其中没写 DB_* 时服务仍会
+#    以默认 SQLite 正常启动(静默回退), 不会报错。启动后务必核对实际后端:
+#      journalctl -u dining-backend -n 200 | grep '已连接'
+#    看到 "已连接 mysql 后端" 才算切换成功, 看到 sqlite 说明 DB_* 没生效。
 #
 # ⚠️ 主密钥 CONFIG_MASTER_KEY / data/master.key 必须与原库一致,否则已加密的
 #    支付密钥无法解密;迁移时请一并复制 /opt/dining-system/data/master.key。

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  门店本地打印代理 —— macOS .app bundle 的 Info.plist 模板。
+
+  为什么要做成 .app:macOS 15(Sequoia)起引入「本地网络隐私」,凡是连接局域网地址的
+  出站操作都要用户授权;而授权是**按代码签名识别程序身份**记录的。Apple TN3179 明确:
+  launchd daemon 自动放行,但 **launchd agent 不在此列** —— 不用 SMAppService 安装的
+  agent 必须在自己的 launchd plist 里声明 AssociatedBundleIdentifiers,系统才能定位到
+  responsible code。脱 bundle 的裸二进制在 launchd 下被拦时,既弹不出授权窗口,也不会
+  在「系统设置 → 隐私与安全性 → 本地网络」里留下条目,表现就是连接被瞬间拒绝:
+
+      dial tcp 192.168.1.133:9100: connect: no route to host
+
+  这与「打印机没开机 / 不在同一网段」的报错一模一样,极难排查,故必须装进 bundle。
+
+  __VERSION__ 由 print-agent 的 install 模式用程序自身的版本号替换。
+
+  注：本注释里提到命令行选项时一律省略前面的短横线 —— XML 注释中不允许出现连续两个
+  连字符，写了会让某些 plist 解析器直接报错。
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.cjfarm.print-agent</string>
+
+    <key>CFBundleName</key>
+    <string>打印代理</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>长健农场打印代理</string>
+
+    <key>CFBundleExecutable</key>
+    <string>print-agent</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+
+    <!-- 无 Dock 图标、无菜单栏:这是一个纯后台代理。 -->
+    <key>LSUIElement</key>
+    <true/>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- 首次访问局域网时系统弹窗里显示的说明文字。 -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>用于连接门店局域网内的打印机(IP:9100)打印小票。</string>
+</dict>
+</plist>

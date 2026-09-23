@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"dining-system/internal/model"
+	"dining-system/internal/po"
 	"dining-system/internal/store"
+	"dining-system/internal/store/dao"
 )
 
 // setupTestDB 建一个临时 SQLite 库(含种子数据),供渲染层读取店铺名等配置。
@@ -45,8 +46,8 @@ func TestFeieSign(t *testing.T) {
 func TestEscapeFeie(t *testing.T) {
 	cases := map[string]string{
 		"普通菜名":         "普通菜名",
-		"<BR>":          "&lt;BR&gt;",
-		"a<b>c":         "a&lt;b&gt;c",
+		"<BR>":         "&lt;BR&gt;",
+		"a<b>c":        "a&lt;b&gt;c",
 		"<C>居中</C>坏分子": "&lt;C&gt;居中&lt;/C&gt;坏分子",
 	}
 	for in, want := range cases {
@@ -87,26 +88,36 @@ func TestSplitFeieContent(t *testing.T) {
 // 单据渲染
 // ============================================================================
 
-func sampleOrder() model.Order {
-	return model.Order{
+func sampleOrder() (po.Order, []po.OrderItem) {
+	o := po.Order{
 		OrderID: 7, OrderNo: "D20260921120000abcdef", TableNo: "03", TableName: "大厅03桌",
-		PersonCount: 4, DishAmount: 66, SeatFee: 24, DiscountAmount: 6, TotalAmount: 84,
+		PersonCount: 4, DishAmount: 6600, SeatFee: 2400, DiscountAmount: 600, TotalAmount: 8400,
 		OrderRemark: "不要香菜",
-		Items: []model.OrderItem{
-			{ItemID: 1, DishID: 1, CategoryID: 1, DishName: "凉拌青瓜", SpecName: "份", Quantity: 2, Price: 28, Amount: 56, Remark: "加辣"},
-			{ItemID: 2, DishID: 10, CategoryID: 6, DishName: "海鲜炒饭", Quantity: 1, Price: 10, Amount: 10},
-		},
-		CreateTime: "2026-09-21 12:00:00",
-		SettleType: "normal",
+		CreateTime:  "2026-09-21 12:00:00",
+		SettleType:  "normal",
+	}
+	items := []po.OrderItem{
+		{ItemID: 1, DishID: 1, DishName: "凉拌青瓜", SpecName: "份", Quantity: 2, Price: 2800, Amount: 5600, Remark: "加辣"},
+		{ItemID: 2, DishID: 10, DishName: "海鲜炒饭", Quantity: 1, Price: 1000, Amount: 1000},
+	}
+	return o, items
+}
+
+// sampleRows 返回带分类 ID 的订单明细(分单逻辑与 buildJobs 使用)。
+func sampleRows() []dao.OrderItemRow {
+	_, items := sampleOrder()
+	return []dao.OrderItemRow{
+		{OrderItem: items[0], CategoryID: 1},
+		{OrderItem: items[1], CategoryID: 6},
 	}
 }
 
 func TestRenderKitchenTicket(t *testing.T) {
 	setupTestDB(t)
-	o := sampleOrder()
+	o, items := sampleOrder()
 
 	// 默认不带金额:后厨只看菜名与数量。
-	lines := RenderKitchenTicket(o, o.Items, 48, false, "【厨房单】")
+	lines := RenderKitchenTicket(o, items, 48, false, "【厨房单】")
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{"【厨房单】", "单号: D20260921120000abcdef", "大厅03桌", "凉拌青瓜 (份) x2", "加辣", "整单备注: 不要香菜"} {
 		if !strings.Contains(joined, want) {
@@ -124,27 +135,27 @@ func TestRenderKitchenTicket(t *testing.T) {
 	}
 
 	// 打开金额开关后必须带出小计。
-	withPrice := strings.Join(RenderKitchenTicket(o, o.Items, 48, true, "【厨房单】"), "\n")
+	withPrice := strings.Join(RenderKitchenTicket(o, items, 48, true, "【厨房单】"), "\n")
 	if !strings.Contains(withPrice, "56.00") {
 		t.Errorf("开启金额后应带出小计,实际内容:\n%s", withPrice)
 	}
 
 	// 加菜单标题。
-	if !strings.Contains(strings.Join(RenderKitchenTicket(o, o.Items, 48, false, "【加菜单】"), "\n"), "【加菜单】") {
+	if !strings.Contains(strings.Join(RenderKitchenTicket(o, items, 48, false, "【加菜单】"), "\n"), "【加菜单】") {
 		t.Error("加菜单标题未生效")
 	}
 }
 
 func TestRenderGuestTicket(t *testing.T) {
 	setupTestDB(t)
-	o := sampleOrder()
-	joined := strings.Join(RenderGuestTicket(o, 48), "\n")
+	o, items := sampleOrder()
+	joined := strings.Join(RenderGuestTicket(o, items, 48), "\n")
 	for _, want := range []string{"【食客小票】", "订单号: D20260921120000abcdef", "凉拌青瓜 (份) x2", "菜品金额", "餐位费", "优惠", "合计", "84.00", "谢谢惠顾"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("食客小票缺少 %q\n实际内容:\n%s", want, joined)
 		}
 	}
-	for _, l := range RenderGuestTicket(o, 48) {
+	for _, l := range RenderGuestTicket(o, items, 48) {
 		if displayWidth(l) > 48 {
 			t.Errorf("行超宽(%d): %q", displayWidth(l), l)
 		}
@@ -154,25 +165,25 @@ func TestRenderGuestTicket(t *testing.T) {
 // TestRenderGuestTicketSettleTypes 免单/挂账必须在票面标注,避免对账歧义。
 func TestRenderGuestTicketSettleTypes(t *testing.T) {
 	setupTestDB(t)
-	free := sampleOrder()
+	free, freeItems := sampleOrder()
 	free.SettleType = "free"
 	free.SettleRemark = "员工聚餐"
-	if got := strings.Join(RenderGuestTicket(free, 48), "\n"); !strings.Contains(got, "【免单】实收 0.00") || !strings.Contains(got, "免单原因: 员工聚餐") {
+	if got := strings.Join(RenderGuestTicket(free, freeItems, 48), "\n"); !strings.Contains(got, "【免单】实收 0.00") || !strings.Contains(got, "免单原因: 员工聚餐") {
 		t.Errorf("免单标注缺失:\n%s", got)
 	}
 
-	credit := sampleOrder()
+	credit, creditItems := sampleOrder()
 	credit.SettleType = "credit"
 	credit.CreditStatus = 1
-	credit.CreditAmount = 84
+	credit.CreditAmount = 8400
 	credit.SettleRemark = "张老板"
-	got := strings.Join(RenderGuestTicket(credit, 48), "\n")
+	got := strings.Join(RenderGuestTicket(credit, creditItems, 48), "\n")
 	if !strings.Contains(got, "【挂账】待收 84.00") || !strings.Contains(got, "挂账人: 张老板") {
 		t.Errorf("挂账标注缺失:\n%s", got)
 	}
 
 	credit.CreditStatus = 2
-	if got := strings.Join(RenderGuestTicket(credit, 48), "\n"); !strings.Contains(got, "【挂账已结】84.00") {
+	if got := strings.Join(RenderGuestTicket(credit, creditItems, 48), "\n"); !strings.Contains(got, "【挂账已结】84.00") {
 		t.Errorf("挂账已结标注缺失:\n%s", got)
 	}
 }
@@ -196,11 +207,11 @@ func TestTwoColWrap(t *testing.T) {
 
 // TestItemsForPrinterCategorySplit 按分类分单:厨房机只收自己负责的分类。
 func TestItemsForPrinterCategorySplit(t *testing.T) {
-	kitchenCold := model.Printer{PrinterType: model.PrinterTypeKitchen, CategoryIDList: []int{1}}
-	kitchenAll := model.Printer{PrinterType: model.PrinterTypeKitchen}
-	guest := model.Printer{PrinterType: model.PrinterTypeGuest}
+	kitchenCold := po.Printer{PrinterType: po.PrinterTypeKitchen, CategoryIDs: "1"}
+	kitchenAll := po.Printer{PrinterType: po.PrinterTypeKitchen}
+	guest := po.Printer{PrinterType: po.PrinterTypeGuest}
 
-	items := sampleOrder().Items // 分类 1 与 6 各一道
+	items := sampleRows() // 分类 1 与 6 各一道
 
 	if got := itemsForPrinter(kitchenCold, items); len(got) != 1 || got[0].DishName != "凉拌青瓜" {
 		t.Errorf("凉菜机应只收到凉菜, got %#v", got)
@@ -209,7 +220,7 @@ func TestItemsForPrinterCategorySplit(t *testing.T) {
 		t.Errorf("未配分类的厨房机应收全部菜品, got %d 条", len(got))
 	}
 	// 小票机即使误配了分类也不能过滤 —— 否则金额合计对不上。
-	guestWithCats := model.Printer{PrinterType: model.PrinterTypeGuest, CategoryIDList: []int{1}}
+	guestWithCats := po.Printer{PrinterType: po.PrinterTypeGuest, CategoryIDs: "1"}
 	if got := itemsForPrinter(guestWithCats, items); len(got) != 2 {
 		t.Errorf("小票机不得按分类过滤, got %d 条", len(got))
 	}
@@ -219,11 +230,12 @@ func TestItemsForPrinterCategorySplit(t *testing.T) {
 // TestBuildJobsSkipsEmptyCategoryPrinter 分类分单没匹配上菜品的机器必须被跳过,
 // 否则会打出一张只有抬头没有菜品的空白厨房单。
 func TestBuildJobsSkipsEmptyCategoryPrinter(t *testing.T) {
-	printers := []model.Printer{
-		{PrinterID: 1, PrinterName: "凉菜机", PrinterType: model.PrinterTypeKitchen, CategoryIDList: []int{99}},
-		{PrinterID: 2, PrinterName: "热菜机", PrinterType: model.PrinterTypeKitchen},
+	printers := []po.Printer{
+		{PrinterID: 1, PrinterName: "凉菜机", PrinterType: po.PrinterTypeKitchen, CategoryIDs: "99"},
+		{PrinterID: 2, PrinterName: "热菜机", PrinterType: po.PrinterTypeKitchen},
 	}
-	jobs := buildJobs(printers, sampleOrder(), sampleOrder().Items, model.PrintDocKitchen, "【厨房单】", model.PrintTriggerOrder, "")
+	o, _ := sampleOrder()
+	jobs := buildJobs(printers, o, sampleRows(), po.PrintDocKitchen, "【厨房单】", po.PrintTriggerOrder, "")
 	if len(jobs) != 1 || jobs[0].p.PrinterID != 2 {
 		t.Fatalf("应只给热菜机派单, got %#v", jobs)
 	}
@@ -232,11 +244,12 @@ func TestBuildJobsSkipsEmptyCategoryPrinter(t *testing.T) {
 // TestBuildJobsGuestOnlyToGuestPrinters 回归:结账只该出小票机,
 // 不能再给厨房机推一张厨房单(这是修复前的实际 bug)。
 func TestBuildJobsGuestOnlyToGuestPrinters(t *testing.T) {
-	printers := []model.Printer{
-		{PrinterID: 1, PrinterName: "后厨机", PrinterType: model.PrinterTypeKitchen},
-		{PrinterID: 2, PrinterName: "前台账", PrinterType: model.PrinterTypeGuest},
+	printers := []po.Printer{
+		{PrinterID: 1, PrinterName: "后厨机", PrinterType: po.PrinterTypeKitchen},
+		{PrinterID: 2, PrinterName: "前台账", PrinterType: po.PrinterTypeGuest},
 	}
-	jobs := buildJobs(printers, sampleOrder(), sampleOrder().Items, model.PrintDocGuest, "", model.PrintTriggerSettle, "")
+	o, _ := sampleOrder()
+	jobs := buildJobs(printers, o, sampleRows(), po.PrintDocGuest, "", po.PrintTriggerSettle, "")
 	if len(jobs) != 1 || jobs[0].p.PrinterID != 2 {
 		t.Fatalf("结账单据只应派给小票机, got %#v", jobs)
 	}
@@ -244,11 +257,12 @@ func TestBuildJobsGuestOnlyToGuestPrinters(t *testing.T) {
 
 // TestBuildJobsKitchenOnlyToKitchenPrinters 反向下单时小票机不拿厨房单。
 func TestBuildJobsKitchenOnlyToKitchenPrinters(t *testing.T) {
-	printers := []model.Printer{
-		{PrinterID: 1, PrinterName: "后厨机", PrinterType: model.PrinterTypeKitchen},
-		{PrinterID: 2, PrinterName: "前台账", PrinterType: model.PrinterTypeGuest},
+	printers := []po.Printer{
+		{PrinterID: 1, PrinterName: "后厨机", PrinterType: po.PrinterTypeKitchen},
+		{PrinterID: 2, PrinterName: "前台账", PrinterType: po.PrinterTypeGuest},
 	}
-	jobs := buildJobs(printers, sampleOrder(), sampleOrder().Items, model.PrintDocKitchen, "【厨房单】", model.PrintTriggerOrder, "")
+	o, _ := sampleOrder()
+	jobs := buildJobs(printers, o, sampleRows(), po.PrintDocKitchen, "【厨房单】", po.PrintTriggerOrder, "")
 	if len(jobs) != 1 || jobs[0].p.PrinterID != 1 {
 		t.Fatalf("厨房单据只应派给厨房机, got %#v", jobs)
 	}
