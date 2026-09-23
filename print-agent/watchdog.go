@@ -30,14 +30,16 @@ func markActive() {
 
 // startWatchdog 启动假死看门狗 goroutine:每分钟检查一次活动戳,
 // 超过 stuckMaxIdle 无活动则打日志并以退出码 1 自杀,由外部守护拉起。
-// stop 与主循环共用退出信号通道 —— 正常退出时不误杀。
-func startWatchdog(stop <-chan os.Signal) {
+//
+// 参数是「广播式」的退出信号(见 broadcastSignals 的说明):**不能**把 signal 通道
+// 直接传给多个消费者,通道是单播的,看门狗抢到就没人通知主循环了。
+func startWatchdog(done <-chan struct{}) {
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-stop:
+			case <-done:
 				return
 			case <-ticker.C:
 				last := lastActiveNano.Load()

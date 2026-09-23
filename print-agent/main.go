@@ -180,15 +180,17 @@ func main() {
 	// 下次取到同一 deliveryId 也会被跳过,从而避免同一张票重复出纸。
 	st := loadJobState(cfg.state)
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	// 主循环与看门狗共用这一个「广播式」退出信号,不能各自去读 signal 通道。
+	done := broadcastSignals(sig)
 
 	// 常驻模式下启用假死看门狗:主循环每轮打活动戳,卡死超过阈值即自杀退出,
 	// 由 launchd KeepAlive / 任务计划 RestartOnFailure / systemd Restart=always
 	// 自动拉起(见 watchdog.go)。--once 单轮自检不需要。
 	if !cfg.once {
 		markActive()
-		startWatchdog(stop)
+		startWatchdog(done)
 	}
 
 	for {
@@ -203,12 +205,31 @@ func main() {
 			return
 		}
 		select {
-		case <-stop:
+		case <-done:
 			logf("收到退出信号,已停止")
 			return
 		case <-time.After(cfg.interval):
 		}
 	}
+}
+
+// broadcastSignals 把首个退出信号「广播」出去:close 一个 channel,所有消费者都能收到。
+//
+// 为什么不能直接把 signal 通道交给多个消费者:channel 是**单播**的。看门狗与主循环
+// 同时阻塞在 <-stop 上时,信号只会被其中一个取走 —— 看门狗取走后只是安静地 return,
+// 主循环则永远等不到信号,SIGTERM/SIGINT 之后进程根本不退出。实测后果有两层:
+//
+//   - `./stop.sh` 打完 pkill 就报「已停止」,代理却还在跑;
+//   - 残留实例与自启动的实例抢同一批云端任务,**同一张小票被打两遍**。
+//
+// 用 close 广播后,「谁先看到信号」不再有歧义。
+func broadcastSignals(sig <-chan os.Signal) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		<-sig
+		close(done)
+	}()
+	return done
 }
 
 // ============================================================================
@@ -248,6 +269,9 @@ func runCycle(client *http.Client, base string, cfg config, st *jobState) (int, 
 	}
 	results := make([]result, 0, len(jobs))
 	for _, j := range jobs {
+		// 顺手记下目标打印机地址:门店自助配置 CUPS 通道时(--setup-cups auto)要用它,
+		// 而 IP 配在管理后台、本机别处都没有。见 printers.go。
+		recordPrinterAddr(printerAddr(j))
 		// 幂等去重:这条任务在本机已经成功打印过(上一次回执丢失被重发)。
 		// 跳过真正打印、直接回执成功,避免重复出票。
 		if st.has(j.DeliveryID) {

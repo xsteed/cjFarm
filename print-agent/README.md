@@ -130,6 +130,7 @@ AGENT=print-agent-darwin-arm64        # Intel Mac 用 darwin-amd64;Windows 用 w
 ./$AGENT --probe 192.168.1.100                        # 连通性自检:到打印机这段通不通(不用装 nc)
 ./$AGENT --doctor                                     # 体检:配置/自启动/通道/防睡眠/云端一次查完(加 --probe IP 连打印机一起查)
 ./$AGENT --setup-cups 192.168.1.100                   # macOS:一条命令建好系统打印队列并打开 CUPS 通道(不需要管理员密码)
+./$AGENT --setup-cups auto                            # 同上,但用「代理见过的打印机地址」,不必手填 IP
 tail -f print-agent.log                               # 看日志(未装成 App 时在程序同目录)
 ./$AGENT --uninstall                                  # 卸载自启(内置命令,保留 agent.env)
 ./uninstall.sh                                        # 卸载脚本版:停进程 + 移除自启 + 清运行文件(--all 连产物一起删)

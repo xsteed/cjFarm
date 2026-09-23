@@ -37,51 +37,44 @@ func cupsQueueNameFor(ip string) string {
 	return "Cjfarm-" + strings.ReplaceAll(ip, ":", "-")
 }
 
-// runSetupCUPS 建好 CUPS 队列并打开 CUPS 通道,返回进程退出码。
+// runSetupCUPS 为一台或多台打印机配好 CUPS 通道,返回进程退出码。
+//
+// 支持一次给多个(逗号/空格分隔):门店常有多台打印机(后厨 + 前台),而每台都要重启
+// 代理并等一次自动发现,分开做既慢又容易漏;一条命令全覆盖。
 func runSetupCUPS(cfg config) int {
 	if runtime.GOOS != "darwin" {
 		logf("[提示] --setup-cups 只针对 macOS:其他平台没有「本地网络」隐私限制,直连打印机即可(tcp 通道),无需本命令")
 		return 0
 	}
-	target := parseProbeTarget(cfg.setupCUPS)
-	if err := validatePrinterAddr(target.ip, target.port); err != nil {
-		logf("[错误] 目标 %q 不可用: %v", target.raw, err)
+	targets, reason := resolveSetupCUPSTargets(cfg.setupCUPS)
+	if len(targets) == 0 {
+		if reason == "" {
+			reason = "未指定打印机地址;用法: --setup-cups 192.168.1.133[,192.168.1.134],或 --setup-cups auto"
+		}
+		logf("[错误] %s", reason)
 		return 1
 	}
-	addr := target.addr()
-	uri := "socket://" + addr
+	logf("===== 为 %d 台打印机配置 CUPS 打印通道 =====", len(targets))
 
-	logf("===== 为 %s 配置 CUPS 打印通道 =====", addr)
-
-	// 1) 建队列(已有就直接用,保证可重复执行)
-	queue, exists := findCUPSQueue(addr)
-	if exists {
-		logf("[信息] 已有对应队列,直接使用:%s → %s", addr, queue)
-	} else {
-		queue = cupsQueueNameFor(target.ip)
-		if out, err := runExternal([]string{"lpadmin", "-p", queue, "-E", "-v", uri}); err != nil {
-			logf("[错误] 创建打印队列失败: %v%s", err, detailOf(out))
-			logf("[提示] 也可走图形界面:「系统设置 → 打印机与扫描仪 → 添加打印机 → IP」,协议选 Socket / HP JetDirect")
-			return 1
+	// 1) 逐台把队列准备好(已存在的直接复用,保证可重复执行)
+	prepared := make([]probeTarget, 0, len(targets))
+	for _, t := range targets {
+		if err := validatePrinterAddr(t.ip, t.port); err != nil {
+			logf("[错误] 目标 %q 不可用: %v", t.raw, err)
+			continue
 		}
-		logf("[完成] 已创建打印队列 %s → %s", queue, uri)
-		// 队列刚建好,必须清掉发现缓存,否则下面「核对」会读到建之前的空结果,
-		// 门店看到的是「建了却还说没找到」。
-		invalidateCUPSQueueCache()
+		if ensureCUPSQueue(t) {
+			prepared = append(prepared, t)
+		}
+	}
+	if len(prepared) == 0 {
+		logf("[问题] 没有任何一台配置成功;可走图形界面:「系统设置 → 打印机与扫描仪 → 添加打印机 → IP」,协议选 Socket / HP JetDirect")
+		return 1
 	}
 
-	// 2) 打开 CUPS 通道
-	bin := darwinAgentBinary()
-	envPath := filepath.Join(dataDirFor(bin), "agent.env")
-	switch printChannelTarget.via {
-	case channelCUPS, channelAuto:
-		logf("[信息] 打印通道已是 %s,无需修改", printChannelTarget.via)
-	default:
-		if err := upsertEnvKey(envPath, "PRINT_AGENT_PRINT_VIA", channelAuto); err != nil {
-			logf("[错误] 写入 %s 失败: %v", envPath, err)
-			return 1
-		}
-		logf("[完成] 已把打印通道设为 auto(仍优先直连,直连失败再改投 CUPS);配置:%s", envPath)
+	// 2) 打开 CUPS 通道(多台共用同一份设置,只改一次)
+	if !ensureCUPSChannel() {
+		return 1
 	}
 
 	// 3) 重启代理,让新配置真正生效(不重启就只是「改了文件」)
@@ -89,13 +82,59 @@ func runSetupCUPS(cfg config) int {
 
 	// 4) 核对
 	logf("")
-	if q, ok := findCUPSQueue(addr); ok {
-		logf("[完成] 核对通过:%s → 队列 %s;代理现在可以经系统打印服务出纸", addr, q)
-		logf("[提示] 想让纸真的出来验证一次: --probe %s --probe-print(会各出一张,直连那张可能失败)", addr)
-		return 0
+	failed := 0
+	for _, t := range prepared {
+		if q, ok := findCUPSQueue(t.addr()); ok {
+			logf("[完成] 核对通过:%s → 队列 %s", t.addr(), q)
+			continue
+		}
+		logf("[问题] %s 的队列建了但自动发现读不到;请执行 --doctor 并把输出发给技术人员", t.addr())
+		failed++
 	}
-	logf("[问题] 队列已建但自动发现读不到它;请执行 --doctor 并把输出发给技术人员")
-	return 1
+	if failed > 0 {
+		return 1
+	}
+	logf("[完成] 全部就绪:代理现在可以经系统打印服务出纸")
+	logf("[提示] 想让纸真的出来验证一次: --probe %s --probe-print(会各出一张,直连那张可能失败)", prepared[0].addr())
+	return 0
+}
+
+// ensureCUPSQueue 确保目标地址有一个可用的 CUPS socket 队列(已存在则复用)。
+func ensureCUPSQueue(t probeTarget) bool {
+	addr := t.addr()
+	if queue, exists := findCUPSQueue(addr); exists {
+		logf("[信息] 已有对应队列,直接使用:%s → %s", addr, queue)
+		return true
+	}
+	queue := cupsQueueNameFor(t.ip)
+	if out, err := runExternal([]string{"lpadmin", "-p", queue, "-E", "-v", "socket://" + addr}); err != nil {
+		logf("[错误] 为 %s 创建打印队列失败: %v%s", addr, err, detailOf(out))
+		return false
+	}
+	logf("[完成] 已创建打印队列 %s → socket://%s", queue, addr)
+	// 队列刚建好,必须清掉发现缓存,否则后面的「核对」会读到建之前的空结果,
+	// 门店看到的是「建了却还说没找到」。
+	invalidateCUPSQueueCache()
+	return true
+}
+
+// ensureCUPSChannel 把打印通道设为 auto(已就位则不动)。
+//
+// 用 auto 而不是 cups:直连若哪天能走通(例如门店改用 LaunchDaemon 或网段白名单),
+// 就自动回到直连 —— 那条路能做 DLE EOT 状态回读,比 CUPS 信息更全。
+func ensureCUPSChannel() bool {
+	if printChannelTarget.via == channelCUPS || printChannelTarget.via == channelAuto {
+		logf("[信息] 打印通道已是 %s,无需修改", printChannelTarget.via)
+		return true
+	}
+	bin := darwinAgentBinary()
+	envPath := filepath.Join(dataDirFor(bin), "agent.env")
+	if err := upsertEnvKey(envPath, "PRINT_AGENT_PRINT_VIA", channelAuto); err != nil {
+		logf("[错误] 写入 %s 失败: %v", envPath, err)
+		return false
+	}
+	logf("[完成] 已把打印通道设为 auto(仍优先直连,直连失败再改投 CUPS);配置:%s", envPath)
+	return true
 }
 
 // detailOf 把外部命令的输出浓缩成「(一行原因)」,没有内容时返回空串。

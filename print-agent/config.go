@@ -69,7 +69,7 @@ func parseFlags() (config, error) {
 		probeTimeout = flag.Int("probe-timeout", envInt("PRINT_AGENT_PROBE_TIMEOUT", defaultProbeTimeoutSec), "自检时单台打印机的拨号超时(秒,1-30)")
 		probePrint   = flag.Bool("probe-print", false, "自检时吐一张纯 ASCII 自检页(默认只探端口 + 读状态,不吐纸)")
 		doctor       = flag.Bool("doctor", false, "一条命令体检:一次查完配置/自启动/打印通道/防睡眠与合盖/云端连通,并给出处置命令;可再带 --probe <打印机IP> 把打印机那一段一起查")
-		setupCUPS    = flag.String("setup-cups", "", "macOS:为指定打印机建好系统打印队列并打开 CUPS 通道(直连被系统「本地网络」权限拦下时用),形如 192.168.1.133 或 192.168.1.133:9100")
+		setupCUPS    = flag.String("setup-cups", "", "macOS:为指定打印机建好系统打印队列并打开 CUPS 通道(直连被系统「本地网络」权限拦下时用)。形如 192.168.1.133、192.168.1.133:9100,多台用逗号分隔;填 auto 则用本机见到过的全部打印机地址")
 		printVia     = flag.String("print-via", envOr("PRINT_AGENT_PRINT_VIA", channelTCP), "打印通道: tcp=直连打印机 IP:9100(默认);cups=一律走本机 CUPS 打印队列;auto=先直连、失败且找得到队列时改投 CUPS(macOS 15+ 被「本地网络」权限拦下时用 cups/auto)")
 		cupsQueue    = flag.String("cups-queue", envOr("PRINT_AGENT_CUPS_QUEUE", ""), "CUPS 队列映射(仅 cups/auto 通道): 形如 192.168.1.133=厨房打印机,多个用逗号分隔;只写队列名则作为所有打印机的默认队列。留空时用 lpstat -v 自动发现")
 		// 声明但不在此处使用:--env 已在 main() 开头(loadEnvFile)按 os.Args 处理,

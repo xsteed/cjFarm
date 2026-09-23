@@ -79,8 +79,11 @@ fi
 echo ""
 echo "== 合盖/睡眠(合盖后能否继续打单) =="
 PMSET_SLEEP="$(ioreg -r -c IOPMrootDomain -d 1 2>/dev/null | grep '"SleepDisabled"')"
+# SLEEP_DISABLED 供下面判断合盖睡眠记录是否已过期。用 case 定值而不是 `[ x = *glob* ]`:
+# POSIX test 的 = 不做通配匹配(那是 [[ ]] 才有的行为),写成通配会永远为假,静默判错。
+SLEEP_DISABLED=0
 case "$PMSET_SLEEP" in
-  *"= Yes") echo "合盖睡眠开关: 已关闭(合盖不睡)" ;;
+  *"= Yes") SLEEP_DISABLED=1; echo "合盖睡眠开关: 已关闭(合盖不睡)" ;;
   *"= No")  echo "合盖睡眠开关: 未关闭 —— 合盖后系统会睡眠,代理停摆"
             echo "              要让合盖后继续打单: sudo pmset -a disablesleep 1" ;;
   *)        echo "合盖睡眠开关: 读取失败(可手工执行 ioreg -r -c IOPMrootDomain -d 1 | grep SleepDisabled)" ;;
@@ -100,18 +103,35 @@ else
   echo "     重跑 ./install.sh 并在询问时选 y(或 PRINT_AGENT_NO_SLEEP=1 后重跑)"
 fi
 
-CLAM="$(pmset -g log 2>/dev/null | grep -i 'Clamshell Sleep' | tail -3)"
-echo "最近的合盖睡眠记录(有输出=确实因合盖睡过):"
-if [ -n "$CLAM" ]; then
-  echo "$CLAM" | sed 's/^/  /'
+# ---- 合盖睡眠记录:必须区分「开关生效前」与「开关生效后」 ----
+# 开关的变更时间可以从电源偏好文件的修改时间拿到(免 sudo,powerd 就写在那儿)。最近的合盖
+# 睡眠记录比它更早 = 历史记录,属正常。直接把旧记录列出来会让门店以为「现在还在睡」——
+# 实测就会这样被误解,所以这里一定要做这个比较,而不是列几条完事。
+PM_LIST=/Library/Preferences/com.apple.PowerManagement.plist
+PM_TIME="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$PM_LIST" 2>/dev/null)"
+CLAM_LAST="$(pmset -g log 2>/dev/null | grep -i 'Clamshell Sleep' | tail -1)"
+CLAM_TS="$(printf '%s' "$CLAM_LAST" | cut -c1-19)"
+
+if [ -z "$CLAM_LAST" ]; then
+  echo "合盖睡眠记录: 无(本机从未因合盖睡过)"
+elif [ -n "$PM_TIME" ] && [ "$CLAM_TS" \< "$PM_TIME" ]; then
+  echo "合盖睡眠记录: 最近一次 $CLAM_TS,早于开关的变更时间($PM_TIME)—— 属历史记录,"
+  echo "              开关生效后还没有新的合盖睡眠 ✓"
+elif [ "$SLEEP_DISABLED" = 1 ]; then
+  echo "合盖睡眠记录: 最近一次 $CLAM_TS,晚于开关的变更时间($PM_TIME)"
+  echo "              → 异常:开关虽显示已关闭,仍发生过合盖睡眠;请重新执行:"
+  echo "                 sudo pmset -a disablesleep 1"
 else
-  echo "  (无)"
+  echo "合盖睡眠记录: 最近一次 $CLAM_TS(开关尚未关闭,合盖后系统仍会睡眠)"
 fi
 
 echo ""
 echo "== 出问题时先跑这一条 =="
 APP="$HOME/Applications/PrintAgent.app"
-echo "  ./print-agent --doctor"
+APP_BIN="$APP/Contents/MacOS/print-agent"
+# 用 App 里的路径而不是 "./print-agent":包里产物叫 print-agent-darwin-*,没有这个文件;
+# 而且真正在跑、配置也认的是 App 里那份(见 docs/print-agent.md 的路径约定)。
+echo "  \"$APP_BIN\" --doctor"
 echo "  会一次查完:配置 / 自启动 / 打印通道与 CUPS 队列 / 防睡眠与合盖 / 云端连通,"
 echo "  并针对每一项直接给出该敲的命令(加 --probe <打印机IP> 可把打印机那段一起查)。"
 if [ -d "$APP" ]; then
@@ -120,7 +140,7 @@ else
   echo "  未发现 $APP(尚未按 .app 形态安装);重装执行 ./install.sh"
 fi
 echo "  打不出小票且报「无法连接打印机 ... no route to host」时,一条命令解决:"
-echo "      ./print-agent --setup-cups <打印机IP>"
+echo "      \"$APP_BIN\" --setup-cups <打印机IP>"
 
 echo ""
 echo "== 云端连通自检 =="

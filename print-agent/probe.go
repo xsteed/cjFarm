@@ -363,7 +363,10 @@ func runProbe(cfg config) int {
 	return 0
 }
 
-// onOff 布尔值的人读形式(日志里的中文开关)。
+// onOff 布尔值的人读形式。**专用于自检页**那个开关 —— 它把后果也写出来了。
+//
+// 别拿它去格式化别的布尔量:曾经用它打印「防睡眠沿用现有配置」,结果打出
+// 「开(会真的出纸)」这种和上下文完全无关的话。其它场景用 onOffText。
 func onOff(b bool) string {
 	if b {
 		return "开(会真的出纸)"

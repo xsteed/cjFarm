@@ -20,6 +20,106 @@
 
 ---
 
+## 部署清单（从零到验收）
+
+> 从上往下照着做即可。每步都写了**期望输出**，对不上就停在那一步，跑体检命令
+> `--doctor` 让它告诉你缺什么。后面各章节是原理与细节，第一次部署不必读。
+>
+> **命令里的路径怎么写**：下文出现的 `./print-agent` 是「产物可执行文件」的通称，压缩包里
+> 实际叫 `print-agent-darwin-arm64`（Apple 芯片）/ `print-agent-darwin-amd64`（Intel）、
+> `print-agent-linux-amd64`、`print-agent-windows-amd64.exe`。而 macOS 装好之后，
+> **真正在跑的那份**在 `~/Applications/PrintAgent.app/Contents/MacOS/print-agent` ——
+> 体检、排障、`--setup-cups` 都用它（解压目录那份读的是另一个位置的配置，结论会误导）。
+
+### 第 0 步：云端准备（管理后台，3 件事）
+
+1. **系统配置 → 小票打印 → 本地打印代理**：签发**代理令牌**；
+2. **打印机管理 → 新增**：通道选「**本地代理**」，把门店打印机的**内网 IP** 填对
+   （形如 `192.168.1.133`，端口默认 9100）；
+3. 记下这三样，门店那边只用它们：后台地址（**不带** `/prod-api`、**不带**结尾斜杠）、代理令牌、打印机 IP。
+
+### 第 1 步：出包（开发机，一条命令）
+
+```bash
+cd print-agent
+make VERSION=1.0.0 package
+```
+
+产物：`dist/{darwin,windows,linux}/` 三个目录 + 三个压缩包（文件名带版本号，旁边有 `.sha256`）。
+
+> 发版时把 `VERSION` 换成新版本号，并**同步更新管理后台的「代理最新版本号」** ——
+> 否则门店执行 `--upgrade` 会被换回服务器上的旧包。门店自助升级还需要服务器提供产物：
+> 把 `print-agent/bin/` 放进后端部署目录（`release.sh` 自带，可用 `AGENT_BIN_DIR` 改目录）。
+
+### 第 2 步：门店安装（把对应的压缩包发过去，解压后在该目录执行）
+
+**macOS：一条命令**（`install.sh` 依次做完四件事 —— 安装 → 打印通道 → 合盖继续运行 → 体检）：
+
+```bash
+./install.sh https://你的后台域名 你的令牌 192.168.1.133
+#                                        ^^^^^^^^^^^^^^ 打印机 IP,可省略
+```
+
+- **省略打印机 IP** 时会用「代理见过的地址」自动配置。本机还没见过任何打印机时，
+  脚本会直接给出补做命令：到管理后台点一次「测试打印」，再执行
+  `<App 内可执行文件> --setup-cups auto` 即可（代理收到任务就会记下地址）。
+  多台打印机用逗号分隔：`192.168.1.133,192.168.1.134`。
+- **合盖继续运行**由脚本一并处理：它把 `caffeinate -i -s` 写进自启动（顶住空闲睡眠），
+  并把系统的合盖睡眠开关关掉（`pmset disablesleep`，需要一次管理员密码）。
+  这两件缺一不可 —— 合盖触发的是 Clamshell Sleep，`caffeinate` 挡不住它，详见 §3.5.2。
+- 想只要其中一部分：
+
+  ```bash
+  ./install.sh --minimal                       # 只安装(等价 --no-cups --no-lid)
+  ./install.sh --no-lid https://后台 令牌       # 只不要「合盖继续运行」
+  ./install.sh --no-cups https://后台 令牌      # 只不要打印通道(保持直连)
+  ```
+
+  也可以双击同目录的 `双击安装.command`，它会交互式问齐三样并停住让你看结果。
+
+**Windows / Linux：一条命令**
+
+```bash
+./install.sh https://你的后台域名 你的令牌     # Windows 双击 install.bat;Linux 用 sudo ./install.sh
+```
+
+> 验证：`<App 内可执行文件> --doctor` 一次查完全部（macOS 上脚本已自动跑过一遍）。
+> 想让纸真的出来：`--probe 192.168.1.133 --probe-print`。
+
+> `--install` 会把程序部署成 `~/Applications/PrintAgent.app`（自带图标），
+> 配置与日志落在 `~/Library/Application Support/PrintAgent/`。
+
+### 第 3 步：验收（门店机器上，两条命令 + 后台点一次）
+
+```bash
+AGENT="$HOME/Applications/PrintAgent.app/Contents/MacOS/print-agent"
+"$AGENT" --doctor                                 # 期望:「结论: … 无阻塞性问题」
+"$AGENT" --probe 192.168.1.133 --probe-print      # 期望:「已额外经 CUPS 队列[…] 送出自检页」
+```
+
+> **为什么用这个长路径而不是解压目录里的那个**：macOS 上真正在跑的是 App 里那份，配置也在
+> 它的数据目录。站在解压目录里跑 `print-agent-darwin-arm64 --doctor`，读到的是**另一个位置**
+> 的配置，会显示「未配置云端地址 / 通道 tcp」，把人引向完全错误的方向（体检会额外提示这一点）。
+
+再到管理后台点一次**测试打印**，日志应出现：
+
+```
+[成功] #13 测试页 → 打印机[后厨打印机](192.168.1.133:9100) 已送出 ×1
+```
+
+### 第 4 步：日常与升级
+
+| 操作 | 命令 |
+|---|---|
+| 看状态 | `./p.sh`（进程 + 最近日志 + 合盖/睡眠 + 出问题该跑什么） |
+| 体检 | `./print-agent --doctor`（加 `--probe <IP>` 连打印机一起查） |
+| 升级 | `./upgrade.sh`（不用重填令牌；升级后建议再跑一次 `--doctor`） |
+| 停止 / 启动 | `./stop.sh` / `./start.sh`（自启动保留） |
+| 卸载 | `./uninstall.sh`（保留配置）／`./uninstall.sh --all`（连产物与配置一起删） |
+| 云端停用 | 管理后台「打印机管理 → 代理列表 → 吊销」 |
+
+---
+
 ## 日常操作速查（复制即用）
 
 > 门店最常用的启动 / 自检 / 停止 / 卸载全在这里。安装只有一条命令；装好之后，

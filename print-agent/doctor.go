@@ -91,6 +91,13 @@ func checkIdentity(d *doctor) {
 		d.bad("无法确定程序自身路径: %v", err)
 	} else {
 		d.good("程序路径 %s", exe)
+		// 「我在哪」与「真正在跑的是谁」在门店现场常常不是同一个:门店习惯站在解压目录里
+		// 敲 ./print-agent --doctor,而开机自启跑的是 App 里那份、配置也在它的数据目录。
+		// 不点破的话,下面会冒出一串「未配置云端地址」,把人引向完全错误的方向(实测踩到)。
+		if running := darwinAgentBinary(); running != "" && !samePath(exe, running) {
+			d.hint("当前执行的是解压目录里的产物,而开机自启跑的是 %s;本次体检读的是本目录的配置。"+
+				"要看真实运行配置请改用: %s --doctor", running, running)
+		}
 	}
 	d.note("平台 %s/%s", runtime.GOOS, runtime.GOARCH)
 
@@ -176,6 +183,10 @@ func checkAutostart(d *doctor) {
 // 还是 tcp,那直连一旦被 macOS 的「本地网络」权限拦下就会全线打不出纸 —— 提示改 auto。
 func checkChannel(d *doctor, cfg config) {
 	logf("--- 打印通道 ---")
+	// 本机见过的打印机地址:配置 CUPS 时门店/技术人员不必再去管理后台翻 IP。
+	if known := knownPrinterAddrs(); len(known) > 0 {
+		d.note("本机见过的打印机地址:%s(配系统打印通道时可直接用 --setup-cups auto)", strings.Join(known, "、"))
+	}
 	if printChannelTarget.via == channelTCP {
 		d.note("通道 tcp(直连打印机 IP:9100)")
 		if queues := discoveredCUPSQueues(); len(queues) > 0 {

@@ -409,10 +409,15 @@ func readTokenHidden() (string, error) {
 }
 
 // prompt 输出提示并读取一行;读到 EOF 且无内容时返回错误,避免非交互环境下死循环。
+//
+// 读不到内容时补一个换行:非交互(门店脚本重定向 stdin)场景下,问题会先被打出来、
+// 紧接着就是下一条带时间戳的日志,挤在同一行上像是程序卡住了。补换行后日志读起来
+// 就是「问了 → 没答上 → 我们改用了什么」。
 func prompt(text string) (string, error) {
 	fmt.Print(text)
 	line, err := stdinReader.ReadString('\n')
 	if err != nil && line == "" {
+		fmt.Println()
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
@@ -707,19 +712,25 @@ func installDarwin(exe string, cfg config) error {
 		return errors.New("内嵌的 macOS LaunchAgent 模板缺失")
 	}
 
-	noSleep := cfg.noSleep
-	if !cfg.noSleepExplicit {
-		noSleep = askNoSleep()
-	}
-	// AssociatedBundleIdentifiers 必须补上:它是「本地网络」授权能被授予的前提
-	// (launchd agent 不在 daemon 的自动放行范围内,详见 deployDarwinBundle)。
-	content := withAssociatedBundleIdentifiers(renderDarwinPlist(tpl, exe, noSleep), darwinBundleID)
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", darwinPlistPath)
+
+	// 防睡眠取值的三级来源:显式指定 → 交互询问 → **沿用现有 plist 的形态**。
+	//
+	// 第三条是关键,而且不能靠「判断有没有终端」来做:门店脚本确实是重定向 stdin 跑的,
+	// 但 `/dev/null` 本身就是字符设备,按 ModeCharDevice 判断会得出「有终端」的错误结论
+	// (实测踩到:重装一次就把防睡眠关掉了,表现为「重装之后合盖又睡了」,几乎没人会
+	// 联想到是重装导致的)。改为以**询问是否真的拿到答案**为准 —— 问不到就沿用现状。
+	noSleep, note := resolveDarwinNoSleep(cfg, plistPath, askNoSleep)
+	if note != "" {
+		logf("[提示] %s", note)
+	}
+	// AssociatedBundleIdentifiers 必须补上:它是「本地网络」授权能被授予的前提
+	// (launchd agent 不在 daemon 的自动放行范围内,详见 deployDarwinBundle)。
+	content := withAssociatedBundleIdentifiers(renderDarwinPlist(tpl, exe, noSleep), darwinBundleID)
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
 		return err
 	}
@@ -814,17 +825,72 @@ func reportDarwinLidClosedReadiness(noSleep bool) {
 	}
 }
 
-// askNoSleep 交互询问是否启用盒盖防睡眠;非交互环境(管道/重定向)默认关闭。
-func askNoSleep() bool {
+// resolveDarwinNoSleep 决定本次安装是否启用「caffeinate 防睡眠包装」。
+//
+// 三级来源:显式指定 → 交互询问 → **沿用现有 plist 的形态**。
+//
+// 单独抽成函数是为了能测 —— 第三条只在「非交互重装」时才走到,而它一旦回归成
+// 「默认关掉」,现场表现是「重装之后合盖又睡了」,几乎没人会联想到是重装导致的。
+// 注意判据是「询问是否真的拿到答案」而不是「有没有终端」:门店脚本重定向的
+// /dev/null 本身就是字符设备,按 ModeCharDevice 判断会得出错误结论(实测踩过)。
+//
+// 第二个返回值是需要打印的提示(note),空串表示无需额外说明。
+func resolveDarwinNoSleep(cfg config, plistPath string, ask func() (bool, bool)) (bool, string) {
+	if cfg.noSleepExplicit {
+		return cfg.noSleep, ""
+	}
+	if v, answered := ask(); answered {
+		return v, ""
+	}
+	v := darwinPlistWrapsWithCaffeinate(plistPath)
+	return v, fmt.Sprintf("未能交互询问防睡眠(无可用终端),沿用现有配置:%s;"+
+		"要改变请显式指定 --no-sleep / PRINT_AGENT_NO_SLEEP", onOffText(v))
+}
+
+// onOffText 布尔值的人读形式(不含任何场景相关的话术,可安全复用于任意开关)。
+func onOffText(b bool) string {
+	if b {
+		return "启用"
+	}
+	return "未启用"
+}
+
+// darwinPlistWrapsWithCaffeinate 读现有 LaunchAgent plist,判断它是否用 caffeinate 包装。
+//
+// 判据只看 ProgramArguments 里有没有出现 caffeinate:模板头部注释里也提到过这个词,
+// 所以不能全文匹配(否则首次安装就会被误判成「已启用」)。
+func darwinPlistWrapsWithCaffeinate(plistPath string) bool {
+	data, err := os.ReadFile(plistPath)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(programArgumentsOfText(string(data)), "/usr/bin/caffeinate")
+}
+
+// programArgumentsOfText 截出 plist 里 ProgramArguments 之后的片段。
+func programArgumentsOfText(plist string) string {
+	const mark = "<key>ProgramArguments</key>"
+	if i := strings.Index(plist, mark); i >= 0 {
+		return plist[i+len(mark):]
+	}
+	return plist
+}
+
+// askNoSleep 交互询问是否启用盒盖防睡眠。
+//
+// 返回值第二个为「是否真的拿到了答案」。刻意区分「用户答 N」与「根本问不出来」:
+// 前者是明确的「不要防睡眠」,后者是脚本/管道场景,此时正确答案是**沿用现状**而不是
+// 替门店做决定 —— 早期版本把两者都当 false,导致重装一次就把已启用的防睡眠关掉。
+func askNoSleep() (value bool, answered bool) {
 	ans, err := prompt("是否需要在 Mac 合盖后继续工作(代理运行期间顶住空闲睡眠,需插电源;合盖睡眠开关还要另行设置,装完会提示)?[y/N]: ")
 	if err != nil {
-		return false // 无法交互时按最保守的「不防睡眠」处理
+		return false, false
 	}
 	switch strings.ToLower(strings.TrimSpace(ans)) {
 	case "y", "yes":
-		return true
+		return true, true
 	default:
-		return false
+		return false, true
 	}
 }
 

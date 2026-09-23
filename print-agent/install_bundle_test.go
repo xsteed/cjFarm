@@ -68,16 +68,97 @@ func TestBundleWithAssociatedBundleIdentifiers(t *testing.T) {
 	}
 }
 
-// programArgumentsOf 截出 ProgramArguments 之后的片段。
-//
-// 渲染结果里保留着模板的头部注释,而注释里会举例提到 caffeinate / CHANGEME 之类的词,
-// 直接对整段字符串做 include 判断会被注释干扰 —— 断言必须只针对真正生效的那一段。
-func programArgumentsOf(plist string) string {
-	const mark = "<key>ProgramArguments</key>"
-	if i := strings.Index(plist, mark); i >= 0 {
-		return plist[i+len(mark):]
+func TestBundleDarwinPlistWrapsWithCaffeinate(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "com.cjfarm.print-agent.plist")
+	tpl := deployTemplate("deploy/print-agent.plist")
+
+	// 普通版:模板头部注释里也出现过 caffeinate 字样,若按全文匹配就会误判成「已启用」,
+	// 于是非交互重装时会保留一个错误结论。
+	_ = os.WriteFile(p, []byte(renderDarwinPlist(tpl, "/tmp/print-agent", false)), 0o644)
+	if darwinPlistWrapsWithCaffeinate(p) {
+		t.Fatal("普通版不应被判为已启用防睡眠(注释里的 caffeinate 字样不算)")
 	}
-	return plist
+
+	_ = os.WriteFile(p, []byte(renderDarwinPlist(tpl, "/tmp/print-agent", true)), 0o644)
+	if !darwinPlistWrapsWithCaffeinate(p) {
+		t.Fatal("防睡眠版应被判为已启用")
+	}
+
+	// 首次安装没有 plist:按未启用处理。
+	if darwinPlistWrapsWithCaffeinate(filepath.Join(dir, "nope.plist")) {
+		t.Fatal("plist 不存在时应返回 false")
+	}
+}
+
+func TestBundleResolveDarwinNoSleep(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "com.cjfarm.print-agent.plist")
+	tpl := deployTemplate("deploy/print-agent.plist")
+	writePlist := func(noSleep bool) {
+		_ = os.WriteFile(p, []byte(renderDarwinPlist(tpl, "/tmp/x/print-agent", noSleep)), 0o644)
+	}
+	askYes := func() (bool, bool) { return true, true }
+	askNo := func() (bool, bool) { return false, true }
+	askSilent := func() (bool, bool) { return false, false } // 非交互:问不出来
+
+	t.Run("显式指定优先且不再询问", func(t *testing.T) {
+		writePlist(false)
+		if v, note := resolveDarwinNoSleep(config{noSleep: true, noSleepExplicit: true}, p, askNo); !v || note != "" {
+			t.Fatalf("显式 true 应生效且无需提示, got %v %q", v, note)
+		}
+		writePlist(true)
+		if v, _ := resolveDarwinNoSleep(config{noSleep: false, noSleepExplicit: true}, p, askYes); v {
+			t.Fatal("显式 false 应生效(不因现存配置而被覆盖)")
+		}
+	})
+
+	t.Run("问得出答案时以答案为准", func(t *testing.T) {
+		writePlist(false)
+		if v, note := resolveDarwinNoSleep(config{}, p, askYes); !v || note != "" {
+			t.Fatalf("答 y 应启用, got %v %q", v, note)
+		}
+		writePlist(true)
+		if v, _ := resolveDarwinNoSleep(config{}, p, askNo); v {
+			t.Fatal("答 N 应关闭")
+		}
+	})
+
+	t.Run("问不出来时沿用现状", func(t *testing.T) {
+		// 核心断言:非交互重装不得把门店先前启用的防睡眠关掉。
+		writePlist(true)
+		v, note := resolveDarwinNoSleep(config{}, p, askSilent)
+		if !v {
+			t.Fatal("现有配置是「启用」时,非交互重装必须保持启用")
+		}
+		if note == "" {
+			t.Fatal("沿用了现有配置时应给出提示,否则门店不知道发生了什么")
+		}
+		// 提示里不得混入「自检页」那套话术(onOff 会带出「开(会真的出纸)」),
+		// 那是另一个开关的措辞,拼进防睡眠提示里纯属胡话。
+		if strings.Contains(note, "出纸") {
+			t.Fatalf("提示措辞串了场景: %q", note)
+		}
+		// 反向:现有是关闭,就不要自作主张打开。
+		writePlist(false)
+		if v, _ := resolveDarwinNoSleep(config{}, p, askSilent); v {
+			t.Fatal("现有配置是「关闭」时,非交互重装不应擅自打开")
+		}
+		// 首次安装(没有 plist):按关闭处理,并给出提示。
+		if v, note := resolveDarwinNoSleep(config{}, filepath.Join(dir, "nope.plist"), askSilent); v || note == "" {
+			t.Fatalf("无 plist 时应为关闭且给出提示, got %v %q", v, note)
+		}
+	})
+}
+
+func TestBundlePlistLabelMatchesAgentID(t *testing.T) {
+	// --doctor 用 darwinBundleID 去 launchctl 里找作业,而作业名来自模板里的 Label。
+	// 两者一旦不一致,体检会永远报「未运行」。
+	tpl := deployTemplate("deploy/print-agent.plist")
+	if !strings.Contains(tpl, "<key>Label</key>") ||
+		!strings.Contains(tpl, "<string>"+darwinBundleID+"</string>") {
+		t.Fatalf("模板 Label 必须等于 %s", darwinBundleID)
+	}
 }
 
 func TestBundlePlistRenderCombination(t *testing.T) {
@@ -104,7 +185,7 @@ func TestBundlePlistRenderCombination(t *testing.T) {
 	// 只看 ProgramArguments 之后的段:模板头部注释里就有 caffeinate 字样,
 	// 按整段字符串判断会永远为真(install_test.go 里也踩过同一个坑)。
 	plain := withAssociatedBundleIdentifiers(renderDarwinPlist(tpl, exe, false), darwinBundleID)
-	if plainArgs := programArgumentsOf(plain); strings.Contains(plainArgs, "caffeinate") {
+	if plainArgs := programArgumentsOfText(plain); strings.Contains(plainArgs, "caffeinate") {
 		t.Fatalf("未启用防睡眠时 ProgramArguments 不应出现 caffeinate:\n%s", plainArgs)
 	}
 	argsAt := strings.Index(got, "<key>ProgramArguments</key>")
