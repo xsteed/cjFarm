@@ -62,13 +62,20 @@ var settingDefaults = map[string]string{
 	//   print_enabled             打印总开关,关闭后所有自动打印一律跳过(手动补打仍可用);
 	//   print_kitchen_show_price  厨房单是否带单价与金额(默认不打,后厨只看菜名和数量);
 	//   print_guest_footer        食客小票页脚文案,清空则不打印页脚(门店可改成自己的口号);
-	//   print_guest_show_seat_fee 食客小票是否显示餐位费行(默认显示,对账透明);
-	//   print_guest_show_discount 食客小票是否显示优惠行(默认显示,有优惠时才出现该行)。
+	//   print_guest_show_seat_fee 食客小票是否显示茶位费行(默认显示,对账透明);
+	//   print_guest_show_discount 食客小票是否显示优惠行(默认显示,有优惠时才出现该行);
+	//   print_guest_qr            小票末尾是否打印二维码(默认关:需先确认 H5 地址手机可访问、
+	//                             且打印机支持 GS ( k 二维码指令,否则会在票尾留一块空白或乱码);
+	//   print_guest_on_append     加菜后是否向小票机出「加菜小票」(只列本次新菜,默认开);
+	//   print_guest_on_order      下单后是否向小票机出「点菜单」(默认开,嫌与结账小票重复可关)。
 	"print_enabled":             "1",
 	"print_kitchen_show_price":  "0",
 	"print_guest_footer":        "谢谢惠顾,欢迎再次光临",
 	"print_guest_show_seat_fee": "1",
 	"print_guest_show_discount": "1",
+	"print_guest_qr":            "0",
+	"print_guest_on_append":     "1",
+	"print_guest_on_order":      "1",
 	// 飞鹅云打印(provider=feie 的打印机使用)。
 	//   feie_user    飞鹅云后台注册账号(手机号/邮箱);
 	//   feie_ukey    开发者 UKEY —— 敏感项,落库前自动加密,接口不回显;
@@ -93,10 +100,17 @@ var settingDefaults = map[string]string{
 	"wxpay_pubkey_id":          "",
 	"wxpay_pubkey_path":        "",
 	"wxpay_notify_url":         "",
-	"alipay_appid":             "",
-	"alipay_private_key_path":  "",
-	"alipay_public_key":        "",
-	"alipay_notify_url":        "",
+	// 小程序桌牌码(AppID 与微信支付共用 wxpay_appid)。
+	//   wx_app_secret        小程序 AppSecret —— 敏感项,落库前自动加密;留空则不出小程序码。
+	//   wx_code_env_version  出码指向的版本:release 正式版 / trial 体验版 / develop 开发版。
+	//                        微信要求 page 必须存在于目标版本,故未发布前必须设成 trial/develop,
+	//                        否则接口一律返回 41030(详见 docs/miniprogram.md)。
+	"wx_app_secret":           "",
+	"wx_code_env_version":     "release",
+	"alipay_appid":            "",
+	"alipay_private_key_path": "",
+	"alipay_public_key":       "",
+	"alipay_notify_url":       "",
 }
 
 // SettingDefault 返回配置项出厂默认值(不存在时返回空串)。

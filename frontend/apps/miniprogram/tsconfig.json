@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // DOM 是「不得不加」的：packages/* 是按 Web 端写的（引用 window / fetch / FormData），
+    // 不加 DOM 就没法对复用的源码做类型检查。代价是类型层面不再拦「小程序代码误用 DOM API」，
+    // 这一点改由 scripts/smoke.mjs 兜底 —— 它在**没有 window/document 的环境**里逐个执行
+    // 构建产物，能在构建期就抓到浏览器 API 泄漏（比类型检查更硬的保证）。
+    "lib": ["ES2019", "DOM"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    // wx.* 全局类型由 miniprogram-api-typings 提供（根 devDependencies）
+    "types": ["miniprogram-api-typings"],
+    "baseUrl": ".",
+    // 与 frontend/aliases.ts 对齐。注意这里指向 packages 的源码，
+    // 与 Web 端共享同一份实现（小程序侧不做 webpack/别名改写，直接读 ts 源）。
+    "paths": {
+      "@dining/types": ["../../packages/types/src/index.ts"],
+      "@dining/types/*": ["../../packages/types/src/*"],
+      "@dining/shared": ["../../packages/shared/src/index.ts"],
+      "@dining/shared/*": ["../../packages/shared/src/*"],
+      "@dining/api": ["../../packages/api/src/index.ts"],
+      "@dining/api/*": ["../../packages/api/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+}

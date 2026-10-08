@@ -431,6 +431,45 @@ func TestOrderSvcEditOrder(t *testing.T) {
 			t.Fatalf("改单后金额应大于 0, got %d", total)
 		}
 	})
+
+	t.Run("赠菜改单", func(t *testing.T) {
+		// 关闭茶位费/满减,保证应收金额可精确断言(重算会按配置计茶位费与优惠)。
+		for k, v := range map[string]string{"seat_fee_enabled": "0", "promotion_enabled": "0"} {
+			if err := dao.SetSetting(k, v); err != nil {
+				t.Fatalf("写入配置 %s 失败: %v", k, err)
+			}
+		}
+		var priceCents int64
+		store.DB.QueryRow(`SELECT price FROM tb_spec WHERE spec_id=?`, specID).Scan(&priceCents)
+
+		id := orderSvcInsertOrder(t, "OE6", OrderStatusPlaced, 0, 5000)
+		items := []dto.OrderItem{
+			{DishID: dishID, SpecID: specID, Quantity: 1},
+			{DishID: dishID, SpecID: specID, Quantity: 2, IsGift: 1, GiftReason: "老客户招待"},
+		}
+		out, err := EditOrder(id, 0, "", items, "tester")
+		if err != nil {
+			t.Fatalf("赠菜改单应成功, got %v", err)
+		}
+		if out.GiftCount != 1 || out.GiftAmount <= 0 {
+			t.Fatalf("赠送统计异常: %+v", out)
+		}
+		var giftCents, totalCents int64
+		store.DB.QueryRow(`SELECT gift_amount, total_amount FROM tb_order WHERE order_id=?`, id).Scan(&giftCents, &totalCents)
+		if giftCents != priceCents*2 {
+			t.Fatalf("gift_amount 应为 %d, got %d", priceCents*2, giftCents)
+		}
+		if totalCents != priceCents {
+			t.Fatalf("total_amount 应为 %d(不含赠送), got %d", priceCents, totalCents)
+		}
+		// 明细落库:赠送行 is_gift=1 且原因保留。
+		var isGift int
+		var giftReason string
+		store.DB.QueryRow(`SELECT is_gift, gift_reason FROM tb_order_item WHERE order_id=? AND is_gift=1`, id).Scan(&isGift, &giftReason)
+		if isGift != 1 || giftReason != "老客户招待" {
+			t.Fatalf("赠送明细落库异常: is_gift=%d reason=%q", isGift, giftReason)
+		}
+	})
 }
 
 func TestOrderSvcListGetBoardUrge(t *testing.T) {

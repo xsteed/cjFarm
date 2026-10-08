@@ -40,13 +40,16 @@ var ManagedSettingKeys = []string{
 	"wxpay_enabled", "wxpay_mchid", "wxpay_appid", "wxpay_serial_no",
 	"wxpay_private_key_path", "wxpay_platform_cert_path",
 	"wxpay_pubkey_id", "wxpay_pubkey_path", "wxpay_notify_url",
+	// 小程序桌牌码:AppID 复用 wxpay_appid,此处只需版本与 AppSecret
+	"wx_code_env_version",
 	"alipay_enabled", "alipay_appid", "alipay_private_key_path",
 	"alipay_public_key", "alipay_notify_url",
 	"print_enabled", "print_kitchen_show_price",
-	"print_guest_footer", "print_guest_show_seat_fee", "print_guest_show_discount",
+	"print_guest_footer", "print_guest_show_seat_fee", "print_guest_show_discount", "print_guest_qr",
+	"print_guest_on_append", "print_guest_on_order",
 	"feie_user", "feie_api_url", "agent_latest_version",
 	// 敏感项(不回显,但同样参与指纹:它们变了,别的管理端就该刷新)
-	"wxpay_apiv3_key", "feie_ukey", "agent_token",
+	"wxpay_apiv3_key", "wx_app_secret", "feie_ukey", "agent_token",
 }
 
 // settingSaveMu 串行化配置保存:版本校验 → 逐项落库不留并发窗口。
@@ -79,7 +82,7 @@ func normFlagValue(v string) string {
 // 其余(含 "1"、空值、配置项缺失)一律返回 "1"。
 //
 // 与 SettingFlag 的分工:打印总开关等「默认关」用 SettingFlag;食客小票段落开关
-// (餐位费/优惠行)出厂即显示,渲染侧(print.guestShowSeatFee)按「!= "0」判定,
+// (茶位费/优惠行)出厂即显示,渲染侧(print.guestShowSeatFee)按「!= "0」判定,
 // 回显侧必须用同一套语义,否则键缺失时配置页显示「关」而实际仍在打印。
 func SettingFlagDefaultOn(key string) string {
 	if dao.GetSetting(key) == "0" {
@@ -113,6 +116,8 @@ func ListSettings() dto.Settings {
 		WxpayPubkeyID:         dao.GetSetting("wxpay_pubkey_id"),
 		WxpayPubkeyPath:       dao.GetSetting("wxpay_pubkey_path"),
 		WxpayNotifyURL:        dao.GetSetting("wxpay_notify_url"),
+		// 小程序桌牌码(wx_app_secret 为敏感项,与 APIv3 密钥一样不回显)
+		WxCodeEnvVersion: dao.GetSetting("wx_code_env_version"),
 		// 支付宝
 		AlipayAppid:          dao.GetSetting("alipay_appid"),
 		AlipayPrivateKeyPath: dao.GetSetting("alipay_private_key_path"),
@@ -125,6 +130,12 @@ func ListSettings() dto.Settings {
 		PrintGuestFooter:       dao.GetSetting("print_guest_footer"),
 		PrintGuestShowSeatFee:  SettingFlagDefaultOn("print_guest_show_seat_fee"),
 		PrintGuestShowDiscount: SettingFlagDefaultOn("print_guest_show_discount"),
+		// 加菜重出小票默认开,与渲染侧 guestPrintOnAppend 的「!= "0"」语义一致
+		PrintGuestOnAppend: SettingFlagDefaultOn("print_guest_on_append"),
+		// 下单点菜单默认开,与渲染侧 guestPrintOnOrder 的「!= "0"」语义一致
+		PrintGuestOnOrder: SettingFlagDefaultOn("print_guest_on_order"),
+		// 二维码默认关闭(SettingFlag:只有明确 "1" 才开),与渲染侧 guestQR 同一套语义
+		PrintGuestQR: SettingFlag("print_guest_qr"),
 		// 飞鹅云打印(feie_ukey 为敏感项,回显留空表示不修改)
 		FeieUser:   dao.GetSetting("feie_user"),
 		FeieApiURL: dao.GetSetting("feie_api_url"),
@@ -173,6 +184,7 @@ func SaveSettings(settings dto.Settings, actor string) (detail string, conflict 
 		"wxpay_pubkey_id":          settings.WxpayPubkeyID,
 		"wxpay_pubkey_path":        settings.WxpayPubkeyPath,
 		"wxpay_notify_url":         settings.WxpayNotifyURL,
+		"wx_code_env_version":      settings.WxCodeEnvVersion,
 		"alipay_appid":             settings.AlipayAppid,
 		"alipay_private_key_path":  settings.AlipayPrivateKeyPath,
 		"alipay_public_key":        settings.AlipayPublicKey,
@@ -183,6 +195,9 @@ func SaveSettings(settings dto.Settings, actor string) (detail string, conflict 
 		"print_guest_footer":        settings.PrintGuestFooter,
 		"print_guest_show_seat_fee": normFlagValue(settings.PrintGuestShowSeatFee),
 		"print_guest_show_discount": normFlagValue(settings.PrintGuestShowDiscount),
+		"print_guest_qr":            normFlagValue(settings.PrintGuestQR),
+		"print_guest_on_append":     normFlagValue(settings.PrintGuestOnAppend),
+		"print_guest_on_order":      normFlagValue(settings.PrintGuestOnOrder),
 		"feie_user":                 settings.FeieUser,
 		"feie_api_url":              settings.FeieApiURL,
 		"agent_latest_version":      settings.AgentLatestVersion,
@@ -205,6 +220,7 @@ func SaveSettings(settings dto.Settings, actor string) (detail string, conflict 
 	// 前端出于安全不回显敏感项,若按空值覆盖会误清掉已配置的密钥。
 	secrets := map[string]string{
 		"wxpay_apiv3_key": settings.WxpayApiv3Key,
+		"wx_app_secret":   settings.WxAppSecret,
 		"feie_ukey":       settings.FeieUkey,
 		"agent_token":     settings.AgentToken,
 	}

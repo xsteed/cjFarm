@@ -3,7 +3,7 @@ package print
 // ============================================================================
 // 食客小票模板配置测试(方案A)
 //
-// 三个可配置项:页脚文案(print_guest_footer)、餐位费行(print_guest_show_seat_fee)、
+// 三个可配置项:页脚文案(print_guest_footer)、茶位费行(print_guest_show_seat_fee)、
 // 优惠行(print_guest_show_discount)。渲染函数实时读取配置,预览(PreviewTicket)
 // 与出纸走同一函数,改配置后预览立即反映——这里同时验证该联动。
 // ============================================================================
@@ -62,16 +62,16 @@ func TestGuestTicketFooterConfig(t *testing.T) {
 func TestGuestTicketSeatFeeConfig(t *testing.T) {
 	setupTestDB(t)
 
-	// 默认显示餐位费。
-	if got := renderGuest(t); !strings.Contains(got, "餐位费") {
-		t.Fatalf("默认应显示餐位费行:\n%s", got)
+	// 默认显示茶位费。
+	if got := renderGuest(t); !strings.Contains(got, "茶位费") {
+		t.Fatalf("默认应显示茶位费行:\n%s", got)
 	}
 
-	// 关闭后餐位费行消失,但合计金额不变(只是展示开关,不影响金额计算)。
+	// 关闭后茶位费行消失,但合计金额不变(只是展示开关,不影响金额计算)。
 	setPrintSetting(t, "print_guest_show_seat_fee", "0")
 	got := renderGuest(t)
-	if strings.Contains(got, "餐位费") {
-		t.Fatalf("关闭后不应显示餐位费行:\n%s", got)
+	if strings.Contains(got, "茶位费") {
+		t.Fatalf("关闭后不应显示茶位费行:\n%s", got)
 	}
 	if !strings.Contains(got, "合计") || !strings.Contains(got, "84.00") {
 		t.Fatalf("合计行与金额不应受影响:\n%s", got)
@@ -114,7 +114,7 @@ func TestPreviewReflectsTemplateConfig(t *testing.T) {
 	if !strings.Contains(got, "预览联动验证") {
 		t.Fatalf("预览应反映自定义页脚:\n%s", got)
 	}
-	if strings.Contains(got, "餐位费") {
-		t.Fatalf("预览应反映餐位费行关闭:\n%s", got)
+	if strings.Contains(got, "茶位费") {
+		t.Fatalf("预览应反映茶位费行关闭:\n%s", got)
 	}
 }

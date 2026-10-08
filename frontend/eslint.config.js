@@ -6,7 +6,10 @@ import prettierConfig from 'eslint-config-prettier';
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**']
+    // dist 出现在多个层级（frontend/dist、apps/miniprogram/dist），故用 **/dist/**。
+    // apps/miniprogram 有自己的 eslint.config.js：它的运行时全局是 wx/App/Page/Component，
+    // 而本配置给 TS 打开的是 globals.browser，混在一起会既漏报又误报。
+    ignores: ['**/dist/**', 'node_modules/**', 'apps/miniprogram/**']
   },
   js.configs.recommended,
   // TS 文件用 @typescript-eslint 的规则集:替换 core 的 no-unused-vars / no-undef

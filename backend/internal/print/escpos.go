@@ -96,6 +96,10 @@ func encodeESCPOS(lines []string) []byte {
 	var b []byte
 	b = append(b, 0x1B, 0x40) // ESC @ 初始化
 	for _, ln := range lines {
+		if qr, ok := SplitQRLine(ln); ok {
+			b = append(b, encodeQR(qr)...)
+			continue
+		}
 		bold := BoldLine(ln)
 		if bold {
 			b = append(b, 0x1B, 0x45, 0x01) // ESC E 1 开启加粗
@@ -107,6 +111,41 @@ func encodeESCPOS(lines []string) []byte {
 		}
 	}
 	b = append(b, 0x1D, 0x56, 0x42, 0x00) // GS V m n: 切纸(部分切)
+	return b
+}
+
+// qrModuleSize 二维码模块大小(点)。6 在 58mm(384 点)与 80mm(576 点)
+// 纸上都能稳定扫出,再大在 58mm 上会超出可打印宽度。
+const qrModuleSize = 0x06
+
+// qrMaxDataBytes 二维码数据区上限(字节)。
+//
+// GS ( k 的容量与机型、纠错级别相关,约 700 字节上下;超限时指令会被打印机
+// 忽略甚至吐乱码。小票二维码只放一个短链接,远够用,超限就干脆不出码。
+const qrMaxDataBytes = 700
+
+// encodeQR 生成一段 ESC/POS 二维码指令(GS ( k 系列)。
+//
+// 交给打印机内置的二维码生成器,而不是后端算位图:后端算位图要引入额外依赖,
+// 且各家位图指令(GS v 0 / GS ( L / ESC *)差异比分歧更大的 GS ( k 还大;
+// GS ( k 是 Epson 系通用指令,国产热敏机基本都兼容。
+func encodeQR(content string) []byte {
+	data := []byte(content)
+	if len(data) == 0 || len(data) > qrMaxDataBytes {
+		return nil
+	}
+	// 存数据指令的长度字段 = cn + fn + m + 数据字节数
+	n := len(data) + 3
+	b := make([]byte, 0, n+32)
+	b = append(b, 0x1B, 0x61, 0x01)                                        // ESC a 1:居中
+	b = append(b, 0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00)    // GS ( k:选 QR 模型 2
+	b = append(b, 0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, qrModuleSize)  // GS ( k:模块大小
+	b = append(b, 0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x33)          // GS ( k:纠错等级 H(48+3)
+	b = append(b, 0x1D, 0x28, 0x6B, byte(n), byte(n>>8), 0x31, 0x50, 0x30) // GS ( k:写入数据
+	b = append(b, data...)
+	b = append(b, 0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30) // GS ( k:打印
+	b = append(b, 0x1B, 0x61, 0x00)                               // ESC a 0:还原左对齐
+	b = append(b, '\n')
 	return b
 }
 

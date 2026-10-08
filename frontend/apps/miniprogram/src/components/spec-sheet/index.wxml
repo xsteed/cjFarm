@@ -1,0 +1,105 @@
+<view
+  wx:if="{{visible}}"
+  class="mask"
+  catchtap="onClose"
+>
+  <view
+    class="sheet"
+    catchtap="noop"
+  >
+    <view class="sheet-hd">
+      <view class="sheet-title">{{dishName}}</view>
+      <view
+        class="sheet-close"
+        catchtap="onClose"
+      >
+        ×
+      </view>
+    </view>
+
+    <scroll-view
+      class="sheet-body"
+      scroll-y
+      enhanced
+      show-scrollbar="{{false}}"
+    >
+      <view
+        wx:if="{{multiSpec}}"
+        class="sec"
+      >
+        <view class="sec-title">规格</view>
+        <view class="chips">
+          <view
+            wx:for="{{specChips}}"
+            wx:key="specId"
+            class="chip {{item.on ? 'on' : ''}} {{item.soldOut ? 'off' : ''}}"
+            data-specid="{{item.specId}}"
+            catchtap="onPickSpec"
+          >
+            {{item.specName}}
+            <text
+              wx:if="{{item.soldOut}}"
+              class="chip-soldout"
+            >
+              售罄</text>
+            <text
+              wx:else
+              class="chip-price"
+            >
+              ¥{{item.priceText}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view
+        wx:if="{{remarkChips.length}}"
+        class="sec"
+      >
+        <view class="sec-title">口味备注</view>
+        <view class="chips">
+          <view
+            wx:for="{{remarkChips}}"
+            wx:key="name"
+            class="chip {{item.on ? 'on' : ''}}"
+            data-name="{{item.name}}"
+            catchtap="onToggleRemark"
+          >
+            {{item.name}}
+          </view>
+        </view>
+      </view>
+
+      <view class="sec">
+        <view class="sec-title">其他要求</view>
+        <input
+          class="sheet-input"
+          value="{{custom}}"
+          placeholder="如：不要辣、少放盐"
+          placeholder-class="ph"
+          maxlength="50"
+          bindinput="onCustomInput"
+        />
+      </view>
+    </scroll-view>
+
+    <!-- 已在购物车里的菜再点开：明确告知「确定」是加份，改备注请去购物车 -->
+    <view
+      wx:if="{{inCartQty}}"
+      class="sheet-hint"
+    >
+      购物车已有 {{inCartQty}} 份，点「确定」会再加 1 份
+    </view>
+
+    <view class="sheet-ft">
+      <view class="ft-price">
+        <text class="sp-cny">¥</text>{{priceText}}
+      </view>
+      <view
+        class="sp-btn"
+        catchtap="onConfirm"
+      >
+        确定
+      </view>
+    </view>
+  </view>
+</view>

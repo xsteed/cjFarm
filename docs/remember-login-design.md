@@ -155,7 +155,7 @@
 | `GET /api/admin/auth/remember/sessions` | 列出当前账号全部有效会话；**令牌只回传前 8 位**（识别本机用），完整令牌不出服务端 |
 | `POST /api/admin/auth/remember/revoke` | 吊销一条 `{ tokenId }`；审计登记「吊销记住登录」（OperTypeDelete） |
 
-**前端页面** `frontend/src/views/Devices.vue`（侧栏「登录设备」菜单，`menuOrder: 15`，无权限点）：
+**前端页面** `frontend/apps/admin/src/views/Devices.vue`（侧栏「登录设备」菜单，`menuOrder: 15`，无权限点）：
 
 - 桌面表格 + 窄屏卡片流，展示：设备指纹、**7/30 天档位**（由 `expire_time - create_time` 反推）、剩余有效期、签发/最后使用时间；
 - **本机识别**：本地令牌前 8 位与服务端回传 `tokenPrefix` 比对，标「本机」；
@@ -167,11 +167,11 @@
 
 | 键 | 内容 | 位置 |
 |---|---|---|
-| `admin_token` | 访问令牌 | `utils/authKeys.js` |
-| `admin_remember` | 记住令牌（不透明串，不存密码） | `utils/remember.js` |
+| `admin_token` | 访问令牌 | `packages/shared/src/authKeys.ts` |
+| `admin_remember` | 记住令牌（不透明串，不存密码） | `packages/auth/src/remember.ts` |
 
-- **本地过期预判 `tokenExpired()`**（`utils/perm.js`）：解析访问令牌 payload 的 `exp` 字段（不验签的乐观判断），路由守卫据此在 SPA 内直接带 redirect 去登录页，避免「进页面 → 请求撞 401 → 整页弹回」的绕圈。篡改 exp 骗过它没有意义——安全校验仍在后端验签；服务端侧失效（改密/停用/后端重启）照旧走 401 兜底。
-- **401 统一处理**（`api/http.ts`）：清全部登录态键 + 带 `?redirect=` 整页回跳，静默换发成功后可回到被打断的页面；`safeRedirect()` 只接受站内路径（防开放重定向）。
+- **本地过期预判 `tokenExpired()`**（`packages/auth/src/perm.ts`）：解析访问令牌 payload 的 `exp` 字段（不验签的乐观判断），路由守卫据此在 SPA 内直接带 redirect 去登录页，避免「进页面 → 请求撞 401 → 整页弹回」的绕圈。篡改 exp 骗过它没有意义——安全校验仍在后端验签；服务端侧失效（改密/停用/后端重启）照旧走 401 兜底。
+- **401 统一处理**（`packages/api/src/http.ts`）：清全部登录态键 + 带 `?redirect=` 整页回跳，静默换发成功后可回到被打断的页面；`safeRedirect()` 只接受站内路径（防开放重定向）。跳转动作已抽成 `setUnauthorizedHandler()`，默认实现即上述行为，小程序端可替换。
 - **已知取舍**：令牌存 localStorage，同源 XSS 可读取（HttpOnly Cookie 方案见第十节）；依赖 Vue 模板自动转义、无 `v-html` 等既有防护作为缓解。
 
 ---
@@ -210,9 +210,9 @@
 | 增量迁移 | `backend/migrations/incr/*/20260922020000_tb_remember_token_add_ua.sql` |
 | 权限登记 | `backend/internal/handler/perm.go`（PermFree） |
 | 审计登记 | `backend/internal/handler/audit.go` |
-| 前端存储工具 | `frontend/src/utils/remember.js` |
-| 登录页（静默换发/竞态保护） | `frontend/src/views/Login.vue` |
-| 登录设备页 | `frontend/src/views/Devices.vue` |
-| API 定义 | `frontend/src/api/auth.ts`（登录类）/ `frontend/src/api/http.ts`（拦截器） |
-| 类型定义 | `frontend/src/types/entities.ts`（`RememberSession` 等） |
-| 路由守卫 / 登录设备菜单 | `frontend/src/router/index.js` |
+| 前端存储工具 | `frontend/packages/auth/src/remember.ts` |
+| 登录页（静默换发/竞态保护） | `frontend/apps/admin/src/views/Login.vue` |
+| 登录设备页 | `frontend/apps/admin/src/views/Devices.vue` |
+| API 定义 | `frontend/packages/api/src/auth.ts`（登录类）/ `frontend/packages/api/src/http.ts`（拦截器） |
+| 类型定义 | `frontend/packages/types/src/entities.ts`（`RememberSession` 等） |
+| 路由守卫 | `frontend/src/router/index.ts`（装配 + 守卫）；「登录设备」菜单在 `frontend/apps/admin/src/routes.ts` |

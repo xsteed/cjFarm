@@ -36,8 +36,9 @@ func ReportSummary(c *gin.Context) {
 		"yesterdayGuestCount":           s.YesterdayGuestCount,
 		"lastMonthSamePeriodAmount":     s.LastMonthSamePeriodAmount,
 		"lastMonthSamePeriodOrderCount": s.LastMonthSamePeriodOrderCount,
-		// 免单 / 挂账
+		// 免单 / 赠送 / 挂账
 		"todayFreeAmount":          s.TodayFreeAmount,
+		"todayGiftAmount":          s.TodayGiftAmount,
 		"creditPendingAmount":      s.CreditPendingAmount,
 		"creditPendingCount":       s.CreditPendingCount,
 		"todayCreditAmount":        s.TodayCreditAmount,

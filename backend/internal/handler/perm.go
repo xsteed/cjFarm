@@ -57,10 +57,11 @@ var routePerms = map[string]string{
 	"GET /api/admin/perm/catalog": "role:view",
 
 	// ---- 桌台 ----
-	"GET /api/admin/table/list":    "table:view",
-	"POST /api/admin/table/save":   "table:edit",
-	"POST /api/admin/table/update": "table:edit",
-	"DELETE /api/admin/table/:id":  "table:edit",
+	"GET /api/admin/table/list":       "table:view",
+	"GET /api/admin/table/weapp-code": "table:view",
+	"POST /api/admin/table/save":      "table:edit",
+	"POST /api/admin/table/update":    "table:edit",
+	"DELETE /api/admin/table/:id":     "table:edit",
 
 	// ---- 分类 ----
 	"GET /api/admin/category/list":    "category:view",

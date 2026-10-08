@@ -103,6 +103,37 @@ func sampleOrder() (po.Order, []po.OrderItem) {
 	return o, items
 }
 
+// TestRenderTicketPickupNo 取餐号应印在客用小票与厨房单上,
+// 未分配(历史订单/手工补录)时不应打印出一行无意义的 "0"。
+func TestRenderTicketPickupNo(t *testing.T) {
+	setupTestDB(t)
+	o, items := sampleOrder()
+
+	t.Run("已分配取餐号则打印", func(t *testing.T) {
+		o.PickupNo = 12
+		for name, lines := range map[string][]string{
+			"食客小票": RenderGuestTicket(o, items, 48),
+			"厨房单":  RenderKitchenTicket(o, items, 48, false, "【厨房单】"),
+		} {
+			if !strings.Contains(strings.Join(lines, "\n"), "取餐号: 12") {
+				t.Errorf("%s 应包含取餐号行, 实际:\n%s", name, strings.Join(lines, "\n"))
+			}
+		}
+	})
+
+	t.Run("未分配则不打印该行", func(t *testing.T) {
+		o.PickupNo = 0
+		for name, lines := range map[string][]string{
+			"食客小票": RenderGuestTicket(o, items, 48),
+			"厨房单":  RenderKitchenTicket(o, items, 48, false, "【厨房单】"),
+		} {
+			if strings.Contains(strings.Join(lines, "\n"), "取餐号") {
+				t.Errorf("%s 不应出现取餐号行, 实际:\n%s", name, strings.Join(lines, "\n"))
+			}
+		}
+	})
+}
+
 // sampleRows 返回带分类 ID 的订单明细(分单逻辑与 buildJobs 使用)。
 func sampleRows() []dao.OrderItemRow {
 	_, items := sampleOrder()
@@ -150,7 +181,7 @@ func TestRenderGuestTicket(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 	joined := strings.Join(RenderGuestTicket(o, items, 48), "\n")
-	for _, want := range []string{"【食客小票】", "订单号: D20260921120000abcdef", "凉拌青瓜 (份) x2", "菜品金额", "餐位费", "优惠", "合计", "84.00", "谢谢惠顾"} {
+	for _, want := range []string{"【食客小票】", "订单号: D20260921120000abcdef", "凉拌青瓜 (份) x2", "菜品金额", "茶位费", "优惠", "合计", "84.00", "谢谢惠顾"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("食客小票缺少 %q\n实际内容:\n%s", want, joined)
 		}

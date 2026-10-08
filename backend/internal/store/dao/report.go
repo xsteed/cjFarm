@@ -212,6 +212,15 @@ func SumFreeIn(start, end string) int64 {
 	return v
 }
 
+// SumGiftIn 统计区间内赠送让利总额(按订单赠送金额 gift_amount)。
+// 与 SumFreeIn 同口径:按下单时间 create_time 归属,排除已取消订单。
+func SumGiftIn(start, end string) int64 {
+	var v int64
+	store.DB.QueryRow(`SELECT COALESCE(SUM(gift_amount),0) FROM tb_order
+		WHERE create_time>=? AND create_time<? AND order_status!=5`, start, end).Scan(&v)
+	return v
+}
+
 // CreditPendingStats 统计待收款挂账的金额与笔数。
 func CreditPendingStats() (cents int64, count int) {
 	store.DB.QueryRow(`SELECT COALESCE(SUM(credit_amount),0), COUNT(*) FROM tb_order

@@ -1,0 +1,343 @@
+<view class="page">
+  <!-- 加载中：骨架屏按真实布局铺一遍（头部 + 搜索 + 左栏 + 菜品行），
+       比转圈更接近最终画面，加载完成时也不会整页「跳」一下 -->
+  <view
+    wx:if="{{loading}}"
+    class="sk"
+  >
+    <view class="sk-hero">
+      <view class="sk-bar sk-shop"></view>
+      <view class="sk-bar sk-table"></view>
+    </view>
+    <view class="sk-sheet">
+      <view class="sk-bar sk-search"></view>
+      <view class="sk-body">
+        <view class="sk-cats">
+          <view
+            wx:for="{{skCats}}"
+            wx:key="*this"
+            class="sk-bar sk-cat"
+          ></view>
+        </view>
+        <view class="sk-dishes">
+          <view
+            wx:for="{{skRows}}"
+            wx:key="*this"
+            class="sk-dish"
+          >
+            <view class="sk-bar sk-img"></view>
+            <view class="sk-main">
+              <view class="sk-bar sk-line"></view>
+              <view class="sk-bar sk-line sk-line-short"></view>
+              <view class="sk-bar sk-price"></view>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 加载失败：给出「怎么办」而不是只报错误码 -->
+  <view
+    wx:elif="{{error}}"
+    class="state"
+  >
+    <view class="err-icon">!</view>
+    <view class="state-text">{{error}}</view>
+    <view
+      class="btn-primary retry"
+      bindtap="onRetry"
+    >
+      重新加载
+    </view>
+  </view>
+
+  <block wx:else>
+    <!-- 头部压成一行：桌号做成胶囊更醒目，省下的高度全给菜单 -->
+    <view class="hero">
+      <view class="hero-shop">{{shopName}}</view>
+      <view class="hero-table">{{tableLabel}}</view>
+    </view>
+
+    <view class="sheet-wrap">
+      <!-- 搜索：放在白卡顶部（不随菜单滚动），菜多的店一眼能看到 -->
+      <view class="search">
+        <view class="search-ico"></view>
+        <input
+          class="search-input"
+          value="{{keyword}}"
+          placeholder="搜索菜名 / 口味，如「牛肉」"
+          placeholder-class="search-ph"
+          confirm-type="search"
+          bindinput="onSearchInput"
+        />
+        <view
+          wx:if="{{keyword}}"
+          class="search-clear"
+          bindtap="onSearchClear"
+        >
+          ×
+        </view>
+      </view>
+
+      <!-- 从订单页点「加菜」回来：明确告知这一轮会并入原单，避免顾客以为在开新单 -->
+      <view
+        wx:if="{{appendNotice}}"
+        class="append-tip"
+      >
+        {{appendNotice}}
+      </view>
+
+      <view
+        wx:if="{{servingRows.length}}"
+        class="serving"
+      >
+        本桌还有 {{servingRows.length}} 笔订单正在出餐，点标签可查看进度
+        <view class="serving-chips">
+          <text
+            wx:for="{{servingRows}}"
+            wx:key="key"
+            class="serving-chip"
+            data-no="{{item.orderNo}}"
+            bindtap="onTapServing"
+          >
+            {{item.label}} ›
+          </text>
+        </view>
+      </view>
+
+      <view class="menu-body">
+        <!-- 搜索态藏起左栏：搜出来的结果本就不按分类浏览，分类名反而占地方 -->
+        <scroll-view
+          wx:if="{{!searching}}"
+          class="cats"
+          scroll-y
+          enhanced
+          show-scrollbar="{{false}}"
+          scroll-with-animation
+          scroll-into-view="{{navIntoId}}"
+        >
+          <view
+            wx:for="{{cats}}"
+            wx:key="categoryId"
+            id="{{item.navId}}"
+            class="cat {{item.categoryId === activeCatId ? 'on' : ''}}"
+            data-id="{{item.categoryId}}"
+            bindtap="onSwitchCat"
+          >
+            {{item.categoryName}}
+          </view>
+        </scroll-view>
+
+        <scroll-view
+          class="dishes"
+          scroll-y
+          enhanced
+          show-scrollbar="{{false}}"
+          scroll-with-animation
+          scroll-into-view="{{scrollIntoId}}"
+          bindscroll="onScroll"
+        >
+          <!-- 列表顶部锚点：换搜索词后用它把右栏拉回顶部（见 scrollListTop） -->
+          <view id="list-top"></view>
+
+          <!-- 所有分类首尾相连：上一个分类看完直接接下一个分类标题，
+               内容少的分类不会留下大片空白，顾客能一直往下翻 -->
+          <block
+            wx:for="{{rows}}"
+            wx:key="key"
+          >
+            <view
+              wx:if="{{item.kind === 'sec'}}"
+              id="{{item.anchor}}"
+              class="sec"
+            >
+              {{item.categoryName}}
+            </view>
+
+            <view
+              wx:elif="{{item.kind === 'empty'}}"
+              class="empty-group"
+            >
+              暂无菜品
+            </view>
+
+            <view
+              wx:else
+              class="dish {{item.soldOut ? 'sold' : ''}}"
+              data-id="{{item.dishId}}"
+              bindtap="onOpenSheet"
+            >
+              <!-- 图片区：售罄时盖一层半透明遮罩 +「售罄」，一眼可辨 -->
+              <view class="dish-media">
+                <image
+                  wx:if="{{item.image}}"
+                  class="dish-img"
+                  src="{{item.image}}"
+                  mode="aspectFill"
+                  lazy-load
+                  data-key="{{item.key}}"
+                  binderror="onImgError"
+                ></image>
+                <view
+                  wx:else
+                  class="dish-img dish-img-none"
+                >
+                  暂无图片
+                </view>
+                <view
+                  wx:if="{{item.soldOut}}"
+                  class="sold-mask"
+                >
+                  售罄
+                </view>
+              </view>
+              <view class="dish-main">
+                <!-- 「已点 N」跟在菜名后：加菜时一眼看清哪道已经点过，比挤在右侧按钮区更容易扫 -->
+                <!-- 标签内容必须紧贴 `>`：写在下一行的话，WXML 会在胶囊**内部**多渲染一个前导空格 -->
+                <view class="dish-name">
+                  {{item.dishName}}<text
+                    wx:if="{{item.orderedQty}}"
+                    class="tag-ordered"
+                  >已点{{item.orderedQty}}</text><text
+                    wx:if="{{item.soldOut}}"
+                    class="tag-soldout"
+                  >售罄</text><text
+                    wx:elif="{{!item.orderable}}"
+                    class="tag-off"
+                  >暂不可点</text>
+                </view>
+                <view
+                  wx:if="{{item.description}}"
+                  class="dish-desc"
+                >
+                  {{item.description}}
+                </view>
+                <!-- 规格少（2~3 个）直接列在行里点选；再多就进弹层（行内放不下） -->
+                <view
+                  wx:if="{{item.specChips.length}}"
+                  class="spec-chips"
+                >
+                  <view
+                    wx:for="{{item.specChips}}"
+                    wx:key="specId"
+                    class="spec-chip {{item.on ? 'on' : ''}} {{item.soldOut ? 'off' : ''}}"
+                    data-id="{{item.dishId}}"
+                    data-spec="{{item.specId}}"
+                    catchtap="onPickSpec"
+                  >
+                    {{item.specName}}<text
+                      wx:if="{{item.soldOut}}"
+                      class="spec-soldout"
+                    >
+                      售罄</text>
+                  </view>
+                </view>
+                <view class="dish-ft">
+                  <view class="dish-price">
+                    <block wx:if="{{item.orderable}}">
+                      <text class="cny">¥</text>{{item.priceText}}<text
+                        wx:if="{{item.manySpecs}}"
+                        class="from"
+                      >
+                        起</text><text
+                        wx:if="{{item.specName}}"
+                        class="spec-name"
+                      >
+                        /{{item.specName}}</text>
+                    </block>
+                    <text
+                      wx:else
+                      class="dish-off"
+                    >
+                      暂不可点
+                    </text>
+                  </view>
+                  <view
+                    wx:if="{{item.orderable && !item.soldOut}}"
+                    class="dish-ops"
+                  >
+                    <!-- 已选（且规格在行内点得动）：行内步进器，加减不用再跑去购物车页；
+                         未选 / 规格太多：加号，份数挂在加号右上角。
+                         加减号不写进文本：字体里的 +/− 按基线对齐，各机型偏心，
+                         改成 view + CSS 画横竖两条棒（见 index.wxss）。 -->
+                    <view
+                      wx:if="{{item.cartQty && !item.manySpecs}}"
+                      class="stepper"
+                    >
+                      <view
+                        class="st-btn st-minus"
+                        data-id="{{item.dishId}}"
+                        data-spec="{{item.specId}}"
+                        catchtap="onMinus"
+                      ></view>
+                      <view class="st-num">{{item.cartQty}}</view>
+                      <view
+                        class="st-btn st-plus"
+                        data-id="{{item.dishId}}"
+                        catchtap="onAdd"
+                      ></view>
+                    </view>
+                    <view
+                      wx:else
+                      class="plus"
+                      data-id="{{item.dishId}}"
+                      catchtap="onAdd"
+                    >
+                      <!-- 份数同样紧贴 `>`：角标是居中对齐的，多一个前导空格数字就会偏右 -->
+                      <text
+                        wx:if="{{item.cartQty}}"
+                        class="plus-badge"
+                      >{{item.cartQty}}</text>
+                    </view>
+                  </view>
+                </view>
+              </view>
+            </view>
+          </block>
+
+          <view
+            wx:if="{{searchEmpty}}"
+            class="empty"
+          >
+            没有找到「{{keyword}}」相关的菜品，换个词试试
+          </view>
+          <view
+            wx:elif="{{!rows.length}}"
+            class="empty"
+          >
+            菜单暂时为空，请联系店员
+          </view>
+          <view class="list-pad"></view>
+        </scroll-view>
+      </view>
+    </view>
+  </block>
+
+  <cart-bar
+    wx:if="{{cartCount > 0 && !loading && !error}}"
+    lifted="{{true}}"
+    count="{{cartCount}}"
+    total-text="{{cartTotalText}}"
+    bind:open="onGoCart"
+  />
+
+  <spec-sheet
+    visible="{{sheetVisible}}"
+    dish-name="{{sheetDish.dishName}}"
+    specs="{{sheetDish.specs}}"
+    remarks="{{remarks}}"
+    initial-spec-id="{{sheetDish.initialSpecId}}"
+    initial-remark="{{sheetDish.initialRemark}}"
+    in-cart-qty="{{sheetInCart}}"
+    bind:close="onSheetClose"
+    bind:confirm="onSheetConfirm"
+  />
+
+  <!-- 常驻底部主导航：放在 wx:if 分支之外，加载中/加载失败时也能切去订单页 -->
+  <tab-bar
+    active="menu"
+    ordered-count="{{orderedCount}}"
+    show-profile="{{showProfile}}"
+  />
+</view>

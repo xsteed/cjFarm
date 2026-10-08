@@ -1,0 +1,178 @@
+/* ============================================================================
+   底部主导航（点餐 / 订单）
+
+   与 cart-bar 一样：小程序自定义组件默认样式隔离（isolated），
+   所以这里不引用 app.wxss 的类名与变量，只带自己用到的 token 副本。
+
+   高度 104rpx 必须与 app.wxss 里的 --tabbar-h 保持一致 —— 页面靠它给底部留白，
+   两边对不上就会「盖住最后一道菜」或者「底部多出一条空白」。
+
+   图标纪律：两个图标同一套语言（4rpx 描边 + currentColor 上色），
+   选中态只改 .tb-item 的 color 一处，顶部不再有指示条之类的额外装饰。
+   ============================================================================ */
+.tabbar {
+  --brand: #ff6b35;
+  --brand-deep: #f0481f;
+  --line: #eee;
+  --r-pill: 999rpx;
+
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+
+  /* 高于 cart-bar（z-index: 20）：结算栏上移后停在导航正上方 */
+  z-index: 30;
+  display: flex;
+  height: 104rpx;
+
+  /* 底部安全区直接写进 padding，不叠加外部工具类 */
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 2rpx solid var(--line);
+  background: #fff;
+  box-shadow: 0 -2rpx 12rpx rgb(0 0 0 / 5%);
+}
+
+.tb-item {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  color: #b9b9b9;
+  transition: color 0.15s ease;
+}
+
+/* 选中：只换颜色 + 加粗文字，不在顶部加指示条（选中项上方保持干净） */
+.tb-item.on {
+  color: var(--brand-deep);
+}
+
+/* 图标统一高度：两个图标的视觉重心落在同一条水平线上 */
+.tb-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44rpx;
+}
+
+/* ---------- 点餐：碗 ----------
+   碗身是「上开口的凹形描边」，碗沿比碗身宽一点点并压在碗口上，
+   28rpx 的高度配 50rpx 的宽度，与右侧单据的视觉重量相当。 */
+.ic-bowl {
+  position: relative;
+  width: 40rpx;
+  height: 24rpx;
+  border: 4rpx solid currentColor;
+  border-top: none;
+  border-radius: 0 0 24rpx 24rpx;
+  box-sizing: border-box;
+}
+
+/* 我的：一个人（圆头 + 半圆肩），与碗/单据同一套线条风格 */
+.ic-person {
+  position: relative;
+  width: 40rpx;
+  height: 40rpx;
+}
+
+.ic-person::before {
+  /* 头 */
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 18rpx;
+  height: 18rpx;
+  border: 4rpx solid currentColor;
+  border-radius: 50%;
+  box-sizing: border-box;
+  margin-left: -9rpx;
+  content: '';
+}
+
+.ic-person::after {
+  /* 肩（半圆） */
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 40rpx;
+  height: 20rpx;
+  border: 4rpx solid currentColor;
+  border-bottom: none;
+  border-radius: 20rpx 20rpx 0 0;
+  box-sizing: border-box;
+  content: '';
+}
+
+/* 碗沿：贴着碗身上沿（不留缝），左右各出挑 5rpx */
+.ic-bowl::before {
+  position: absolute;
+  top: -4rpx;
+  right: -5rpx;
+  left: -5rpx;
+  height: 4rpx;
+  border-radius: 2rpx;
+  background: currentColor;
+  content: '';
+}
+
+/* ---------- 订单：单据 ---------- */
+.ic-ticket {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8rpx;
+  width: 34rpx;
+  height: 38rpx;
+  padding: 0 5rpx;
+  border: 4rpx solid currentColor;
+  border-radius: 8rpx;
+  box-sizing: border-box;
+}
+
+.ic-line {
+  width: 100%;
+  height: 4rpx;
+  border-radius: 2rpx;
+  background: currentColor;
+}
+
+.ic-line-short {
+  width: 60%;
+}
+
+/* ---------- 已点份数角标 ----------
+   挂在单据的右上角：锚点是角标自身右上顶点，再用 transform 挪到「跨在角上」，
+   份数变两位数时自动往外长，不会反着压到图标上。 */
+/* border-box 同上：否则 26rpx(min-width) + 16rpx(padding) + 6rpx(border)
+   会得到一个比 34rpx 的图标还宽的角标。 */
+.tb-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 26rpx;
+  height: 26rpx;
+  padding: 0 6rpx;
+  border: 2rpx solid #fff;
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  color: #fff;
+  font-size: 17rpx;
+  font-weight: 700;
+  line-height: 22rpx;
+  text-align: center;
+  box-sizing: border-box;
+  transform: translate(35%, -35%);
+}
+
+.tb-text {
+  font-size: 21rpx;
+  line-height: 1.2;
+  letter-spacing: 0.5rpx;
+}
+
+.tb-item.on .tb-text {
+  font-weight: 700;
+}

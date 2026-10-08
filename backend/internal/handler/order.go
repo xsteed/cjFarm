@@ -88,17 +88,17 @@ func OrderBoard(c *gin.Context) {
 	}
 	list := []gin.H{}
 	for _, t := range tables {
-		var order interface{}
-		if t.Order != nil {
-			items := make([]dto.OrderItem, 0, len(t.Order.Items))
-			for _, it := range t.Order.Items {
+		orders := make([]interface{}, 0, len(t.Orders))
+		for _, bo := range t.Orders {
+			items := make([]dto.OrderItem, 0, len(bo.Items))
+			for _, it := range bo.Items {
 				items = append(items, dto.FromOrderItem(it))
 			}
-			order = dto.FromOrder(t.Order.Order, items, t.Order.PendingUrge)
+			orders = append(orders, dto.FromOrder(bo.Order, items, bo.PendingUrge))
 		}
 		list = append(list, gin.H{
 			"tableId": t.TableID, "tableNo": t.TableNo, "tableName": t.TableName,
-			"capacity": t.Capacity, "status": t.Status, "order": order,
+			"capacity": t.Capacity, "status": t.Status, "orders": orders,
 		})
 	}
 	ok(c, list)
@@ -200,6 +200,9 @@ func OrderSettle(c *gin.Context) {
 		SettleType   string `json:"settleType"`
 		PayType      string `json:"payType"`
 		SettleRemark string `json:"settleRemark"`
+		// PrintTicket 本次是否出小票。指针类型是为了区分「前端没传」与「显式 false」:
+		// 老客户端不传该字段,必须维持「结账即打印」的既有行为。
+		PrintTicket *bool `json:"printTicket"`
 	}
 	if err := c.ShouldBindJSON(&p); err != nil || p.OrderID == 0 {
 		fail(c, "参数错误")
@@ -224,7 +227,11 @@ func OrderSettle(c *gin.Context) {
 			fmt.Sprintf("结账收款 ¥%.2f，方式 %s", po.ToYuan(out.PaidCents), out.PayType))
 	}
 	// 打印结账单:免单/挂账小票会标注结算方式,便于给客人留底。
-	printOrderTicket(p.OrderID)
+	// 免单/挂账常常并不需要给客人出票(留痕在审计日志里),因此由收银在弹窗里
+	// 决定本次是否出纸;未传该字段时保持「结账即打印」的既有行为。
+	if p.PrintTicket == nil || *p.PrintTicket {
+		printOrderTicket(p.OrderID)
+	}
 	// 结账(无论何种方式)后,关闭该订单未支付的在线渠道单:顾客还开着的收款码
 	// 若再被扫码支付,回调会对不上账(挂账单尤其如此 —— 渠道那笔钱系统已无处安放)。
 	closeOnlinePayment(p.OrderID)
@@ -256,6 +263,9 @@ func OrderCreditSettle(c *gin.Context) {
 	}
 	SetAuditDetail(c, "order", strconv.Itoa(p.OrderID),
 		fmt.Sprintf("挂账核销，收款 ¥%.2f（%s）", po.ToYuan(due), payType))
+	// 补打一张「挂账已结」小票:客人此前拿到的那张写的是「待收」,欠款结清
+	// 必须有一张书面凭证,否则口头核销日后对不上账。
+	printOrderTicket(p.OrderID)
 	okMsg(c, fmt.Sprintf("挂账已核销，收款 ¥%.2f（%s）", po.ToYuan(due), payType))
 }
 
@@ -364,8 +374,12 @@ func OrderEdit(c *gin.Context) {
 	// 改单重算了应收金额:若顾客此前已生成在线支付二维码,旧码对应旧金额,
 	// 必须同步关闭渠道支付单(同 OrderCancel),防止按旧金额付款后回调因金额不符被拒导致掉单。
 	closeOnlinePayment(p.OrderID)
-	SetAuditDetail(c, "order", strconv.Itoa(p.OrderID),
-		fmt.Sprintf("改单：应收 ¥%.2f → ¥%.2f，人数 %d，明细 %d 项",
-			po.ToYuan(out.OldTotalCents), out.Total, out.PersonCount, out.ItemCount))
+	summary := fmt.Sprintf("改单：应收 ¥%.2f → ¥%.2f，人数 %d，明细 %d 项",
+		po.ToYuan(out.OldTotalCents), out.Total, out.PersonCount, out.ItemCount)
+	// 赠菜是让利动作,必须在审计摘要里单独说清赠了几道、让了多少利。
+	if out.GiftCount > 0 {
+		summary += fmt.Sprintf("，赠菜 %d 道（¥%.2f）", out.GiftCount, out.GiftAmount)
+	}
+	SetAuditDetail(c, "order", strconv.Itoa(p.OrderID), summary)
 	okMsg(c, "改单成功，金额已重算")
 }

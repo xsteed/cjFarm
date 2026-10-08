@@ -1,0 +1,23 @@
+<view
+  class="cart-bar {{count > 0 ? '' : 'dim'}} {{lifted ? 'lifted' : ''}}"
+  bindtap="onTap"
+>
+  <view class="cb-left">
+    <!-- 购物车图标 + 份数角标。组件样式隔离、也不引外部图片，
+         所以图标用 CSS 画：车把 + 车筐（梯形）+ 两个轮子，全部 currentColor。 -->
+    <view class="cb-cart {{count > 0 ? '' : 'off'}}">
+      <view class="cb-cart-hd"></view>
+      <view class="cb-cart-bd"></view>
+      <view class="cb-cart-w"></view>
+      <view
+        wx:if="{{count > 0}}"
+        class="cb-badge"
+      >{{count}}</view>
+    </view>
+    <view class="cb-sum">
+      <text class="cb-label">合计</text>
+      <text class="cb-money"><text class="cb-cny">¥</text>{{totalText}}</text>
+    </view>
+  </view>
+  <view class="cb-btn">{{count > 0 ? actionText : '请选择菜品'}}</view>
+</view>

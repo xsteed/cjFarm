@@ -228,7 +228,9 @@ func TestManagedSettingKeysComplete(t *testing.T) {
 		PrintGuestFooter: "页脚测试", PrintGuestShowSeatFee: "1", PrintGuestShowDiscount: "1",
 		FeieUser: "feie-user", FeieApiURL: "http://feie.example/api",
 		AgentLatestVersion: "1.0.0",
-		WxpayApiv3Key:      "apiv3-secret", FeieUkey: "feie-secret", AgentToken: "agent-secret",
+		WxCodeEnvVersion:   "release",
+		WxpayApiv3Key:      "apiv3-secret", WxAppSecret: "wx-app-secret",
+		FeieUkey: "feie-secret", AgentToken: "agent-secret",
 	}
 	w, c := newSaveContext(cfg)
 	SettingSave(c)

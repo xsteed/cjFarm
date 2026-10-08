@@ -2,6 +2,8 @@ package dao
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 
 	"dining-system/infra/logger"
@@ -14,8 +16,9 @@ const OrderCols = `order_id, order_no, table_id, table_no, table_name, person_co
 	dish_amount, seat_fee, discount_amount, total_amount, pay_status, pay_type, pay_time,
 	transaction_id, pay_channel, refund_amount, refund_time,
 	settle_type, settle_time, settle_operator, settle_remark,
-	credit_status, credit_amount, credit_settle_time, credit_settle_by, paid_amount,
-	finish_time, order_remark, cancel_reason, begin_time, end_time, create_by, create_time, update_by, update_time, remark`
+	credit_status, credit_amount, credit_settle_time, credit_settle_by, paid_amount, gift_amount,
+	finish_time, order_remark, cancel_reason, begin_time, end_time, create_by, create_time, update_by, update_time, remark,
+	biz_date, pickup_no`
 
 // ScanOrder 扫描一行订单记录(不含明细)。
 //
@@ -33,15 +36,19 @@ func ScanOrder(rows interface{ Scan(...interface{}) error }) (po.Order, error) {
 	var finishTime, orderRemark, cancelReason sql.NullString
 	var beginTime, endTime sql.NullString
 	var createBy, createTime, updateBy, updateTime, remark sql.NullString
+	// biz_date 允许 NULL(历史行/手工补录行),故走 NullString 再回落为空串。
+	var bizDate sql.NullString
 	err := rows.Scan(&o.OrderID, &o.OrderNo, &o.TableID, &tableNo, &tableName, &o.PersonCount, &o.OrderStatus,
 		&o.DishAmount, &o.SeatFee, &o.DiscountAmount, &o.TotalAmount, &o.PayStatus, &payType, &payTime,
 		&transactionID, &payChannel, &o.RefundAmount, &refundTime,
 		&settleType, &settleTime, &settleOperator, &settleRemark,
-		&o.CreditStatus, &o.CreditAmount, &creditSettleTime, &creditSettleBy, &o.PaidAmount,
-		&finishTime, &orderRemark, &cancelReason, &beginTime, &endTime, &createBy, &createTime, &updateBy, &updateTime, &remark)
+		&o.CreditStatus, &o.CreditAmount, &creditSettleTime, &creditSettleBy, &o.PaidAmount, &o.GiftAmount,
+		&finishTime, &orderRemark, &cancelReason, &beginTime, &endTime, &createBy, &createTime, &updateBy, &updateTime, &remark,
+		&bizDate, &o.PickupNo)
 	if err != nil {
 		return o, err
 	}
+	o.BizDate = bizDate.String
 	o.TableNo, o.TableName = tableNo.String, tableName.String
 	// 模型里可空时间字段是 *string(保留 NULL 语义),这里由 NullString 转指针。
 	o.PayType, o.PayTime = nsPtr(payType), nsPtr(payTime)
@@ -88,6 +95,33 @@ func GetActiveOrderByTable(tableID int) (po.Order, bool) {
 		return po.Order{}, false
 	}
 	return o, true
+}
+
+// GetUnpaidOrderByTable 查询桌台最近一笔「未结账」订单(顾客付款前可加菜/付款的那一单)。
+// 与 GetActiveOrderByTable 的区别:已付款但出餐未完成的订单不算「未结账」,
+// 顾客此时应能开新单,故此处额外按 pay_status=0 过滤。
+func GetUnpaidOrderByTable(tableID int) (po.Order, bool) {
+	o, err := ScanOrder(store.DB.QueryRow(`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND pay_status=0 AND order_status IN (1,2,3) ORDER BY order_id DESC LIMIT 1`, tableID))
+	if err != nil {
+		return po.Order{}, false
+	}
+	return o, true
+}
+
+// ListServingOrdersByTable 查询桌台「已付款但出餐未完成」的订单,顾客扫码时据此查看出餐进度。
+func ListServingOrdersByTable(tableID int) []po.Order {
+	rows, err := store.DB.Query(`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND pay_status=1 AND order_status IN (1,2,3) ORDER BY order_id`, tableID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var list []po.Order
+	for rows.Next() {
+		if o, err := ScanOrder(rows); err == nil {
+			list = append(list, o)
+		}
+	}
+	return list
 }
 
 // ListActiveOrders 查询全部进行中订单(1已下单/2制作中/3已上齐),按 order_id 升序。
@@ -266,7 +300,7 @@ func LoadOrderItems(orderID int) []po.OrderItem {
 func LoadOrderItemsTx(q interface {
 	Query(query string, args ...interface{}) (*sql.Rows, error)
 }, orderID int) ([]po.OrderItem, error) {
-	rows, err := q.Query(`SELECT item_id, order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark
+	rows, err := q.Query(`SELECT item_id, order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark, batch_no, client_request_id, is_gift, gift_reason
 		FROM tb_order_item WHERE order_id=? ORDER BY item_id`, orderID)
 	if err != nil {
 		return nil, err
@@ -276,7 +310,7 @@ func LoadOrderItemsTx(q interface {
 	for rows.Next() {
 		var it po.OrderItem
 		var oid int
-		if err := rows.Scan(&it.ItemID, &oid, &it.DishID, &it.DishName, &it.SpecID, &it.SpecName, &it.Price, &it.Quantity, &it.Amount, &it.Remark); err != nil {
+		if err := rows.Scan(&it.ItemID, &oid, &it.DishID, &it.DishName, &it.SpecID, &it.SpecName, &it.Price, &it.Quantity, &it.Amount, &it.Remark, &it.BatchNo, &it.ClientRequestID, &it.IsGift, &it.GiftReason); err != nil {
 			return nil, err
 		}
 		items = append(items, it)
@@ -303,7 +337,7 @@ func LoadOrderItemsByOrderIDs(orderIDs []int) (map[int][]po.OrderItem, error) {
 		placeholders += "?"
 		args = append(args, id)
 	}
-	rows, err := store.DB.Query(`SELECT item_id, order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark
+	rows, err := store.DB.Query(`SELECT item_id, order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark, batch_no, client_request_id, is_gift, gift_reason
 		FROM tb_order_item WHERE order_id IN (`+placeholders+`) ORDER BY order_id, item_id`, args...)
 	if err != nil {
 		return nil, err
@@ -312,7 +346,7 @@ func LoadOrderItemsByOrderIDs(orderIDs []int) (map[int][]po.OrderItem, error) {
 	for rows.Next() {
 		var it po.OrderItem
 		var oid int
-		if err := rows.Scan(&it.ItemID, &oid, &it.DishID, &it.DishName, &it.SpecID, &it.SpecName, &it.Price, &it.Quantity, &it.Amount, &it.Remark); err != nil {
+		if err := rows.Scan(&it.ItemID, &oid, &it.DishID, &it.DishName, &it.SpecID, &it.SpecName, &it.Price, &it.Quantity, &it.Amount, &it.Remark, &it.BatchNo, &it.ClientRequestID, &it.IsGift, &it.GiftReason); err != nil {
 			return nil, err
 		}
 		out[oid] = append(out[oid], it)
@@ -342,6 +376,46 @@ func CountActiveOrdersTx(tx *sql.Tx, tableID int) (int, error) {
 	var active int
 	err := tx.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`, tableID).Scan(&active)
 	return active, err
+}
+
+// CountUnpaidOrdersTx 统计桌台「未结账」订单数(下单防重用):
+// 付款前的订单才算未结账,已付款但出餐未完成的订单不阻断新单。
+func CountUnpaidOrdersTx(tx *sql.Tx, tableID int) (int, error) {
+	var n int
+	err := tx.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE table_id=? AND pay_status=0 AND order_status IN (1,2,3)`, tableID).Scan(&n)
+	return n, err
+}
+
+// CountUnfinishedOrdersTx 统计桌台「未完成出餐」的订单数(桌台释放判定用):
+// 只要还有订单在出餐流程中(1/2/3),桌台就仍视为占用。
+func CountUnfinishedOrdersTx(tx *sql.Tx, tableID int) (int, error) {
+	var n int
+	err := tx.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`, tableID).Scan(&n)
+	return n, err
+}
+
+// GetOrderIDByRequestIDTx 按幂等键(client_request_id)查询订单 ID(下单去重用)。
+// 幂等键冗余存储在 tb_order_item 上:同一次提交的所有明细共享同一请求号。
+func GetOrderIDByRequestIDTx(tx *sql.Tx, requestID string) (int, bool) {
+	var orderID int
+	err := tx.QueryRow(`SELECT order_id FROM tb_order_item WHERE client_request_id=? LIMIT 1`, requestID).Scan(&orderID)
+	if err != nil {
+		return 0, false
+	}
+	return orderID, true
+}
+
+// HasOrderItemRequestTx 判断订单是否已存在携带指定幂等键的明细(加菜去重用)。
+func HasOrderItemRequestTx(tx *sql.Tx, orderID int, requestID string) (bool, error) {
+	var one int
+	err := tx.QueryRow(`SELECT 1 FROM tb_order_item WHERE order_id=? AND client_request_id=? LIMIT 1`, orderID, requestID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // TouchOrderTx 对订单行做自赋值 no-op 更新,在 MySQL/SQLite 上先取该行写锁,
@@ -458,9 +532,9 @@ func CancelOrderTx(tx *sql.Tx, orderID int, reason, operator string, curStatus i
 }
 
 // UpdateOrderForEditTx 在事务中更新订单基础金额信息,仅允许进行中且未支付订单。
-func UpdateOrderForEditTx(tx *sql.Tx, orderID, personCount int, remark string, dishCents, seatCents, discountCents, totalCents int64, operator string) (int64, error) {
-	res, err := tx.Exec(`UPDATE tb_order SET person_count=?, order_remark=?, dish_amount=?, seat_fee=?, discount_amount=?, total_amount=?, update_by=?, update_time=? WHERE order_id=? AND pay_status=0 AND order_status IN (1,2,3)`,
-		personCount, remark, dishCents, seatCents, discountCents, totalCents, operator, store.Now(), orderID)
+func UpdateOrderForEditTx(tx *sql.Tx, orderID, personCount int, remark string, dishCents, seatCents, discountCents, giftCents, totalCents int64, operator string) (int64, error) {
+	res, err := tx.Exec(`UPDATE tb_order SET person_count=?, order_remark=?, dish_amount=?, seat_fee=?, discount_amount=?, gift_amount=?, total_amount=?, update_by=?, update_time=? WHERE order_id=? AND pay_status=0 AND order_status IN (1,2,3)`,
+		personCount, remark, dishCents, seatCents, discountCents, giftCents, totalCents, operator, store.Now(), orderID)
 	if err != nil {
 		return 0, err
 	}
@@ -480,13 +554,59 @@ func ReplaceOrderItemsTx(tx *sql.Tx, orderID int, items []po.OrderItem) error {
 	return nil
 }
 
+// pickupNoRetryMax NextPickupNoTx 的取号重试次数上限。
+// 只有「当天首单 + 并发插入同一计数行」才会触发重试,2~3 次足以覆盖;
+// 超出只可能是主键持续冲突等异常情况,此时应让下单失败暴露问题,而不是给出重复号。
+const pickupNoRetryMax = 3
+
+// NextPickupNoTx 在事务内取下一个当日取餐号(当天首单为 1,之后依次 +1)。
+//
+// 必须在事务里调用,原因有二:
+//  1. UPDATE 会对该营业日的计数行上行锁,把并发下单在本行上串行化
+//     —— 若放在事务外,MIN间隙里两个连接会拿到同一个号;
+//  2. 事务回滚时自增一并回滚,不会出现「号被占用却查不到订单」的空洞。
+//
+// 流程是「先自增已有行、行不存在再插入初值」,两种数据库语义一致,
+// 无需依赖 MySQL 的 ON DUPLICATE KEY / LAST_INSERT_ID 或 SQLite 的 ON CONFLICT。
+func NextPickupNoTx(tx *sql.Tx, bizDate string) (int, error) {
+	if bizDate == "" {
+		return 0, errors.New("营业日为空,无法取餐号")
+	}
+	for i := 0; i < pickupNoRetryMax; i++ {
+		// 1) 已存在计数行:自增后读回。自增在同一事务内立即可见。
+		res, err := tx.Exec(`UPDATE tb_day_seq SET next_val = next_val + 1 WHERE biz_date = ?`, bizDate)
+		if err != nil {
+			return 0, err
+		}
+		if n, err := res.RowsAffected(); err == nil && n > 0 {
+			var next int
+			if err := tx.QueryRow(`SELECT next_val FROM tb_day_seq WHERE biz_date = ?`, bizDate).Scan(&next); err != nil {
+				return 0, err
+			}
+			if next <= 0 {
+				return 0, fmt.Errorf("取餐号计数器异常: biz_date=%s next_val=%d", bizDate, next)
+			}
+			return next, nil
+		}
+		// 2) 当天首单:计数行还不存在,插入初值 1。
+		//    并发的另一个事务可能刚插进去 → 主键冲突,回到步骤 1 重试自增。
+		if _, err := tx.Exec(`INSERT INTO tb_day_seq(biz_date, next_val) VALUES(?, 1)`, bizDate); err != nil {
+			continue
+		}
+		return 1, nil
+	}
+	return 0, fmt.Errorf("取餐号取号失败(重试 %d 次未成功): biz_date=%s", pickupNoRetryMax, bizDate)
+}
+
 // InsertOrderTx 在事务中新增食客订单并返回主键 ID。
-func InsertOrderTx(tx *sql.Tx, orderNo string, tableID, personCount int, tableNo, tableName, orderRemark string, dishCents, seatCents, discountCents, totalCents int64) (int64, error) {
-	res, err := tx.Exec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, person_count, order_status,
-		dish_amount, seat_fee, discount_amount, total_amount, pay_status, order_remark, create_by, create_time, update_by, update_time)
-		VALUES(?,?,?,?,?,1,?,?,?,?,0,?,?,?,?,?)`,
-		orderNo, tableID, tableNo, tableName, personCount,
-		dishCents, seatCents, discountCents, totalCents, orderRemark,
+// bizDate/pickupNo 为当日取餐号(见 NextPickupNoTx),由下单流程在事务内取号后传入。
+// customerID 为下单会员的归属(0 = 匿名),只认服务端从顾客令牌解析出的值,请求体不可带。
+func InsertOrderTx(tx *sql.Tx, orderNo, bizDate string, pickupNo, tableID, personCount, customerID int, tableNo, tableName, orderRemark string, dishCents, seatCents, discountCents, giftCents, totalCents int64) (int64, error) {
+	res, err := tx.Exec(`INSERT INTO tb_order(order_no, biz_date, pickup_no, table_id, table_no, table_name, person_count, order_status,
+		dish_amount, seat_fee, discount_amount, gift_amount, total_amount, pay_status, customer_id, order_remark, create_by, create_time, update_by, update_time)
+		VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,0,?,?,?,?,?,?)`,
+		orderNo, bizDate, pickupNo, tableID, tableNo, tableName, personCount,
+		dishCents, seatCents, discountCents, giftCents, totalCents, customerID, orderRemark,
 		"食客", store.Now(), "食客", store.Now())
 	if err != nil {
 		return 0, err
@@ -494,10 +614,15 @@ func InsertOrderTx(tx *sql.Tx, orderNo string, tableID, personCount int, tableNo
 	return res.LastInsertId()
 }
 
-// InsertOrderItemTx 在事务中新增订单明细。
+// InsertOrderItemTx 在事务中新增订单明细。批次(BatchNo)未显式指定时默认 1(首次下单);
+// 幂等键(ClientRequestID)冗余写入明细,用于下单/加菜去重。
 func InsertOrderItemTx(tx *sql.Tx, orderID int64, it po.OrderItem) error {
-	_, err := tx.Exec(`INSERT INTO tb_order_item(order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark)
-		VALUES(?,?,?,?,?,?,?,?,?)`, orderID, it.DishID, it.DishName, it.SpecID, it.SpecName, it.Price, it.Quantity, it.Amount, it.Remark)
+	batch := it.BatchNo
+	if batch <= 0 {
+		batch = 1
+	}
+	_, err := tx.Exec(`INSERT INTO tb_order_item(order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark, batch_no, client_request_id, is_gift, gift_reason)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, orderID, it.DishID, it.DishName, it.SpecID, it.SpecName, it.Price, it.Quantity, it.Amount, it.Remark, batch, it.ClientRequestID, it.IsGift, it.GiftReason)
 	return err
 }
 
@@ -509,9 +634,16 @@ func GetOrderStateTx(tx *sql.Tx, orderID int) (orderStatus, payStatus, personCou
 }
 
 // UpdateOrderAmountTx 在事务中更新订单金额。
-func UpdateOrderAmountTx(tx *sql.Tx, orderID int, dishCents, seatCents, discountCents, totalCents int64) error {
-	_, err := tx.Exec(`UPDATE tb_order SET dish_amount=?, seat_fee=?, discount_amount=?, total_amount=?, update_time=? WHERE order_id=?`,
-		dishCents, seatCents, discountCents, totalCents, store.Now(), orderID)
+func UpdateOrderAmountTx(tx *sql.Tx, orderID int, dishCents, seatCents, discountCents, giftCents, totalCents int64) error {
+	_, err := tx.Exec(`UPDATE tb_order SET dish_amount=?, seat_fee=?, discount_amount=?, gift_amount=?, total_amount=?, update_time=? WHERE order_id=?`,
+		dishCents, seatCents, discountCents, giftCents, totalCents, store.Now(), orderID)
+	return err
+}
+
+// UpdateOrderAmountAndPersonTx 在事务中更新订单金额与用餐人数(加菜时人数可变)。
+func UpdateOrderAmountAndPersonTx(tx *sql.Tx, orderID, personCount int, dishCents, seatCents, discountCents, giftCents, totalCents int64) error {
+	_, err := tx.Exec(`UPDATE tb_order SET person_count=?, dish_amount=?, seat_fee=?, discount_amount=?, gift_amount=?, total_amount=?, update_time=? WHERE order_id=?`,
+		personCount, dishCents, seatCents, discountCents, giftCents, totalCents, store.Now(), orderID)
 	return err
 }
 

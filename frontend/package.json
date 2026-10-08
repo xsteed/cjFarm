@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -10,10 +14,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "mp:build": "npm run build -w @dining/app-miniprogram",
+    "mp:dev": "npm run dev -w @dining/app-miniprogram",
+    "mp:test": "npm run test -w @dining/app-miniprogram",
+    "mp:verify": "npm run verify -w @dining/app-miniprogram",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "lint:style": "stylelint \"src/**/*.{vue,css,less}\""
+    "lint:style": "stylelint \"src/**/*.{vue,css,less}\" \"apps/**/*.{vue,css,less}\" \"packages/**/*.{vue,css,less}\""
   },
   "dependencies": {
     "axios": "^1.7.7",
@@ -30,12 +38,14 @@
     "@vitejs/plugin-vue": "^5.1.4",
     "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "^0.7.0",
+    "esbuild": "^0.21.5",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-vue": "^9.0.0",
     "globals": "^15.0.0",
     "jsdom": "^25.0.1",
     "lint-staged": "^15.0.0",
+    "miniprogram-api-typings": "^5.2.3",
     "postcss-html": "^1.0.0",
     "postcss-less": "^6.0.0",
     "prettier": "^3.8.0",

@@ -80,12 +80,22 @@ func PrintLogReprint(c *gin.Context) {
 type previewLine struct {
 	Text string `json:"text"`
 	Bold bool   `json:"bold,omitempty"`
+	// QR 非空表示这一行实际出的是二维码:前端按该内容渲染真实二维码图形,
+	// Text 只是占位提示。等宽文本网格画不出二维码,只能这样保住「预览即所得」。
+	QR string `json:"qr,omitempty"`
 }
+
+// qrPlaceholder 预览里二维码行的占位文本。
+const qrPlaceholder = "[二维码]"
 
 // toPreviewLines 把文本行包装为带强调标记的预览行。
 func toPreviewLines(lines []string) []previewLine {
 	out := make([]previewLine, 0, len(lines))
 	for _, l := range lines {
+		if qr, ok := print.SplitQRLine(l); ok {
+			out = append(out, previewLine{Text: qrPlaceholder, QR: qr})
+			continue
+		}
 		out = append(out, previewLine{Text: l, Bold: print.BoldLine(l)})
 	}
 	return out
@@ -100,8 +110,9 @@ func PrintPreviewSample(c *gin.Context) {
 		DocType          string  `json:"docType"`          // guest(默认)/kitchen
 		PaperWidth       int     `json:"paperWidth"`       // 32(58mm)/48(80mm,默认)
 		Footer           *string `json:"footer"`           // 页脚文案覆盖
-		ShowSeatFee      *bool   `json:"showSeatFee"`      // 餐位费行开关覆盖
+		ShowSeatFee      *bool   `json:"showSeatFee"`      // 茶位费行开关覆盖
 		ShowDiscount     *bool   `json:"showDiscount"`     // 优惠行开关覆盖
+		QR               *bool   `json:"qr"`               // 小票二维码开关覆盖
 		KitchenShowPrice *bool   `json:"kitchenShowPrice"` // 厨房单带金额覆盖
 	}
 	_ = c.ShouldBindJSON(&p)
@@ -109,6 +120,7 @@ func PrintPreviewSample(c *gin.Context) {
 		Footer:       p.Footer,
 		ShowSeatFee:  p.ShowSeatFee,
 		ShowDiscount: p.ShowDiscount,
+		QR:           p.QR,
 	}, p.KitchenShowPrice != nil && *p.KitchenShowPrice)
 	previewChunks := make([][]previewLine, 0, len(chunks))
 	for _, ck := range chunks {

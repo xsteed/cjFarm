@@ -1,0 +1,207 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28rpx;
+  padding: 0 60rpx;
+}
+
+.state-text {
+  color: var(--ink-3);
+  font-size: 28rpx;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.spinner {
+  width: 68rpx;
+  height: 68rpx;
+  border: 6rpx solid #ffe3d4;
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.err-icon {
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 50%;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 60rpx;
+  font-weight: 700;
+  line-height: 104rpx;
+  text-align: center;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  padding: 20rpx 24rpx 0;
+  box-sizing: border-box;
+}
+
+/* ---------- 应付金额 ---------- */
+.amt {
+  margin-bottom: 20rpx;
+  padding: 44rpx 28rpx;
+  background: linear-gradient(160deg, #fff 0%, #fff8f5 100%);
+  text-align: center;
+}
+
+.amt-label {
+  color: var(--ink-3);
+  font-size: 25rpx;
+}
+
+.amt-value {
+  margin-top: 12rpx;
+  color: var(--brand-deep);
+  font-size: 76rpx;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.amt-no {
+  margin-top: 16rpx;
+  color: var(--ink-3);
+  font-size: 23rpx;
+}
+
+/* ---------- 已支付 ---------- */
+.paid {
+  padding: 56rpx 28rpx;
+  text-align: center;
+}
+
+.paid-title {
+  color: var(--success);
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.paid-sub {
+  margin-top: 12rpx;
+  color: var(--ink-3);
+  font-size: 24rpx;
+}
+
+/* ---------- 渠道与收款码 ---------- */
+.sec {
+  margin-bottom: 20rpx;
+  padding: 28rpx;
+}
+
+.sec-title {
+  margin-bottom: 12rpx;
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.tabs {
+  display: flex;
+  gap: 16rpx;
+  padding: 8rpx;
+  border-radius: var(--r-md);
+  background: #f5f5f5;
+}
+
+.tab {
+  flex: 1;
+  height: 68rpx;
+  border-radius: var(--r-sm);
+  color: var(--ink-2);
+  font-size: 26rpx;
+  line-height: 68rpx;
+  text-align: center;
+}
+
+.tab.on {
+  background: #fff;
+  color: var(--brand-deep);
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+}
+
+.qr-wrap {
+  margin-top: 28rpx;
+  text-align: center;
+}
+
+.qr-img {
+  width: 420rpx;
+  height: 420rpx;
+  border: 2rpx solid var(--line);
+  border-radius: var(--r-md);
+  background: #fff;
+}
+
+.qr-tip {
+  margin-top: 14rpx;
+  color: var(--ink-3);
+  font-size: 23rpx;
+}
+
+.qr-empty {
+  margin-top: 28rpx;
+  padding: 44rpx 24rpx;
+  border-radius: var(--r-md);
+  background: #fafafa;
+  color: var(--ink-3);
+  font-size: 25rpx;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.tip-line {
+  margin-top: 12rpx;
+  color: var(--ink-2);
+  font-size: 24rpx;
+  line-height: 1.7;
+}
+
+/* ---------- 底部 ---------- */
+.foot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 16rpx;
+  padding: 18rpx 24rpx;
+  /* 安全区写在自身 padding 里（不要与全局 .safe-bottom 组合，页面样式会覆盖掉它） */
+  padding-bottom: calc(18rpx + env(safe-area-inset-bottom));
+  border-top: 2rpx solid var(--line);
+  background: #fff;
+}
+
+.foot-minor {
+  flex-shrink: 0;
+  height: 84rpx;
+  padding: 0 32rpx;
+}
+
+.foot-main {
+  flex: 1;
+  height: 84rpx;
+  padding: 0;
+}
+
+.bottom-pad {
+  height: 40rpx;
+}

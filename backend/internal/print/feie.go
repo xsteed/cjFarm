@@ -348,7 +348,12 @@ func splitFeieContent(lines []string) []string {
 	out := []string{}
 	cur := ""
 	for _, l := range lines {
+		// 二维码标记行用飞鹅的 <QR> 标签落地(前提是官方支持的标签),
+		// 不能走纯文本分支——否则会把控制前缀原样打到纸上。
 		piece := escapeFeie(l)
+		if qr, ok := SplitQRLine(l); ok {
+			piece = "<QR>" + escapeFeie(qr) + "</QR>"
+		}
 		next := piece
 		if cur != "" {
 			next = cur + "<BR>" + piece

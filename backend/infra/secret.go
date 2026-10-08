@@ -36,6 +36,8 @@ var encAAD = []byte("dining-config-secret-v1")
 // 商户私钥/公钥以「文件路径」形式保存,内容本身不落库,故无需加入。
 var sensitiveKeys = map[string]bool{
 	"wxpay_apiv3_key": true,
+	// 小程序 AppSecret:拿到它就能以小程序身份换 access_token(可下发订阅消息、出码等)。
+	"wx_app_secret": true,
 	// 飞鹅开发者 UKEY:等同于账号密码(拿到它就能用商户账号给任意已绑定打印机推单)。
 	"feie_ukey": true,
 	// 本地打印代理令牌:拿到它就能冒充门店代理把队列里的票据全部拉走(含订单金额)。

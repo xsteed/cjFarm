@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -68,14 +69,14 @@ type BoardOrder struct {
 	PendingUrge bool
 }
 
-// BoardTable 看板中的一桌;无进行中订单时 Order 为 nil。
+// BoardTable 看板中的一桌;无进行中订单时 Orders 为空。
 type BoardTable struct {
 	TableID   int
 	TableNo   string
 	TableName string
 	Capacity  int
 	Status    int
-	Order     *BoardOrder
+	Orders    []BoardOrder
 }
 
 // OrderBoard 返回所有桌台及每桌当前进行中的订单。
@@ -95,17 +96,14 @@ func OrderBoard() ([]BoardTable, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 每桌只保留 order_id 最大(最近)的一笔进行中订单,与旧实现
-	// GetActiveOrderByTable 的 ORDER BY order_id DESC LIMIT 1 语义一致。
-	// 正常业务一桌同时仅一笔进行中订单(下单时已防重),这里仅是兜底。
-	byTable := map[int]po.Order{}
+	// 一桌可有多笔进行中订单(顾客付款后本单结束、再点即为新单,旧单仍在出餐),
+	// 因此按桌分组收集全部进行中订单,而非取最新一笔。
+	byTable := map[int][]po.Order{}
 	for _, o := range activeOrders {
-		if cur, ok := byTable[o.TableID]; !ok || o.OrderID > cur.OrderID {
-			byTable[o.TableID] = o
-		}
+		byTable[o.TableID] = append(byTable[o.TableID], o)
 	}
-	orderIDs := make([]int, 0, len(byTable))
-	for _, o := range byTable {
+	orderIDs := make([]int, 0, len(activeOrders))
+	for _, o := range activeOrders {
 		orderIDs = append(orderIDs, o.OrderID)
 	}
 	itemsByOrder, err := dao.LoadOrderItemsByOrderIDs(orderIDs)
@@ -121,23 +119,42 @@ func OrderBoard() ([]BoardTable, error) {
 			TableName: t.TableName,
 			Capacity:  t.Capacity,
 			Status:    t.Status,
+			Orders:    []BoardOrder{},
 		}
 		if t.Status == 1 {
-			if o, ok := byTable[t.TableID]; ok {
-				items := itemsByOrder[o.OrderID]
-				if items == nil {
-					items = []po.OrderItem{} // 保持无明细时返回空数组而非 null
-				}
-				bt.Order = &BoardOrder{
-					Order:       o,
-					Items:       items,
-					PendingUrge: pendingUrges[o.OrderID],
+			if orders, ok := byTable[t.TableID]; ok {
+				// activeOrders 已按 order_id 升序,保持下单先后顺序展示。
+				for _, o := range orders {
+					items := itemsByOrder[o.OrderID]
+					if items == nil {
+						items = []po.OrderItem{} // 保持无明细时返回空数组而非 null
+					}
+					bt.Orders = append(bt.Orders, BoardOrder{
+						Order:       o,
+						Items:       items,
+						PendingUrge: pendingUrges[o.OrderID],
+					})
 				}
 			}
 		}
 		out = append(out, bt)
 	}
 	return out, nil
+}
+
+// releaseTableIfIdle 桌台按「是否仍有未完成订单」决定是否释放。
+// 一桌多单场景下,某一单完成/取消/结账不等于整桌空闲,必须等该桌所有订单
+// 都走出餐流程(4/5)后才置空闲,避免「还有单在出餐却显示空闲」。
+// 必须在当前订单已更新为终态之后调用(计数才不会把当前单算进去)。
+func releaseTableIfIdle(tx *sql.Tx, tableID int) error {
+	n, err := dao.CountUnfinishedOrdersTx(tx, tableID)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return dao.SetTableStatusTx(tx, tableID, 0)
+	}
+	return nil
 }
 
 // ChangeOrderStatus 订单状态流转:校验状态机与终态资金约束后,
@@ -176,7 +193,7 @@ func ChangeOrderStatus(orderID, target int, operator string) error {
 			return fmt.Errorf("订单状态已变更，请刷新后重试")
 		}
 		if target == OrderStatusFinished || target == OrderStatusCanceled {
-			return dao.SetTableStatusTx(tx, tableID, 0)
+			return releaseTableIfIdle(tx, tableID)
 		} else if target >= OrderStatusPlaced && target <= OrderStatusDining {
 			return dao.SetTableStatusTx(tx, tableID, 1)
 		}
@@ -306,7 +323,7 @@ func SettleOrder(orderID int, settleTypeRaw, payTypeRaw, remark, operator string
 		if n == 0 {
 			return fmt.Errorf("订单状态已变更，请刷新后重试")
 		}
-		return dao.SetTableStatusTx(tx, info.TableID, 0)
+		return releaseTableIfIdle(tx, info.TableID)
 	})
 	if err != nil {
 		return SettleOutcome{}, err
@@ -438,7 +455,7 @@ func FinishOrder(orderID int, operator string) error {
 		if n == 0 {
 			return fmt.Errorf("订单状态已变更，请刷新后重试")
 		}
-		return dao.SetTableStatusTx(tx, tableID, 0)
+		return releaseTableIfIdle(tx, tableID)
 	})
 	if err != nil {
 		return err
@@ -473,7 +490,17 @@ func CancelOrder(orderID int, reason, operator string) (string, error) {
 		if n == 0 {
 			return fmt.Errorf("订单状态已变更，请刷新后重试")
 		}
-		return dao.SetTableStatusTx(tx, tableID, 0)
+		// 取消的是「未支付」订单，餐还没做，占用的库存要回补。
+		items, err := dao.LoadOrderItemsTx(tx, orderID)
+		if err != nil {
+			return err
+		}
+		for _, it := range items {
+			if err := dao.RestoreSpecStockTx(tx, it.SpecID, it.Quantity); err != nil {
+				return err
+			}
+		}
+		return releaseTableIfIdle(tx, tableID)
 	})
 	if err != nil {
 		return "", err
@@ -489,6 +516,8 @@ type EditOrderOutcome struct {
 	Total         float64 // 改单后应收金额(元)
 	PersonCount   int     // 归一化后的用餐人数
 	ItemCount     int     // 重建后的明细条数
+	GiftAmount    float64 // 赠送金额(元)
+	GiftCount     int     // 赠送明细条数
 }
 
 // EditOrder 改单:以数据库为准校验并重建明细,重算金额后原子更新订单与明细。
@@ -514,7 +543,7 @@ func EditOrder(orderID, personCount int, orderRemark string, items []dto.OrderIt
 		return EditOrderOutcome{}, err
 	}
 	oldTotal := dao.GetOrderTotal(orderID)
-	dishAmount, seatFee, discount, total := RecalcAmount(personCount, resolved)
+	dishAmount, seatFee, discount, giftAmount, total := RecalcAmount(personCount, resolved)
 
 	poItems := make([]po.OrderItem, 0, len(resolved))
 	for _, it := range resolved {
@@ -529,24 +558,53 @@ func EditOrder(orderID, personCount int, orderRemark string, items []dto.OrderIt
 		if err := dao.TouchOrderTx(tx, orderID); err != nil {
 			return err
 		}
+		// 改单 = 删旧明细 + 建新明细：先回补旧明细占用的库存，再扣新明细的，净额入账。
+		existing, err := dao.LoadOrderItemsTx(tx, orderID)
+		if err != nil {
+			return err
+		}
+		for _, it := range existing {
+			if err := dao.RestoreSpecStockTx(tx, it.SpecID, it.Quantity); err != nil {
+				return err
+			}
+		}
 		n, err := dao.UpdateOrderForEditTx(tx, orderID, personCount, orderRemark,
-			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(total), operator)
+			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(giftAmount), po.ToCents(total), operator)
 		if err != nil {
 			return err
 		}
 		if n == 0 {
 			return fmt.Errorf("订单状态已变更，请刷新后重试")
 		}
-		return dao.ReplaceOrderItemsTx(tx, orderID, poItems)
+		if err := dao.ReplaceOrderItemsTx(tx, orderID, poItems); err != nil {
+			return err
+		}
+		for _, it := range poItems {
+			if err := dao.DecrementSpecStockTx(tx, it.SpecID, it.Quantity); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
+		if errors.Is(err, dao.ErrSoldOut) {
+			return EditOrderOutcome{}, errors.New("部分菜品已售罄，请返回菜单重新选择")
+		}
 		return EditOrderOutcome{}, fmt.Errorf("改单失败: %w", err)
+	}
+	giftCount := 0
+	for _, it := range resolved {
+		if it.IsGift == 1 {
+			giftCount++
+		}
 	}
 	return EditOrderOutcome{
 		OldTotalCents: oldTotal,
 		Total:         total,
 		PersonCount:   personCount,
 		ItemCount:     len(resolved),
+		GiftAmount:    giftAmount,
+		GiftCount:     giftCount,
 	}, nil
 }
 

@@ -2,15 +2,19 @@ package dao
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 
 	"dining-system/internal/po"
 	"dining-system/internal/store"
 )
 
+// ErrSoldOut 限量规格库存不足：并发下单把库存抢光时用于回滚整单。
+var ErrSoldOut = errors.New("库存不足，该菜品已售罄")
+
 // DishCols 菜品列表查询的 SELECT 列(含分类名,需 FROM tb_dish d LEFT JOIN tb_category c)。
 const DishCols = `d.dish_id, d.category_id, COALESCE(c.category_name,''), d.dish_name, d.dish_image,
-	d.description, d.status, d.sort_order, d.del_flag, d.create_by, d.create_time, d.update_by, d.update_time, d.remark`
+	d.description, d.status, d.sold_out, d.sort_order, d.del_flag, d.create_by, d.create_time, d.update_by, d.update_time, d.remark`
 
 // DishRow 菜品+联表分类名的查询投影。
 type DishRow struct {
@@ -22,7 +26,7 @@ type DishRow struct {
 func ScanDish(rows interface{ Scan(...interface{}) error }) (DishRow, error) {
 	var d DishRow
 	err := rows.Scan(&d.DishID, &d.CategoryID, &d.CategoryName, &d.DishName, &d.DishImage,
-		&d.Description, &d.Status, &d.SortOrder, &d.DelFlag, &d.CreateBy, &d.CreateTime, &d.UpdateBy, &d.UpdateTime, &d.Remark)
+		&d.Description, &d.Status, &d.SoldOut, &d.SortOrder, &d.DelFlag, &d.CreateBy, &d.CreateTime, &d.UpdateBy, &d.UpdateTime, &d.Remark)
 	return d, err
 }
 
@@ -90,12 +94,21 @@ func GetDishByID(id int) (DishRow, error) {
 		FROM tb_dish d LEFT JOIN tb_category c ON d.category_id=c.category_id WHERE d.dish_id=?`, id))
 }
 
+// normalizeStock 把「写入口」的库存归一化：<=0（未设置 / 负数 / 0）一律按「不限量」-1 存。
+// 库存 0（售罄）只能由下单扣减产生；店长或旧调用方传一个零值不能意外把规格做成售罄。
+func normalizeStock(stock int64) int64 {
+	if stock <= 0 {
+		return -1
+	}
+	return stock
+}
+
 // CreateDish 创建菜品并写入规格。
 func CreateDish(d po.Dish, specs []po.Spec) (int64, error) {
 	var dishID int64
 	err := store.WithTx(func(tx *sql.Tx) error {
-		res, err := tx.Exec(`INSERT INTO tb_dish(category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time)
-			VALUES(?,?,?,?,?,?,?,?,?)`, d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SortOrder, "0", store.Now(), store.Now())
+		res, err := tx.Exec(`INSERT INTO tb_dish(category_id, dish_name, dish_image, description, status, sold_out, sort_order, del_flag, create_time, update_time)
+			VALUES(?,?,?,?,?,?,?,?,?,?)`, d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SoldOut, d.SortOrder, "0", store.Now(), store.Now())
 		if err != nil {
 			return err
 		}
@@ -104,7 +117,8 @@ func CreateDish(d po.Dish, specs []po.Spec) (int64, error) {
 			return err
 		}
 		for _, s := range specs {
-			if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price) VALUES(?,?,?)`, dishID, s.SpecName, s.Price); err != nil {
+			if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, stock) VALUES(?,?,?,?)`,
+				dishID, s.SpecName, s.Price, normalizeStock(s.Stock)); err != nil {
 				return err
 			}
 		}
@@ -113,19 +127,60 @@ func CreateDish(d po.Dish, specs []po.Spec) (int64, error) {
 	return dishID, err
 }
 
-// UpdateDish 更新菜品并重建规格。
+// UpdateDish 更新菜品并**增量**更新规格：
+//   - 带 SpecID 的规格按 ID UPDATE（库存随表单写回）
+//   - 不带 SpecID 的 INSERT 新增
+//   - 旧有但不在本次列表里的 DELETE
+//
+// 相比旧的「DELETE 全量重建」，增量更新保住了 spec_id 与库存 —— 否则店长改个价格/名字，
+// 规格会被重建（spec_id 全变、库存归零），自动售罄的计数就前功尽弃。
 func UpdateDish(d po.Dish, specs []po.Spec) error {
 	return store.WithTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`UPDATE tb_dish SET category_id=?, dish_name=?, dish_image=?, description=?, status=?, sort_order=?, update_time=? WHERE dish_id=?`,
-			d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SortOrder, store.Now(), d.DishID); err != nil {
+		if _, err := tx.Exec(`UPDATE tb_dish SET category_id=?, dish_name=?, dish_image=?, description=?, status=?, sold_out=?, sort_order=?, update_time=? WHERE dish_id=?`,
+			d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SoldOut, d.SortOrder, store.Now(), d.DishID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM tb_spec WHERE dish_id=?`, d.DishID); err != nil {
-			return err
-		}
+
+		keep := map[int]bool{}
 		for _, s := range specs {
-			if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price) VALUES(?,?,?)`, d.DishID, s.SpecName, s.Price); err != nil {
+			if s.SpecID > 0 {
+				keep[s.SpecID] = true
+				if _, err := tx.Exec(`UPDATE tb_spec SET spec_name=?, price=?, stock=? WHERE spec_id=? AND dish_id=?`,
+					s.SpecName, s.Price, normalizeStock(s.Stock), s.SpecID, d.DishID); err != nil {
+					return err
+				}
+			}
+		}
+
+		// 事务内读现有规格，删除不在本次列表里的（被店长删掉的行）。
+		rows, err := tx.Query(`SELECT spec_id FROM tb_spec WHERE dish_id=?`, d.DishID)
+		if err != nil {
+			return err
+		}
+		var toDelete []int
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
 				return err
+			}
+			if !keep[id] {
+				toDelete = append(toDelete, id)
+			}
+		}
+		rows.Close()
+		for _, id := range toDelete {
+			if _, err := tx.Exec(`DELETE FROM tb_spec WHERE spec_id=?`, id); err != nil {
+				return err
+			}
+		}
+
+		for _, s := range specs {
+			if s.SpecID == 0 {
+				if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, stock) VALUES(?,?,?,?)`,
+					d.DishID, s.SpecName, s.Price, normalizeStock(s.Stock)); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -149,13 +204,15 @@ func GetSpecForOrder(specID, dishID int) (dishName, specName, delFlag string, di
 
 // SpecOrderInfo 订单明细校验所需的菜品与规格信息(与 GetSpecForOrder 返回内容一致)。
 type SpecOrderInfo struct {
-	SpecID     int
-	DishID     int
-	SpecName   string
-	PriceCents int64
-	DishName   string
-	DishStatus int
-	DelFlag    string
+	SpecID      int
+	DishID      int
+	SpecName    string
+	PriceCents  int64
+	SpecStock   int64
+	DishName    string
+	DishStatus  int
+	DishSoldOut int
+	DelFlag     string
 }
 
 // LoadSpecsForOrder 按规格 ID 批量加载订单明细对应的菜品与规格信息,key 为 spec_id。
@@ -176,7 +233,7 @@ func LoadSpecsForOrder(specIDs []int) (map[int]SpecOrderInfo, error) {
 		placeholders += "?"
 		args = append(args, id)
 	}
-	rows, err := store.DB.Query(`SELECT s.spec_id, s.dish_id, s.spec_name, s.price, d.dish_name, d.status, d.del_flag
+	rows, err := store.DB.Query(`SELECT s.spec_id, s.dish_id, s.spec_name, s.price, s.stock, d.dish_name, d.status, d.sold_out, d.del_flag
 		FROM tb_spec s JOIN tb_dish d ON d.dish_id = s.dish_id
 		WHERE s.spec_id IN (`+placeholders+`)`, args...)
 	if err != nil {
@@ -185,8 +242,8 @@ func LoadSpecsForOrder(specIDs []int) (map[int]SpecOrderInfo, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var info SpecOrderInfo
-		if err := rows.Scan(&info.SpecID, &info.DishID, &info.SpecName, &info.PriceCents,
-			&info.DishName, &info.DishStatus, &info.DelFlag); err != nil {
+		if err := rows.Scan(&info.SpecID, &info.DishID, &info.SpecName, &info.PriceCents, &info.SpecStock,
+			&info.DishName, &info.DishStatus, &info.DishSoldOut, &info.DelFlag); err != nil {
 			return nil, err
 		}
 		out[info.SpecID] = info
@@ -199,7 +256,7 @@ func LoadSpecsForOrder(specIDs []int) (map[int]SpecOrderInfo, error) {
 
 // LoadDishSpecs 加载单道菜品的规格。
 func LoadDishSpecs(dishID int) []po.Spec {
-	rows, err := store.DB.Query(`SELECT spec_id, dish_id, spec_name, price FROM tb_spec WHERE dish_id=? ORDER BY spec_id`, dishID)
+	rows, err := store.DB.Query(`SELECT spec_id, dish_id, spec_name, price, stock FROM tb_spec WHERE dish_id=? ORDER BY spec_id`, dishID)
 	if err != nil {
 		return []po.Spec{}
 	}
@@ -207,7 +264,7 @@ func LoadDishSpecs(dishID int) []po.Spec {
 	specs := []po.Spec{}
 	for rows.Next() {
 		var s po.Spec
-		rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price)
+		rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price, &s.Stock)
 		specs = append(specs, s)
 	}
 	return specs
@@ -228,15 +285,56 @@ func LoadSpecsByDishIDs(ids []int) map[int][]po.Spec {
 		placeholders += "?"
 		args = append(args, id)
 	}
-	rows, err := store.DB.Query(`SELECT spec_id, dish_id, spec_name, price FROM tb_spec WHERE dish_id IN (`+placeholders+`) ORDER BY dish_id, spec_id`, args...)
+	rows, err := store.DB.Query(`SELECT spec_id, dish_id, spec_name, price, stock FROM tb_spec WHERE dish_id IN (`+placeholders+`) ORDER BY dish_id, spec_id`, args...)
 	if err != nil {
 		return out
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var s po.Spec
-		rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price)
+		rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price, &s.Stock)
 		out[s.DishID] = append(out[s.DishID], s)
 	}
 	return out
+}
+
+// DecrementSpecStockTx 在事务内扣减某个规格的库存（下单 / 加菜 / 改单写入明细时调用）。
+// 不限量（stock < 0）的规格不扣减、恒成功。
+//
+// 并发安全：限量规格用「带守卫的原子 UPDATE」扣减（stock >= qty 才扣）。
+// 并发下单把同一规格抢光时，后到者的 UPDATE 影响 0 行 → 返回 ErrSoldOut，整个事务回滚。
+func DecrementSpecStockTx(tx *sql.Tx, specID int, qty int) error {
+	var stock int64
+	if err := tx.QueryRow(`SELECT stock FROM tb_spec WHERE spec_id=?`, specID).Scan(&stock); err != nil {
+		return err
+	}
+	if stock < 0 {
+		return nil // 不限量
+	}
+	res, err := tx.Exec(`UPDATE tb_spec SET stock = stock - ? WHERE spec_id=? AND stock >= ?`, qty, specID, qty)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrSoldOut
+	}
+	return nil
+}
+
+// RestoreSpecStockTx 在事务内回补某个规格的库存（取消未支付订单 / 改单删除旧明细时调用）。
+// 不限量的规格不回补；规格已被删除（删菜）时也按无操作处理，不阻断取消/改单。
+func RestoreSpecStockTx(tx *sql.Tx, specID int, qty int) error {
+	var stock int64
+	if err := tx.QueryRow(`SELECT stock FROM tb_spec WHERE spec_id=?`, specID).Scan(&stock); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if stock < 0 {
+		return nil
+	}
+	_, err := tx.Exec(`UPDATE tb_spec SET stock = stock + ? WHERE spec_id=?`, qty, specID)
+	return err
 }

@@ -6,7 +6,43 @@
     "allowJs": false,
     "checkJs": false,
     "noEmit": true,
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals"],
+    "baseUrl": ".",
+    // 与 aliases.ts 保持一致(TS 的 paths 按最长前缀匹配,不受顺序影响)。
+    // 单独维护一份是因为 tsconfig 无法 import Vite 的 alias 数组。
+    "paths": {
+      "@dining/types": ["packages/types/src/index.ts"],
+      "@dining/types/*": ["packages/types/src/*"],
+      "@dining/shared": ["packages/shared/src/index.ts"],
+      "@dining/shared/*": ["packages/shared/src/*"],
+      "@dining/api": ["packages/api/src/index.ts"],
+      "@dining/api/*": ["packages/api/src/*"],
+      "@dining/auth": ["packages/auth/src/index.ts"],
+      "@dining/auth/*": ["packages/auth/src/*"],
+      "@dining/customer-core": ["packages/customer-core/src/index.ts"],
+      "@dining/customer-core/*": ["packages/customer-core/src/*"],
+      "@dining/app-admin": ["apps/admin/src/index.ts"],
+      "@dining/app-admin/*": ["apps/admin/src/*"],
+      "@dining/app-customer": ["apps/customer/src/index.ts"],
+      "@dining/app-customer/*": ["apps/customer/src/*"],
+      "@shell/*": ["src/*"]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "apps/**/*.ts",
+    "apps/**/*.d.ts",
+    "apps/**/*.vue",
+    "packages/**/*.ts",
+    "packages/**/*.d.ts",
+    "packages/**/*.vue",
+    "aliases.ts",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ],
+  // 小程序是独立工程（自己的 tsconfig 带着 wx 全局类型，见 apps/miniprogram/tsconfig.json）。
+  // 用 Web 端的 tsconfig 去检查它会因为缺 wx 类型而全军覆没，所以显式排除。
+  "exclude": ["node_modules", "dist", "apps/miniprogram"]
 }

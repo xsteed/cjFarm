@@ -1,0 +1,153 @@
+/* ============================================================
+   全局样式与设计 token
+   取值与 Web 端 frontend/src/style.css 的 :root 一一对应，
+   保证顾客在 H5 与小程序看到的是同一套视觉（暖橙品牌 / 炭黑文字 / 16rpx 圆角体系）。
+   WXSS 用 rpx：750rpx = 屏幕宽度，故数值约为设计稿 px 的 2 倍。
+   ============================================================ */
+page {
+  --brand: #ff6b35;
+  --brand-deep: #f0481f;
+  --brand-light: #ff8a50;
+  --brand-soft: #fff1ea;
+  --brand-ghost: #fff8f5;
+  --ink: #1a1a1a;
+  --ink-2: #4a4a4a;
+  --ink-3: #8c8c8c;
+  --ink-4: #c7c7c7;
+  --line: #eee;
+  --bg: #f7f7f7;
+  --card: #fff;
+  --success: #1fc97e;
+  --success-soft: #e8faf1;
+  --warning: #ffb020;
+  --warning-soft: #fff6e5;
+  --danger: #f53f3f;
+  --danger-soft: #feeeee;
+  --r-sm: 16rpx;
+  --r-md: 24rpx;
+  --r-lg: 32rpx;
+  --r-xl: 40rpx;
+  --r-pill: 999rpx;
+  --shadow-1: 0 4rpx 16rpx rgb(26 26 26 / 6%);
+  --shadow-2: 0 16rpx 48rpx rgb(26 26 26 / 10%);
+  --grad-brand: linear-gradient(135deg, #ff8a50 0%, #ff6b35 45%, #f0481f 100%);
+  --grad-brand-soft: linear-gradient(135deg, #ff8a50 0%, #f0481f 100%);
+  /* 常驻底部主导航的高度（不含安全区）。页面用它给底部留白，
+     必须与 components/tab-bar/index.wxss 里的 .tabbar 高度一致。 */
+  --tabbar-h: 104rpx;
+  /* 加号 / 步进器按钮的直径：一道菜「未点（单个加号）」与「已点（步进器）」
+     是两个分支，直径必须一致，否则点一下按钮会明显跳一号。
+     点餐页的 .plus / .st-btn 与购物车页的 .step 都用它。 */
+  --ops-btn: 56rpx;
+
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+/* ---------- 通用原子类 ---------- */
+/* 注意：这里的类只对**页面**生效。自定义组件默认样式隔离（isolated），
+   组件内用不到这些类，需要的话必须在组件自己的 wxss 里写一份
+   （scripts/audit-wxss.mjs 会按作用域把这个规则查出来）。 */
+.card {
+  background: var(--card);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.price {
+  color: var(--brand-deep);
+  font-weight: 700;
+}
+
+/* 主按钮：与 Web 端 t-button 的渐变主色保持一致 */
+.btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 88rpx;
+  padding: 0 48rpx;
+  border-radius: var(--r-pill);
+  background: var(--grad-brand-soft);
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 600;
+  box-shadow: 0 8rpx 28rpx rgb(240 72 31 / 24%);
+}
+
+.btn-primary.dim {
+  background: #d9d9d9;
+  color: #fff;
+  box-shadow: none;
+}
+
+/* 次要按钮 */
+.btn-ghost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 80rpx;
+  padding: 0 40rpx;
+  border: 2rpx solid var(--line);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 28rpx;
+}
+
+/* 状态标签 */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 40rpx;
+  padding: 0 16rpx;
+  border-radius: var(--r-pill);
+  font-size: 22rpx;
+  line-height: 1;
+}
+
+.tag-primary {
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+.tag-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.tag-warning {
+  background: var(--warning-soft);
+  color: #b7791f;
+}
+
+.tag-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.tag-default {
+  background: #f2f2f2;
+  color: var(--ink-3);
+}
+
+/* 底部安全区不做成工具类：它必须与元素自身的 padding 合并成一条声明，
+   否则「页面/组件样式覆盖全局样式」会把 padding-bottom 顶掉（两边同为单类选择器）。
+   各页面与组件在自身规则里直接写 `padding-bottom: calc(... + env(safe-area-inset-bottom))`。 */
+
+/* 空态 */
+.empty {
+  padding: 96rpx 40rpx;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 26rpx;
+}
+
+/* 价格前缀的小号 ¥ */
+.cny {
+  font-size: 24rpx;
+  font-weight: 600;
+}

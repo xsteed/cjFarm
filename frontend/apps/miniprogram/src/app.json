@@ -1,0 +1,14 @@
+{
+  "pages": ["pages/index/index", "pages/cart/index", "pages/order/index", "pages/pay/index", "pages/profile/index"],
+  "window": {
+    "navigationBarBackgroundColor": "#ff6b35",
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "扫码点餐",
+    "backgroundColor": "#f7f7f7",
+    "backgroundColorTop": "#ff6b35",
+    "backgroundTextStyle": "light"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

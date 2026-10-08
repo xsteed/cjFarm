@@ -1,9 +1,14 @@
 package po
 
 // 打印单据类型(落 tb_print_log.doc_type)。
+//
+// guest_append(加菜小票)只在下单场景产生;补打与预览无法还原「当时新增了
+// 哪些菜」(订单只增不减、日志不存渲染快照),一律按 guest 重放当前整单,
+// Reprint/PreviewTicket/PreviewTicketSample 的归一化逻辑依赖这一点。
 const (
-	PrintDocKitchen = "kitchen"
-	PrintDocGuest   = "guest"
+	PrintDocKitchen     = "kitchen"
+	PrintDocGuest       = "guest"
+	PrintDocGuestAppend = "guest_append"
 )
 
 // 打印日志状态。

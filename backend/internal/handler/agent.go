@@ -243,7 +243,7 @@ func AgentAck(c *gin.Context) {
 			// 老代理不传,默认 false → 走原有失败重试逻辑。
 			Skipped bool `json:"skipped"`
 			// RetryAfter 代理建议多少秒后再下发(通常是冷却剩余秒数)。0 表示由云端决定。
-			RetryAfter int `json:"retryAfter"`
+			RetryAfter    int `json:"retryAfter"`
 			PrinterStatus *struct {
 				Queried      bool   `json:"queried"`
 				Raw          string `json:"raw"`

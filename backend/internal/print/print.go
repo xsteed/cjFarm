@@ -66,11 +66,31 @@ func kitchenShowPrice() bool { return service.GetSetting("print_kitchen_show_pri
 // 用户在管理端清空后保存,即得到空串 → 页脚行整体省略。
 func guestFooter() string { return strings.TrimSpace(service.GetSetting("print_guest_footer")) }
 
-// guestShowSeatFee 食客小票是否显示餐位费行(默认显示,对账透明)。
+// guestShowSeatFee 食客小票是否显示茶位费行(默认显示,对账透明)。
 func guestShowSeatFee() bool { return service.GetSetting("print_guest_show_seat_fee") != "0" }
 
 // guestShowDiscount 食客小票是否显示优惠行(默认显示;有优惠金额时才出现该行)。
 func guestShowDiscount() bool { return service.GetSetting("print_guest_show_discount") != "0" }
+
+// guestQR 食客小票页脚后是否打印二维码(默认关闭)。
+//
+// 默认关的原因是它需要两个外部条件同时成立:H5 地址已配置成手机能访问的真实
+// 地址、且打印机支持 GS ( k 二维码指令。出厂即开会让一部分机型吐出乱码,
+// 让门店自己在「系统配置 → 小票打印」里确认后再开。
+func guestQR() bool { return service.GetSetting("print_guest_qr") == "1" }
+
+// guestPrintOnAppend 加菜后是否向小票机重出一张食客小票(默认开)。
+//
+// 沿用 show_seat_fee 的「!= "0"」语义:管理端关掉时写入明确的 "0",
+// 老库没有这个键时视为开启 —— 与 seed 的出厂默认一致。
+func guestPrintOnAppend() bool { return service.GetSetting("print_guest_on_append") != "0" }
+
+// guestPrintOnOrder 下单时是否向小票机出「点菜单」(默认开)。
+//
+// 下单即出的小票相当于点菜凭证(菜品上错、漏上当场能对),但与结账小票
+// 内容高度重叠,不想要重复出纸的门店可关 —— 关闭后下单只打厨房单,
+// 加菜小票(print_guest_on_append)与结账小票不受影响。
+func guestPrintOnOrder() bool { return service.GetSetting("print_guest_on_order") != "0" }
 
 // ============================================================================
 // 打印机选取
@@ -218,6 +238,9 @@ func (j job) render() []string {
 	if j.docType == po.PrintDocGuest {
 		return RenderGuestTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
 	}
+	if j.docType == po.PrintDocGuestAppend {
+		return RenderGuestAppendTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
+	}
 	return RenderKitchenTicket(j.o, toPOItems(j.items), j.p.PaperWidth, kitchenShowPrice(), j.title)
 }
 
@@ -297,14 +320,16 @@ func runAsync(jobs []job) {
 
 // buildJobs 按「单据类型 + 分类分单」为一批启用的打印机生成作业。
 //
-// docType 为 guest 时只挑小票机;kitchen 时只挑厨房机并做分类过滤。
-// 分类过滤后无菜可打的机器直接跳过(不打空白单)。
+// docType 为 guest / guest_append 时只挑小票机(两者都不做分类过滤);
+// kitchen 时只挑厨房机并做分类过滤。分类过滤后无菜可打的机器直接跳过
+// (不打空白单)。
 func buildJobs(printers []po.Printer, o po.Order, items []service.PrintOrderItemRow,
 	docType, title, triggerBy, operator string) []job {
 
 	jobs := []job{}
 	for _, p := range printers {
-		if docType == po.PrintDocGuest && p.PrinterType != po.PrinterTypeGuest {
+		if (docType == po.PrintDocGuest || docType == po.PrintDocGuestAppend) &&
+			p.PrinterType != po.PrinterTypeGuest {
 			continue
 		}
 		if docType == po.PrintDocKitchen && p.PrinterType == po.PrinterTypeGuest {
@@ -327,7 +352,10 @@ func buildJobs(printers []po.Printer, o po.Order, items []service.PrintOrderItem
 // 对外入口
 // ============================================================================
 
-// PrintOrder 下单后自动打印:厨房机出厨房单、小票机出食客小票。
+// PrintOrder 下单后自动打印:厨房机出厨房单、小票机出「点菜单」。
+//
+// 小票机这张是点菜凭证(下单即出,金额只覆盖已点的菜),可由
+// print_guest_on_order 单独关闭;加菜小票与结账小票不受它影响。
 // items 应为本次下单的菜品(未补分类也可,内部会补)。
 func PrintOrder(o po.Order, items []po.OrderItem) {
 	if !printEnabled() {
@@ -345,7 +373,9 @@ func PrintOrder(o po.Order, items []po.OrderItem) {
 			return
 		}
 		jobs := buildJobs(printers, o, attached, po.PrintDocKitchen, "【厨房单】", po.PrintTriggerOrder, "")
-		jobs = append(jobs, buildJobs(printers, o, attached, po.PrintDocGuest, "", po.PrintTriggerOrder, "")...)
+		if guestPrintOnOrder() {
+			jobs = append(jobs, buildJobs(printers, o, attached, po.PrintDocGuest, "", po.PrintTriggerOrder, "")...)
+		}
 		for _, j := range jobs {
 			runJobRecovered(j)
 		}
@@ -354,7 +384,8 @@ func PrintOrder(o po.Order, items []po.OrderItem) {
 
 // PrintKitchen 加菜:只向厨房机推「加菜单」。
 //
-// 食客小票不在这里打 —— 加菜后金额会变,小票统一留到结账时出一张准确的。
+// 食客小票由 PrintGuestAppend 负责 —— 厨房单只列本次新增的菜品(后厨只补做
+// 这几道),小票则重出整单最新金额;两者口径不同,不要合并。
 // items 应为本次新增的菜品(不是整桌的全部菜品)。
 func PrintKitchen(o po.Order, items []po.OrderItem) {
 	if !printEnabled() {
@@ -368,6 +399,37 @@ func PrintKitchen(o po.Order, items []po.OrderItem) {
 			return
 		}
 		runAsync(buildJobs(printers, o, attached, po.PrintDocKitchen, "【加菜单】", po.PrintTriggerAppend, ""))
+	})
+}
+
+// PrintGuestAppend 加菜后向小票机出一张「加菜小票」(仅小票机)。
+//
+// 只列本次新增的菜品,金额只给一行整单「当前合计」—— 客人刚加完菜,
+// 关心的是加了什么、现在多少钱,不必再重放一遍此前已点的全部菜品。
+// 结账时仍会出完整食客小票,茶位费/优惠等整单口径的分项在那张票上呈现。
+//
+// items 应为本次新增的菜品(与 PrintKitchen 同一份,不是整单明细)。
+// 打印开关由 print_guest_on_append 单独控制(默认开):加菜频繁的门店可关掉省纸。
+//
+// 补打/预览说明:该单据在日志里落 doc_type=guest_append,但补打与预览无法
+// 还原「当时新增了哪些菜」(订单只增不减、日志不存渲染快照),统一按
+// docType=guest 重放当前整单 —— 见 po.PrintDocGuestAppend 的注释。
+func PrintGuestAppend(o po.Order, items []po.OrderItem) {
+	if !printEnabled() || !guestPrintOnAppend() {
+		return
+	}
+	goSafe("PrintGuestAppend", func() {
+		printers, err := loadPrinters(po.PrinterTypeGuest)
+		if err != nil {
+			logger.Warnf("打印: 查询小票打印机失败: %v", err)
+			return
+		}
+		if len(printers) == 0 {
+			logger.Warnf("打印: 没有启用中的小票打印机,跳过订单 %s 的加菜小票", o.OrderNo)
+			return
+		}
+		attached := service.AttachItemCategories(items)
+		runAsync(buildJobs(printers, o, attached, po.PrintDocGuestAppend, "", po.PrintTriggerAppend, ""))
 	})
 }
 
@@ -386,8 +448,24 @@ func PrintGuestTicket(o po.Order) {
 			logger.Warnf("打印: 查询小票打印机失败: %v", err)
 			return
 		}
+		// 没有启用中的小票机时必须留一条日志:结账后客人等着拿小票却始终不出纸,
+		// 若此处静默返回,排查时既没有打印记录也没有任何线索(与 PrintOrder 同款兜底)。
+		if len(printers) == 0 {
+			logger.Warnf("打印: 没有启用中的小票打印机,跳过订单 %s 的结账小票", o.OrderNo)
+			return
+		}
 		runAsync(buildJobs(printers, o, attached, po.PrintDocGuest, "", po.PrintTriggerSettle, ""))
 	})
+}
+
+// normalizeDocType 单据类型归一化:渲染形态只有 kitchen 与 guest 两种。
+// guest_append(加菜小票)无法按「当时新增的菜品」重放(订单只增不减、
+// 日志不存渲染快照),补打与预览一律回落为整单 guest。
+func normalizeDocType(docType string) string {
+	if docType == po.PrintDocKitchen {
+		return po.PrintDocKitchen
+	}
+	return po.PrintDocGuest
 }
 
 // Reprint 人工补打:把指定订单的单据重新送到指定打印机(同步返回结果)。
@@ -395,9 +473,7 @@ func PrintGuestTicket(o po.Order) {
 // 与自动打印的区别:这是商家明确要求的动作,失败必须让前端看到原因,
 // 所以同步执行并把错误原样返回;同时日志里 trigger_by=reprint 便于区分。
 func Reprint(printerID, orderID int, docType, operator string) error {
-	if docType != po.PrintDocKitchen {
-		docType = po.PrintDocGuest
-	}
+	docType = normalizeDocType(docType)
 	p, err := service.LoadPrinter(printerID)
 	if err != nil {
 		return errors.New("打印机不存在")
@@ -429,9 +505,7 @@ func Reprint(printerID, orderID int, docType, operator string) error {
 // 任务依次送出,预览按同样规则分段返回,前端逐段渲染即与出纸 1:1。
 // 第二个返回值是行宽(半角字符数,前端排版用)。
 func PreviewTicket(printerID, orderID int, docType string) ([][]string, int, error) {
-	if docType != po.PrintDocKitchen {
-		docType = po.PrintDocGuest
-	}
+	docType = normalizeDocType(docType)
 	p, err := service.LoadPrinter(printerID)
 	if err != nil {
 		return nil, 0, errors.New("打印机不存在")
@@ -461,12 +535,13 @@ type GuestTicketOverrides struct {
 	Footer       *string
 	ShowSeatFee  *bool
 	ShowDiscount *bool
+	QR           *bool
 }
 
 // PreviewTicketSample 用示例订单渲染一版「预计打印模板」。
 //
 // 不依赖任何真实订单与打印机:管理端配置页即时查看模板效果(所见即所改,
-// 表单值通过 overrides 注入,未保存也能预览)。示例金额自洽(菜品+餐位费-优惠=合计)。
+// 表单值通过 overrides 注入,未保存也能预览)。示例金额自洽(菜品+茶位费-优惠=合计)。
 // kitchenShowPrice 仅厨房单生效;paperWidth 取 32(58mm)/48(80mm),其余值按 48。
 func PreviewTicketSample(docType string, paperWidth int, ov GuestTicketOverrides, kitchenShowPrice bool) ([][]string, int) {
 	if paperWidth != 32 {
@@ -487,11 +562,19 @@ func PreviewTicketSample(docType string, paperWidth int, ov GuestTicketOverrides
 	if ov.ShowDiscount != nil {
 		cfg.showDiscount = *ov.ShowDiscount
 	}
+	if ov.QR != nil {
+		cfg.qr = *ov.QR
+	}
 	return [][]string{renderGuestTicketWith(o, items, paperWidth, cfg)}, LineWidth(paperWidth)
 }
 
 // samplePreviewOrder 构造示例订单:金额自洽,菜名贴近真实门店,便于看排版效果。
+//
+// 带上支付方式与结账时间,是为了让「示例预览」能看到结账小票的那几行结算信息
+// —— 下单即出的小票这几行为空,只看下单模板会误以为小票上没有支付方式。
 func samplePreviewOrder() (po.Order, []po.OrderItem) {
+	payType := "微信"
+	settleTime := service.Now()
 	o := po.Order{
 		OrderNo:        "D20260922SAMPLE001",
 		TableNo:        "08",
@@ -504,6 +587,8 @@ func samplePreviewOrder() (po.Order, []po.OrderItem) {
 		OrderRemark:    "少辣",
 		CreateTime:     service.Now(),
 		SettleType:     "normal",
+		PayType:        &payType,
+		SettleTime:     &settleTime,
 	}
 	items := []po.OrderItem{
 		{DishName: "凉拌青瓜", SpecName: "份", Quantity: 2, Price: 2800, Amount: 5600, Remark: "加辣"},

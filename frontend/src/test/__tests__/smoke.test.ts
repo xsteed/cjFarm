@@ -1,5 +1,5 @@
 import { expectTypeOf } from 'vitest';
-import type { ApiResponse } from '../../types/api';
+import type { ApiResponse } from '@dining/types';
 import { clearAllStorage, stubMatchMedia } from '../mocks';
 
 describe('vitest smoke', () => {

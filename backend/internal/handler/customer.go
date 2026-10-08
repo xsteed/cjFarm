@@ -41,7 +41,7 @@ func customerFail(c *gin.Context, err error) {
 // CustomerTable 顾客扫码进入桌台:路由参数同时接受「桌台稳定码」与「数字桌台ID」。
 // 老二维码(/order/1)与新二维码(/order/XXXXXXXX)都可正常打开。
 func CustomerTable(c *gin.Context) {
-	table, currentOrder, err := service.CustomerTable(c.Param("id"))
+	table, currentOrder, servingOrders, err := service.CustomerTable(c.Param("id"))
 	if err != nil {
 		fail(c, "桌台不存在")
 		return
@@ -51,13 +51,14 @@ func CustomerTable(c *gin.Context) {
 		co = currentOrder
 	}
 	ok(c, gin.H{
-		"tableId":      table.TableID,
-		"tableNo":      table.TableNo,
-		"tableName":    table.TableName,
-		"tableCode":    table.TableCode,
-		"capacity":     table.Capacity,
-		"status":       table.Status,
-		"currentOrder": co,
+		"tableId":       table.TableID,
+		"tableNo":       table.TableNo,
+		"tableName":     table.TableName,
+		"tableCode":     table.TableCode,
+		"capacity":      table.Capacity,
+		"status":        table.Status,
+		"currentOrder":  co,
+		"servingOrders": servingOrders,
 	})
 }
 
@@ -83,24 +84,28 @@ func CustomerRemarks(c *gin.Context) {
 
 func CustomerCreateOrder(c *gin.Context) {
 	var p struct {
-		TableID     int             `json:"tableId"`
-		PersonCount int             `json:"personCount"`
-		OrderRemark string          `json:"orderRemark"`
-		Items       []dto.OrderItem `json:"items"`
+		TableID         int             `json:"tableId"`
+		PersonCount     int             `json:"personCount"`
+		OrderRemark     string          `json:"orderRemark"`
+		Items           []dto.OrderItem `json:"items"`
+		ClientRequestID string          `json:"clientRequestId"`
 	}
 	if err := c.ShouldBindJSON(&p); err != nil {
 		fail(c, "参数错误")
 		return
 	}
-	res, err := service.CustomerCreateOrder(p.TableID, p.PersonCount, p.OrderRemark, p.Items)
+	// 会员归属只认服务端从顾客令牌解析出的值(可选身份,未登录为 0),请求体不带该字段。
+	res, err := service.CustomerCreateOrder(customerIDFrom(c), p.TableID, p.PersonCount, p.OrderRemark, p.Items, p.ClientRequestID)
 	if err != nil {
 		customerFail(c, err)
 		return
 	}
 
-	// 下单成功后异步触发打印机打印(厨房单 + 食客小票),失败不影响下单。
-	if created, ok := service.LoadOrderForPrint(int(res.OrderID)); ok {
-		print.PrintOrder(created, res.Items)
+	// 下单成功后异步触发打印机打印(厨房单 + 食客小票),失败不影响下单;幂等命中不重复打印。
+	if !res.Duplicated {
+		if created, ok := service.LoadOrderForPrint(int(res.OrderID)); ok {
+			print.PrintOrder(created, res.Items)
+		}
 	}
 
 	ok(c, gin.H{
@@ -136,24 +141,30 @@ func CustomerSetting(c *gin.Context) {
 // 与首次下单不同,加菜复用已有订单(合并明细、重算金额),避免同一桌产生多笔订单。
 func CustomerAppendOrder(c *gin.Context) {
 	var p struct {
-		TableID int             `json:"tableId"`
-		OrderNo string          `json:"orderNo"`
-		Items   []dto.OrderItem `json:"items"`
+		TableID         int             `json:"tableId"`
+		OrderNo         string          `json:"orderNo"`
+		Items           []dto.OrderItem `json:"items"`
+		PersonCount     int             `json:"personCount"`
+		ClientRequestID string          `json:"clientRequestId"`
 	}
 	if err := c.ShouldBindJSON(&p); err != nil {
 		fail(c, "参数错误")
 		return
 	}
 
-	res, err := service.CustomerAppendOrder(p.TableID, p.OrderNo, p.Items)
+	res, err := service.CustomerAppendOrder(p.TableID, p.OrderNo, p.Items, p.PersonCount, p.ClientRequestID)
 	if err != nil {
 		customerFail(c, err)
 		return
 	}
 
-	// 打印新增菜品的厨房单(食客小票在结账时打印,此处仅通知后厨)。
-	if created, ok := service.LoadOrderForPrint(res.OrderID); ok {
-		print.PrintKitchen(created, res.Items)
+	// 打印:厨房机出「加菜单」(只列新菜),小票机重出一张整单最新金额的食客小票
+	// (print_guest_on_append 可关);幂等命中不重复打印。
+	if !res.Duplicated {
+		if created, ok := service.LoadOrderForPrint(res.OrderID); ok {
+			print.PrintKitchen(created, res.Items)
+			print.PrintGuestAppend(created, res.Items)
+		}
 	}
 
 	ok(c, gin.H{

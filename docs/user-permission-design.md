@@ -20,8 +20,8 @@
 | 鉴权中间件 | 只判断「令牌有效」，**不做任何接口授权** | `auth.go: AdminAuth` |
 | 用户/角色表 | **不存在**（12 张业务表里没有 user / role / permission） | `internal/store/schema.go` |
 | 操作人留痕 | 订单 4 处写死字符串 `'收银员'`，其余走 `adminName(c)` 取令牌用户名 | `handler/order.go:178,524,566,624` |
-| 前端守卫 | 只有 `meta.requiresAuth` 布尔值 | `frontend/src/router/index.js` |
-| 前端菜单 | `AdminLayout.vue` 硬编码 10 项，人人相同 | `frontend/src/layout/AdminLayout.vue:82` |
+| 前端守卫 | 只有 `meta.requiresAuth` 布尔值 | `frontend/src/router/index.ts` |
+| 前端菜单 | `AdminLayout.vue` 硬编码 10 项，人人相同 | `frontend/apps/admin/src/layout/AdminLayout.vue` |
 
 **结论**：任何登录者都能操作全部 40+ 个管理接口（含退款、删桌台、改系统配置）。这是当前最主要的安全缺口。
 
@@ -557,30 +557,34 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 
 ## 八、前端改动清单
 
+> 路径说明：前端已重构为 npm workspaces 单仓库（一次构建、产物仍是单一 `frontend/dist`）。
+> 下表路径按**重构后**的位置书写：跨端可复用层在 `packages/`，管理端页面在 `apps/admin/`，
+> Web 装配与守卫留在 `src/`。详见 `README.md` 的「目录结构」。
+
 ### 8.1 新增文件
 
 | 文件 | 内容 |
 |---|---|
-| `src/utils/authKeys.js` | 登录态 localStorage 键名的**唯一来源**（`LS_TOKEN` … `LS_PERMS` + `AUTH_KEYS`）。`perm.js` 与 `api/index.js` 都从这里取，避免两处各写一份字符串导致改名漏改（曾出现「401 只清了 token、权限缓存残留」） |
-| `src/utils/perm.js` | `hasPerm(code)` / `setAuth(data)` / `clearAuth()` / `getRoleName()` / `refreshProfile()`；perms 用 `ref(Set)` 保证 computed 可追踪 |
-| `src/views/Users.vue` | 员工管理：列表（关键字/角色/状态筛选）+ 新增/编辑弹窗 + 重置密码 + 启停用 + 删除 |
-| `src/views/Roles.vue` | 角色管理：角色列表 + 权限勾选（按模块分组，模块级全选，编辑自动勾上查看）+ 内置角色只读提示 |
-| `src/views/NoPermission.vue` | 「无可用功能」提示页（员工角色被清空时兜底，避免白屏） |
+| `packages/shared/src/authKeys.ts` | 登录态 localStorage 键名的**唯一来源**（`LS_TOKEN` … `LS_PERMS` + `AUTH_KEYS`）。`packages/auth/src/perm.ts` 与 `packages/api/src/http.ts` 都从这里取，避免两处各写一份字符串导致改名漏改（曾出现「401 只清了 token、权限缓存残留」） |
+| `packages/auth/src/perm.ts` | `hasPerm(code)` / `setAuth(data)` / `clearAuth()` / `getRoleName()` / `refreshProfile()`；perms 用 `ref(Set)` 保证 computed 可追踪 |
+| `apps/admin/src/views/Users.vue` | 员工管理：列表（关键字/角色/状态筛选）+ 新增/编辑弹窗 + 重置密码 + 启停用 + 删除 |
+| `apps/admin/src/views/Roles.vue` | 角色管理：角色列表 + 权限勾选（按模块分组，模块级全选，编辑自动勾上查看）+ 内置角色只读提示 |
+| `apps/admin/src/views/NoPermission.vue` | 「无可用功能」提示页（员工角色被清空时兜底，避免白屏） |
 
 ### 8.2 修改文件
 
 | 文件 | 改动 |
 |---|---|
-| `src/api/index.js` | 新增 12 个接口函数；`login` 返回值含 perms |
-| `src/router/index.js` | 每条管理端路由加 `meta.perm`；守卫改为「requiresAuth → 补载 profile → 校验 perm → 无权限跳 NoPermission」 |
-| `src/layout/AdminLayout.vue` | `menus` 每项加 `perm` 并过滤；顶栏显示「姓名（角色名）」；无权限菜单不渲染 |
-| `src/views/Login.vue` | 登录成功后 `setAuth(res)` 存 token/用户名/姓名/角色/perms |
+| `packages/api/src/index.ts` | 新增 12 个接口函数；`login` 返回值含 perms |
+| `apps/admin/src/routes.ts` + `src/router/index.ts` | 路由表集中于 `routes.ts`：每条管理端路由加 `meta.perm`；守卫（装配在 `src/router/index.ts`）改为「requiresAuth → 补载 profile → 校验 perm → 无权限跳 NoPermission」 |
+| `apps/admin/src/layout/AdminLayout.vue` | `menus` 每项加 `perm` 并过滤；顶栏显示「姓名（角色名）」；无权限菜单不渲染。菜单由 `apps/admin/src/menu.ts` 从路由表派生（入参 `router.getRoutes()`） |
+| `apps/admin/src/views/Login.vue` | 登录成功后 `setAuth(res)` 存 token/用户名/姓名/角色/perms |
 | `src/App.vue` | 首次挂载时刷新一次 profile（6.5 的登录态收敛） |
-| `src/views/Orders.vue` | 按 `order:settle` / `order:cancel` / `order:edit` / `refund:operate` 显隐按钮 |
-| `src/views/Credit.vue` | 按 `credit:settle` 显隐核销按钮 |
-| `src/views/Tables.vue` / `Categories.vue` / `Dishes.vue` / `Remarks.vue` / `Printers.vue` | 按 `xxx:edit` 显隐新增/编辑/删除按钮与弹窗入口 |
-| `src/views/Config.vue` | 按 `config:edit` 禁用保存按钮（`config:view` 只读） |
-| `src/views/Report.vue` | 无 `report:view` 由路由守卫拦截，页面内无需改动 |
+| `apps/admin/src/views/Orders.vue` | 按 `order:settle` / `order:cancel` / `order:edit` / `refund:operate` 显隐按钮 |
+| `apps/admin/src/views/Credit.vue` | 按 `credit:settle` 显隐核销按钮 |
+| `apps/admin/src/views/Tables.vue` / `Categories.vue` / `Dishes.vue` / `Remarks.vue` / `Printers.vue` | 按 `xxx:edit` 显隐新增/编辑/删除按钮与弹窗入口（同目录下） |
+| `apps/admin/src/views/Config.vue` | 按 `config:edit` 禁用保存按钮（`config:view` 只读） |
+| `apps/admin/src/views/Report.vue` | 无 `report:view` 由路由守卫拦截，页面内无需改动 |
 
 > **前端隐藏按钮 ≠ 安全**。所有隐藏都只是体验优化，真正的拦截在后面两个中间件。
 > 每个按钮显隐都对应一个后端权限点，一一对齐（第 4.3 节表格）。
@@ -695,7 +699,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 ### 9.3 前端验证
 
 - 用 09-21 验证过的手法：在项目根建**临时自检页**，通过 `<script type="module">` 由 vite dev
-  直接加载 `src/utils/perm.js`，一次性验证菜单过滤与按钮显隐逻辑，验完删除该文件并重新构建。
+  直接加载 `frontend/packages/auth/src/perm.ts`，一次性验证菜单过滤与按钮显隐逻辑，验完删除该文件并重新构建。
   （避开浏览器自动化在 SPA 内点击跳转不稳定的问题。）
 - 手工确认：4 个角色分别登录，看到 5 种不同的菜单组合；直接手敲无权限路由 URL 被守卫拦下。
 - 确认 `npm run build` 成功，后端静态托管下功能正常。

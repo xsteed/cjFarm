@@ -26,6 +26,9 @@ type Settings struct {
 	WxpayPubkeyID   string `json:"wxpay_pubkey_id"`
 	WxpayPubkeyPath string `json:"wxpay_pubkey_path"`
 	WxpayNotifyURL  string `json:"wxpay_notify_url"`
+	// 小程序桌牌码(AppID 复用 wxpay_appid)
+	WxAppSecret      string `json:"wx_app_secret"`       // 敏感项:不回显,留空表示不修改
+	WxCodeEnvVersion string `json:"wx_code_env_version"` // release / trial / develop
 	// 支付宝商户参数
 	AlipayAppid          string `json:"alipay_appid"`
 	AlipayPrivateKeyPath string `json:"alipay_private_key_path"`
@@ -36,8 +39,11 @@ type Settings struct {
 	PrintKitchenShowPrice string `json:"print_kitchen_show_price"` // 厨房单是否带单价金额
 	// 食客小票模板配置(方案A:高频变化点做成设置项,后端渲染实时读取)
 	PrintGuestFooter       string `json:"print_guest_footer"`        // 页脚文案,清空则不打印页脚
-	PrintGuestShowSeatFee  string `json:"print_guest_show_seat_fee"` // 是否显示餐位费行("1"=显示)
+	PrintGuestShowSeatFee  string `json:"print_guest_show_seat_fee"` // 是否显示茶位费行("1"=显示)
 	PrintGuestShowDiscount string `json:"print_guest_show_discount"` // 是否显示优惠行("1"=显示)
+	PrintGuestQR           string `json:"print_guest_qr"`            // 小票末尾是否打印二维码("1"=打印)
+	PrintGuestOnAppend     string `json:"print_guest_on_append"`     // 加菜后是否出加菜小票("1"=打印)
+	PrintGuestOnOrder      string `json:"print_guest_on_order"`      // 下单后是否出点菜单("1"=打印)
 	// 飞鹅云打印(feie_ukey 为敏感项,回显时留空表示不修改)
 	FeieUser   string `json:"feie_user"`
 	FeieUkey   string `json:"feie_ukey"`

@@ -148,6 +148,92 @@ func AuthenticateToken(tok string) (*dao.AuthInfo, AuthzStatus) {
 }
 
 // ============================================================================
+// 顾客会员令牌(小程序登录态)
+// ============================================================================
+
+// customerTokenTTL 顾客令牌有效期。刻意比管理端短:顾客端有「静默重登」兜底
+// (wx.login 免费且无感知,令牌过期/401 时小程序自动重新登录),短有效期换来
+// 「停用会员」更快生效 —— 令牌无状态,不查库就无法感知 status 变化。
+const customerTokenTTL = 2 * time.Hour
+
+// customerTokenPrefix 顾客令牌载荷前缀。与管理端令牌(username|uid|ver|exp)形态不同,
+// 两者互不可兑换:管理端令牌拿到顾客接口会被拒,反之亦然。
+const customerTokenPrefix = "customer"
+
+// GenCustomerToken 签发顾客令牌:customer|<customerID>|<exp>,HMAC-SHA256 签名。
+func GenCustomerToken(customerID int) string {
+	exp := time.Now().Add(customerTokenTTL).Unix()
+	payload := fmt.Sprintf("%s|%d|%d", customerTokenPrefix, customerID, exp)
+	mac := hmac.New(sha256.New, []byte(infra.LoadAuthKey()))
+	mac.Write([]byte(payload))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
+}
+
+// VerifyCustomerToken 校验顾客令牌的签名与有效期,返回会员 ID。
+// 与管理端 VerifyToken 的差异只有三点:前缀固定、无 tokenVersion(顾客无「改密下线」概念)、
+// 载荷少一个字段。
+func VerifyCustomerToken(tok string) (int, bool) {
+	parts := strings.SplitN(tok, ".", 2)
+	if len(parts) != 2 {
+		return 0, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return 0, false
+	}
+	mac := hmac.New(sha256.New, []byte(infra.LoadAuthKey()))
+	mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
+		return 0, false
+	}
+	fields := strings.Split(string(payload), "|")
+	if len(fields) != 3 || fields[0] != customerTokenPrefix {
+		return 0, false
+	}
+	id, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, false
+	}
+	exp, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil || exp <= time.Now().Unix() {
+		return 0, false
+	}
+	return id, true
+}
+
+// CustomerAuthzStatus 顾客登录态校验结果分类,由 handler 映射到 401 与文案。
+type CustomerAuthzStatus int
+
+const (
+	CustomerAuthzOK CustomerAuthzStatus = iota
+	CustomerAuthzInvalidToken
+	CustomerAuthzGone
+	CustomerAuthzDisabled
+)
+
+// AuthenticateCustomerToken 校验顾客令牌并加载会员档案,按可用性分类返回状态。
+// 与管理端 AuthenticateToken 的差异:无角色/令牌版本概念,只看档案是否存在且启用。
+func AuthenticateCustomerToken(tok string) (*po.Customer, CustomerAuthzStatus) {
+	id, ok := VerifyCustomerToken(tok)
+	if !ok {
+		return nil, CustomerAuthzInvalidToken
+	}
+	c, err := dao.GetCustomerByID(id)
+	if err != nil {
+		return nil, CustomerAuthzGone
+	}
+	if c == nil {
+		return nil, CustomerAuthzGone
+	}
+	if c.Status != po.CustomerStatusEnabled {
+		return nil, CustomerAuthzDisabled
+	}
+	return c, CustomerAuthzOK
+}
+
+// ============================================================================
 // 登录防暴力破解限流(内存级)
 // ============================================================================
 

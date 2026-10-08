@@ -1,0 +1,106 @@
+<view class="page">
+  <view
+    wx:if="{{loading}}"
+    class="state"
+  >
+    <view class="spinner"></view>
+    <view class="state-text">正在加载账单…</view>
+  </view>
+
+  <view
+    wx:elif="{{error}}"
+    class="state"
+  >
+    <view class="err-icon">!</view>
+    <view class="state-text">{{error}}</view>
+    <view class="btn-ghost" bindtap="onBack">返回订单</view>
+  </view>
+
+  <block wx:else>
+    <scroll-view
+      class="body"
+      scroll-y
+      enhanced
+      show-scrollbar="{{false}}"
+    >
+      <!-- 金额 -->
+      <view class="card amt">
+        <view class="amt-label">本单应付</view>
+        <view class="amt-value"><text class="cny">¥</text>{{totalText}}</view>
+        <view class="amt-no" bindtap="onCopyOrderNo">
+          单号 {{shortNo}} · {{statusText}}
+        </view>
+      </view>
+
+      <block wx:if="{{paid}}">
+        <view class="card paid">
+          <view class="paid-title">已收到付款</view>
+          <view class="paid-sub">感谢惠顾，出餐进度可在订单页查看</view>
+        </view>
+      </block>
+
+      <block wx:else>
+        <!-- 渠道切换 -->
+        <view class="card sec">
+          <view class="tabs">
+            <view
+              class="tab {{payTab === 'wx' ? 'on' : ''}}"
+              data-tab="wx"
+              bindtap="onSwitchTab"
+            >
+              微信收款
+            </view>
+            <view
+              class="tab {{payTab === 'ali' ? 'on' : ''}}"
+              data-tab="ali"
+              bindtap="onSwitchTab"
+            >
+              支付宝收款
+            </view>
+          </view>
+
+          <view wx:if="{{hasQr}}" class="qr-wrap">
+            <image
+              class="qr-img"
+              src="{{qrImage}}"
+              mode="aspectFit"
+              show-menu-by-longpress
+            ></image>
+            <view class="qr-tip">长按图片可保存到相册</view>
+          </view>
+          <view wx:else class="qr-empty">
+            门店尚未配置该渠道的收款码，请到前台结账。
+          </view>
+        </view>
+
+        <!-- 支付方式说明 -->
+        <view class="card sec">
+          <view class="sec-title">如何完成支付</view>
+          <view class="tip-line">{{chanTip}}</view>
+          <view class="tip-line">商家在后台确认收款后，本页与订单页会自动更新为「已支付」。</view>
+        </view>
+
+        <view class="bottom-pad"></view>
+      </block>
+    </scroll-view>
+
+    <view class="foot">
+      <view class="btn-ghost foot-minor" bindtap="onBack">返回订单</view>
+      <!-- 后端开通 JSAPI 时给真正的在线支付入口；没开通仍是「手动查一次」的降级路径 -->
+      <view
+        wx:if="{{!paid && canJsapi}}"
+        class="btn-primary foot-main {{checking ? 'dim' : ''}}"
+        bindtap="onPayOnline"
+      >
+        {{checking ? '拉起支付…' : '微信支付'}}
+      </view>
+      <view
+        wx:elif="{{!paid}}"
+        class="btn-primary foot-main {{checking ? 'dim' : ''}}"
+        bindtap="onCheck"
+      >
+        {{checking ? '查询中…' : '我已完成支付'}}
+      </view>
+    </view>
+  </block>
+</view>

@@ -147,6 +147,9 @@ func TestListSettings(t *testing.T) {
 	if err := dao.SetSetting("wxpay_apiv3_key", "super-secret"); err != nil {
 		t.Fatalf("写入敏感配置失败: %v", err)
 	}
+	if err := dao.SetSetting("wx_app_secret", "wx-app-secret"); err != nil {
+		t.Fatalf("写入敏感配置失败: %v", err)
+	}
 
 	got := ListSettings()
 	if got.ShopName != "回显店名" {
@@ -157,6 +160,10 @@ func TestListSettings(t *testing.T) {
 	}
 	if got.WxpayApiv3Key != "" {
 		t.Fatalf("敏感项不应回显, got %q", got.WxpayApiv3Key)
+	}
+	// 小程序 AppSecret 同样是敏感项:拿到它就能以小程序身份换 access_token。
+	if got.WxAppSecret != "" {
+		t.Fatalf("小程序 AppSecret 不应回显, got %q", got.WxAppSecret)
 	}
 	// 默认开开关:种子默认 "1"。
 	if got.PrintGuestShowSeatFee != "1" || got.PrintGuestShowDiscount != "1" {

@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import Components from 'unplugin-vue-components/vite';
 import { TDesignResolver } from 'unplugin-vue-components/resolvers';
+import { workspaceAliases } from './aliases';
 
 export default defineConfig({
   plugins: [
@@ -9,10 +10,16 @@ export default defineConfig({
     // TDesign 组件按需自动导入(模板里的 t-xxx 自动 import + 注册),只打用到的组件 JS;
     // 样式仍走 main.ts 的全量 CSS —— MessagePlugin/DialogPlugin 等函数式组件依赖全量样式,
     // 按需样式(importStyle: 'css')对函数式组件不生效,反而要逐个手动补。
+    // dirs 指向管理端 app 的组件目录:这里有少数组件在模板里按名字使用(不显式 import)。
     Components({
-      resolvers: [TDesignResolver({ library: 'vue-next' })]
+      resolvers: [TDesignResolver({ library: 'vue-next' })],
+      dirs: ['apps/admin/src/components']
     })
   ],
+  resolve: {
+    // 工作区包(packages/* 与 apps/*)统一走别名,见 aliases.ts
+    alias: workspaceAliases
+  },
   server: {
     port: 5173,
     proxy: {

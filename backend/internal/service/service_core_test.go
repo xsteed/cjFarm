@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"dining-system/internal/dto"
 	"dining-system/internal/po"
@@ -209,16 +210,20 @@ func TestCoreCalcSettle(t *testing.T) {
 	}
 }
 
-// TestCoreRandHexEdge 补充 randHex 的边界:0/奇数长度退化为空串,正常长度为偶数十六进制。
-func TestCoreRandHexEdge(t *testing.T) {
-	if got := randHex(0); got != "" {
-		t.Fatalf("randHex(0) 应为空串, got %q", got)
+// TestCoreSerialNoEdge 单号的两处边界:非正长度随机段返回空串;
+// 时间戳段定长 12 位(不足会破坏字典序即时间序的性质,例如月份为个位时)。
+func TestCoreSerialNoEdge(t *testing.T) {
+	if got := randBase32(0); got != "" {
+		t.Fatalf("randBase32(0) 应为空串, got %q", got)
 	}
-	if got := randHex(1); got != "" {
-		t.Fatalf("randHex(1) 应为空串, got %q", got)
+	// 用 1 月 2 日 03:04:05 这种「月日时分秒都是个位数」的时刻验证补零:
+	// 若 layout 写成 2006-1-2 这类非定长形式,此处会立刻失败。
+	no := "D" + time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local).Format(serialNoTimeLayout) + randBase32(serialNoRandomLen)
+	if len(no) != SerialNoLen {
+		t.Fatalf("单号长度应为 %d, got %d (%q)", SerialNoLen, len(no), no)
 	}
-	if got := randHex(4); len(got) != 4 {
-		t.Fatalf("randHex(4) 长度应为 4, got %q", got)
+	if !strings.HasPrefix(no, "D260102030405") {
+		t.Fatalf("时间戳段应定长补零为 yyMMddHHmmss, got %q", no)
 	}
 }
 
@@ -239,7 +244,7 @@ func coreNear(t *testing.T, what string, got, want float64) {
 	}
 }
 
-// TestCoreRecalcAmount 校验金额重算:菜品金额 + 餐位费 - 优惠(依赖配置)。
+// TestCoreRecalcAmount 校验金额重算:菜品金额 + 茶位费 - 优惠(依赖配置)。
 func TestCoreRecalcAmount(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -255,14 +260,14 @@ func TestCoreRecalcAmount(t *testing.T) {
 		wantDisc  float64
 		wantTotal float64
 	}{
-		{"无餐位费无优惠", "0", "6", "0", "100", "10", 3, coreAmounts(10, 20.5), 30.5, 0, 0, 30.5},
-		{"餐位费按人数计", "1", "6", "0", "100", "10", 3, coreAmounts(10, 20.5), 30.5, 18, 0, 48.5},
+		{"无茶位费无优惠", "0", "6", "0", "100", "10", 3, coreAmounts(10, 20.5), 30.5, 0, 0, 30.5},
+		{"茶位费按人数计", "1", "6", "0", "100", "10", 3, coreAmounts(10, 20.5), 30.5, 18, 0, 48.5},
 		{"满减优惠", "0", "6", "1", "100", "10", 3, coreAmounts(250), 250, 0, 20, 230},
 		{"优惠可叠加", "0", "6", "1", "100", "80", 3, coreAmounts(150), 150, 0, 80, 70},
 		{"优惠封顶于菜品金额", "0", "6", "1", "50", "100", 3, coreAmounts(150), 150, 0, 150, 0},
 		{"未达门槛不优惠", "0", "6", "1", "100", "10", 3, coreAmounts(99), 99, 0, 0, 99},
 		{"空明细", "0", "6", "0", "100", "10", 1, coreAmounts(), 0, 0, 0, 0},
-		{"餐位费+优惠叠加", "1", "5", "1", "100", "10", 4, coreAmounts(250), 250, 20, 20, 250},
+		{"茶位费+优惠叠加", "1", "5", "1", "100", "10", 4, coreAmounts(250), 250, 20, 20, 250},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -278,13 +283,39 @@ func TestCoreRecalcAmount(t *testing.T) {
 					t.Fatalf("写入配置 %s 失败: %v", k, err)
 				}
 			}
-			dish, seat, disc, total := RecalcAmount(c.personCnt, c.items)
+			dish, seat, disc, gift, total := RecalcAmount(c.personCnt, c.items)
 			coreNear(t, "菜品金额", dish, c.wantDish)
-			coreNear(t, "餐位费", seat, c.wantSeat)
+			coreNear(t, "茶位费", seat, c.wantSeat)
 			coreNear(t, "优惠", disc, c.wantDisc)
 			coreNear(t, "合计", total, c.wantTotal)
+			coreNear(t, "赠送金额", gift, 0)
 		})
 	}
+}
+
+// TestCoreRecalcAmountGift 校验赠送菜品不进入菜品金额/合计,但计入赠送金额。
+func TestCoreRecalcAmountGift(t *testing.T) {
+	coreInitDB(t)
+	for k, v := range map[string]string{
+		"seat_fee_enabled":    "0",
+		"promotion_enabled":   "0",
+		"promotion_threshold": "100",
+		"promotion_discount":  "10",
+	} {
+		if err := dao.SetSetting(k, v); err != nil {
+			t.Fatalf("写入配置 %s 失败: %v", k, err)
+		}
+	}
+	items := []dto.OrderItem{
+		{Amount: 20, Price: 20, Quantity: 1},           // 正常菜 ¥20
+		{Amount: 0, Price: 30, Quantity: 2, IsGift: 1}, // 赠送菜 ¥30 x2
+	}
+	dish, seat, disc, gift, total := RecalcAmount(3, items)
+	coreNear(t, "菜品金额", dish, 20)
+	coreNear(t, "赠送金额", gift, 60)
+	coreNear(t, "优惠", disc, 0)
+	coreNear(t, "合计", total, 20)
+	_ = seat
 }
 
 // TestCoreResolveOrderItemsValidation 校验订单明细的各类非法入参。
@@ -335,6 +366,17 @@ func TestCoreResolveOrderItemsValidation(t *testing.T) {
 		_, err := ResolveOrderItems([]dto.OrderItem{{SpecID: specID, DishID: dishID, Quantity: 1}})
 		if err == nil || !strings.Contains(err.Error(), "已下架") {
 			t.Fatalf("下架菜品应报「已下架」, got %v", err)
+		}
+	})
+	t.Run("赠菜无原因可选", func(t *testing.T) {
+		coreInitDB(t)
+		dishID, specID := coreSeedDish(t, "赠菜", 1, po.DelFlagOK, 1000)
+		out, err := ResolveOrderItems([]dto.OrderItem{{SpecID: specID, DishID: dishID, Quantity: 1, IsGift: 1}})
+		if err != nil {
+			t.Fatalf("赠菜无原因应可选, got %v", err)
+		}
+		if len(out) != 1 || out[0].IsGift != 1 || out[0].Amount != 0 {
+			t.Fatalf("赠菜重建异常: %+v", out)
 		}
 	})
 }

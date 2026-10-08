@@ -1,0 +1,58 @@
+{
+  "description": "扫码点餐 · 微信小程序顾客端（源码在 src/，产物在 dist/，构建见 build.mjs）",
+  "projectname": "cjFarm-miniprogram",
+  "appid": "wx0f4ab661c6cbe4eb",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "dist/",
+  "setting": {
+    "urlCheck": true,
+    "es6": false,
+    "enhance": false,
+    "postcss": false,
+    "minified": false,
+    "minifyWXSS": false,
+    "minifyWXML": false,
+    "nodeModules": false,
+    "packNpmManually": false,
+    "coverView": true,
+    "lazyloadPlaceholderEnable": false,
+    "ignoreUploadUnusedFiles": true,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "packNpmRelationList": [],
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "condition": {
+    "miniprogram": {
+      "list": [
+        {
+          "name": "扫小程序码进入（scene=桌台码）",
+          "pathName": "pages/index/index",
+          "query": "scene=8YG3Q335",
+          "scene": 1011
+        },
+        {
+          "name": "直接指定桌台码（调试用）",
+          "pathName": "pages/index/index",
+          "query": "tableCode=8YG3Q335",
+          "scene": null
+        }
+      ]
+    }
+  },
+  "simulatorPluginLibVersion": {},
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "editorSetting": {}
+}

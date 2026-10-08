@@ -28,7 +28,11 @@ import (
 // 文案注意引导扫新码:老二维码(纯数字桌台 ID)路径出于安全考虑不返回订单号,
 // 桌台已有进行中订单时顾客既无法加菜也开不了新单 —— 唯一出路是扫桌上的新
 // 8 位随机码(管理端桌台详情可打印),文案必须把这个出口讲清楚。
-var ErrActiveOrderDuplicate = errors.New("该桌台已有进行中的订单，请扫描桌上的新二维码进入订单页继续点菜（或联系服务员）")
+var ErrActiveOrderDuplicate = errors.New("该桌台已有未结账的订单，请扫描桌上的新二维码进入订单页继续点菜（或联系服务员）")
+
+// errDuplicateRequest 幂等键已处理过:同一 clientRequestId 的重复请求(双击/超时重试)
+// 直接返回首次结果,不再重复下单/加菜。仅在事务内部使用,不对外透出。
+var errDuplicateRequest = errors.New("重复请求")
 
 // orderItemsFromPO 将持久化订单明细批量转为 API 出参。
 func orderItemsFromPO(poItems []po.OrderItem) []dto.OrderItem {
@@ -41,10 +45,10 @@ func orderItemsFromPO(poItems []po.OrderItem) []dto.OrderItem {
 
 // CustomerTable 顾客扫码进入桌台:按「桌台稳定码/数字桌台ID」解析桌台,
 // 兜底补发稳定码,并返回该桌当前进行中的订单(无进行中订单时 currentOrder 为 nil)。
-func CustomerTable(ref string) (dto.Table, *dto.Order, error) {
+func CustomerTable(ref string) (dto.Table, *dto.Order, []dto.Order, error) {
 	t, byID, err := dao.GetTableByRef(ref)
 	if err != nil {
-		return dto.Table{}, nil, err
+		return dto.Table{}, nil, nil, err
 	}
 	// 兜底补发稳定码,保证管理端始终能拿到可印制的码值。
 	if t.TableCode == "" {
@@ -53,17 +57,23 @@ func CustomerTable(ref string) (dto.Table, *dto.Order, error) {
 		}
 	}
 
-	// 该桌进行中的订单(1已下单/2制作中/3已上齐):顾客再次扫码时直接进入订单状态页。
+	// 该桌「未结账」的订单(付款前,1/2/3 且 pay_status=0):顾客再次扫码时直接进入订单页,
+	// 可继续加菜或付款;已付款但出餐未完成的订单不算未结账,顾客可开新单。
 	// 纯数字 table_id(老二维码)可被遍历枚举,不能作为订单能力凭据 —— 该路径只返回桌台基础信息,
-	// 不再附带进行中订单,避免攻击者遍历 1..N 批量拉取他人订单;桌台码(8 位随机码)才携带 currentOrder。
+	// 不再附带订单,避免攻击者遍历 1..N 批量拉取他人订单;桌台码(8 位随机码)才携带 currentOrder。
 	var currentOrder *dto.Order
-	if !byID && t.Status == 1 {
-		if o, ok := dao.GetActiveOrderByTable(t.TableID); ok {
+	servingOrders := make([]dto.Order, 0)
+	if !byID {
+		if o, ok := dao.GetUnpaidOrderByTable(t.TableID); ok {
 			order := dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false)
 			currentOrder = &order
 		}
+		// 已付款但出餐未完成的订单:顾客据此查看出餐进度。
+		for _, o := range dao.ListServingOrdersByTable(t.TableID) {
+			servingOrders = append(servingOrders, dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false))
+		}
 	}
-	return dto.FromTable(t), currentOrder, nil
+	return dto.FromTable(t), currentOrder, servingOrders, nil
 }
 
 // CustomerMenuCategory 顾客端菜单按分类组织的出参结构。
@@ -153,23 +163,42 @@ func CustomerSettings() map[string]string {
 		// 在线支付开关(顾客端据此决定是否展示在线支付入口)
 		"wxpay_enabled":  flag("wxpay_enabled"),
 		"alipay_enabled": flag("alipay_enabled"),
+		// 会员功能开关:小程序 AppID/AppSecret 已配置才开放「注册成为会员」
+		"member_enabled": memberEnabledFlag(),
 	}
+}
+
+// memberEnabledFlag 会员功能开关的归一化("1"/"0"),判定口径与 weapp.MemberEnabled 一致。
+// 放在 service 层判定(而非 handler 直接问 weapp):weapp 依赖本包,反向引用会成环。
+func memberEnabledFlag() string {
+	if dao.GetSetting("wxpay_appid") != "" && dao.GetSetting("wx_app_secret") != "" {
+		return "1"
+	}
+	return "0"
 }
 
 // CustomerCreateOrderResult 顾客首次下单的结果,供 handler 组装响应与触发打印。
 type CustomerCreateOrderResult struct {
 	OrderID        int64
 	OrderNo        string
+	PickupNo       int // 当日取餐号(顾客口头报号用),0 表示未分配
 	DishAmount     float64
 	SeatFee        float64
 	DiscountAmount float64
 	TotalAmount    float64
 	Items          []po.OrderItem // 本次下单明细(打印用)
+	Duplicated     bool           // 幂等命中:重复请求返回的首次结果,无需再打印
 }
 
 // CustomerCreateOrder 顾客首次下单:校验参数、以数据库为准重建明细、占用桌台、
 // 在同一桌台并发下单校验后原子写入订单与明细。
-func CustomerCreateOrder(tableID, personCount int, orderRemark string, items []dto.OrderItem) (CustomerCreateOrderResult, error) {
+// clientRequestID 为可选幂等键:同一键的重复请求(双击/超时重试)返回首次结果。
+// customerID 为下单会员的归属(0 = 匿名),只认服务端从顾客令牌解析出的值。
+func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark string, items []dto.OrderItem, clientRequestIDs ...string) (CustomerCreateOrderResult, error) {
+	clientRequestID := ""
+	if len(clientRequestIDs) > 0 {
+		clientRequestID = clientRequestIDs[0]
+	}
 	if tableID == 0 || len(items) == 0 {
 		return CustomerCreateOrderResult{}, errors.New("请选择桌台并点选菜品")
 	}
@@ -189,15 +218,19 @@ func CustomerCreateOrder(tableID, personCount int, orderRemark string, items []d
 	if err != nil {
 		return CustomerCreateOrderResult{}, err
 	}
-	dishAmount, seatFee, discount, total := RecalcAmount(personCount, resolved)
+	dishAmount, seatFee, discount, giftAmount, total := RecalcAmount(personCount, resolved)
 
 	poItems := make([]po.OrderItem, 0, len(resolved))
 	for _, it := range resolved {
-		poItems = append(poItems, it.ToPO())
+		p := it.ToPO()
+		p.ClientRequestID = clientRequestID
+		poItems = append(poItems, p)
 	}
 
 	orderNo := GenOrderNo()
 	var orderID int64
+	var existingOrderID int
+	var pickup int
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 先写桌台行(置占用)再查进行中订单:这条 UPDATE 在 MySQL/SQLite 上都会
 		// 先取到该行的写锁,把「同一桌台的并发下单」在本行上串行化,
@@ -209,22 +242,41 @@ func CustomerCreateOrder(tableID, personCount int, orderRemark string, items []d
 		if n == 0 {
 			return errors.New("桌台不存在")
 		}
-		// 一桌同一时间只允许一笔进行中订单:重复下单(双击/并发提交/重复扫码)
-		// 会造成「看板只显示最新一单、旧单仍可被收款」的资损口径混乱,
-		// 继续点菜应走加菜接口。
-		active, err := dao.CountActiveOrdersTx(tx, tableID)
+		// 幂等:同一 clientRequestId 只处理一次,重复请求返回首次结果(不重复下单)。
+		if clientRequestID != "" {
+			if id, ok := dao.GetOrderIDByRequestIDTx(tx, clientRequestID); ok {
+				existingOrderID = id
+				return errDuplicateRequest
+			}
+		}
+		// 一桌同一时间最多一笔「未结账」订单:重复下单(双击/并发提交/重复扫码)
+		// 应走加菜接口,而不是再开一单;已付款但出餐未完成的订单不阻断新单
+		// (顾客付款后本单即结束,再点即为新的一单)。
+		unpaid, err := dao.CountUnpaidOrdersTx(tx, tableID)
 		if err != nil {
 			return err
 		}
-		if active > 0 {
+		if unpaid > 0 {
 			return ErrActiveOrderDuplicate
 		}
-		orderID, err = dao.InsertOrderTx(tx, orderNo, tableID, personCount, tableNo, tableName, orderRemark,
-			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(total))
+		// 取餐号必须在事务内取:UPDATE 计数行的锁把并发下单串行化,
+		// 且其自增随事务回滚,不会出现「号被占用却没有对应订单」的空洞。
+		bizDate := store.Now()[:10]
+		pickupNo, err := dao.NextPickupNoTx(tx, bizDate)
 		if err != nil {
 			return err
 		}
+		orderID, err = dao.InsertOrderTx(tx, orderNo, bizDate, pickupNo, tableID, personCount, customerID, tableNo, tableName, orderRemark,
+			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(giftAmount), po.ToCents(total))
+		if err != nil {
+			return err
+		}
+		pickup = pickupNo
 		for _, it := range poItems {
+			// 先扣库存再写明细：扣失败（并发售罄）整个事务回滚，明细也不会留下。
+			if err := dao.DecrementSpecStockTx(tx, it.SpecID, it.Quantity); err != nil {
+				return err
+			}
 			if err := dao.InsertOrderItemTx(tx, orderID, it); err != nil {
 				return err
 			}
@@ -232,20 +284,50 @@ func CustomerCreateOrder(tableID, personCount int, orderRemark string, items []d
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errDuplicateRequest) {
+			return customerCreateOrderFromExistingID(existingOrderID)
+		}
 		if errors.Is(err, ErrActiveOrderDuplicate) {
 			return CustomerCreateOrderResult{}, err
+		}
+		if errors.Is(err, dao.ErrSoldOut) {
+			return CustomerCreateOrderResult{}, errors.New("部分菜品已售罄，请返回菜单重新选择")
 		}
 		return CustomerCreateOrderResult{}, fmt.Errorf("下单失败: %w", err)
 	}
 
+	// 幂等命中走上面的 errDuplicateRequest 分支提前返回,走到这里的一定是「本次真实插入」,
+	// 据此维护会员卡展示列,不会重复计数。
+	NotifyCustomerOrder(customerID)
+
 	return CustomerCreateOrderResult{
 		OrderID:        orderID,
 		OrderNo:        orderNo,
+		PickupNo:       pickup,
 		DishAmount:     dishAmount,
 		SeatFee:        seatFee,
 		DiscountAmount: discount,
 		TotalAmount:    total,
 		Items:          poItems,
+	}, nil
+}
+
+// customerCreateOrderFromExistingID 幂等命中时按订单 ID 还原首次下单结果(标记 Duplicated,handler 跳过打印)。
+func customerCreateOrderFromExistingID(orderID int) (CustomerCreateOrderResult, error) {
+	o, err := dao.GetOrderByID(orderID)
+	if err != nil {
+		return CustomerCreateOrderResult{}, fmt.Errorf("下单失败: %w", err)
+	}
+	return CustomerCreateOrderResult{
+		OrderID:        int64(o.OrderID),
+		OrderNo:        o.OrderNo,
+		PickupNo:       o.PickupNo,
+		DishAmount:     po.ToYuan(o.DishAmount),
+		SeatFee:        po.ToYuan(o.SeatFee),
+		DiscountAmount: po.ToYuan(o.DiscountAmount),
+		TotalAmount:    po.ToYuan(o.TotalAmount),
+		Items:          dao.LoadOrderItems(o.OrderID),
+		Duplicated:     true,
 	}, nil
 }
 
@@ -266,13 +348,23 @@ type CustomerAppendOrderResult struct {
 	SeatFee     float64
 	TotalAmount float64
 	Items       []po.OrderItem // 本次新增明细(打印用)
+	Duplicated  bool           // 幂等命中:重复请求返回的首次结果,无需再打印
 }
 
 // CustomerAppendOrder 顾客加菜:向该桌进行中且未支付的订单追加菜品。
-// 与首次下单不同,加菜复用已有订单(合并明细、重算金额),避免同一桌产生多笔订单。
-func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem) (CustomerAppendOrderResult, error) {
+// 与首次下单不同,加菜复用已有订单(合并明细、重算金额),避免同一桌产生多笔未结账单。
+// personCount 允许随加菜一并修改用餐人数:<=0 表示沿用订单现值。
+// clientRequestID 为可选幂等键:同一键的重复请求(双击/超时重试)返回首次结果。
+func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem, personCount int, clientRequestIDs ...string) (CustomerAppendOrderResult, error) {
+	clientRequestID := ""
+	if len(clientRequestIDs) > 0 {
+		clientRequestID = clientRequestIDs[0]
+	}
 	if tableID == 0 || orderNo == "" || len(items) == 0 {
 		return CustomerAppendOrderResult{}, errors.New("参数错误")
+	}
+	if personCount > 100 {
+		return CustomerAppendOrderResult{}, errors.New("用餐人数超出限制")
 	}
 
 	orderID, orderTableID, _, orderStatus, payStatus, err := dao.GetOrderAppendInfo(orderNo)
@@ -296,7 +388,8 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem) (Cu
 		return CustomerAppendOrderResult{}, err
 	}
 
-	var dishAmount, seatFee, discount, total float64
+	var dishAmount, seatFee, discount, giftAmount, total float64
+	var nextBatch int
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 先对订单行取写锁(自赋值 no-op):加菜是「读明细→插新行→覆盖金额」,
 		// 若不锁行,与改单(DELETE 明细重建)/收款/取消并发时,双方基于各自的旧明细
@@ -304,6 +397,16 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem) (Cu
 		// 锁行后同一订单的加菜/改单/收款/取消在行上串行化(两库语义见 dao.TouchOrderTx)。
 		if err := dao.TouchOrderTx(tx, orderID); err != nil {
 			return err
+		}
+		// 幂等:同一 clientRequestId 只处理一次,重复请求返回首次结果(不重复加菜)。
+		if clientRequestID != "" {
+			dup, err := dao.HasOrderItemRequestTx(tx, orderID, clientRequestID)
+			if err != nil {
+				return err
+			}
+			if dup {
+				return errDuplicateRequest
+			}
 		}
 		// 事务内重读状态:并发收款/改单/取消时,基于事务外旧快照重算金额会互相覆盖,
 		// 出现「明细多了、金额没加上」的坏账。
@@ -313,6 +416,11 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem) (Cu
 		}
 		if !ActiveStatus(curStatus) || curPay == 1 {
 			return errors.New("订单状态已变更，请刷新后重试")
+		}
+		// 用餐人数可随加菜一并更新:请求未传(<=0)则沿用订单现值。
+		effectivePerson := curPerson
+		if personCount > 0 {
+			effectivePerson = personCount
 		}
 		// 合并现有明细与新增明细,按最新人数/明细重算金额。
 		// 明细读失败必须终止事务:否则会基于不完整的旧明细重算金额并落库,产生坏账。
@@ -325,25 +433,47 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem) (Cu
 			allItems = append(allItems, dto.FromOrderItem(it))
 		}
 		allItems = append(allItems, newItems...)
-		dishAmount, seatFee, discount, total = RecalcAmount(curPerson, allItems)
+		dishAmount, seatFee, discount, giftAmount, total = RecalcAmount(effectivePerson, allItems)
+		// 加菜批次:首次下单批次为 1,每次加菜在上次最大批次基础上 +1。
+		nextBatch = 1
+		for _, it := range existing {
+			if it.BatchNo >= nextBatch {
+				nextBatch = it.BatchNo + 1
+			}
+		}
 		for _, it := range newItems {
-			if err := dao.InsertOrderItemTx(tx, int64(orderID), it.ToPO()); err != nil {
+			p := it.ToPO()
+			p.BatchNo = nextBatch
+			p.ClientRequestID = clientRequestID
+			if err := dao.DecrementSpecStockTx(tx, p.SpecID, p.Quantity); err != nil {
+				return err
+			}
+			if err := dao.InsertOrderItemTx(tx, int64(orderID), p); err != nil {
 				return err
 			}
 		}
-		if err := dao.UpdateOrderAmountTx(tx, orderID,
-			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(total)); err != nil {
+		if err := dao.UpdateOrderAmountAndPersonTx(tx, orderID, effectivePerson,
+			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(giftAmount), po.ToCents(total)); err != nil {
 			return err
 		}
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errDuplicateRequest) {
+			return customerAppendFromExisting(orderNo)
+		}
+		if errors.Is(err, dao.ErrSoldOut) {
+			return CustomerAppendOrderResult{}, errors.New("部分菜品已售罄，请返回菜单重新选择")
+		}
 		return CustomerAppendOrderResult{}, fmt.Errorf("加菜失败: %w", err)
 	}
 
 	poItems := make([]po.OrderItem, 0, len(newItems))
 	for _, it := range newItems {
-		poItems = append(poItems, it.ToPO())
+		p := it.ToPO()
+		p.BatchNo = nextBatch
+		p.ClientRequestID = clientRequestID
+		poItems = append(poItems, p)
 	}
 	return CustomerAppendOrderResult{
 		OrderID:     orderID,
@@ -352,6 +482,23 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem) (Cu
 		SeatFee:     seatFee,
 		TotalAmount: total,
 		Items:       poItems,
+	}, nil
+}
+
+// customerAppendFromExisting 幂等命中时按订单号还原加菜后的订单金额(标记 Duplicated,handler 跳过打印)。
+func customerAppendFromExisting(orderNo string) (CustomerAppendOrderResult, error) {
+	o, err := dao.GetOrderByNo(orderNo)
+	if err != nil {
+		return CustomerAppendOrderResult{}, fmt.Errorf("加菜失败: %w", err)
+	}
+	return CustomerAppendOrderResult{
+		OrderID:     o.OrderID,
+		OrderNo:     o.OrderNo,
+		DishAmount:  po.ToYuan(o.DishAmount),
+		SeatFee:     po.ToYuan(o.SeatFee),
+		TotalAmount: po.ToYuan(o.TotalAmount),
+		Items:       nil,
+		Duplicated:  true,
 	}, nil
 }
 

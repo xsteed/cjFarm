@@ -27,8 +27,14 @@ func orderDaoCreateAt(t *testing.T, orderNo string, tableID int, tableNo string)
 	t.Helper()
 	var id int64
 	if err := store.WithTx(func(tx *sql.Tx) error {
-		var err error
-		id, err = InsertOrderTx(tx, orderNo, tableID, 4, tableNo, "测试桌", "少辣", 3000, 100, 200, 2900)
+		// 走真实取号路径:既保证 (biz_date, pickup_no) 唯一索引不被同一个号撞上,
+		// 也让这批用例顺带覆盖 NextPickupNoTx。
+		bizDate := store.Now()[:10]
+		pickupNo, err := NextPickupNoTx(tx, bizDate)
+		if err != nil {
+			return err
+		}
+		id, err = InsertOrderTx(tx, orderNo, bizDate, pickupNo, tableID, 4, 0, tableNo, "测试桌", "少辣", 3000, 100, 200, 0, 2900)
 		return err
 	}); err != nil {
 		t.Fatalf("创建订单失败: %v", err)
@@ -421,10 +427,10 @@ func TestOrderUpdateAmountAndEdit(t *testing.T) {
 	id := orderDaoCreate(t, "D-EDIT-0001", 1)
 
 	if err := store.WithTx(func(tx *sql.Tx) error {
-		if err := UpdateOrderAmountTx(tx, id, 4000, 200, 300, 3900); err != nil {
+		if err := UpdateOrderAmountTx(tx, id, 4000, 200, 300, 0, 3900); err != nil {
 			return err
 		}
-		n, err := UpdateOrderForEditTx(tx, id, 6, "改备注", 4000, 200, 300, 3900, "boss")
+		n, err := UpdateOrderForEditTx(tx, id, 6, "改备注", 4000, 200, 300, 0, 3900, "boss")
 		if err != nil {
 			return err
 		}

@@ -1,0 +1,25 @@
+{
+  "name": "@dining/app-miniprogram",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "微信小程序顾客端（原生小程序 + TS），复用 @dining/{api,types,shared}",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "audit": "node scripts/audit-wxml.mjs && node scripts/audit-wxss.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node build.mjs && node scripts/smoke.mjs",
+    "precheck": "node scripts/precheck-release.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run audit && npm run test && npm run smoke"
+  },
+  "dependencies": {
+    "@dining/api": "1.0.0",
+    "@dining/shared": "1.0.0",
+    "@dining/types": "1.0.0",
+    "axios": "^1.7.7"
+  }
+}

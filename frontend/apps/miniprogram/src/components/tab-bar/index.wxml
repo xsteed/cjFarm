@@ -1,0 +1,43 @@
+<!-- 底部主导航：点餐 / 订单。页面把它放在最外层，常驻显示（不在任何 wx:if 分支里）。 -->
+<view class="tabbar">
+  <view
+    class="tb-item {{active === 'menu' ? 'on' : ''}}"
+    bindtap="onTapMenu"
+  >
+    <!-- 点餐：一只碗（凹形碗身 + 略宽的碗沿），比三条横线更像「吃饭」 -->
+    <view class="tb-icon">
+      <view class="ic-bowl"></view>
+    </view>
+    <view class="tb-text">点餐</view>
+  </view>
+
+  <view
+    class="tb-item {{active === 'order' ? 'on' : ''}}"
+    bindtap="onTapOrder"
+  >
+    <!-- 订单：单据（外框 + 两行文字），与 H5 BottomTabBar 的图标同语义 -->
+    <view class="tb-icon">
+      <view class="ic-ticket">
+        <view class="ic-line"></view>
+        <view class="ic-line ic-line-short"></view>
+      </view>
+      <view
+        wx:if="{{orderedCount > 0}}"
+        class="tb-badge"
+      >{{orderedCount}}</view>
+    </view>
+    <view class="tb-text">订单</view>
+  </view>
+
+  <view
+    wx:if="{{showProfile}}"
+    class="tb-item {{active === 'profile' ? 'on' : ''}}"
+    bindtap="onTapProfile"
+  >
+    <!-- 我的：一个人（圆头 + 半圆肩） -->
+    <view class="tb-icon">
+      <view class="ic-person"></view>
+    </view>
+    <view class="tb-text">我的</view>
+  </view>
+</view>

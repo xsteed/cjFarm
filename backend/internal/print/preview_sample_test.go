@@ -26,7 +26,7 @@ func TestPreviewTicketSampleGuest(t *testing.T) {
 	got := chunks[0]
 	joined := strings.Join(got, "\n")
 	// 完整票据要素:标题、示例菜、金额区、默认页脚(由 seed 补齐)。
-	for _, want := range []string{"【食客小票】", "凉拌青瓜", "柴火土鸡", "菜品金额", "餐位费", "优惠", "合计", "谢谢惠顾"} {
+	for _, want := range []string{"【食客小票】", "凉拌青瓜", "柴火土鸡", "菜品金额", "茶位费", "优惠", "合计", "谢谢惠顾"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("示例小票缺少 %q:\n%s", want, joined)
 		}
@@ -56,8 +56,8 @@ func TestPreviewTicketSampleOverrides(t *testing.T) {
 	if strings.Contains(joined, "谢谢惠顾") {
 		t.Fatalf("覆盖后不应出现库里的默认页脚:\n%s", joined)
 	}
-	if strings.Contains(joined, "餐位费") {
-		t.Fatalf("覆盖关闭餐位费行未生效:\n%s", joined)
+	if strings.Contains(joined, "茶位费") {
+		t.Fatalf("覆盖关闭茶位费行未生效:\n%s", joined)
 	}
 	// 合计金额不因展示开关变化。
 	if !strings.Contains(joined, "98.00") {

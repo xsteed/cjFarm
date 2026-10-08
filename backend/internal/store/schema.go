@@ -58,6 +58,7 @@ var schemaTemplate = []string{
 		dish_image  VARCHAR(255) DEFAULT '',
 		description VARCHAR(500) DEFAULT '',
 		status      INTEGER      DEFAULT 1,
+		sold_out    INTEGER      DEFAULT 0,
 		sort_order  INTEGER      DEFAULT 0,
 		del_flag    VARCHAR(2)   DEFAULT '0',
 		create_by   VARCHAR(64)  DEFAULT '',
@@ -71,7 +72,8 @@ var schemaTemplate = []string{
 		spec_id   {{PK}},
 		dish_id   INTEGER      NOT NULL,
 		spec_name VARCHAR(64)  NOT NULL,
-		price     INTEGER      DEFAULT 0
+		price     INTEGER      DEFAULT 0,
+		stock     INTEGER      DEFAULT -1
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_remark (
@@ -228,6 +230,19 @@ var schemaTemplate = []string{
 		cfg_value VARCHAR(4000) DEFAULT ''
 	){{OPTS}}`,
 
+	// tb_day_seq 按营业日维护取餐号(pickup_no)计数器。
+	//
+	// 存在的前提:内部单号 order_no 必须保持不可枚举 —— 顾客端
+	// `/customer/order/:orderNo`(handler/customer.go)免登录即可凭单号查单,
+	// 自增或雪花这类线性编号等于开放对全量订单的遍历。而 20 位随机串又长到无法口头报读。
+	// 因此另起一套「当天从 1 递增」的短号,专供顾客报号与厨房/服务员叫号:
+	//   - 写入路径只有「下单」一处,自增在事务行锁下串行化(见 dao.NextPickupNoTx);
+	//   - 计数行按 biz_date 作主键而非自增 INTEGER,故此处手写 PRIMARY KEY 而非 {{PK}}。
+	`CREATE TABLE IF NOT EXISTS tb_day_seq (
+		biz_date VARCHAR(10) PRIMARY KEY,
+		next_val INTEGER      DEFAULT 0
+	){{OPTS}}`,
+
 	`CREATE TABLE IF NOT EXISTS tb_order (
 		order_id        {{PK}},
 		order_no        VARCHAR(64)  NOT NULL,
@@ -266,10 +281,21 @@ var schemaTemplate = []string{
 		credit_settle_time VARCHAR(32),
 		credit_settle_by   VARCHAR(64) DEFAULT '',
 		paid_amount     INTEGER      DEFAULT 0,
+		-- 赠送金额(分):赠送菜品按原价计的金额合计,不计入应收金额(让利口径)。
+		gift_amount     INTEGER      DEFAULT 0,
+		-- 下单会员:0 = 匿名(历史单与未登录单);会员体系见 tb_customer。
+		-- 请求体不带该值,一律以顾客令牌为准(防止伪造归属)。
+		customer_id     INTEGER      DEFAULT 0,
 		-- 结账时(状态被置 4 前)的订单状态快照:撤销结算时恢复到结账前的真实状态,
 		-- 而不是无条件回到 3(订单可能在 1/2 状态被提前结账,撤销后应回到 1/2 继续制作流程)。
 		-- 0 表示历史数据未记录(撤销时回退为 3)。
-		pre_settle_status INTEGER     DEFAULT 0
+		pre_settle_status INTEGER     DEFAULT 0,
+		-- 营业日(YYYY-MM-DD)与当日取餐号:专供顾客口头报号 / 厨房叫号,每天从 1 递增,
+		-- 与不可枚举的内部单号 order_no 各司其职(见 tb_day_seq 的注释)。
+		-- biz_date 缺省 NULL 而非空串的用意:让「非下单写入的行」不参与下面
+		-- (biz_date, pickup_no) 的唯一判定 —— 两种数据库对含 NULL 的组合都不判重复。
+		biz_date   VARCHAR(10) DEFAULT NULL,
+		pickup_no  INTEGER     DEFAULT 0
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_order_item (
@@ -282,7 +308,14 @@ var schemaTemplate = []string{
 		price     INTEGER      DEFAULT 0,
 		quantity  INTEGER      DEFAULT 1,
 		amount    INTEGER      DEFAULT 0,
-		remark    VARCHAR(255) DEFAULT ''
+		remark    VARCHAR(255) DEFAULT '',
+		-- 加菜批次:1=首次下单,每次加菜 +1,用于菜品明细里区分「首次下单/第N次加菜」。
+		batch_no  INTEGER      DEFAULT 1,
+		-- 幂等键:同一次下单/加菜提交的所有明细共享同一 client_request_id,用于去重(适当冗余)。
+		client_request_id VARCHAR(64) DEFAULT '',
+		-- 是否赠送:0 正常计费 1 赠送(商家改单标记,amount 记 0,原价计入订单 gift_amount)。
+		is_gift   INTEGER      DEFAULT 0,
+		gift_reason VARCHAR(255) DEFAULT ''
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_order_urge (
@@ -378,6 +411,25 @@ var schemaTemplate = []string{
 		remark          VARCHAR(500) DEFAULT ''
 	){{OPTS}}`,
 
+	// 顾客会员档案(小程序「注册成为会员」,见 docs/design-docs/customer-member/spec.md)。
+	// openid 是微信小程序侧的用户唯一标识:wx.login 的 code 由服务端 code2session 换得,
+	// 同一个微信号在该小程序下恒定 —— 以它做唯一键,「首次出现即注册,再次出现即登录」。
+	// 不存 session_key(一期不解密手机号等敏感数据,最小化收集);
+	// 无 del_flag:会员不做软删除,注销直接物理删(档案不含敏感信息,见 spec 2.6)。
+	// 昵称/头像由用户主动填写,不强制,未填时前端显示「微信用户」。
+	`CREATE TABLE IF NOT EXISTS tb_customer (
+		customer_id      {{PK}},
+		openid           VARCHAR(64)  NOT NULL,
+		nickname         VARCHAR(64)  DEFAULT '',
+		avatar_url       VARCHAR(255) DEFAULT '',
+		status           INTEGER      DEFAULT 1,
+		order_count      INTEGER      DEFAULT 0,
+		last_order_time  VARCHAR(32)  DEFAULT '',
+		create_time      VARCHAR(32),
+		last_login_time  VARCHAR(32)  DEFAULT '',
+		remark           VARCHAR(255) DEFAULT ''
+	){{OPTS}}`,
+
 	// 记住登录令牌(实现「记住我(7/30 天免登录)」)。
 	// 令牌为后端生成的随机串,存本地后仅用于向后端换取新登录态;
 	// 是否过期由 expire_time 决定(后端查库裁决,前端无法篡改),与后端访问令牌(默认 24h)解耦。
@@ -438,13 +490,23 @@ type indexDef struct {
 // 其余索引用于订单查询、看板与报表加速。
 var indexDefs = []indexDef{
 	{Name: "idx_order_no", Table: "tb_order", Columns: "order_no", Unique: true},
+	// 取餐号当天唯一:正常路径由 dao.NextPickupNoTx 的行锁串行化保证,
+	// 唯一索引作为「有人绕过该函数手工插起订」时的兜底防线。
+	// biz_date 为 NULL 的行不参与判定(两库语义一致),因此不影响手工补录的历史行。
+	{Name: "idx_order_pickup", Table: "tb_order", Columns: "biz_date, pickup_no", Unique: true},
 	{Name: "idx_order_table", Table: "tb_order", Columns: "table_id"},
 	{Name: "idx_order_status", Table: "tb_order", Columns: "order_status"},
+	// 「未结账单」判定与看板按桌分组查询:table_id + pay_status + order_status 组合索引。
+	{Name: "idx_order_table_unpaid", Table: "tb_order", Columns: "table_id, pay_status, order_status"},
 	{Name: "idx_order_create_time", Table: "tb_order", Columns: "create_time"},
 	// 报表按「钱到账时间」过滤(见 dao.RangeAmount):正常收款按 pay_time、
 	// 挂账核销按 credit_settle_time 归属,补索引避免区间统计逐日扫全表。
 	{Name: "idx_order_pay_time", Table: "tb_order", Columns: "pay_time"},
 	{Name: "idx_order_credit_settle_time", Table: "tb_order", Columns: "credit_settle_time"},
+	// 会员「我的订单」按时间倒序分页(见 tb_customer)。
+	{Name: "idx_order_customer", Table: "tb_order", Columns: "customer_id, create_time"},
+	// 会员登录按 openid 精确查档;唯一索引同时兜底「并发首登建档」的幂等性。
+	{Name: "idx_customer_openid", Table: "tb_customer", Columns: "openid", Unique: true},
 	{Name: "idx_order_item_order", Table: "tb_order_item", Columns: "order_id"},
 	{Name: "idx_payment_order", Table: "tb_payment", Columns: "order_no"},
 	{Name: "idx_payment_channel_trade", Table: "tb_payment", Columns: "channel, channel_trade_no", Unique: true},
@@ -553,6 +615,25 @@ var alterCols = []alterCol{
 	// 打印份数(1-5) 与「按菜品分类分单」(CSV 分类 ID,空=全收)。
 	{Table: "tb_printer", Name: "copies", Def: "INTEGER DEFAULT 1"},
 	{Table: "tb_printer", Name: "category_ids", Def: "VARCHAR(255) DEFAULT ''"},
+	// 加菜批次:首次下单=1,每次加菜 +1;老库明细默认回填为 1。
+	{Table: "tb_order_item", Name: "batch_no", Def: "INTEGER DEFAULT 1"},
+	// 幂等键:下单/加菜去重(冗余存储于明细行,老库默认 '' 不参与去重)。
+	{Table: "tb_order_item", Name: "client_request_id", Def: "VARCHAR(64) DEFAULT ''"},
+	// 赠送标记:0 正常计费 1 赠送;老库明细默认 0。
+	{Table: "tb_order_item", Name: "is_gift", Def: "INTEGER DEFAULT 0"},
+	// 赠送原因(可选),老库默认 ''。
+	{Table: "tb_order_item", Name: "gift_reason", Def: "VARCHAR(255) DEFAULT ''"},
+	// 订单赠送金额合计(分),老库默认 0。
+	{Table: "tb_order", Name: "gift_amount", Def: "INTEGER DEFAULT 0"},
+	// 订单会员归属(顾客会员体系),老库默认 0(匿名单);历史数据不回填。
+	{Table: "tb_order", Name: "customer_id", Def: "INTEGER DEFAULT 0"},
+	// 营业日与当日取餐号(取餐叫号用):老库升级补列,与建表语句中的 biz_date/pickup_no 对齐。
+	{Table: "tb_order", Name: "biz_date", Def: "VARCHAR(10) DEFAULT NULL"},
+	{Table: "tb_order", Name: "pickup_no", Def: "INTEGER DEFAULT 0"},
+	// 售罄标记（人工）：1 售罄 0 正常，与「下架(status)」正交。老库默认 0。
+	{Table: "tb_dish", Name: "sold_out", Def: "INTEGER DEFAULT 0"},
+	// 规格库存（自动售罄）：-1 不限量，>=0 剩余份数。老库默认 -1。
+	{Table: "tb_spec", Name: "stock", Def: "INTEGER DEFAULT -1"},
 }
 
 // alterStatements 返回指定方言下的增量列 DDL。
@@ -583,16 +664,8 @@ func migrate() {
 		}
 	}
 
-	for _, ix := range indexDefs {
-		if indexExists(ix.Name) {
-			continue
-		}
-		stmt := indexStatement(dialect, ix)
-		if _, err := DB.Exec(stmt); err != nil {
-			logger.Fatalf("建索引失败(%s): %v\n%s", dialect, err, stmt)
-		}
-	}
-
+	// 先补列再建索引:老库升级时,索引(如 idx_order_pickup)可能依赖本次新增的列
+	// (biz_date/pickup_no),若先建索引会因列不存在而失败。
 	for _, c := range alterCols {
 		if columnExists(c.Table, c.Name) {
 			continue
@@ -602,6 +675,16 @@ func migrate() {
 			logger.Fatalf("补列失败(%s): %v\n%s", dialect, err, stmt)
 		}
 		logger.Infof("[db] 已补列 %s.%s", c.Table, c.Name)
+	}
+
+	for _, ix := range indexDefs {
+		if indexExists(ix.Name) {
+			continue
+		}
+		stmt := indexStatement(dialect, ix)
+		if _, err := DB.Exec(stmt); err != nil {
+			logger.Fatalf("建索引失败(%s): %v\n%s", dialect, err, stmt)
+		}
 	}
 
 	// 历史数据回填:老订单没有实收金额,按「已支付即全额实收」补齐,保证报表口径连续。

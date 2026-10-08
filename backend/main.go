@@ -53,8 +53,13 @@ func setupAPI(r *gin.Engine) {
 		api.GET("/customer/menu", handler.CustomerMenu)
 		api.GET("/customer/remarks", handler.CustomerRemarks)
 		api.GET("/customer/config", handler.CustomerSetting)
-		api.POST("/customer/order", handler.CustomerCreateOrder)
-		api.POST("/customer/order/append", handler.CustomerAppendOrder)
+		api.POST("/customer/order", handler.CustomerAuthOptional, handler.CustomerCreateOrder)
+		api.POST("/customer/order/append", handler.CustomerAuthOptional, handler.CustomerAppendOrder)
+		// 顾客会员:一键注册/登录(自愿,未登录不影响点餐);登录态为 2h 短令牌,
+		// 过期由小程序端静默重登(见 docs/design-docs/customer-member/spec.md)。
+		api.POST("/customer/auth/login", handler.CustomerMemberLogin)
+		api.GET("/customer/auth/profile", handler.CustomerAuthRequired, handler.CustomerMemberProfile)
+		api.GET("/customer/order/mine", handler.CustomerAuthRequired, handler.CustomerMyOrders)
 		api.GET("/customer/order/no/:orderNo", handler.CustomerOrderByNo)
 		api.POST("/customer/order/urge", handler.CustomerUrgeOrder)
 		api.GET("/customer/pay/qr", handler.CustomerPayQr)
@@ -101,6 +106,8 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/perm/catalog", handler.PermCatalog)
 
 			admin.GET("/table/list", handler.TableList)
+			// 桌台小程序码(顾客扫它进小程序点餐);配置见「系统配置 → 小程序桌牌码」
+			admin.GET("/table/weapp-code", handler.TableWeappCode)
 			admin.POST("/table/save", handler.TableSave)
 			admin.POST("/table/update", handler.TableUpdate)
 			admin.DELETE("/table/:id", handler.TableDelete)
@@ -297,7 +304,7 @@ func main() {
 	setupAPI(r)
 
 	// 前端静态资源(若已构建)。Vite 默认把产物放到 dist/assets,但这里统一约定
-	// assetsDir 为 "static"(见 frontend/vite.config.js),因此只需托管 /static 即可。
+	// assetsDir 为 "static"(见 frontend/vite.config.ts),因此只需托管 /static 即可。
 	// 同时兼容 /assets 以覆盖未改配置的旧构建产物。
 	if fi, err := os.Stat(staticDir); err == nil && fi.IsDir() {
 		r.Static("/static", filepath.Join(staticDir, "static"))

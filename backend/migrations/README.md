@@ -109,7 +109,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 >
 > `create` 系列为纯建表（`IF NOT EXISTS`），可安全重复执行。
 
-## 四、表清单（共 20 张）
+## 四、表清单（共 21 张）
 
 | # | 表名 | 说明 | 种子数据 | 归属脚本 |
 |---|---|---|---|---|
@@ -133,6 +133,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 18 | `tb_print_job` | 本地打印代理任务队列（云后端入队，门店代理取单后直发 9100） | 运行时产生 | incr 07 |
 | 19 | `tb_print_agent` | 本地打印代理注册与令牌状态 | 运行时产生 | full |
 | 20 | `tb_image` | 图片内容表（菜品图 / 收款码 / 上传图二进制） | 启动时写入出厂图 | full |
+| 21 | `tb_day_seq` | 按营业日维护「当日取餐号」的计数器 | 运行时产生 | full + incr 20261009000000 |
 
 > `tb_print_job` 与 `tb_print_log` 的分工：前者是「待办」（送达即结案，可定期清理），
 > 后者是「台账」（给商家查「这单打了没」，长期保留），两者由 `print_log_id` 关联。
@@ -144,12 +145,14 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `tb_role` 的 4 个内置角色（admin / manager / cashier / staff）每次启动由
 > `store.SyncBuiltinRoles()` 幂等校准；其中 `admin` 的权限**强制恢复为全量**，防止误改锁死。
 
-## 五、索引清单（共 30 个）
+## 五、索引清单（共 32 个）
 
 | 索引名 | 表 | 类型 | 用途 |
 |---|---|---|---|
 | `idx_order_no` | tb_order | UNIQUE | 订单号唯一 |
+| `idx_order_pickup` | tb_order | UNIQUE（2 列） | 同一营业日的取餐号不重复（`biz_date` 为 NULL 的历史行不参与判定） |
 | `idx_order_table` | tb_order | 普通 | 按桌台查单 |
+| `idx_order_table_unpaid` | tb_order | 普通（3 列） | 未结账单判定 + 看板按桌分组 |
 | `idx_order_status` | tb_order | 普通 | 按状态查单 |
 | `idx_order_create_time` | tb_order | 普通 | 报表按时间 |
 | `idx_order_pay_time` | tb_order | 普通 | 报表按收款到账时间 |
@@ -247,14 +250,14 @@ SET GLOBAL max_allowed_packet=64M;
 
 **SQLite（3.53）**
 
-- `full/`：建库结果为 **20 表 / 30 索引**；种子数据 config 31、role 4、table 8、
-  category 6、dish 21、spec 32、remark 6、printer 2（合计 110 行，`seed.sql` 不含图片数据）；
+- `full/`：建库结果为 **20 表 / 31 索引**；种子数据 config 36、role 4、table 8、
+  category 6、dish 21、spec 32、remark 6、printer 2（合计 115 行，`seed.sql` 不含图片数据）；
   `tb_order` 37 列齐全；重复执行数量不变（建表 `IF NOT EXISTS`、种子 `INSERT OR IGNORE`）。
 - `incr/`：在 24 列的旧结构 `tb_order` 上依次执行 01~04 后补齐至 37 列；历史回填正确
   （已支付订单 `settle_type='normal'`、`paid_amount=total_amount-refund_amount`）；
   05（`tb_user_role_create`）在旧库上建出员工/角色两表与 3 个索引。
 - **2026-09-21 复核**：`go run ./cmd/gensql -check` 通过（磁盘脚本与 Go 定义一致）；
-  20 表 / 30 索引 / 110 行种子由 `schemaTemplate` 与 `SeedCounts()` 自动核对，
+  20 表 / 31 索引 / 115 行种子由 `schemaTemplate` 与 `SeedCounts()` 自动核对，
   `go test ./...` 中 `sqlgen_test.go` 会同步做这项一致性校验。
 
 **MySQL（在 MySQL 协议兼容服务端上实跑）**

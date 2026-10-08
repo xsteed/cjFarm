@@ -15,35 +15,44 @@ type OrderItem struct {
 	Amount     float64 `json:"amount"`
 	Remark     string  `json:"itemRemark"`
 	CategoryID int     `json:"categoryId,omitempty"`
+	BatchNo    int     `json:"batchNo"`    // 加菜批次:1=首次下单,每次加菜 +1
+	IsGift     int     `json:"isGift"`     // 是否赠送:0 正常计费 1 赠送(商家改单标记)
+	GiftReason string  `json:"giftReason"` // 赠送原因(可选)
 }
 
 // FromOrderItem 将持久化对象转为 API 出参,金额由分转元。CategoryID 无来源,不填充。
 func FromOrderItem(p po.OrderItem) OrderItem {
 	return OrderItem{
-		ItemID:   p.ItemID,
-		DishID:   p.DishID,
-		DishName: p.DishName,
-		SpecID:   p.SpecID,
-		SpecName: p.SpecName,
-		Price:    po.ToYuan(p.Price),
-		Quantity: p.Quantity,
-		Amount:   po.ToYuan(p.Amount),
-		Remark:   p.Remark,
+		ItemID:     p.ItemID,
+		DishID:     p.DishID,
+		DishName:   p.DishName,
+		SpecID:     p.SpecID,
+		SpecName:   p.SpecName,
+		Price:      po.ToYuan(p.Price),
+		Quantity:   p.Quantity,
+		Amount:     po.ToYuan(p.Amount),
+		Remark:     p.Remark,
+		BatchNo:    p.BatchNo,
+		IsGift:     p.IsGift,
+		GiftReason: p.GiftReason,
 	}
 }
 
 // ToPO 将 API 出参转回持久化对象,金额由元转分。CategoryID 不入库。
 func (it OrderItem) ToPO() po.OrderItem {
 	return po.OrderItem{
-		ItemID:   it.ItemID,
-		DishID:   it.DishID,
-		DishName: it.DishName,
-		SpecID:   it.SpecID,
-		SpecName: it.SpecName,
-		Price:    po.ToCents(it.Price),
-		Quantity: it.Quantity,
-		Amount:   po.ToCents(it.Amount),
-		Remark:   it.Remark,
+		ItemID:     it.ItemID,
+		DishID:     it.DishID,
+		DishName:   it.DishName,
+		SpecID:     it.SpecID,
+		SpecName:   it.SpecName,
+		Price:      po.ToCents(it.Price),
+		Quantity:   it.Quantity,
+		Amount:     po.ToCents(it.Amount),
+		Remark:     it.Remark,
+		BatchNo:    it.BatchNo,
+		IsGift:     it.IsGift,
+		GiftReason: it.GiftReason,
 	}
 }
 
@@ -52,7 +61,9 @@ func (it OrderItem) ToPO() po.OrderItem {
 type Order struct {
 	OrderID        int     `json:"orderId"`
 	OrderNo        string  `json:"orderNo"`
-	ShortNo        string  `json:"shortNo"` // 可报读短号(由 orderNo 派生,不入库),供顾客向服务员报号
+	PickupNo       int     `json:"pickupNo"` // 当日取餐号(当天从 1 递增),0 表示未分配
+	ShortNo        string  `json:"shortNo"`  // 可报读短号:优先取餐号,缺失时由 orderNo 派生(非持久列,供顾客向服务员报号)
+	BizDate        string  `json:"bizDate"`  // 营业日(持久列,随 ToPO 回写),一般不在界面展示
 	TableID        int     `json:"tableId"`
 	TableNo        string  `json:"tableNo"`
 	TableName      string  `json:"tableName"`
@@ -79,6 +90,7 @@ type Order struct {
 	CreditSettleTime *string     `json:"creditSettleTime"` // 挂账核销时间
 	CreditSettleBy   string      `json:"creditSettleBy"`   // 挂账核销操作人
 	PaidAmount       float64     `json:"paidAmount"`       // 实收金额(元):免单=0,挂账核销前=0
+	GiftAmount       float64     `json:"giftAmount"`       // 赠送金额(元):赠送菜品原价合计,不计入应收
 	FinishTime       *string     `json:"finishTime"`
 	OrderRemark      string      `json:"orderRemark"`
 	CancelReason     string      `json:"cancelReason"`
@@ -98,7 +110,9 @@ func FromOrder(p po.Order, items []OrderItem, pendingUrge bool) Order {
 	return Order{
 		OrderID:          p.OrderID,
 		OrderNo:          p.OrderNo,
-		ShortNo:          po.ShortOrderNo(p.OrderNo),
+		PickupNo:         p.PickupNo,
+		BizDate:          p.BizDate,
+		ShortNo:          po.DisplayNo(p.PickupNo, p.OrderNo),
 		TableID:          p.TableID,
 		TableNo:          p.TableNo,
 		TableName:        p.TableName,
@@ -124,6 +138,7 @@ func FromOrder(p po.Order, items []OrderItem, pendingUrge bool) Order {
 		CreditSettleTime: p.CreditSettleTime,
 		CreditSettleBy:   p.CreditSettleBy,
 		PaidAmount:       po.ToYuan(p.PaidAmount),
+		GiftAmount:       po.ToYuan(p.GiftAmount),
 		FinishTime:       p.FinishTime,
 		OrderRemark:      p.OrderRemark,
 		CancelReason:     p.CancelReason,
@@ -154,10 +169,14 @@ func FromOrderCustomer(p po.Order, items []OrderItem, pendingUrge bool) Order {
 }
 
 // ToPO 将 API 出参转回持久化对象,金额由元转分。ShortNo/Items/PendingUrge 不入库。
+// BizDate/PickupNo 是持久列,必须原样回带:否则经「DTO→PO→落库」的改单路径
+// 会把取餐号抹成 0,顾客报号失效。
 func (o Order) ToPO() po.Order {
 	return po.Order{
 		OrderID:          o.OrderID,
 		OrderNo:          o.OrderNo,
+		BizDate:          o.BizDate,
+		PickupNo:         o.PickupNo,
 		TableID:          o.TableID,
 		TableNo:          o.TableNo,
 		TableName:        o.TableName,
@@ -183,6 +202,7 @@ func (o Order) ToPO() po.Order {
 		CreditSettleTime: o.CreditSettleTime,
 		CreditSettleBy:   o.CreditSettleBy,
 		PaidAmount:       po.ToCents(o.PaidAmount),
+		GiftAmount:       po.ToCents(o.GiftAmount),
 		FinishTime:       o.FinishTime,
 		OrderRemark:      o.OrderRemark,
 		CancelReason:     o.CancelReason,

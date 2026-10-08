@@ -1,6 +1,6 @@
 import { reactive, type UnwrapNestedRefs } from 'vue';
 import { vi } from 'vitest';
-import { AUTH_KEYS } from '../utils/authKeys';
+import { AUTH_KEYS } from '@dining/shared';
 
 type EChartsMockInstance = {
   setOption: ReturnType<typeof vi.fn>;

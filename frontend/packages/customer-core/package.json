@@ -1,0 +1,18 @@
+{
+  "name": "@dining/customer-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "@dining/api": "1.0.0",
+    "@dining/shared": "1.0.0",
+    "@dining/types": "1.0.0",
+    "vue": "^3.5.13"
+  }
+}

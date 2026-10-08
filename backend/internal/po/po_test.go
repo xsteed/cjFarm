@@ -23,6 +23,28 @@ func TestShortOrderNo(t *testing.T) {
 	}
 }
 
+// TestDisplayNo 校验可报读短号的取值优先级:
+// 有取餐号时用它(纯数字、当天唯一、够短);没有时退回单号尾 6 位,
+// 保证历史订单与手工补录的行永远有值可显示。
+func TestDisplayNo(t *testing.T) {
+	const orderNo = "D202609200122298a45bf800674d485"
+	cases := []struct {
+		name     string
+		pickupNo int
+		want     string
+	}{
+		{"有取餐号优先用取餐号", 12, "12"},
+		{"取餐号从 1 起而非 0", 1, "1"},
+		{"历史订单退回尾6位", 0, "74D485"},
+		{"负数按未分配处理", -1, "74D485"},
+	}
+	for _, c := range cases {
+		if got := DisplayNo(c.pickupNo, orderNo); got != c.want {
+			t.Errorf("%s: DisplayNo(%d, %q) = %q, want %q", c.name, c.pickupNo, orderNo, got, c.want)
+		}
+	}
+}
+
 // TestMoneyRoundTrip 校验金额工具往返与 Round2。
 func TestMoneyRoundTrip(t *testing.T) {
 	if got := ToCents(66.66); got != 6666 {

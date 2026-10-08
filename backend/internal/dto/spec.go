@@ -8,6 +8,7 @@ type Spec struct {
 	DishID   int     `json:"dishId"`
 	SpecName string  `json:"specName"`
 	Price    float64 `json:"price"`
+	Stock    int64   `json:"stock"` // 剩余库存：-1 不限量，>=0 剩余份数（0 = 售罄）
 }
 
 // FromSpec 将持久化对象转为 API 出参,单价由分转元。
@@ -17,6 +18,7 @@ func FromSpec(p po.Spec) Spec {
 		DishID:   p.DishID,
 		SpecName: p.SpecName,
 		Price:    po.ToYuan(p.Price),
+		Stock:    p.Stock,
 	}
 }
 
@@ -27,5 +29,6 @@ func (s Spec) ToPO() po.Spec {
 		DishID:   s.DishID,
 		SpecName: s.SpecName,
 		Price:    po.ToCents(s.Price),
+		Stock:    s.Stock,
 	}
 }

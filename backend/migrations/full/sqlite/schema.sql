@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS tb_dish (
         dish_image  VARCHAR(255) DEFAULT '',
         description VARCHAR(500) DEFAULT '',
         status      INTEGER      DEFAULT 1,
+        sold_out    INTEGER      DEFAULT 0,
         sort_order  INTEGER      DEFAULT 0,
         del_flag    VARCHAR(2)   DEFAULT '0',
         create_by   VARCHAR(64)  DEFAULT '',
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS tb_spec (
         spec_id   INTEGER PRIMARY KEY AUTOINCREMENT,
         dish_id   INTEGER      NOT NULL,
         spec_name VARCHAR(64)  NOT NULL,
-        price     INTEGER      DEFAULT 0
+        price     INTEGER      DEFAULT 0,
+        stock     INTEGER      DEFAULT -1
     );
 CREATE TABLE IF NOT EXISTS tb_remark (
         remark_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,6 +167,10 @@ CREATE TABLE IF NOT EXISTS tb_config (
         cfg_key   VARCHAR(64)   PRIMARY KEY,
         cfg_value VARCHAR(4000) DEFAULT ''
     );
+CREATE TABLE IF NOT EXISTS tb_day_seq (
+        biz_date VARCHAR(10) PRIMARY KEY,
+        next_val INTEGER      DEFAULT 0
+    );
 CREATE TABLE IF NOT EXISTS tb_order (
         order_id        INTEGER PRIMARY KEY AUTOINCREMENT,
         order_no        VARCHAR(64)  NOT NULL,
@@ -203,10 +209,21 @@ CREATE TABLE IF NOT EXISTS tb_order (
         credit_settle_time VARCHAR(32),
         credit_settle_by   VARCHAR(64) DEFAULT '',
         paid_amount     INTEGER      DEFAULT 0,
+        -- 赠送金额(分):赠送菜品按原价计的金额合计,不计入应收金额(让利口径)。
+        gift_amount     INTEGER      DEFAULT 0,
+        -- 下单会员:0 = 匿名(历史单与未登录单);会员体系见 tb_customer。
+        -- 请求体不带该值,一律以顾客令牌为准(防止伪造归属)。
+        customer_id     INTEGER      DEFAULT 0,
         -- 结账时(状态被置 4 前)的订单状态快照:撤销结算时恢复到结账前的真实状态,
         -- 而不是无条件回到 3(订单可能在 1/2 状态被提前结账,撤销后应回到 1/2 继续制作流程)。
         -- 0 表示历史数据未记录(撤销时回退为 3)。
-        pre_settle_status INTEGER     DEFAULT 0
+        pre_settle_status INTEGER     DEFAULT 0,
+        -- 营业日(YYYY-MM-DD)与当日取餐号:专供顾客口头报号 / 厨房叫号,每天从 1 递增,
+        -- 与不可枚举的内部单号 order_no 各司其职(见 tb_day_seq 的注释)。
+        -- biz_date 缺省 NULL 而非空串的用意:让「非下单写入的行」不参与下面
+        -- (biz_date, pickup_no) 的唯一判定 —— 两种数据库对含 NULL 的组合都不判重复。
+        biz_date   VARCHAR(10) DEFAULT NULL,
+        pickup_no  INTEGER     DEFAULT 0
     );
 CREATE TABLE IF NOT EXISTS tb_order_item (
         item_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,7 +235,14 @@ CREATE TABLE IF NOT EXISTS tb_order_item (
         price     INTEGER      DEFAULT 0,
         quantity  INTEGER      DEFAULT 1,
         amount    INTEGER      DEFAULT 0,
-        remark    VARCHAR(255) DEFAULT ''
+        remark    VARCHAR(255) DEFAULT '',
+        -- 加菜批次:1=首次下单,每次加菜 +1,用于菜品明细里区分「首次下单/第N次加菜」。
+        batch_no  INTEGER      DEFAULT 1,
+        -- 幂等键:同一次下单/加菜提交的所有明细共享同一 client_request_id,用于去重(适当冗余)。
+        client_request_id VARCHAR(64) DEFAULT '',
+        -- 是否赠送:0 正常计费 1 赠送(商家改单标记,amount 记 0,原价计入订单 gift_amount)。
+        is_gift   INTEGER      DEFAULT 0,
+        gift_reason VARCHAR(255) DEFAULT ''
     );
 CREATE TABLE IF NOT EXISTS tb_order_urge (
         urge_id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -300,6 +324,18 @@ CREATE TABLE IF NOT EXISTS tb_user (
         update_time     VARCHAR(32),
         remark          VARCHAR(500) DEFAULT ''
     );
+CREATE TABLE IF NOT EXISTS tb_customer (
+        customer_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        openid           VARCHAR(64)  NOT NULL,
+        nickname         VARCHAR(64)  DEFAULT '',
+        avatar_url       VARCHAR(255) DEFAULT '',
+        status           INTEGER      DEFAULT 1,
+        order_count      INTEGER      DEFAULT 0,
+        last_order_time  VARCHAR(32)  DEFAULT '',
+        create_time      VARCHAR(32),
+        last_login_time  VARCHAR(32)  DEFAULT '',
+        remark           VARCHAR(255) DEFAULT ''
+    );
 CREATE TABLE IF NOT EXISTS tb_remember_token (
         token_id       INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id        INTEGER      NOT NULL,
@@ -319,11 +355,15 @@ CREATE TABLE IF NOT EXISTS tb_image (
         create_time  VARCHAR(32)
     );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_order_no ON tb_order(order_no);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_pickup ON tb_order(biz_date, pickup_no);
 CREATE INDEX IF NOT EXISTS idx_order_table ON tb_order(table_id);
 CREATE INDEX IF NOT EXISTS idx_order_status ON tb_order(order_status);
+CREATE INDEX IF NOT EXISTS idx_order_table_unpaid ON tb_order(table_id, pay_status, order_status);
 CREATE INDEX IF NOT EXISTS idx_order_create_time ON tb_order(create_time);
 CREATE INDEX IF NOT EXISTS idx_order_pay_time ON tb_order(pay_time);
 CREATE INDEX IF NOT EXISTS idx_order_credit_settle_time ON tb_order(credit_settle_time);
+CREATE INDEX IF NOT EXISTS idx_order_customer ON tb_order(customer_id, create_time);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_openid ON tb_customer(openid);
 CREATE INDEX IF NOT EXISTS idx_order_item_order ON tb_order_item(order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_order ON tb_payment(order_no);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_channel_trade ON tb_payment(channel, channel_trade_no);

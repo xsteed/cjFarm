@@ -116,6 +116,7 @@ type Summary struct {
 	LastMonthSamePeriodAmount     float64
 	LastMonthSamePeriodOrderCount int
 	TodayFreeAmount               float64
+	TodayGiftAmount               float64
 	CreditPendingAmount           float64
 	CreditPendingCount            int
 	TodayCreditAmount             float64
@@ -176,6 +177,9 @@ func ReportSummary() Summary {
 	// ---- 今日免单(让利额) ----
 	todayFreeCents := dao.SumFreeIn(todayStart, tomorrowStart)
 
+	// ---- 今日赠送(让利额) ----
+	todayGiftCents := dao.SumGiftIn(todayStart, tomorrowStart)
+
 	// ---- 挂账 ----
 	creditPendingCents, creditPendingCount := dao.CreditPendingStats()
 	todayCreditCents := dao.SumCreditIn(todayStart, tomorrowStart)
@@ -208,6 +212,7 @@ func ReportSummary() Summary {
 		LastMonthSamePeriodAmount:     po.Round2(po.ToYuan(lastMonthAmountCents)),
 		LastMonthSamePeriodOrderCount: lastMonthOrderCount,
 		TodayFreeAmount:               po.Round2(po.ToYuan(todayFreeCents)),
+		TodayGiftAmount:               po.Round2(po.ToYuan(todayGiftCents)),
 		CreditPendingAmount:           po.Round2(po.ToYuan(creditPendingCents)),
 		CreditPendingCount:            creditPendingCount,
 		TodayCreditAmount:             po.Round2(po.ToYuan(todayCreditCents)),

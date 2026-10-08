@@ -1,0 +1,8 @@
+{
+  "navigationBarTitleText": "扫码点餐",
+  "usingComponents": {
+    "cart-bar": "/components/cart-bar/index",
+    "spec-sheet": "/components/spec-sheet/index",
+    "tab-bar": "/components/tab-bar/index"
+  }
+}

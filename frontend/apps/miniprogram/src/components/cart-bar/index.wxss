@@ -1,0 +1,167 @@
+/* ============================================================================
+   本组件是样式自包含的：小程序自定义组件默认样式隔离（isolated），
+   因此这里**不引用** app.wxss 的变量与类名，只带自己用到的 token 副本。
+   好处是「页面/全局样式到底会不会透进组件」这种不确定行为与本组件无关，
+   也不会出现组件与页面同名 class（如 .on / .sec）互相覆盖。
+   取值与 frontend/src/app.wxss 的 page 块保持一致。
+   ============================================================================ */
+.cart-bar {
+  --grad-brand-soft: linear-gradient(135deg, #ff8a50 0%, #f0481f 100%);
+  --r-pill: 999rpx;
+
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 108rpx;
+  /* 底部安全区直接写进 padding，不叠加外部工具类 */
+  padding: 0 32rpx env(safe-area-inset-bottom);
+  background: rgb(26 26 26 / 92%);
+  -webkit-backdrop-filter: blur(10rpx);
+  backdrop-filter: blur(10rpx);
+}
+
+/* 底部还有主导航时整体上移，停在导航正上方（导航高 104rpx，见 components/tab-bar）。
+   同时去掉自身的安全区 padding：安全区已经由导航让出来了，留着会多出一段空白。 */
+.cart-bar.lifted {
+  bottom: calc(104rpx + env(safe-area-inset-bottom));
+  padding-bottom: 0;
+}
+
+.cb-left {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+/* ---------- 购物车图标 ----------
+   车把（⌐ 形的两条边）+ 车筐（上宽下窄的梯形：左/右透明边框把斜边撑出来）
+   + 两个轮子，全部 currentColor —— 「能不能结算」只改 .cb-cart 的 color 一处。 */
+.cb-cart {
+  position: relative;
+  flex-shrink: 0;
+  width: 44rpx;
+  height: 44rpx;
+  color: rgb(255 255 255 / 92%);
+}
+
+.cb-cart.off {
+  color: rgb(255 255 255 / 45%);
+}
+
+/* 车把：上边 + 右边，右边那条竖线落进车筐左上沿 */
+.cb-cart-hd {
+  position: absolute;
+  top: 0;
+  left: 2rpx;
+  width: 22rpx;
+  height: 14rpx;
+  border-top: 4rpx solid currentColor;
+  border-right: 4rpx solid currentColor;
+  border-radius: 0 3rpx 0 0;
+  box-sizing: border-box;
+}
+
+/* 车筐：width 是下底宽，加上左右各 5rpx 透明边框 → 上底 40rpx / 下底 30rpx 的梯形 */
+.cb-cart-bd {
+  position: absolute;
+  top: 12rpx;
+  left: 0;
+  width: 30rpx;
+  height: 0;
+  border-top: 22rpx solid currentColor;
+  border-right: 5rpx solid transparent;
+  border-left: 5rpx solid transparent;
+}
+
+/* 轮子：两个小圆点，左右各一 */
+.cb-cart-w {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 8rpx;
+}
+
+.cb-cart-w::before,
+.cb-cart-w::after {
+  position: absolute;
+  bottom: 0;
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+
+.cb-cart-w::before {
+  left: 6rpx;
+}
+
+.cb-cart-w::after {
+  right: 8rpx;
+}
+
+/* 份数角标：挂在车筐右上。
+   必须 border-box：小程序没有全局 `box-sizing: border-box`，
+   按默认的 content-box 算的话 min-width + padding + border 会把角标撑得比图标还宽。
+   描边用底色（#1a1a1a）做「挖空」，压在车筐上也读得清。 */
+.cb-badge {
+  position: absolute;
+  top: -2rpx;
+  right: -8rpx;
+  min-width: 24rpx;
+  height: 24rpx;
+  padding: 0 5rpx;
+  border: 2rpx solid #1a1a1a;
+  border-radius: var(--r-pill);
+  background: var(--grad-brand-soft);
+  color: #fff;
+  font-size: 16rpx;
+  font-weight: 700;
+  line-height: 20rpx;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.cb-sum {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+}
+
+.cb-label {
+  color: rgb(255 255 255 / 62%);
+  font-size: 24rpx;
+}
+
+.cb-money {
+  color: #fff;
+  font-size: 38rpx;
+  font-weight: 700;
+}
+
+/* 与 app.wxss 的 .cny 同款：组件内自持一份，不依赖外部样式 */
+.cb-cny {
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.cb-btn {
+  height: 72rpx;
+  padding: 0 44rpx;
+  border-radius: var(--r-pill);
+  background: var(--grad-brand-soft);
+  color: #fff;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 72rpx;
+}
+
+.dim .cb-btn {
+  background: #555;
+}

@@ -1,14 +1,20 @@
 package po
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // ShortOrderNo 从完整订单号派生一个可口头报读的短号。
 //
-// 完整单号形如 D202609200122298a45bf800674d485(31 位),顾客既读不出来
-// 也不方便向服务员报号。取其尾部 6 位作为短号(如 74D485):
+// 完整单号形如 D261008123456K3M9P2R(20 位),顾客既读不出来
+// 也不方便向服务员报号。取其尾部 6 位作为短号(如 3M9P2R):
 //   - 由单号派生,无需额外存储与回填,历史订单同样有效;
 //   - 订单列表原本就按 order_no LIKE %关键词% 查询,输入短号即可命中;
-//   - 随机段取自 crypto/rand,同批次重复概率可忽略。
+//   - 随机段改用 Base32 后,尾 6 位含 30bit(约 10.7 亿种),比原先十六进制的
+//     24bit(1677 万种)更不易撞号。
+//
+// 新单请优先用 DisplayNo:它先取 pickup_no,只有缺号时才退回本函数。
 func ShortOrderNo(orderNo string) string {
 	s := strings.TrimSpace(orderNo)
 	if len(s) <= 6 {
@@ -17,23 +23,41 @@ func ShortOrderNo(orderNo string) string {
 	return strings.ToUpper(s[len(s)-6:])
 }
 
+// DisplayNo 返回可供顾客口头报读的取餐号。
+//
+// 优先取 pickup_no(纯数字、当天从 1 递增、足够短,pickup_no 见 tb_order.biz_date/pickup_no);
+// pickup_no 为 0 的历史订单或手工补录行,退回 ShortOrderNo 从单号派生的尾 6 位,
+// 保证展示层永远有值可显示,不会因为新列没回填就露出空白。
+func DisplayNo(pickupNo int, orderNo string) string {
+	if pickupNo > 0 {
+		return strconv.Itoa(pickupNo)
+	}
+	return ShortOrderNo(orderNo)
+}
+
 // OrderItem 对应 tb_order_item 表。
 type OrderItem struct {
-	ItemID   int
-	DishID   int
-	DishName string
-	SpecID   int
-	SpecName string
-	Price    int64 // 单价(分)
-	Quantity int
-	Amount   int64 // 小计金额(分)
-	Remark   string
+	ItemID          int
+	DishID          int
+	DishName        string
+	SpecID          int
+	SpecName        string
+	Price           int64 // 单价(分)
+	Quantity        int
+	Amount          int64 // 小计金额(分)
+	Remark          string
+	BatchNo         int    // 加菜批次:1=首次下单,每次加菜 +1
+	ClientRequestID string // 幂等键:同一次提交的明细共享,用于下单/加菜去重
+	IsGift          int    // 是否赠送:0 正常计费 1 赠送(amount 记 0,原价计入订单 gift_amount)
+	GiftReason      string // 赠送原因(可选,商家改单时填写)
 }
 
 // Order 对应 tb_order 表。
 type Order struct {
 	OrderID        int
 	OrderNo        string
+	BizDate        string // 营业日 'YYYY-MM-DD':取餐号按天分组的分区键,随下单写入
+	PickupNo       int    // 当日取餐号(从 1 递增),供顾客口头报号;0 表示未分配
 	TableID        int
 	TableNo        string // tb_order 冗余列
 	TableName      string // tb_order 冗余列
@@ -60,6 +84,7 @@ type Order struct {
 	CreditSettleTime *string // 挂账核销时间
 	CreditSettleBy   string  // 挂账核销操作人
 	PaidAmount       int64   // 实收金额(分):免单=0,挂账核销前=0
+	GiftAmount       int64   // 赠送金额(分):赠送菜品按原价计的金额合计,不计入应收
 	FinishTime       *string
 	OrderRemark      string
 	CancelReason     string

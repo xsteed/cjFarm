@@ -1,0 +1,118 @@
+<!-- 我的：会员卡 + 历史订单。登录自愿，未登录渲染注册引导卡。 -->
+<view class="page">
+  <view
+    wx:if="{{loading && !member}}"
+    class="state"
+  >
+    <view class="spinner"></view> 加载中…
+  </view>
+
+  <view
+    wx:elif="{{error}}"
+    class="state"
+  >
+    <view class="state-err">{{error}}</view>
+    <button
+      class="btn-ghost"
+      bindtap="onRetry"
+    >
+      重新加载
+    </button>
+  </view>
+
+  <block wx:else>
+    <!-- 会员卡 -->
+    <view class="card {{loggedIn ? 'cardOn' : 'cardOff'}}">
+      <block wx:if="{{loggedIn && member}}">
+        <view class="card-avatar">{{avatarChar}}</view>
+        <view class="card-main">
+          <view class="card-name">{{member.nickname}}</view>
+          <view class="card-sub">入会 {{member.memberSince}}</view>
+        </view>
+        <view class="card-stat">
+          <view class="stat-num">{{member.orderCount}}</view>
+          <view class="stat-label">累计订单</view>
+        </view>
+      </block>
+      <block wx:else>
+        <view class="card-avatar card-avatar-off">会</view>
+        <view class="card-main">
+          <view class="card-name">{{enabled ? '注册成为会员' : '会员功能未开启'}}</view>
+          <view class="card-sub">{{enabled ? '一键授权，随时查看历史订单' : '请联系商家在系统配置中开启'}}</view>
+        </view>
+      </block>
+    </view>
+
+    <button
+      wx:if="{{enabled && !loggedIn}}"
+      class="btn-primary"
+      disabled="{{pending}}"
+      bindtap="onLogin"
+    >
+      {{pending ? '登录中…' : '微信一键注册成为会员'}}
+    </button>
+    <button
+      wx:if="{{loggedIn}}"
+      class="btn-ghost btn-logout"
+      bindtap="onLogout"
+    >
+      退出登录
+    </button>
+
+    <!-- 历史订单 -->
+    <view
+      wx:if="{{loggedIn}}"
+      class="sec"
+    >
+      <view class="sec-head">
+        <view class="sec-title">我的订单</view>
+        <view class="sec-sub">共 {{total}} 单</view>
+      </view>
+
+      <view
+        wx:if="{{orders.length === 0}}"
+        class="empty"
+      >
+        还没有订单，去点一单吧
+      </view>
+
+      <view
+        wx:for="{{orders}}"
+        wx:key="orderNo"
+        class="order"
+      >
+        <view class="order-top">
+          <view class="order-table">{{item.tableName}}</view>
+          <view class="tag {{item.statusClass}}">{{item.statusText}}</view>
+        </view>
+        <view class="order-mid">
+          <view class="order-no">{{item.orderNo}}</view>
+          <view
+            wx:if="{{item.pickupText}}"
+            class="order-pickup"
+          >
+            {{item.pickupText}}
+          </view>
+        </view>
+        <view class="order-bot">
+          <view class="order-time">{{item.timeText}}</view>
+          <view class="order-amt">¥{{item.amountText}}</view>
+        </view>
+      </view>
+
+      <button
+        wx:if="{{hasMore}}"
+        class="btn-ghost btn-more"
+        disabled="{{loadingMore}}"
+        bindtap="onLoadMore"
+      >
+        {{loadingMore ? '加载中…' : '加载更多'}}
+      </button>
+    </view>
+  </block>
+
+  <tab-bar
+    active="profile"
+    show-profile="{{enabled}}"
+  />
+</view>

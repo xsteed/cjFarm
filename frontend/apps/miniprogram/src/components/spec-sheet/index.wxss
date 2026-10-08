@@ -1,0 +1,208 @@
+.mask {
+  position: fixed;
+  /* 用四个方向的显式声明而不是 inset 简写：inset 要 iOS 14.5+ 才认，
+     老机型上会退化成「不拉伸的遮罩」，点击区域与视觉全歪。 */
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: rgb(0 0 0 / 45%);
+}
+
+/* ============================================================================
+   本组件是样式自包含的：小程序自定义组件默认样式隔离（isolated），
+   所以这里**不引用** app.wxss 的变量与类名，而是带自己用到的 token 副本。
+   这样组件内部的 .on / .sec / .ph 等类名不会与页面同名 class 互相干扰，
+   也不依赖「页面样式能否透进组件」这一不确定行为。
+   token 取值与 frontend/src/app.wxss 的 page 块保持一致。
+   ============================================================================ */
+.sheet {
+  --brand: #ff6b35;
+  --brand-deep: #f0481f;
+  --brand-soft: #fff1ea;
+  --ink: #1a1a1a;
+  --ink-2: #4a4a4a;
+  --ink-3: #8c8c8c;
+  --ink-4: #c7c7c7;
+  --line: #eee;
+  --r-sm: 16rpx;
+  --r-xl: 40rpx;
+
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  /* 底部安全区写在自身 padding 里（不使用全局 .safe-bottom 叠加，避免样式先后顺序不确定） */
+  padding-bottom: env(safe-area-inset-bottom);
+  background: #fff;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  overflow: hidden;
+  animation: slide-up 0.22s ease-out;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+.sheet-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 32rpx 32rpx 16rpx;
+}
+
+/* 菜名可能很长：单行省略（组件内自带，不依赖全局 .ellipsis —— 组件样式隔离，
+   全局类不会生效） */
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 34rpx;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sheet-close {
+  flex-shrink: 0;
+  width: 56rpx;
+  height: 56rpx;
+  margin-left: 16rpx;
+  border-radius: 50%;
+  background: #f5f5f5;
+  color: var(--ink-3);
+  font-size: 36rpx;
+  line-height: 56rpx;
+  text-align: center;
+}
+
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 32rpx;
+  /* scroll-view 默认 content-box：不加这行，左右 padding 会把内容挤出容器 */
+  box-sizing: border-box;
+}
+
+.sec {
+  padding: 20rpx 0;
+}
+
+.sec-title {
+  margin-bottom: 16rpx;
+  color: var(--ink-3);
+  font-size: 24rpx;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+
+.chip {
+  padding: 14rpx 28rpx;
+  border: 2rpx solid var(--line);
+  border-radius: var(--r-sm);
+  background: #fafafa;
+  color: var(--ink-2);
+  font-size: 26rpx;
+}
+
+.chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-weight: 600;
+}
+
+/* 售罄规格：灰显，点不动（onPickSpec / onConfirm 再各拦一道） */
+.chip.off {
+  border-color: #eee;
+  background: #f6f6f6;
+  color: var(--ink-4);
+}
+
+.chip-soldout {
+  margin-left: 8rpx;
+  color: var(--ink-4);
+  font-size: 22rpx;
+}
+
+.chip-price {
+  margin-left: 8rpx;
+  color: var(--ink-3);
+  font-size: 22rpx;
+}
+
+.chip.on .chip-price {
+  color: var(--brand-deep);
+}
+
+.sheet-input {
+  height: 84rpx;
+  padding: 0 24rpx;
+  border-radius: var(--r-sm);
+  background: #f7f7f7;
+  color: var(--ink);
+  font-size: 27rpx;
+}
+
+.ph {
+  color: var(--ink-4);
+  font-size: 26rpx;
+}
+
+.sheet-hint {
+  padding: 0 32rpx 12rpx;
+  color: var(--ink-3);
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.sheet-ft {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 24rpx;
+  padding: 20rpx 32rpx 24rpx;
+  border-top: 2rpx solid var(--line);
+}
+
+.ft-price {
+  color: var(--brand-deep);
+  font-size: 40rpx;
+  font-weight: 700;
+}
+
+/* 与 app.wxss 的 .cny 同款：组件内自持一份，不依赖外部样式 */
+.sp-cny {
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+/* 与 app.wxss 的 .btn-primary 同款（主按钮渐变 + 阴影） */
+.sp-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 88rpx;
+  padding: 0 56rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, #ff8a50 0%, #f0481f 100%);
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 600;
+  box-shadow: 0 8rpx 28rpx rgb(240 72 31 / 24%);
+}

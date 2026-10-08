@@ -1,3 +1,11 @@
 node_modules
 dist
 package-lock.json
+
+# 以下文件的格式由**生成器/工具**决定，纳入检查会与生成方互相改写（改完下次构建/保存又被覆盖）：
+#   components.d.ts                —— unplugin-vue-components 构建时生成（已实测：格式化后重新 build 会被覆盖回去）
+#   apps/miniprogram/project.config.json         —— 微信开发者工具保存设置时整份重写（工具不写行尾换行）
+#   apps/miniprogram/project.private.config.json —— 同上，且是开发者本地私有文件（已被小程序目录 .gitignore 排除）
+components.d.ts
+apps/miniprogram/project.config.json
+apps/miniprogram/project.private.config.json

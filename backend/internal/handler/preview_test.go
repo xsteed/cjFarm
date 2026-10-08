@@ -199,8 +199,8 @@ func TestPrintPreviewSampleHandler(t *testing.T) {
 	if !strings.Contains(joined, "未保存的口号") {
 		t.Fatalf("覆盖页脚应出现在示例预览中:\n%s", joined)
 	}
-	if strings.Contains(joined, "餐位费") {
-		t.Fatalf("showSeatFee=false 应隐藏餐位费行:\n%s", joined)
+	if strings.Contains(joined, "茶位费") {
+		t.Fatalf("showSeatFee=false 应隐藏茶位费行:\n%s", joined)
 	}
 	if !strings.Contains(joined, "【食客小票】") {
 		t.Fatalf("示例小票缺少标题:\n%s", joined)

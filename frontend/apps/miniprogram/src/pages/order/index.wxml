@@ -1,0 +1,169 @@
+<view class="page">
+  <view
+    wx:if="{{loading}}"
+    class="state"
+  >
+    <view class="spinner"></view>
+    <view class="state-text">正在加载订单…</view>
+  </view>
+
+  <view
+    wx:elif="{{error}}"
+    class="state"
+  >
+    <view class="err-icon">!</view>
+    <view class="state-text">{{error}}</view>
+    <view class="state-actions">
+      <!-- 网络类失败可以原地重试；「没有找到订单」这种再点多少次也没用，就不显示 -->
+      <view
+        wx:if="{{canRetry}}"
+        class="btn-primary"
+        bindtap="onRetry"
+      >
+        重试
+      </view>
+      <view
+        class="btn-ghost"
+        bindtap="onGoMenu"
+      >
+        去点菜
+      </view>
+    </view>
+  </view>
+
+  <block wx:else>
+    <scroll-view
+      class="body"
+      scroll-y
+      enhanced
+      show-scrollbar="{{false}}"
+    >
+      <!-- 订单概要 -->
+      <view class="card head">
+        <view class="head-top">
+          <view class="head-table">{{tableLabel}}</view>
+          <view class="head-top-right">
+            <view class="tag {{statusClass}}">{{statusText}}</view>
+            <view class="head-refresh" bindtap="onRefresh">刷新</view>
+          </view>
+        </view>
+        <view class="head-no">单号 {{shortNo}}</view>
+        <view class="head-meta">
+          <text>{{personCount}} 人用餐</text>
+          <text wx:if="{{createTimeText}}">{{createTimeText}}</text>
+        </view>
+        <view class="head-amt">
+          <text class="head-amt-label">合计</text>
+          <text class="head-amt-value"><text class="cny">¥</text>{{totalText}}</text>
+          <text class="tag {{payClass}}">{{payText}}</text>
+        </view>
+      </view>
+
+      <!-- 状态提示：只有「已取消 / 已完成 / 已结账」才出这张卡。
+           进行中的单这一格本来只有步骤条，去掉步骤条后就是张空白卡，直接整卡不渲染。 -->
+      <view
+        wx:if="{{canceled || done || settled}}"
+        class="card sec"
+      >
+        <block wx:if="{{canceled}}">
+          <view class="cancel-tip">
+            订单已取消<text wx:if="{{canceledReason}}">：{{canceledReason}}</text>
+          </view>
+        </block>
+        <block wx:else>
+          <view wx:if="{{done}}" class="done-tip">本单已完成，欢迎下次光临</view>
+          <view wx:elif="{{settled}}" class="done-tip">本单已结账，菜品仍在出餐中，请稍候</view>
+        </block>
+      </view>
+
+      <!-- 菜品 -->
+      <view class="card sec">
+        <view class="sec-title">菜品明细</view>
+        <view
+          wx:for="{{rows}}"
+          wx:key="key"
+          class="row"
+        >
+          <view class="row-main">
+            <view class="row-name">
+              <text wx:if="{{item.batchLabel}}" class="row-batch">{{item.batchLabel}}</text>
+              <text wx:if="{{item.isGift}}" class="row-gift">赠 </text>{{item.name}}<text wx:if="{{item.specName}}" class="row-spec">{{item.specName}}</text>
+            </view>
+            <view wx:if="{{item.itemRemark}}" class="row-remark">{{item.itemRemark}}</view>
+          </view>
+          <view class="row-qty">{{item.qtyText}}</view>
+          <view class="row-amt {{item.isGift ? 'rowAmtGift' : ''}}">{{item.isGift ? '赠' : '¥' + item.amountText}}</view>
+        </view>
+        <view
+          wx:if="{{orderRemark}}"
+          class="order-remark"
+        >
+          订单备注：{{orderRemark}}
+        </view>
+
+        <!-- 账单明细：合计比菜品明细多一截是顾客最常见的疑问，把加价项摊开 -->
+        <view class="bill">
+          <view class="bill-row">
+            <text>菜品小计</text>
+            <text>¥{{dishTotalText}}</text>
+          </view>
+          <view
+            wx:if="{{showSeatFee}}"
+            class="bill-row"
+          >
+            <text>茶位费</text>
+            <text>¥{{seatFeeText}}</text>
+          </view>
+          <view
+            wx:if="{{showDiscount}}"
+            class="bill-row bill-discount"
+          >
+            <text>满减优惠</text>
+            <text>-¥{{discountText}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="bottom-pad"></view>
+    </scroll-view>
+
+    <!-- 底部动作栏（刷新已移到右上角，避免窄屏下四个按钮挤成一行放不下） -->
+    <view class="foot">
+      <view
+        wx:if="{{canUrge}}"
+        class="btn-ghost foot-minor {{urgeCooldown > 0 ? 'dim' : ''}}"
+        bindtap="onUrge"
+      >
+        {{urgeCooldown > 0 ? urgeCooldown + 's 后可再催' : (urging ? '催菜中…' : '催菜')}}
+      </view>
+      <view
+        wx:if="{{canAppend}}"
+        class="btn-ghost foot-minor"
+        bindtap="onAppend"
+      >
+        加菜
+      </view>
+      <view
+        wx:if="{{canPay}}"
+        class="btn-primary foot-main"
+        bindtap="onPay"
+      >
+        去支付
+      </view>
+      <view
+        wx:elif="{{settled || done || canceled}}"
+        class="btn-primary foot-main"
+        bindtap="onNewOrder"
+      >
+        再点一单
+      </view>
+    </view>
+  </block>
+
+  <!-- 常驻底部主导航：加载中 / 「本桌没有进行中订单」的空态下也能切回点餐 -->
+  <tab-bar
+    active="order"
+    ordered-count="{{orderedCount}}"
+    show-profile="{{showProfile}}"
+  />
+</view>

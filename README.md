@@ -31,14 +31,25 @@ dining-system/
 ├── print-agent/            # 门店本地打印代理（独立 Go module，零依赖静态编译，跑在门店内网出站拉单后直发 9100）
 │   ├── agent.env.example   #   门店配置模板（复制为 agent.env 与程序同目录）
 │   └── deploy/             #   自启动物料：service(linux)/plist(macOS)/任务计划 xml(Windows)
-├── frontend/               # Vue 3 + TDesign 前端
-│   ├── vite.config.js      # 构建配置（assetsDir 对齐后端 /static）
-│   └── src/
-│       ├── api/index.js    # 全部接口封装 + 登录 + 鉴权拦截
-│       ├── router/index.js # 路由 + 登录守卫 + 权限守卫（按 meta.perm 过滤菜单）
-│       ├── utils/perm.js   # 登录态与权限点缓存（setAuth/hasPerm/refreshProfile）
-│       ├── layout/AdminLayout.vue
-│       └── views/          # 登录页 + 13 个管理页（含员工、角色）+ 顾客点餐页 + 打印页
+├── frontend/               # npm workspaces 单仓库（一次构建、产物仍是单一 dist）
+│   ├── vite.config.ts      # 构建配置（assetsDir 对齐后端 /static；别名见 aliases.ts）
+│   ├── aliases.ts          # 工作区别名唯一来源（vite / vitest 共用）
+│   ├── src/                # Web shell：入口 + 路由装配 + 全局守卫 + 图标/样式
+│   │   ├── main.ts         #   创建应用、注册图标与全局 $money、注入 UI 通知实现
+│   │   └── router/index.ts #   拼接两端路由（顾客端 + 管理端）+ 登录/权限守卫
+│   ├── apps/
+│   │   ├── admin/          # 管理端：layout（侧栏）+ views（13 个管理页）+ components
+│   │   │   └── src/routes.ts / menu.ts   # 路由表与侧栏菜单派生（菜单由路由表筛出）
+│   │   ├── customer/       # 顾客点餐端（H5）：OrderPage + order/* + 打印票据页
+│   │   │   └── src/routes.ts             # /order/:tableId、/printTicket（公开）
+│   │   └── miniprogram/    # 微信小程序顾客端（独立工程：原生小程序 + esbuild，见 docs/miniprogram.md）
+│   │       └── src/        #   pages/ components/ api/ store/；复用 packages，不复用 UI
+│   └── packages/           # 跨端可复用层（不依赖 TDesign，H5 与小程序共用）
+│       ├── types/          #   后端接口契约（实体 + 分页/响应包装类型）
+│       ├── shared/         #   存储键/安全存储/金额/字典/状态码 + UI 通知适配器
+│       ├── api/            #   全部接口封装 + axios 拦截器（含登录态注入）
+│       ├── auth/           #   登录态与权限点缓存（setAuth/hasPerm/refreshProfile）
+│       └── customer-core/  #   顾客端业务逻辑（购物车/轮询/催菜/可见性适配器）
 ├── deploy/                 # 部署物料
 │   ├── deploy.sh           # 服务器端部署/更新（自动识别首次安装或覆盖更新）
 │   ├── setup-nginx.sh      # Nginx 配置一键生成（server_name/HTTPS/校验/回滚/重载）
@@ -136,6 +147,23 @@ cd frontend
 npm run build     # 产物输出到 frontend/dist/static（assetsDir 已对齐后端 /static）
 # 后端会自动检测 frontend/dist 并静态托管，访问 http://localhost:8080 即可
 ```
+
+### 4. 微信小程序顾客端（独立工程）
+
+代码在 `frontend/apps/miniprogram/`，用 esbuild 把 TS 打成小程序产物，**复用** `packages/*`
+（接口层 `@dining/api` 一行未改，靠一个 axios 的 `wx.request` 适配器接上），**不复用** UI。
+
+```bash
+cd frontend
+npm run mp:build     # 构建到 apps/miniprogram/dist
+npm run mp:dev       # 构建并监听
+npm run mp:verify    # 类型检查 + lint + WXML/WXSS 审计 + 单测 + 产物冒烟（在无 DOM 宿主里执行产物）
+```
+
+然后用微信开发者工具「导入项目」指向 `frontend/apps/miniprogram/`。
+
+> ⚠️ 当前只是**第一版实现，不能直接上线**：还需要 HTTPS 备案域名 + 合法域名白名单（AppID 已配置），
+> 在线支付（JSAPI）与订阅消息尚未接入。**完整清单见 [`docs/miniprogram.md`](docs/miniprogram.md)。**
 
 ## 后端打包（Makefile）
 

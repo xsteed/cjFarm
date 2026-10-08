@@ -1,0 +1,138 @@
+<view class="page">
+  <scroll-view
+    class="body"
+    scroll-y
+    enhanced
+    show-scrollbar="{{false}}"
+  >
+    <!-- 空态 -->
+    <view
+      wx:if="{{!rows.length}}"
+      class="empty"
+    >
+      <view class="empty-title">购物车还是空的</view>
+      <view class="btn-primary empty-btn" bindtap="onBackToMenu">去点菜</view>
+    </view>
+
+    <block wx:else>
+      <view
+        wx:if="{{appendMode}}"
+        class="notice"
+      >
+        本桌已有进行中的订单，本次提交将作为「加菜」并入该单。
+      </view>
+
+      <!-- 菜品清单 -->
+      <view class="card sec">
+        <view class="sec-hd">
+          <text class="sec-title">已选菜品</text>
+          <text class="sec-action" bindtap="onClear">清空</text>
+        </view>
+        <view
+          wx:for="{{rows}}"
+          wx:key="key"
+          class="line"
+        >
+          <view class="line-main">
+            <view class="line-name">
+              {{item.dishName}}<text wx:if="{{item.specName}}" class="line-spec">{{item.specName}}</text>
+            </view>
+            <view
+              class="line-remark"
+              data-key="{{item.key}}"
+              catchtap="onEditRemark"
+            >
+              <text wx:if="{{item.itemRemark}}">备注：{{item.itemRemark}}</text>
+              <text wx:else class="line-remark-add">+ 添加备注</text>
+            </view>
+            <view class="line-bottom">
+              <text class="line-price">¥{{item.priceText}}</text>
+              <text class="line-del" data-key="{{item.key}}" catchtap="onRemove">移除</text>
+            </view>
+          </view>
+          <view class="line-right">
+            <view class="stepper">
+              <view class="step dec" data-key="{{item.key}}" bindtap="onDec"></view>
+              <view class="step-num">{{item.quantity}}</view>
+              <view class="step inc" data-key="{{item.key}}" bindtap="onInc"></view>
+            </view>
+            <view class="line-amount">¥{{item.amountText}}</view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 就餐信息 -->
+      <view class="card sec">
+        <view class="row">
+          <text class="row-label">就餐人数</text>
+          <view class="stepper">
+            <view class="step dec" data-delta="-1" bindtap="onPerson"></view>
+            <view class="step-num">{{personCount}}</view>
+            <view class="step inc" data-delta="1" bindtap="onPerson"></view>
+          </view>
+        </view>
+        <!-- 加菜复用已有订单，后端 append 接口不接受整单备注 → 直接隐藏，避免「填了却被丢弃」 -->
+        <view
+          wx:if="{{!appendMode}}"
+          class="row row-col"
+        >
+          <text class="row-label">订单备注</text>
+          <input
+            class="remark-input"
+            value="{{orderRemark}}"
+            placeholder="如：有老人小孩，少放辣"
+            placeholder-class="ph"
+            maxlength="100"
+            bindinput="onRemarkInput"
+          />
+        </view>
+      </view>
+
+      <!-- 金额明细 -->
+      <view class="card sec">
+        <view class="amt-row">
+          <text>菜品小计</text>
+          <text>¥{{dishTotalText}}</text>
+        </view>
+        <view
+          wx:if="{{showSeatFee}}"
+          class="amt-row"
+        >
+          <text>茶位费</text>
+          <text>¥{{seatFeeText}}</text>
+        </view>
+        <view
+          wx:if="{{showDiscount}}"
+          class="amt-row discount"
+        >
+          <text>满减优惠</text>
+          <text>-¥{{discountText}}</text>
+        </view>
+        <view class="amt-row total">
+          <text>合计</text>
+          <text class="price">¥{{totalText}}</text>
+        </view>
+        <view class="amt-tip">最终金额以门店结算为准</view>
+      </view>
+
+      <view class="bottom-pad"></view>
+    </block>
+  </scroll-view>
+
+  <!-- 底部提交栏 -->
+  <view
+    wx:if="{{rows.length}}"
+    class="foot"
+  >
+    <view class="foot-sum">
+      <text class="foot-label">合计</text>
+      <text class="foot-money"><text class="cny">¥</text>{{totalText}}</text>
+    </view>
+    <view
+      class="btn-primary foot-btn {{submitting ? 'dim' : ''}}"
+      bindtap="onSubmit"
+    >
+      {{submitting ? '提交中…' : submitText}}
+    </view>
+  </view>
+</view>

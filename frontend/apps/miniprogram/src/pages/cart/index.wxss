@@ -1,0 +1,319 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  padding: 20rpx 24rpx 0;
+  box-sizing: border-box;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32rpx;
+  padding-top: 200rpx;
+}
+
+.empty-title {
+  color: var(--ink-3);
+  font-size: 28rpx;
+}
+
+.empty-btn {
+  height: 76rpx;
+  padding: 0 56rpx;
+}
+
+.notice {
+  margin-bottom: 20rpx;
+  padding: 20rpx 24rpx;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.sec {
+  margin-bottom: 20rpx;
+  padding: 24rpx;
+}
+
+.sec-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.sec-title {
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.sec-action {
+  color: var(--ink-3);
+  font-size: 24rpx;
+  padding: 8rpx 4rpx;
+}
+
+/* ---------- 菜品行 ---------- */
+/* 左信息 / 右步进器 用 flex 分行，不用绝对定位：绝对定位时「移除」会盖在金额上，
+   且行高随备注行数变化时更容易错位。 */
+.line {
+  display: flex;
+  align-items: flex-start;
+  gap: 20rpx;
+  padding: 22rpx 0;
+  border-top: 2rpx solid #f5f5f5;
+}
+
+.line-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.line-name {
+  color: var(--ink);
+  font-size: 29rpx;
+  font-weight: 600;
+}
+
+.line-spec {
+  margin-left: 12rpx;
+  padding: 2rpx 12rpx;
+  border-radius: var(--r-sm);
+  background: #f4f4f4;
+  color: var(--ink-3);
+  font-size: 21rpx;
+  font-weight: 400;
+}
+
+.line-remark {
+  margin-top: 8rpx;
+  color: var(--warning);
+  font-size: 23rpx;
+  line-height: 1.5;
+}
+
+/* 还没填备注时显示「+ 添加备注」：整行可点，点开就地编辑 */
+.line-remark-add {
+  color: var(--ink-4);
+}
+
+.line-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10rpx;
+}
+
+.line-price {
+  color: var(--ink-3);
+  font-size: 24rpx;
+}
+
+.line-del {
+  padding: 6rpx 8rpx;
+  color: var(--ink-4);
+  font-size: 22rpx;
+}
+
+.line-right {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14rpx;
+}
+
+.line-amount {
+  color: var(--brand-deep);
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+/* ---------- 份数步进器 ----------
+   加减号与点餐页一致：不写进文本，用 CSS 画的圆角短棒 + currentColor，
+   否则字体的 −/+ 跟着基线走，各机型上下偏心；直径也走同一个 --ops-btn，
+   两边（点餐页 / 购物车页）的按钮长得一模一样。 */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.step {
+  position: relative;
+  flex-shrink: 0;
+  width: var(--ops-btn);
+  height: var(--ops-btn);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+/* 横棒：加减共用，50% + 负 margin 保证圆心对齐 */
+.step::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24rpx;
+  height: 4rpx;
+  margin: -2rpx 0 0 -12rpx;
+  border-radius: 2rpx;
+  background: currentColor;
+  content: '';
+}
+
+/* 竖棒：只给加号，与横棒交叉成「+」 */
+.step.inc::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4rpx;
+  height: 24rpx;
+  margin: -12rpx 0 0 -2rpx;
+  border-radius: 2rpx;
+  background: currentColor;
+  content: '';
+}
+
+/* 减号：与点餐页的 .st-minus 同款（白底 + 品牌色笔画），
+   原来用灰笔画配灰描边，在白卡片上几乎看不出是个按钮 */
+.step.dec {
+  border: 2rpx solid #ffd5c4;
+  background: #fff;
+  color: var(--brand);
+}
+
+.step.inc {
+  background: var(--grad-brand-soft);
+  color: #fff;
+}
+
+/* 数字槽：两位数的份数也放得下；配合 .stepper 的 8rpx gap，
+   整条步进器的宽度和改版前（52 + 60 + 52 = 164rpx）基本持平 */
+.step-num {
+  min-width: 44rpx;
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ---------- 信息行 ---------- */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18rpx 0;
+  border-top: 2rpx solid #f5f5f5;
+}
+
+.row-col {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 14rpx;
+}
+
+.row-label {
+  color: var(--ink-2);
+  font-size: 27rpx;
+}
+
+.remark-input {
+  width: 100%;
+  height: 80rpx;
+  padding: 0 20rpx;
+  border-radius: var(--r-sm);
+  background: #f7f7f7;
+  color: var(--ink);
+  font-size: 26rpx;
+  box-sizing: border-box;
+}
+
+.ph {
+  color: var(--ink-4);
+  font-size: 25rpx;
+}
+
+/* ---------- 金额明细 ---------- */
+.amt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12rpx 0;
+  color: var(--ink-2);
+  font-size: 26rpx;
+}
+
+.amt-row.discount {
+  color: var(--success);
+}
+
+.amt-row.total {
+  margin-top: 8rpx;
+  padding-top: 20rpx;
+  border-top: 2rpx dashed var(--line);
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.amt-row.total .price {
+  font-size: 34rpx;
+}
+
+.amt-tip {
+  margin-top: 8rpx;
+  color: var(--ink-4);
+  font-size: 22rpx;
+}
+
+/* ---------- 底部提交 ---------- */
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 24rpx;
+  padding: 20rpx 32rpx;
+  /* 安全区写在自身 padding 里（不要与全局 .safe-bottom 组合，页面样式会覆盖掉它） */
+  padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
+  border-top: 2rpx solid var(--line);
+  background: #fff;
+}
+
+.foot-sum {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+}
+
+.foot-label {
+  color: var(--ink-3);
+  font-size: 24rpx;
+}
+
+.foot-money {
+  color: var(--brand-deep);
+  font-size: 42rpx;
+  font-weight: 700;
+}
+
+.foot-btn {
+  height: 84rpx;
+  padding: 0 56rpx;
+}
+
+.bottom-pad {
+  height: 40rpx;
+}

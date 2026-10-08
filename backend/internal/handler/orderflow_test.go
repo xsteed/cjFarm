@@ -177,7 +177,7 @@ func TestCustomerCreateOrderRejectsDuplicateActiveOrder(t *testing.T) {
 	}
 	// 同桌第二单(模拟双击/重复提交)被拒。
 	res = callHandler(t, CustomerCreateOrder, body)
-	if res["code"] != float64(400) || !strings.Contains(res["msg"].(string), "进行中的订单") {
+	if res["code"] != float64(400) || !strings.Contains(res["msg"].(string), "未结账的订单") {
 		t.Fatalf("重复开单应被拒绝, got %v", res)
 	}
 }

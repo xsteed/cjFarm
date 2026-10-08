@@ -160,7 +160,7 @@ func RecordMismatchedPayment(orderID int, orderNo, channel string, paidCents, ex
 	reason := fmt.Sprintf("金额不一致:渠道实收¥%.2f/系统应收¥%.2f,未入账,请人工核对", po.ToYuan(paidCents), po.ToYuan(expectCents))
 	if _, err := dao.InsertRefund(po.Refund{
 		OrderID: orderID, OrderNo: orderNo, PaymentID: 0,
-		RefundNo: "M" + GenOrderNo()[1:], Channel: channel,
+		RefundNo: GenRefundNo(RefundNoManual), Channel: channel,
 		ChannelRefundNo: channelTradeNo, Amount: paidCents,
 		Status: po.RefundStatusFail, Reason: reason, Operator: "system",
 	}); err != nil {
@@ -184,7 +184,7 @@ func HasPendingDuplicateRefund(orderNo, channel string) (refundID int, refundNo 
 func RecordDuplicateRefund(orderID int, orderNo, channel string, amountCents int64, channelTradeNo string) (refundNo string, refundID, paymentID int, totalCents int64, err error) {
 	paymentID, _, _, _ = dao.GetPayment(orderNo, channel)
 	_, _, _, totalCents, _ = dao.GetOrderAmount(orderNo)
-	refundNo = "R" + GenOrderNo()[1:]
+	refundNo = GenRefundNo(RefundNoRefund)
 	refundID, err = dao.InsertRefund(po.Refund{
 		OrderID: orderID, OrderNo: orderNo, PaymentID: paymentID,
 		RefundNo: refundNo, Channel: channel, ChannelRefundNo: channelTradeNo,
@@ -250,7 +250,7 @@ func RefundAmount(orderNo string, totalCents int64, amountYuan float64) (int64, 
 // 这里用 dao.TouchOrderTx 对订单行做自赋值 UPDATE 取行写锁,把同一订单的额度校验与
 // 退款单落库在 DB 行上串行化,消除 check-then-act 竞态 —— refundMu 仍保留为第一道防线。
 func CreateRefund(orderID int, orderNo string, paymentID int, channel string, totalCents int64, amountYuan float64, reason, operator string) (refundNo string, refundID int, refundCents int64, err error) {
-	refundNo = "R" + GenOrderNo()[1:]
+	refundNo = GenRefundNo(RefundNoRefund)
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 先取订单行写锁,使后续「重查已退额度」读到的是串行化后的最新值。
 		if err := dao.TouchOrderTx(tx, orderID); err != nil {
