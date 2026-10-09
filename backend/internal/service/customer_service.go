@@ -34,6 +34,10 @@ var ErrActiveOrderDuplicate = errors.New("该桌台已有未结账的订单，�
 // 直接返回首次结果,不再重复下单/加菜。仅在事务内部使用,不对外透出。
 var errDuplicateRequest = errors.New("重复请求")
 
+// ErrTableUnavailable 桌台被店员人工停用/预约时,拒绝顾客新点餐。
+// 与 ErrActiveOrderDuplicate 一样是面向顾客的业务提示,应原样透出(提示联系店员)。
+var ErrTableUnavailable = errors.New("该桌台暂不可用或已被预订，如需用餐请联系店员")
+
 // orderItemsFromPO 将持久化订单明细批量转为 API 出参。
 func orderItemsFromPO(poItems []po.OrderItem) []dto.OrderItem {
 	items := make([]dto.OrderItem, 0, len(poItems))
@@ -214,6 +218,10 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 	if err != nil {
 		return CustomerCreateOrderResult{}, errors.New("桌台不存在")
 	}
+	// 人工停用/预约的桌台拒绝新点餐(事务内 OccupyTableTx 还会再兜底校验一次,防并发漏判)。
+	if lockStatus, _, err := dao.GetTableLock(tableID); err == nil && lockStatus != po.TableLockNormal {
+		return CustomerCreateOrderResult{}, ErrTableUnavailable
+	}
 
 	resolved, err := ResolveOrderItems(items)
 	if err != nil {
@@ -238,6 +246,9 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 		// 使下面的「已有进行中订单」检查不再有 check-then-act 竞态窗口。
 		n, err := dao.OccupyTableTx(tx, tableID)
 		if err != nil {
+			if errors.Is(err, dao.ErrTableLocked) {
+				return ErrTableUnavailable
+			}
 			return err
 		}
 		if n == 0 {
@@ -289,6 +300,9 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 			return customerCreateOrderFromExistingID(existingOrderID)
 		}
 		if errors.Is(err, ErrActiveOrderDuplicate) {
+			return CustomerCreateOrderResult{}, err
+		}
+		if errors.Is(err, ErrTableUnavailable) {
 			return CustomerCreateOrderResult{}, err
 		}
 		if errors.Is(err, dao.ErrSoldOut) {

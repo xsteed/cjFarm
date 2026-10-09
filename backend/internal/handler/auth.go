@@ -105,9 +105,9 @@ func AdminLogin(c *gin.Context) {
 	var p struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
-		// 记住我(免登录):勾选后后端签发一条 7/30 天有效的令牌返回给前端。
+		// 记住我(免登录):勾选后后端签发一条 7/30 天或永久有效的令牌返回给前端。
 		Remember bool `json:"remember"`
-		Days     int  `json:"days"` // 仅当 Remember 为 true 时生效,1=7天 2=30天(下方归一为 7/30)
+		Days     int  `json:"days"` // 仅当 Remember 为 true 时生效,7=7天 30=30天 36500=永久(服务层归一)
 	}
 	if err := c.ShouldBindJSON(&p); err != nil {
 		fail(c, "参数错误")

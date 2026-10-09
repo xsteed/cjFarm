@@ -53,6 +53,12 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 	return total, list, dao.PendingUrgeOrderIDs(), nil
 }
 
+// ListOrderBatchCounts 批量统计订单的加菜批次数,供订单列表展示「加菜」角标。
+// 一次 IN 查询覆盖整页;失败的订单不在返回 map 中,前端按「未加菜」处理。
+func ListOrderBatchCounts(orderIDs []int) map[int]int {
+	return dao.CountOrderBatches(orderIDs)
+}
+
 // GetOrder 读取订单详情:返回订单、明细与待处理催菜标记。
 func GetOrder(orderID int) (po.Order, []po.OrderItem, bool, error) {
 	o, err := dao.GetOrderByID(orderID)

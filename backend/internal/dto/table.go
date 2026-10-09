@@ -5,11 +5,15 @@ import "dining-system/internal/po"
 
 // Table 对应 tb_table 表(API 出参)。
 type Table struct {
-	TableID    int     `json:"tableId"`
-	TableNo    string  `json:"tableNo"`
-	TableName  string  `json:"tableName"`
-	Capacity   int     `json:"capacity"`
-	Status     int     `json:"status"` // 0 空闲 1 占用
+	TableID   int    `json:"tableId"`
+	TableNo   string `json:"tableNo"`
+	TableName string `json:"tableName"`
+	Capacity  int    `json:"capacity"`
+	Status    int    `json:"status"` // 0 空闲 1 占用(订单自动流转)
+	// LockStatus/LockRemark 人工可用性状态:0 正常 1 停用 2 预约;与占用状态正交,
+	// 非 0 时顾客端拒绝新点餐。
+	LockStatus int     `json:"lockStatus"`
+	LockRemark string  `json:"lockRemark"`
 	SortOrder  int     `json:"sortOrder"`
 	DelFlag    string  `json:"delFlag"`
 	CreateBy   string  `json:"createBy"`
@@ -28,6 +32,8 @@ func FromTable(p po.Table) Table {
 		TableName:  p.TableName,
 		Capacity:   p.Capacity,
 		Status:     p.Status,
+		LockStatus: p.LockStatus,
+		LockRemark: p.LockRemark,
 		SortOrder:  p.SortOrder,
 		DelFlag:    p.DelFlag,
 		CreateBy:   p.CreateBy,
@@ -47,6 +53,8 @@ func (t Table) ToPO() po.Table {
 		TableName:  t.TableName,
 		Capacity:   t.Capacity,
 		Status:     t.Status,
+		LockStatus: t.LockStatus,
+		LockRemark: t.LockRemark,
 		SortOrder:  t.SortOrder,
 		DelFlag:    t.DelFlag,
 		CreateBy:   t.CreateBy,

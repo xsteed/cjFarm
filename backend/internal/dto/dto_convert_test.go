@@ -2,6 +2,7 @@ package dto
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"dining-system/internal/po"
@@ -55,6 +56,47 @@ func TestDtoSpecMapping(t *testing.T) {
 	}
 	if got := want.ToPO(); !reflect.DeepEqual(got, p) {
 		t.Errorf("ToPO() = %+v, want %+v", got, p)
+	}
+}
+
+// TestFromOrderCustomerCancelReason 校验顾客端取消原因的「可展示性」收口。
+//
+// 背景:顾客端 H5 与小程序都有「订单已取消：<原因>」这一行,但出参层曾把 CancelReason 一律清空,
+// 于是这行永远是空的(顾客只看到「已取消」)。修复后按三条规则处理:
+//  1. 空 / 通用标签「商家取消」 → 置空,由前端给标准提示(未支付、不产生费用);
+//  2. 真实原因(如「菜品售罄」) → 去空白后原样下发;
+//  3. 超长文本 → 按字符截断,避免整段内部备注出现在顾客手机上。
+func TestFromOrderCustomerCancelReason(t *testing.T) {
+	long := strings.Repeat("备注", 30) // 60 字符
+	cases := []struct {
+		name     string
+		in       string
+		want     string
+		wantFull string
+	}{
+		{"空原因", "", "", ""},
+		{"通用标签不含信息", "商家取消", "", "商家取消"},
+		{"真实原因原样下发", "菜品售罄", "菜品售罄", "菜品售罄"},
+		{"去首尾空白", "  顾客要求取消  ", "顾客要求取消", "  顾客要求取消  "},
+		{"超长截断到 40 字符", long, string([]rune(long)[:40]), long},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := po.Order{OrderID: 1, OrderNo: "D001", OrderStatus: 5, CancelReason: c.in, CreateBy: "internal", UpdateBy: "internal"}
+			got := FromOrderCustomer(p, nil, false)
+			if got.CancelReason != c.want {
+				t.Errorf("顾客端 CancelReason = %q, want %q", got.CancelReason, c.want)
+			}
+			// 敏感字段仍然剥离
+			if got.CreateBy != "" || got.UpdateBy != "" || got.TransactionID != "" || got.SettleOperator != "" {
+				t.Errorf("内部字段应被剥离, got %+v", got)
+			}
+			// 管理端口径不受影响:原因原样保留
+			if admin := FromOrder(p, nil, false); admin.CancelReason != c.wantFull {
+				t.Errorf("管理端 CancelReason = %q, want %q", admin.CancelReason, c.wantFull)
+			}
+		})
 	}
 }
 

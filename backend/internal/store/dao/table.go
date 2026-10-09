@@ -2,20 +2,24 @@ package dao
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 
 	"dining-system/internal/po"
 	"dining-system/internal/store"
 )
 
+// ErrTableLocked 表示桌台被人工停用或预约,拒绝占用(新点餐)。
+var ErrTableLocked = errors.New("table locked")
+
 // TableCols 桌台表完整列(与 ScanTable 顺序一一对应)。
-const TableCols = `table_id, table_no, table_name, capacity, status, sort_order, del_flag,
+const TableCols = `table_id, table_no, table_name, capacity, status, lock_status, lock_remark, sort_order, del_flag,
 	create_by, create_time, update_by, update_time, remark, table_code`
 
 // ScanTable 扫描一行桌台记录。
 func ScanTable(rows interface{ Scan(...interface{}) error }) (po.Table, error) {
 	var t po.Table
-	err := rows.Scan(&t.TableID, &t.TableNo, &t.TableName, &t.Capacity, &t.Status, &t.SortOrder, &t.DelFlag,
+	err := rows.Scan(&t.TableID, &t.TableNo, &t.TableName, &t.Capacity, &t.Status, &t.LockStatus, &t.LockRemark, &t.SortOrder, &t.DelFlag,
 		&t.CreateBy, &t.CreateTime, &t.UpdateBy, &t.UpdateTime, &t.Remark, &t.TableCode)
 	return t, err
 }
@@ -30,27 +34,32 @@ func SetTableStatusTx(tx *sql.Tx, tableID, status int) error {
 	return err
 }
 
-// OccupyTableTx 在事务中占用桌台,带未删除守卫;返回受影响行数(0 表示桌台不存在)。
-// 与 SetTableStatusTx 的区别:并发下单场景要求「桌台存在且未删除」才允许占用,
+// OccupyTableTx 在事务中占用桌台,带未删除与「未被人工停用/预约」守卫;返回受影响行数
+// (0 表示桌台不存在)。桌台被停用/预约时返回 ErrTableLocked。
+//
+// 与 SetTableStatusTx 的区别:并发下单场景要求「桌台存在、未删除且 lock_status=0」才允许占用,
 // 同时利用该 UPDATE 在 MySQL/SQLite 上先取行写锁,把同一桌台的并发下单串行化。
 //
 // MySQL 未开启 clientFoundRows 时,no-op UPDATE 会返回 0 受影响行数(桌台已是占用态),
-// 与「桌台不存在」无法区分;这里在 n==0 时回查存在性,存在则视为占用成功,
-// 避免同秒重复下单被误报为「桌台不存在」。
+// 与「桌台不存在」无法区分;这里在 n==0 时回查存在性与 lock_status,据实区分三种结果。
 func OccupyTableTx(tx *sql.Tx, tableID int) (int64, error) {
-	res, err := tx.Exec(`UPDATE tb_table SET status=1, update_time=? WHERE table_id=? AND del_flag='0'`, store.Now(), tableID)
+	res, err := tx.Exec(`UPDATE tb_table SET status=1, update_time=? WHERE table_id=? AND del_flag='0' AND lock_status=0`, store.Now(), tableID)
 	if err != nil {
 		return 0, err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		return n, nil
 	}
-	var exists int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM tb_table WHERE table_id=? AND del_flag='0'`, tableID).Scan(&exists); err != nil {
+	var exists, lockStatus int
+	if err := tx.QueryRow(`SELECT COUNT(*), COALESCE(MAX(lock_status),0) FROM tb_table WHERE table_id=? AND del_flag='0'`, tableID).
+		Scan(&exists, &lockStatus); err != nil {
 		return 0, err
 	}
 	if exists == 0 {
 		return 0, nil
+	}
+	if lockStatus != po.TableLockNormal {
+		return 0, ErrTableLocked
 	}
 	return 1, nil
 }
@@ -123,10 +132,17 @@ func GetTableNoName(tableID int) (tableNo, tableName string, err error) {
 	return
 }
 
+// GetTableLock 查询桌台人工状态(lock_status)与备注;桌台不存在时返回 sql.ErrNoRows。
+func GetTableLock(tableID int) (lockStatus int, lockRemark string, err error) {
+	err = store.DB.QueryRow(`SELECT lock_status, COALESCE(lock_remark,'') FROM tb_table WHERE table_id=? AND del_flag='0'`, tableID).
+		Scan(&lockStatus, &lockRemark)
+	return
+}
+
 // InsertTable 新增桌台并返回主键 ID。
 func InsertTable(t po.Table) (int64, error) {
-	res, err := store.DB.Exec(`INSERT INTO tb_table(table_no, table_name, capacity, status, sort_order, del_flag, table_code, create_time, update_time)
-		VALUES(?,?,?,?,?,?,?,?,?)`, t.TableNo, t.TableName, t.Capacity, t.Status, t.SortOrder, "0", store.NewUniqueTableCode(), store.Now(), store.Now())
+	res, err := store.DB.Exec(`INSERT INTO tb_table(table_no, table_name, capacity, status, lock_status, lock_remark, sort_order, del_flag, table_code, create_time, update_time)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, t.TableNo, t.TableName, t.Capacity, t.Status, t.LockStatus, t.LockRemark, t.SortOrder, "0", store.NewUniqueTableCode(), store.Now(), store.Now())
 	if err != nil {
 		return 0, err
 	}
@@ -138,10 +154,21 @@ func InsertTable(t po.Table) (int64, error) {
 	return id, nil
 }
 
-// UpdateTable 更新桌台基础信息。
+// UpdateTable 更新桌台基础信息(桌号/桌名/容纳人数/排序)。
+//
+// 刻意不更新 status:占用状态由订单流转自动维护,后台编辑表单并不提交该字段,
+// 若在此覆盖会把正在用餐的桌台「改」成空闲,导致看板丢单。
+// 人工可用性状态(lock_status/lock_remark)统一走 SetTableLock,便于单独加业务守卫。
 func UpdateTable(t po.Table) error {
-	_, err := store.DB.Exec(`UPDATE tb_table SET table_no=?, table_name=?, capacity=?, status=?, sort_order=?, update_time=? WHERE table_id=?`,
-		t.TableNo, t.TableName, t.Capacity, t.Status, t.SortOrder, store.Now(), t.TableID)
+	_, err := store.DB.Exec(`UPDATE tb_table SET table_no=?, table_name=?, capacity=?, sort_order=?, update_time=? WHERE table_id=?`,
+		t.TableNo, t.TableName, t.Capacity, t.SortOrder, store.Now(), t.TableID)
+	return err
+}
+
+// SetTableLock 更新桌台人工状态(lock_status/lock_remark),幂等。
+func SetTableLock(id, lockStatus int, lockRemark string) error {
+	_, err := store.DB.Exec(`UPDATE tb_table SET lock_status=?, lock_remark=?, update_time=? WHERE table_id=?`,
+		lockStatus, lockRemark, store.Now(), id)
 	return err
 }
 

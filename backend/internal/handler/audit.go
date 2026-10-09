@@ -66,6 +66,7 @@ var routeAudit = map[string]auditMeta{
 	// ---- 基础资料 ----
 	"POST /api/admin/table/save":      {Module: "桌台管理", Action: "新增桌台", Type: po.OperTypeInsert, Target: "table"},
 	"POST /api/admin/table/update":    {Module: "桌台管理", Action: "修改桌台", Type: po.OperTypeUpdate, Target: "table", IDKey: "tableId"},
+	"POST /api/admin/table/lock":      {Module: "桌台管理", Action: "变更桌台状态", Type: po.OperTypeUpdate, Target: "table", IDKey: "tableId"},
 	"DELETE /api/admin/table/:id":     {Module: "桌台管理", Action: "删除桌台", Type: po.OperTypeDelete, Target: "table", IDKey: "id"},
 	"POST /api/admin/category/save":   {Module: "分类管理", Action: "新增分类", Type: po.OperTypeInsert, Target: "category"},
 	"POST /api/admin/category/update": {Module: "分类管理", Action: "修改分类", Type: po.OperTypeUpdate, Target: "category", IDKey: "categoryId"},

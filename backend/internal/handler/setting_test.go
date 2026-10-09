@@ -215,7 +215,7 @@ func TestManagedSettingKeysComplete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := dto.Settings{
-		ShopName: "键集测试", ShopLogo: "/uploads/logo.png", H5BaseURL: "http://h.example",
+		ShopName: "键集测试", ShopSlogan: "标语测试", ShopLogo: "/uploads/logo.png", H5BaseURL: "http://h.example",
 		SeatFeeEnabled: "1", SeatFee: "9",
 		PromotionEnabled: "1", PromotionThreshold: "100", PromotionDiscount: "10",
 		PayQrWx: "/uploads/wx.png", PayQrAli: "/uploads/ali.png",
@@ -226,6 +226,9 @@ func TestManagedSettingKeysComplete(t *testing.T) {
 		AlipayAppid: "alappid-x", AlipayPrivateKeyPath: "/ak.pem", AlipayPublicKey: "alpub-x", AlipayNotifyURL: "http://an.example/cb",
 		PrintEnabled: "1", PrintKitchenShowPrice: "1",
 		PrintGuestFooter: "页脚测试", PrintGuestShowSeatFee: "1", PrintGuestShowDiscount: "1",
+		// 顾客小票二维码/加菜出票/下单出票:后加入的受管键,fixture 必须同步覆盖,
+		// 否则这些键保存后仍为空,乐观锁指纹对它们存在盲区(见本测试的守护说明)。
+		PrintGuestQR: "1", PrintGuestOnAppend: "1", PrintGuestOnOrder: "1",
 		FeieUser: "feie-user", FeieApiURL: "http://feie.example/api",
 		AgentLatestVersion: "1.0.0",
 		WxCodeEnvVersion:   "release",

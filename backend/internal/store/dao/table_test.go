@@ -2,6 +2,7 @@ package dao
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -164,6 +165,53 @@ func TestOccupyTableTx(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("不存在桌台应返回 0, got %d", n)
+	}
+}
+
+func TestSetTableLockRoundTrip(t *testing.T) {
+	tableDaoInitDB(t)
+	id, err := InsertTable(po.Table{TableNo: "52", TableName: "锁定桌", Capacity: 2, SortOrder: 1})
+	if err != nil {
+		t.Fatalf("新增桌台失败: %v", err)
+	}
+
+	if err := SetTableLock(int(id), po.TableLockReserved, "张先生 18:00"); err != nil {
+		t.Fatalf("设置桌台状态失败: %v", err)
+	}
+	lockStatus, remark, err := GetTableLock(int(id))
+	if err != nil {
+		t.Fatalf("读取桌台状态失败: %v", err)
+	}
+	if lockStatus != po.TableLockReserved || remark != "张先生 18:00" {
+		t.Fatalf("桌台状态未生效: status=%d remark=%q", lockStatus, remark)
+	}
+
+	// 恢复正常后备注清空。
+	if err := SetTableLock(int(id), po.TableLockNormal, ""); err != nil {
+		t.Fatalf("恢复桌台失败: %v", err)
+	}
+	if lockStatus, _, _ := GetTableLock(int(id)); lockStatus != po.TableLockNormal {
+		t.Fatalf("恢复正常后状态应为 0, got %d", lockStatus)
+	}
+}
+
+// TestOccupyTableTxRejectsLocked 人工停用/预约的桌台拒绝占用。
+func TestOccupyTableTxRejectsLocked(t *testing.T) {
+	tableDaoInitDB(t)
+	id, err := InsertTable(po.Table{TableNo: "53", TableName: "停用桌", Capacity: 2, SortOrder: 1})
+	if err != nil {
+		t.Fatalf("新增桌台失败: %v", err)
+	}
+	if err := SetTableLock(int(id), po.TableLockDisabled, "设备维修"); err != nil {
+		t.Fatalf("停用桌台失败: %v", err)
+	}
+
+	err = store.WithTx(func(tx *sql.Tx) error {
+		_, err := OccupyTableTx(tx, int(id))
+		return err
+	})
+	if !errors.Is(err, ErrTableLocked) {
+		t.Fatalf("停用桌台占用应返回 ErrTableLocked, got %v", err)
 	}
 }
 

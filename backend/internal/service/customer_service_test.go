@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -73,6 +74,37 @@ func TestCustomerSvcTable(t *testing.T) {
 	}
 	if tbl.TableCode == "" {
 		t.Fatalf("桌台稳定码应被兜底补发")
+	}
+}
+
+// TestCustomerSvcCreateOrderRejectsLocked 人工停用/预约的桌台拒绝顾客新点餐。
+func TestCustomerSvcCreateOrderRejectsLocked(t *testing.T) {
+	customerSvcInit(t)
+
+	dishID, specID := customerSvcSpecID(t)
+	items := []dto.OrderItem{{DishID: dishID, SpecID: specID, Quantity: 1}}
+
+	if err := dao.SetTableLock(1, po.TableLockDisabled, "设备维修"); err != nil {
+		t.Fatalf("停用桌台失败: %v", err)
+	}
+	if _, err := CustomerCreateOrder(0, 1, 2, "", items); !errors.Is(err, ErrTableUnavailable) {
+		t.Fatalf("停用桌台下单应返回 ErrTableUnavailable, got %v", err)
+	}
+
+	// 预约同样拒绝。
+	if err := dao.SetTableLock(1, po.TableLockReserved, "王先生 18:30"); err != nil {
+		t.Fatalf("预约桌台失败: %v", err)
+	}
+	if _, err := CustomerCreateOrder(0, 1, 2, "", items); !errors.Is(err, ErrTableUnavailable) {
+		t.Fatalf("预约桌台下单应返回 ErrTableUnavailable, got %v", err)
+	}
+
+	// 恢复正常后可正常下单。
+	if err := dao.SetTableLock(1, po.TableLockNormal, ""); err != nil {
+		t.Fatalf("恢复桌台失败: %v", err)
+	}
+	if _, err := CustomerCreateOrder(0, 1, 2, "", items); err != nil {
+		t.Fatalf("恢复正常后下单应成功, got %v", err)
 	}
 }
 
@@ -322,6 +354,52 @@ func TestCustomerSvcAppendBatch(t *testing.T) {
 	}
 	if got := batchOf(); len(got) != 3 || got[2] != 3 {
 		t.Fatalf("第二次加菜明细批次应为 3, got %v", got)
+	}
+}
+
+// 改单走「DELETE 明细 + 重建」,若改单请求不回传 batchNo,顾客的加菜批次会被重置成 1,
+// 前端批次标签与「加菜只打新增菜」的打印批次语义全部丢失。前端改单弹窗已随提交回传
+// 原批次号(新加的菜归入下一批次),这里锁定该契约。
+func TestEditOrderPreservesBatch(t *testing.T) {
+	customerSvcInit(t)
+	dishID, specID := customerSvcSpecID(t)
+	items := []dto.OrderItem{{DishID: dishID, SpecID: specID, Quantity: 1}}
+	out, err := CustomerCreateOrder(0, 1, 2, "", items)
+	if err != nil {
+		t.Fatalf("下单失败: %v", err)
+	}
+	if _, err := CustomerAppendOrder(1, out.OrderNo, items, 0); err != nil {
+		t.Fatalf("加菜失败: %v", err)
+	}
+
+	// 改单:原两行批次 1/2 原样回传,另由商家新加一行(批次 3)。
+	editItems := []dto.OrderItem{
+		{DishID: dishID, SpecID: specID, Quantity: 2, BatchNo: 1},
+		{DishID: dishID, SpecID: specID, Quantity: 1, BatchNo: 2},
+		{DishID: dishID, SpecID: specID, Quantity: 1, BatchNo: 3},
+	}
+	if _, err := EditOrder(int(out.OrderID), 2, "", editItems, "tester"); err != nil {
+		t.Fatalf("改单失败: %v", err)
+	}
+
+	var got []int
+	rows, err := store.DB.Query(`SELECT batch_no FROM tb_order_item WHERE order_id=? ORDER BY item_id`, out.OrderID)
+	if err != nil {
+		t.Fatalf("查询批次失败: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var b int
+		if err := rows.Scan(&b); err != nil {
+			t.Fatalf("扫描批次失败: %v", err)
+		}
+		got = append(got, b)
+	}
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("改单后批次应保留为 [1 2 3], got %v", got)
+	}
+	if m := ListOrderBatchCounts([]int{int(out.OrderID)}); m[int(out.OrderID)] != 3 {
+		t.Fatalf("批次计数应为 3, got %v", m)
 	}
 }
 

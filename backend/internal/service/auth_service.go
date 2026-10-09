@@ -69,40 +69,57 @@ func GenToken(username string, userID, tokenVersion int) string {
 
 // VerifyToken 校验签名与有效期,返回载荷。用户名不允许含 '|'(建号时已校验)。
 func VerifyToken(tok string) (*TokenClaims, bool) {
+	claims, exp, ok := parseToken(tok)
+	if !ok || exp <= time.Now().Unix() {
+		return nil, false
+	}
+	return claims, true
+}
+
+// VerifyTokenSignature 只校验签名与载荷结构,不校验有效期。
+//
+// 专供审计留痕(如 401/403 的越权记录,见 handler.writeDeniedLog):需要确认
+// 「操作人姓名确实出自本系统签发的令牌」以防伪造,但令牌已过期并不代表它没有审计价值
+// —— 恰恰相反,「谁在用过期/失效令牌访问」正是要留痕的线索。故此处不做过期判定。
+func VerifyTokenSignature(tok string) (*TokenClaims, bool) {
+	claims, _, ok := parseToken(tok)
+	return claims, ok
+}
+
+// parseToken 校验 HMAC 签名与载荷结构,返回载荷与过期时间(Unix 秒)。
+// 不做过期判断,由调用方决定语义:VerifyToken 判过期,VerifyTokenSignature 不判。
+func parseToken(tok string) (*TokenClaims, int64, bool) {
 	parts := strings.SplitN(tok, ".", 2)
 	if len(parts) != 2 {
-		return nil, false
+		return nil, 0, false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return nil, false
+		return nil, 0, false
 	}
 	mac := hmac.New(sha256.New, []byte(infra.LoadAuthKey()))
 	mac.Write(payload)
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
-		return nil, false
+		return nil, 0, false
 	}
 	fields := strings.Split(string(payload), "|")
 	if len(fields) != 4 {
-		return nil, false
+		return nil, 0, false
 	}
 	uid, err := strconv.Atoi(fields[1])
 	if err != nil {
-		return nil, false
+		return nil, 0, false
 	}
 	ver, err := strconv.Atoi(fields[2])
 	if err != nil {
-		return nil, false
+		return nil, 0, false
 	}
 	exp, err := strconv.ParseInt(fields[3], 10, 64)
 	if err != nil {
-		return nil, false
+		return nil, 0, false
 	}
-	if exp <= time.Now().Unix() {
-		return nil, false
-	}
-	return &TokenClaims{Username: fields[0], UserID: uid, TokenVersion: ver}, true
+	return &TokenClaims{Username: fields[0], UserID: uid, TokenVersion: ver}, exp, true
 }
 
 // ============================================================================
@@ -469,12 +486,19 @@ func FingerprintUA(ua string) string {
 	return browser + "·" + osName
 }
 
-// CreateRememberToken 为账号生成一条「记住我」令牌(7/30 天),返回令牌串。
-// days 仅 30 会按 30 天处理,其余按 7 天处理。
+// rememberPermanentDays 「永久」档的天数(100 年,语义上等于不过期)。
+// 与前端登录页 REMEMBER_PERMANENT_DAYS 保持一致。
+const rememberPermanentDays = 36500
+
+// CreateRememberToken 为账号生成一条「记住我」令牌(7/30 天或永久),返回令牌串。
+// days 为 30 按 30 天处理;为 rememberPermanentDays 按「永久」处理;其余按 7 天处理。
 func CreateRememberToken(userID, days int, ua string) (string, error) {
 	d := 7
-	if days == 30 {
+	switch days {
+	case 30:
 		d = 30
+	case rememberPermanentDays:
+		d = rememberPermanentDays
 	}
 	return dao.CreateRememberToken(userID, d, FingerprintUA(ua))
 }

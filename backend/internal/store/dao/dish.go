@@ -14,7 +14,7 @@ var ErrSoldOut = errors.New("库存不足，该菜品已售罄")
 
 // DishCols 菜品列表查询的 SELECT 列(含分类名,需 FROM tb_dish d LEFT JOIN tb_category c)。
 const DishCols = `d.dish_id, d.category_id, COALESCE(c.category_name,''), d.dish_name, d.dish_image,
-	d.description, d.status, d.sold_out, d.sort_order, d.del_flag, d.create_by, d.create_time, d.update_by, d.update_time, d.remark`
+	d.description, d.status, d.sold_out, d.signature, d.sort_order, d.del_flag, d.create_by, d.create_time, d.update_by, d.update_time, d.remark`
 
 // DishRow 菜品+联表分类名的查询投影。
 type DishRow struct {
@@ -26,7 +26,7 @@ type DishRow struct {
 func ScanDish(rows interface{ Scan(...interface{}) error }) (DishRow, error) {
 	var d DishRow
 	err := rows.Scan(&d.DishID, &d.CategoryID, &d.CategoryName, &d.DishName, &d.DishImage,
-		&d.Description, &d.Status, &d.SoldOut, &d.SortOrder, &d.DelFlag, &d.CreateBy, &d.CreateTime, &d.UpdateBy, &d.UpdateTime, &d.Remark)
+		&d.Description, &d.Status, &d.SoldOut, &d.Signature, &d.SortOrder, &d.DelFlag, &d.CreateBy, &d.CreateTime, &d.UpdateBy, &d.UpdateTime, &d.Remark)
 	return d, err
 }
 
@@ -107,8 +107,8 @@ func normalizeStock(stock int64) int64 {
 func CreateDish(d po.Dish, specs []po.Spec) (int64, error) {
 	var dishID int64
 	err := store.WithTx(func(tx *sql.Tx) error {
-		res, err := tx.Exec(`INSERT INTO tb_dish(category_id, dish_name, dish_image, description, status, sold_out, sort_order, del_flag, create_time, update_time)
-			VALUES(?,?,?,?,?,?,?,?,?,?)`, d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SoldOut, d.SortOrder, "0", store.Now(), store.Now())
+		res, err := tx.Exec(`INSERT INTO tb_dish(category_id, dish_name, dish_image, description, status, sold_out, signature, sort_order, del_flag, create_time, update_time)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SoldOut, d.Signature, d.SortOrder, "0", store.Now(), store.Now())
 		if err != nil {
 			return err
 		}
@@ -136,8 +136,8 @@ func CreateDish(d po.Dish, specs []po.Spec) (int64, error) {
 // 规格会被重建（spec_id 全变、库存归零），自动售罄的计数就前功尽弃。
 func UpdateDish(d po.Dish, specs []po.Spec) error {
 	return store.WithTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`UPDATE tb_dish SET category_id=?, dish_name=?, dish_image=?, description=?, status=?, sold_out=?, sort_order=?, update_time=? WHERE dish_id=?`,
-			d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SoldOut, d.SortOrder, store.Now(), d.DishID); err != nil {
+		if _, err := tx.Exec(`UPDATE tb_dish SET category_id=?, dish_name=?, dish_image=?, description=?, status=?, sold_out=?, signature=?, sort_order=?, update_time=? WHERE dish_id=?`,
+			d.CategoryID, d.DishName, d.DishImage, d.Description, d.Status, d.SoldOut, d.Signature, d.SortOrder, store.Now(), d.DishID); err != nil {
 			return err
 		}
 

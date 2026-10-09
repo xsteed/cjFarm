@@ -53,10 +53,19 @@ func OrderList(c *gin.Context) {
 	}
 	// 批量标记待处理催菜,供列表展示角标(一次查询覆盖整页,避免逐条查库)。
 	out := make([]dto.Order, 0, len(list))
+	// 批次计数同样一次 IN 查询覆盖整页:列表有「加菜×N」角标,商家不点详情
+	// 也能看出哪桌加过菜(加菜高峰期的后厨优先级判断常以列表为准)。
+	ids := make([]int, 0, len(list))
+	for _, o := range list {
+		ids = append(ids, o.OrderID)
+	}
+	batchCounts := service.ListOrderBatchCounts(ids)
 	for _, o := range list {
 		// 列表只返回订单主字段与催菜角标;明细仅在详情接口加载,
 		// 逐单加载明细会退化成 N+1 查询(单页最多 500 次)。
-		out = append(out, dto.FromOrder(o, nil, pending[o.OrderID]))
+		d := dto.FromOrder(o, nil, pending[o.OrderID])
+		d.BatchCount = batchCounts[o.OrderID]
+		out = append(out, d)
 	}
 	tableResult(c, total, out)
 }

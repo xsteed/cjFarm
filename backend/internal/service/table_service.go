@@ -6,6 +6,7 @@ import (
 
 	"dining-system/infra/logger"
 	"dining-system/internal/dto"
+	"dining-system/internal/po"
 	"dining-system/internal/store"
 	"dining-system/internal/store/dao"
 )
@@ -50,12 +51,36 @@ func SaveTable(t dto.Table) (int64, error) {
 	return id, nil
 }
 
-// UpdateTable 校验并更新桌台基础信息。
+// UpdateTable 校验并更新桌台基础信息(桌号/桌名/容纳人数/排序)。
+// 占用状态与人工可用性状态均不在此处修改:前者由订单流转维护,后者走 SetTableLock。
 func UpdateTable(t dto.Table) error {
 	if strings.TrimSpace(t.TableNo) == "" || strings.TrimSpace(t.TableName) == "" {
 		return errors.New("请填写桌号和桌台名称")
 	}
 	return dao.UpdateTable(t.ToPO())
+}
+
+// SetTableLock 设置桌台人工可用性状态:0 正常 / 1 停用(不可用) / 2 预约。
+//
+// 「停用」表示该桌无法接待(如维修、区域关闭),若仍有进行中订单会让顾客无处可去,
+// 因此与删除一样先拦截;「预约」允许与进行中订单并存(预订的是稍后的时段)。
+func SetTableLock(id, lockStatus int, lockRemark string) error {
+	if id == 0 {
+		return errors.New("参数错误")
+	}
+	if !po.ValidTableLockStatus(lockStatus) {
+		return errors.New("无效的桌台状态")
+	}
+	if lockStatus == po.TableLockDisabled {
+		if _, ok := dao.GetActiveOrderByTable(id); ok {
+			return errors.New("该桌台存在进行中订单，请先完成或取消订单后再停用")
+		}
+	}
+	lockRemark = strings.TrimSpace(lockRemark)
+	if r := []rune(lockRemark); len(r) > 60 {
+		lockRemark = string(r[:60])
+	}
+	return dao.SetTableLock(id, lockStatus, lockRemark)
 }
 
 // DeleteTable 校验无进行中订单后逻辑删除桌台。

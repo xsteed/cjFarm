@@ -10,8 +10,9 @@ type Dish struct {
 	DishName     string  `json:"dishName"`
 	DishImage    string  `json:"dishImage"`
 	Description  string  `json:"description"`
-	Status       int     `json:"status"`  // 1 上架 0 下架
-	SoldOut      int     `json:"soldOut"` // 0 未售罄 1 售罄
+	Status       int     `json:"status"`    // 1 上架 0 下架
+	SoldOut      int     `json:"soldOut"`   // 0 未售罄 1 售罄
+	Signature    int     `json:"signature"` // 0 普通 1 招牌菜
 	SortOrder    int     `json:"sortOrder"`
 	DelFlag      string  `json:"delFlag"`
 	CreateBy     string  `json:"createBy"`
@@ -33,6 +34,7 @@ func FromDish(p po.Dish, categoryName string, specs []Spec) Dish {
 		Description:  p.Description,
 		Status:       p.Status,
 		SoldOut:      p.SoldOut,
+		Signature:    p.Signature,
 		SortOrder:    p.SortOrder,
 		DelFlag:      p.DelFlag,
 		CreateBy:     p.CreateBy,
@@ -54,6 +56,7 @@ func (d Dish) ToPO() po.Dish {
 		Description: d.Description,
 		Status:      d.Status,
 		SoldOut:     d.SoldOut,
+		Signature:   d.Signature,
 		SortOrder:   d.SortOrder,
 		DelFlag:     d.DelFlag,
 		CreateBy:    d.CreateBy,

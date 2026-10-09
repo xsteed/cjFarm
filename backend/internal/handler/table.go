@@ -50,6 +50,24 @@ func TableUpdate(c *gin.Context) {
 	okMsg(c, "修改成功")
 }
 
+// TableLock 设置桌台人工可用性状态(停用/预约/恢复正常),避免被其他客人扫码占用。
+func TableLock(c *gin.Context) {
+	var p struct {
+		TableID    int    `json:"tableId"`
+		LockStatus int    `json:"lockStatus"`
+		LockRemark string `json:"lockRemark"`
+	}
+	if err := c.ShouldBindJSON(&p); err != nil || p.TableID == 0 {
+		fail(c, "参数错误")
+		return
+	}
+	if err := service.SetTableLock(p.TableID, p.LockStatus, p.LockRemark); err != nil {
+		fail(c, err.Error())
+		return
+	}
+	okMsg(c, "桌台状态已更新")
+}
+
 func TableDelete(c *gin.Context) {
 	id, okid := idParam(c)
 	if !okid {

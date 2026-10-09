@@ -633,6 +633,34 @@ func GetOrderStateTx(tx *sql.Tx, orderID int) (orderStatus, payStatus, personCou
 	return
 }
 
+// CountOrderBatches 批量统计各订单的加菜批次数(明细 distinct batch_no)。
+// 供订单列表展示「加菜」角标:一次 IN 查询覆盖整页,与列表「不逐单查明细(N+1)」的
+// 口径一致(见 handler.OrderList);查询失败静默返回空 map,列表只是不打角标,不影响出单。
+func CountOrderBatches(orderIDs []int) map[int]int {
+	out := map[int]int{}
+	if len(orderIDs) == 0 {
+		return out
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(orderIDs)), ",")
+	args := make([]interface{}, 0, len(orderIDs))
+	for _, id := range orderIDs {
+		args = append(args, id)
+	}
+	rows, err := store.DB.Query(`SELECT order_id, COUNT(DISTINCT batch_no) FROM tb_order_item
+		WHERE order_id IN (`+placeholders+`) GROUP BY order_id`, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, n int
+		if rows.Scan(&id, &n) == nil {
+			out[id] = n
+		}
+	}
+	return out
+}
+
 // UpdateOrderAmountTx 在事务中更新订单金额。
 func UpdateOrderAmountTx(tx *sql.Tx, orderID int, dishCents, seatCents, discountCents, giftCents, totalCents int64) error {
 	_, err := tx.Exec(`UPDATE tb_order SET dish_amount=?, seat_fee=?, discount_amount=?, gift_amount=?, total_amount=?, update_time=? WHERE order_id=?`,

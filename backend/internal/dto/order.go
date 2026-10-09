@@ -1,6 +1,10 @@
 package dto
 
-import "dining-system/internal/po"
+import (
+	"strings"
+
+	"dining-system/internal/po"
+)
 
 // OrderItem 对应 tb_order_item 表(API 出参),金额以元(float64)表示。
 // CategoryID 不入 tb_order_item 表,由打印层临时按 dish_id 关联查询补齐。
@@ -102,6 +106,7 @@ type Order struct {
 	UpdateTime       string      `json:"updateTime"`
 	Remark           *string     `json:"remark"`
 	PendingUrge      bool        `json:"pendingUrge"` // 是否存在未处理的催菜(运行时填充,不入库)
+	BatchCount       int         `json:"batchCount"`  // 加菜批次数(运行时填充,不入库):明细 distinct batch_no,1=未加过菜。列表接口填充,详情接口明细自带 batchNo 无需它
 	Items            []OrderItem `json:"items"`
 }
 
@@ -154,9 +159,39 @@ func FromOrder(p po.Order, items []OrderItem, pendingUrge bool) Order {
 	}
 }
 
+// genericCancelReason 管理端「取消」按钮的固定标签:它只说明「谁取消的」,不含任何原因,
+// 对顾客等于没说(「订单已取消：商家取消」),由 cancelReasonForCustomer 统一抹平。
+const genericCancelReason = "商家取消"
+
+// maxCustomerCancelReasonRune 顾客可见取消原因的长度上限(按字符数,不按字节,避免截断中文)。
+const maxCustomerCancelReasonRune = 40
+
+// cancelReasonForCustomer 把内部取消原因转成「能直接给顾客看」的文案。
+//
+// 规则:
+//   - 空 / 通用标签(商家取消) → 空串:没有信息量,由前端给标准提示(未支付、不产生费用);
+//   - 其余原样下发,但去首尾空白并截断到 40 字符 —— 取消原因是管理端可写的自由文本,
+//     整段内部备注(如「这桌客人很难沟通」)不该出现在顾客手机上。
+//
+// 前端不做这层判断:哪些内容能给顾客看属于「出参口径」,只在这一处收口,
+// H5 / 小程序两端拿到的就是最终可展示的文案。
+func cancelReasonForCustomer(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" || reason == genericCancelReason {
+		return ""
+	}
+	r := []rune(reason)
+	if len(r) > maxCustomerCancelReasonRune {
+		return string(r[:maxCustomerCancelReasonRune])
+	}
+	return reason
+}
+
 // FromOrderCustomer 顾客端订单出参:复用 FromOrder 后裁剪顾客端无消费场景的敏感字段。
-// 剥离:TransactionID(第三方渠道交易号)、SettleOperator(收银员姓名)、CreateBy/UpdateBy(内部操作人)、
-// CancelReason(取消原因,可能含内部备注)。保留菜品、金额、状态、桌号、备注、下单时间等顾客需要的信息。
+// 剥离:TransactionID(第三方渠道交易号)、SettleOperator(收银员姓名)、CreateBy/UpdateBy(内部操作人)。
+// CancelReason 不直接透传,走 cancelReasonForCustomer 做「可展示性」收口:
+// 取消只发生在未支付订单上(service.CancelOrder / ChangeOrderStatus 均强制 pay_status=0),
+// 顾客看到的永远是一笔没花钱的单,所以文案只需要说明「为什么没了」,不必承担账务解释。
 // 管理端接口(OrderGet 等)仍用 FromOrder 全量版本,不受影响。
 func FromOrderCustomer(p po.Order, items []OrderItem, pendingUrge bool) Order {
 	o := FromOrder(p, items, pendingUrge)
@@ -164,7 +199,7 @@ func FromOrderCustomer(p po.Order, items []OrderItem, pendingUrge bool) Order {
 	o.SettleOperator = ""
 	o.CreateBy = ""
 	o.UpdateBy = ""
-	o.CancelReason = ""
+	o.CancelReason = cancelReasonForCustomer(p.CancelReason)
 	return o
 }
 

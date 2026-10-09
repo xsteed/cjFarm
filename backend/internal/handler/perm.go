@@ -60,6 +60,7 @@ var routePerms = map[string]string{
 	"GET /api/admin/table/weapp-code": "table:view",
 	"POST /api/admin/table/save":      "table:edit",
 	"POST /api/admin/table/update":    "table:edit",
+	"POST /api/admin/table/lock":      "table:edit",
 	"DELETE /api/admin/table/:id":     "table:edit",
 
 	// ---- 分类 ----
@@ -310,9 +311,10 @@ func adminName(c *gin.Context) string {
 // 若把未验签的名字写进审计日志,攻击者仅凭构造一个假令牌,就能在 401/403 留痕里
 // 冒充任意操作人(见 writeDeniedLog),审计数据会彻底失去可信度。
 // 验签失败一律返回空串 —— 宁可不留痕,也不留下会骗人的假名。
+// 用 VerifyTokenSignature 而非 VerifyToken:只认签名,不因过期而丢弃归属(过期令牌同样是线索)。
 func usernameFromToken(c *gin.Context) string {
 	tok := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
-	claims, valid := service.VerifyToken(tok)
+	claims, valid := service.VerifyTokenSignature(tok)
 	if !valid {
 		return ""
 	}

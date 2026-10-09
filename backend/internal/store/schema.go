@@ -32,6 +32,8 @@ var schemaTemplate = []string{
 		table_name  VARCHAR(64)  NOT NULL,
 		capacity    INTEGER      DEFAULT 0,
 		status      INTEGER      DEFAULT 0,
+		lock_status INTEGER      DEFAULT 0,
+		lock_remark VARCHAR(255) DEFAULT '',
 		sort_order  INTEGER      DEFAULT 0,
 		del_flag    VARCHAR(2)   DEFAULT '0',
 		create_by   VARCHAR(64)  DEFAULT '',
@@ -59,6 +61,7 @@ var schemaTemplate = []string{
 		description VARCHAR(500) DEFAULT '',
 		status      INTEGER      DEFAULT 1,
 		sold_out    INTEGER      DEFAULT 0,
+		signature   INTEGER      DEFAULT 0,
 		sort_order  INTEGER      DEFAULT 0,
 		del_flag    VARCHAR(2)   DEFAULT '0',
 		create_by   VARCHAR(64)  DEFAULT '',
@@ -608,6 +611,10 @@ var alterCols = []alterCol{
 	{Table: "tb_refund", Name: "is_duplicate", Def: "INTEGER DEFAULT 0"},
 	// 桌台稳定码: 创建时生成、永不变更的随机码,二维码内容使用它(而非自增 ID)。
 	{Table: "tb_table", Name: "table_code", Def: "VARCHAR(16) DEFAULT ''"},
+	// 桌台人工状态(与自动占用 status 正交): 0 正常 / 1 停用(不可用) / 2 预约。
+	// 老库默认 0(正常),不影响存量桌台;lock_remark 记录停用原因或预约人/时段。
+	{Table: "tb_table", Name: "lock_status", Def: "INTEGER DEFAULT 0"},
+	{Table: "tb_table", Name: "lock_remark", Def: "VARCHAR(255) DEFAULT ''"},
 	// 打印机厂商与云打印: provider 默认 'tcp' —— 老库里的打印机都是直连网络机,
 	// 升级后行为不变;切到飞鹅只需把 provider 改成 'feie' 并填 feie_sn。
 	{Table: "tb_printer", Name: "provider", Def: "VARCHAR(16) DEFAULT 'tcp'"},
@@ -632,6 +639,8 @@ var alterCols = []alterCol{
 	{Table: "tb_order", Name: "pickup_no", Def: "INTEGER DEFAULT 0"},
 	// 售罄标记（人工）：1 售罄 0 正常，与「下架(status)」正交。老库默认 0。
 	{Table: "tb_dish", Name: "sold_out", Def: "INTEGER DEFAULT 0"},
+	// 招牌菜标记：1 招牌 0 普通，顾客端图片左上角渲染「招牌」角标。老库默认 0。
+	{Table: "tb_dish", Name: "signature", Def: "INTEGER DEFAULT 0"},
 	// 规格库存（自动售罄）：-1 不限量，>=0 剩余份数。老库默认 -1。
 	{Table: "tb_spec", Name: "stock", Def: "INTEGER DEFAULT -1"},
 }

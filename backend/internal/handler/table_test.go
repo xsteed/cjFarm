@@ -189,6 +189,47 @@ func TestTableDelete(t *testing.T) {
 	}
 }
 
+// TestTableLock 设置桌台人工状态成功路径。
+func TestTableLock(t *testing.T) {
+	tableInitDB(t)
+	id := tableInsert(t, "T66", "预约桌")
+
+	w := tableCall(t, TableLock, http.MethodPost, "/api/admin/table/lock",
+		`{"tableId":`+strconv.Itoa(id)+`,"lockStatus":2,"lockRemark":"李女士 19:00"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("设置桌台状态应返回 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	lockStatus, remark, err := dao.GetTableLock(id)
+	if err != nil {
+		t.Fatalf("读取桌台状态失败: %v", err)
+	}
+	if lockStatus != po.TableLockReserved || remark != "李女士 19:00" {
+		t.Fatalf("桌台状态未生效: status=%d remark=%q", lockStatus, remark)
+	}
+
+	// 恢复「正常」。
+	w = tableCall(t, TableLock, http.MethodPost, "/api/admin/table/lock",
+		`{"tableId":`+strconv.Itoa(id)+`,"lockStatus":0}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("恢复桌台应返回 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if lockStatus, _, _ := dao.GetTableLock(id); lockStatus != po.TableLockNormal {
+		t.Fatalf("恢复正常后状态应为 0, got %d", lockStatus)
+	}
+}
+
+// TestTableLockInvalidStatus 非法状态值被拒绝。
+func TestTableLockInvalidStatus(t *testing.T) {
+	tableInitDB(t)
+	id := tableInsert(t, "T65", "非法状态桌")
+
+	w := tableCall(t, TableLock, http.MethodPost, "/api/admin/table/lock",
+		`{"tableId":`+strconv.Itoa(id)+`,"lockStatus":9}`, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("非法状态应返回 400, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestTableDeleteInvalidID 非法路径参数返回无效 ID 错误。
 func TestTableDeleteInvalidID(t *testing.T) {
 	tableInitDB(t)

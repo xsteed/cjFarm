@@ -114,6 +114,8 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/table/weapp-code", handler.TableWeappCode)
 			admin.POST("/table/save", handler.TableSave)
 			admin.POST("/table/update", handler.TableUpdate)
+			// 桌台人工可用性状态:停用 / 预约 / 恢复正常(与订单占用状态正交)。
+			admin.POST("/table/lock", handler.TableLock)
 			admin.DELETE("/table/:id", handler.TableDelete)
 
 			admin.GET("/category/list", handler.CategoryList)
