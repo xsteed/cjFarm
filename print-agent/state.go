@@ -98,9 +98,18 @@ func (s *jobState) maybeCompactLocked() {
 		_ = s.f.Close()
 		s.f = nil
 	}
-	if err := os.WriteFile(s.path, []byte(strings.Join(keep, "\n")+"\n"), 0o600); err == nil {
-		if f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
-			s.f = f
-		}
+	if err := os.WriteFile(s.path, []byte(strings.Join(keep, "\n")+"\n"), 0o600); err != nil {
+		// 与 loadJobState 同口径:失败必须告警,不能静默退化成纯内存去重,
+		// 否则重启后云端重发会重复出纸,且现场毫无线索。
+		logf("[警告] 状态文件重写失败 %s: %v(重启后将失去重复打印去重能力,请关注磁盘状态)", s.path, err)
+		return
 	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		// 重写成功但追加句柄打不开:此后新增的幂等号只留内存、不落盘,
+		// 重启后会丢失 —— 必须留痕,不能静默。
+		logf("[警告] 状态文件重写后无法继续追加 %s: %v(此间新增记录重启后将丢失,可能重复出纸)", s.path, err)
+		return
+	}
+	s.f = f
 }

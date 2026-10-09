@@ -192,7 +192,7 @@ chmod +x "$PKG_DIR/deploy"/*.sh 2>/dev/null || true
 
 cat > "$PKG_DIR/VERSION" <<EOF
 version=$VERSION
-build_time=$BUILD_TIME
+build_time=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')
 arch=$ARCH
 EOF
 
