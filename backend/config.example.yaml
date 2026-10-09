@@ -1,8 +1,16 @@
 # ============================================================================
-# 扫码点餐管理系统 — 后端部署配置模板（config.yaml）
+# 扫码点餐管理系统 — 后端部署配置「全量注释模板」（config.example.yaml）
 # ----------------------------------------------------------------------------
+# 定位：本文件是**教学/参考**模板（入库公开），列出全部可配项与逐项说明；
+#       想要一份「值已填好、可直接用」的生产配置，请复制成 config.prod.yaml
+#       （该文件不入库、可写真实密码；make build 会把它复制成 bin/config.yaml，
+#        deploy.sh 也优先以它为模板生成服务器上的 config.yaml）。
+#
 # 用法：复制为 backend/config.yaml，按需取消注释并修改。
 #       cp config.example.yaml config.yaml
+#   · 用 deploy/deploy.sh 部署到服务器时无需手工复制：首次安装会自动生成
+#     <INSTALL_DIR>/config.yaml(并校正 database / admin / trusted_proxies 等),
+#     之后每次带 DB_* 部署只会重写其中的 database 段，其余内容保留。
 #
 # 【优先级】真实环境变量 > config.yaml > .env > 代码默认值
 #   · 三者可以共存，也可以只用其中一个；同键时按上面的顺序取高优先级；
@@ -23,15 +31,10 @@
 #
 # 完整迁移手册见 ../docs/mysql-migration.md
 #
-# 【日志】zap 结构化日志,控制台可读 + 文件 JSON 可采集。
-#   仅通过环境变量/.env 配置(config.yaml 不支持以下键):
-#   · LOG_PATH          日志文件路径,默认 ./logs/app.log(固定落盘);
-#                       设为 off / none / false / 0 / - 可关闭,仅写控制台
-#   · LOG_LEVEL         debug / info / warn / error(默认 info)
-#   · LOG_MAX_SIZE_MB   单文件大小上限,默认 50
-#   · LOG_MAX_AGE_DAYS  保留天数,默认 30
-#   · LOG_MAX_BACKUPS   保留历史文件数,默认 7(旧文件自动压缩)
-#   生产用 systemd 部署时, 路径由服务单元固定为 <INSTALL_DIR>/logs/app.log。
+# 【日志】zap 结构化日志,控制台可读 + 文件 JSON 可采集,配置见下方 log 段。
+#   等价环境变量: LOG_PATH / LOG_AGENT_PATH / LOG_LEVEL / LOG_MAX_SIZE_MB /
+#   LOG_MAX_AGE_DAYS / LOG_MAX_BACKUPS(两者可混用, 环境变量优先级更高); 默认
+#   落盘 ./logs/app.log。生产用 deploy.sh 部署时会自动写入 <INSTALL_DIR>/logs/app.log。
 # ============================================================================
 
 # ---------------------------------------------------------------------------
@@ -100,6 +103,22 @@ security:
   # token_ttl_hours: 24
   # 是否收紧主密钥文件 ACL（Windows 下仅保留当前用户；非 Windows 忽略）
   # harden_file_acl: false
+
+# ---------------------------------------------------------------------------
+# 日志（落盘与轮转）
+# ---------------------------------------------------------------------------
+log:
+  # 日志文件路径（默认 ./logs/app.log，相对启动时的工作目录）
+  # 设为 off / none / false / 0 / - 表示不落盘，只输出到控制台
+  # path: /opt/dining-system/logs/app.log
+  # 门店打印代理（取单程序）的 pull/ping/ack 高频日志单独落盘，不混进主日志
+  # agent_path: /opt/dining-system/logs/agent.log
+  # 级别：debug / info / warn / error（默认 info）
+  # level: info
+  # 轮转：单文件上限 50MB / 保留 30 天 / 最多 7 份（旧文件自动压缩）
+  # max_size_mb: 50
+  # max_age_days: 30
+  # max_backups: 7
 
 # ---------------------------------------------------------------------------
 # 管理端初始账号

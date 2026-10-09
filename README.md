@@ -13,7 +13,8 @@
 dining-system/
 ├── backend/                # Go + Gin 后端（按职责分层到 internal/ 子包）
 │   ├── main.go             # 入口：装配 + 路由 + 静态托管 + CORS + 优雅退出
-│   ├── config.example.yaml # 部署配置模板（复制为 config.yaml，启动时自动读取，推荐）
+│   ├── config.prod.yaml    # 生产配置（本机私有，不入库）：make build 复制为 bin/config.yaml；部署时作为生成 config.yaml 的首选模板
+│   ├── config.example.yaml # 全量注释模板（全部可配项 + 逐项说明，供查阅）
 │   ├── .env.example        # 环境变量模板（复制为 .env，同样自动读取，二选一）
 │   ├── internal/
 │   │   ├── model/          # 数据模型 + 金额换算（纯函数，最底层无依赖）
@@ -88,7 +89,9 @@ go run .          # 或 make run
 不配任何一项也能启动（默认 `sqlite` + `8080` + `admin`/`admin123`）。
 
 ```bash
-cp config.example.yaml config.yaml   # 模板含全部可配项与逐项注释
+cp config.example.yaml config.yaml   # 全量注释模板（仓库自带），按需逐项开启
+# 若你维护了本机私有的 config.prod.yaml（不入库、值已填好），也可以：
+#   cp config.prod.yaml config.yaml
 cp .env.example .env                 # 两者可只用一个
 ```
 
@@ -107,6 +110,10 @@ cp .env.example .env                 # 两者可只用一个
 | `database.mysql.host` 等 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | MySQL 连接信息 | `127.0.0.1` / `3306` / `root` / 空 / `dining` |
 | `database.mysql.dsn` | `DB_DSN` | MySQL 完整连接串（非空时优先于上面 5 项） | 空 |
 | `security.master_key` | `CONFIG_MASTER_KEY` | 敏感配置加密主密钥（优先级高于 `data/master.key`） | 空 |
+| `log.path` | `LOG_PATH` | 日志落盘路径；设 `off` 则只输出控制台 | `./logs/app.log` |
+| `log.agent_path` | `LOG_AGENT_PATH` | 门店打印代理日志路径（设 `off` 并入主日志） | `<日志目录>/agent.log` |
+| `log.level` | `LOG_LEVEL` | 日志级别 `debug` / `info` / `warn` / `error` | `info` |
+| `log.max_size_mb` / `max_age_days` / `max_backups` | `LOG_MAX_SIZE_MB` / `LOG_MAX_AGE_DAYS` / `LOG_MAX_BACKUPS` | 轮转：单文件上限 / 保留天数 / 保留份数 | `50` / `30` / `7` |
 
 两个文件都读**当前工作目录**（即从 `backend/` 启动），路径可用 `CONFIG_FILE` /
 `ENV_FILE` 覆盖。`config.yaml` 里出现模板之外的键名会**直接报错并提示行号**，
@@ -171,7 +178,9 @@ npm run mp:verify    # 类型检查 + lint + WXML/WXSS 审计 + 单测 + 产物�
 
 | 命令 | 说明 |
 |---|---|
-| `make build` | 本机编译，输出 `bin/dining-backend(.exe)` |
+| `make build` | 本机编译，输出 `bin/dining-backend(.exe)` + `bin/config.yaml`（配置来源见 `make config`） |
+| `make config` | 只生成/刷新 `bin/config.yaml`（优先本机的 `config.prod.yaml`，缺失时回退 `config.example.yaml`，不影响二进制） |
+| `make package` | 本机编译 + 生成交付目录 `bin/`（二进制 + `config.yaml`），可直接拷走 |
 | `make build-linux` | 交叉编译 Linux amd64 + arm64 |
 | `make build-linux-amd64` | 交叉编译 `bin/dining-backend-linux-amd64` |
 | `make build-linux-arm64` | 交叉编译 `bin/dining-backend-linux-arm64` |
@@ -182,6 +191,22 @@ npm run mp:verify    # 类型检查 + lint + WXML/WXSS 审计 + 单测 + 产物�
 > 因 SQLite 使用纯 Go 驱动（无 CGO），交叉编译无需额外工具链：`make build-linux` 即产出可直接在 Linux 上运行的 ELF 二进制（`CGO_ENABLED=0`）。
 >
 > 支持注入版本信息：`make build VERSION=1.2.0`（通过 `-ldflags` 写入 `main.version/buildTime/gitCommit`，启动日志会打印版本号）。
+
+### 生产配置文件 `config.prod.yaml`
+
+`backend/config.prod.yaml` 是一份**值已填好、可直接用**的生产配置。**它不入库**（`.gitignore` 已排除），可以放心写真实密码/域名；仓库里公开的是 `config.example.yaml`（全量注释模板）。新克隆的仓库先建一份：
+
+```bash
+cd backend && cp config.example.yaml config.prod.yaml   # 然后按需修改
+```
+
+它被用在这几处：
+
+- `make build` / `make config` → 复制为 `bin/config.yaml`（**缺失时自动回退 `config.example.yaml`**，`make` 不会因此失败）；
+- `./release.sh` 发布时**有则打进包**（没有则告警并跳过）→ `deploy/deploy.sh` **优先以它**生成服务器上的 `<INSTALL_DIR>/config.yaml`，包里没有才回退 `config.example.yaml`；
+- 部署脚本只按需改动其中几处（传 `DB_*` 时的 `database` 段、`server.port`、以及缺失时的 `static_dir` / `log.path`），**其余内容保持你写的样子**。
+
+> ⚠️ 相对路径按「当前工作目录」解析：部署后工作目录就是安装目录，因此 `./frontend/dist`、`./data/dining.db`、`./logs/app.log` 都正确落在安装目录下。
 
 ## 生产部署
 
@@ -210,19 +235,66 @@ SERVER_NAME=dining.example.com SSL_CERT=/etc/nginx/ssl/dining.crt \
 脚本会：
 1. `make build-linux-amd64` 交叉编译后端 → `$INSTALL_DIR/bin/dining-backend`
 2. `npm ci && npm run build` 构建前端 → `$INSTALL_DIR/frontend/dist`
-3. 生成 `dining-backend.service`（systemd，崩溃自动重启）并 `enable --now`
-4. 由 `deploy/setup-nginx.sh` 按 `deploy/nginx-production.conf`（唯一配置来源）生成 Nginx 配置并 `nginx -t && nginx -s reload`：
+3. 生成本机部署配置 `$INSTALL_DIR/config.yaml`（首次安装，优先以发布包里的 `backend/config.prod.yaml` 为模板，包里没有则回退 `config.example.yaml`；详见下方「部署配置统一在 config.yaml」）
+4. 生成 `dining-backend.service`（systemd，崩溃自动重启）并 `enable --now`
+5. 由 `deploy/setup-nginx.sh` 按 `deploy/nginx-production.conf`（唯一配置来源）生成 Nginx 配置并 `nginx -t && nginx -s reload`：
    - 未设置 `SERVER_NAME`：用通配 `server_name _`（与过去的基础配置等价）；
    - 设置了 `SERVER_NAME`：写入指定域名/IP，带证书时自动启用 HTTPS；
    - 全程自动备份旧配置、`nginx -t` 失败自动回滚，并做前端与反代自检。
 
 部署后后端日志有两个去处：
 
-- **落盘文件（推荐排障）**：`$INSTALL_DIR/logs/app.log`，JSON 行格式，按 50MB / 30 天 / 7 份自动轮转并压缩。systemd 服务单元已显式指定该绝对路径，不受工作目录变化影响；
+- **落盘文件（推荐排障）**：`$INSTALL_DIR/logs/app.log`，JSON 行格式，按 50MB / 30 天 / 7 份自动轮转并压缩。路径来自 `config.yaml` 的 `log.path`，部署时自动写为绝对路径，不受工作目录变化影响；
 - **journald**：进程控制台输出由 systemd 接管，`journalctl -u dining-backend -f` 可看。
 
-需要改路径或级别：编辑 `/etc/dining-backend.env`（`LOG_PATH` / `LOG_LEVEL` / `LOG_MAX_*`）后 `systemctl restart dining-backend`。
-本地直接运行（`make run` 或 `start.bat`）时默认写到 `backend/logs/app.log`，无需任何配置；设 `LOG_PATH=off` 可只输出控制台。
+需要改路径或级别：改 `$INSTALL_DIR/config.yaml` 的 `log` 段（`path` / `level` / `max_size_mb` / `max_age_days` / `max_backups`）后 `systemctl restart dining-backend`。
+本地直接运行（`make run` 或 `start.bat`）时默认写到 `backend/logs/app.log`，无需任何配置；把 `log.path` 设为 `off` 可只输出控制台。
+
+#### 部署配置统一在 config.yaml
+
+生产部署的配置只有一个落点：**`$INSTALL_DIR/config.yaml`**（默认 `/opt/dining-system/config.yaml`）。
+后端启动时读工作目录下的这个文件（systemd 的 `WorkingDirectory` 就是安装目录）：
+端口、静态目录、日志路径、数据库连接、管理端初始账号、可信代理都在里面。
+systemd 服务单元只保留 `WorkingDirectory` / `ExecStart` / `EnvironmentFile`，不再声明任何配置项。
+
+| 文件 | 谁在管 | 说明 |
+|---|---|---|
+| `$INSTALL_DIR/config.yaml` | `deploy.sh` 生成并维护 | **唯一配置源**。首次安装以 `backend/config.prod.yaml` 为模板生成（包里没有才回退 `config.example.yaml`）；之后仅在传了 `DB_*` 时重写 `database` 段，并在缺失时补 `server.static_dir` / `log.path` / `log.agent_path`、首次写 `server.port` 与 `admin` 段。你手写的其余键不会被冲掉 |
+| `/etc/dining-backend.env` | 历史遗留 | 新版本**不再写入**。升级时里面残留的 `DB_*` / `ADMIN_*` / `TRUSTED_PROXIES` 会**自动迁移进 config.yaml 并从该文件移除**（旧文件备份为 `.bak.<时间戳>`）。原因：真实环境变量优先级高于 config.yaml，不迁移就会出现「改了 config.yaml 不生效」 |
+
+几条约定：
+
+- **端口**：显式传 `BACKEND_PORT=9000` 时写入 `config.yaml`；没传则沿用文件里已有的值 —— 这样 Nginx 反代、健康检查与后端监听用的是同一个端口；
+- **`static_dir` / `log.path` / `log.agent_path`**：模板里已有就原样保留（`config.prod.yaml` 给的是 `./frontend/dist`、`./logs/app.log` 这类相对安装目录的路径），只在缺失时才补写；
+- `/etc/dining-backend.env` 作为**逃生出口**保留：想用环境变量临时覆盖某项配置时写在那里即可（环境变量优先级更高），默认不存在。
+
+#### 日常更新 / 从旧版本升级
+
+同一个脚本、同一条命令，靠安装目录里有没有后端二进制自动识别「首次安装 / 覆盖更新」：
+
+```bash
+# 服务器上（发布包解压后的根目录）
+sudo bash deploy/deploy.sh --skip-build      # 覆盖更新：备份 → 覆盖 bin/dist → 健康检查 → 失败自动回滚
+```
+
+更新时会**自动**处理两件过去必须手工做的事：
+
+| 场景 | 现在的行为 |
+|---|---|
+| 线上 Nginx 仍反代旧前缀 `/prod-api/`（从旧版本升级上来的常见问题，会让前端所有接口 404） | 自动改为 `/api/`：先备份 → `nginx -t` 校验 → 失败自动回滚 → reload。不需要时加 `--no-fix-nginx` 退回只告警 |
+| 想顺带切到 MySQL | 带上 `DB_*` 即可（见下），脚本会重写 `config.yaml` 的 `database` 段，其余内容原样保留 |
+
+```bash
+# 更新 + 一键切库（同一条命令搞定）
+cd /tmp/dining-xxx && sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_USER=dining \
+  DB_PASSWORD='强密码' DB_NAME=dining bash deploy/deploy.sh --skip-build
+```
+
+`config.yaml` 已随本次更新一起备份，健康检查失败时会**连它一起回滚**，不会留下「二进制回滚了、配置还指着新库」的半吊子状态。
+
+> 一键发布同理：把 `DB_*` 写进本地 `.release.env`，`./release.sh` 会自动透传到远程 `deploy.sh`。
+>
+> ⚠️ 切库前请先建好库并**搬完数据**（含 `data/master.key`），顺序见 [`docs/mysql-migration.md`](docs/mysql-migration.md)。
 
 ### Nginx 生产配置（也可单独执行）
 
@@ -259,6 +331,7 @@ cd ../frontend && npm ci && npm run build
 # 3. 拷贝产物到服务器
 #    bin/dining-backend-linux-amd64  -> /opt/dining-system/bin/dining-backend
 #    frontend/dist/                 -> /opt/dining-system/frontend/dist/
+#    config.example.yaml            -> /opt/dining-system/config.yaml（按需编辑，后端从工作目录读取）
 
 # 4. 安装 systemd 服务
 sudo cp deploy/dining-backend.service /etc/systemd/system/dining-backend.service

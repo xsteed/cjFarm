@@ -17,6 +17,7 @@ var configEnvKeys = []string{
 	"DB_DRIVER", "DB_PATH", "DB_DSN", "DB_HOST", "DB_PORT",
 	"DB_USER", "DB_PASSWORD", "DB_NAME", "DB_PARAMS",
 	"CONFIG_MASTER_KEY", "MASTER_KEY_PATH", "MASTER_KEY_OLD", "TOKEN_TTL_HOURS", "HARDEN_FILE_ACL",
+	"LOG_PATH", "LOG_AGENT_PATH", "LOG_LEVEL", "LOG_MAX_SIZE_MB", "LOG_MAX_AGE_DAYS", "LOG_MAX_BACKUPS",
 	"ADMIN_USER", "ADMIN_PASS",
 	"ENV_FILE", "CONFIG_FILE",
 }
@@ -79,6 +80,13 @@ security:
   harden_file_acl: true
   master_key_path: ./data/k.key
   master_key_old: base64-encoded-old-key
+log:
+  path: /var/log/dining/app.log
+  agent_path: /var/log/dining/agent.log
+  level: debug
+  max_size_mb: 20
+  max_age_days: 7
+  max_backups: 3
 admin:
   user: boss
   pass: s3cret
@@ -112,6 +120,12 @@ admin:
 		"HARDEN_FILE_ACL":   "1",
 		"MASTER_KEY_PATH":   "./data/k.key",
 		"MASTER_KEY_OLD":    "base64-encoded-old-key",
+		"LOG_PATH":          "/var/log/dining/app.log",
+		"LOG_AGENT_PATH":    "/var/log/dining/agent.log",
+		"LOG_LEVEL":         "debug",
+		"LOG_MAX_SIZE_MB":   "20",
+		"LOG_MAX_AGE_DAYS":  "7",
+		"LOG_MAX_BACKUPS":   "3",
 		"ADMIN_USER":        "boss",
 		"ADMIN_PASS":        "s3cret",
 	}

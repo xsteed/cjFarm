@@ -4,8 +4,9 @@
 # 安装: 复制到 /etc/systemd/system/dining-backend.service
 #       systemctl daemon-reload && systemctl enable --now dining-backend
 #
-# 说明: 工作目录设为安装目录, 使相对路径(./dining.db、旧版 ./uploads 导入源)稳定可用;
-#       也可通过 Environment 覆盖端口/数据库/存量图片导入源目录。
+# 说明: 工作目录设为安装目录, 后端据此读取 <INSTALL_DIR>/config.yaml, 并让相对路径
+#       (./data/dining.db、旧版 ./uploads 导入源) 稳定可用;
+#       端口/数据库/可信代理等部署配置都写在 config.yaml 里, 不必改本服务单元。
 # ============================================================================
 
 [Unit]
@@ -23,58 +24,36 @@ WorkingDirectory=/opt/dining-system
 # 后端二进制
 ExecStart=/opt/dining-system/bin/dining-backend
 
-# 环境变量说明:
-#   DB_PATH 使用相对路径(./data/dining.db),配合 WorkingDirectory 落在 /opt/dining-system 下。
-#   STATIC_DIR 显式写死绝对路径:后端默认值是相对路径(../frontend/dist),一旦有人
-#   改了 WorkingDirectory、或在别处直接 cd 到 bin 目录启动二进制,就会解析到错误位置。
-#   UPLOAD_DIR 保留为升级兼容项:旧版本磁盘存量图片会从该目录导入数据库 tb_image,
-#   运行时图片展示改为从数据库读取,不再把该目录作为种子图或新上传图片的分发依赖。
-#   写死绝对路径可让升级导入源与 WorkingDirectory 解耦。
-#   由 deploy.sh 的 sed 将 /opt/dining-system 替换为实际 INSTALL_DIR。
-Environment=STATIC_DIR=/opt/dining-system/frontend/dist
-Environment=UPLOAD_DIR=/opt/dining-system/uploads
-# 日志固定落盘到安装目录下的 logs/(deploy.sh 会把 /opt/dining-system 替换为实际 INSTALL_DIR)。
-# 用绝对路径,避免服务 WorkingDirectory 变化导致日志跑偏;后端的 EnvironmentFile
-# (/etc/dining-backend.env)在其后加载,如需改路径在那边覆盖即可。
-# 默认按 50MB/30 天/7 份轮转并压缩,由程序自带(无需 logrotate)。
-Environment=LOG_PATH=/opt/dining-system/logs/app.log
-# 打印代理(门店取单程序)的 pull/ping/ack 高频轮询日志单独落盘,
-# 不混入主日志 app.log;设为 off 时回落并入主日志文件,保证日志不丢。
-Environment=LOG_AGENT_PATH=/opt/dining-system/logs/agent.log
-
-# 管理端凭据由 deploy.sh 写入 /etc/dining-backend.env(权限 600),
-# 避免在服务单元里明文写密码。文件缺失时 "-" 前缀使其不报错。
+# 部署配置(端口 / 静态目录 / 数据库 / 日志 / 可信代理)统一在 <INSTALL_DIR>/config.yaml,
+# 由 deploy.sh 生成并维护; 后端按 WorkingDirectory 自动读取, 因此本服务单元
+# 不再声明任何配置项 —— 要改动请编辑该文件后 systemctl restart dining-backend。
+#   · server.static_dir : 前端产物目录(默认 ../frontend/dist 是按「从 backend/ 启动」
+#     设计的, 部署形态必须显式指定, deploy.sh 会写为 <INSTALL_DIR>/frontend/dist)
+#   · server.port       : 监听端口(默认 8080)
+#   · log.path          : 日志落盘路径(默认 ./logs/app.log, 相对工作目录)
+#   · database.*        : SQLite / MySQL 连接
+#
+# EnvironmentFile 仅作为「逃生出口」保留: 想用环境变量临时覆盖某项配置时写在这里
+# (环境变量优先级高于 config.yaml); 默认不存在, "-" 前缀保证缺失时不报错。
 EnvironmentFile=-/etc/dining-backend.env
 
-# 可选环境变量(按需取消注释)
-# Environment=PORT=8080
-# Environment=DB_PATH=/opt/dining-system/data/dining.db
-
 # ---- 切换到 MySQL(详见 docs/mysql-migration.md) ----
-# 只需打开 DB_DRIVER 并填好连接信息,业务代码无需改动。
-# 密码不建议写在这里,放 EnvironmentFile(上方 /etc/dining-backend.env,权限 600)。
-# Environment=DB_DRIVER=mysql
-# Environment=DB_HOST=127.0.0.1
-# Environment=DB_PORT=3306
-# Environment=DB_USER=dining
-# Environment=DB_NAME=dining
-# Environment=DB_PASSWORD=改成强密码
-# 也可用一行完整连接串(设置后优先于上面的分项);maxAllowedPacket 放行单张
-# 大图(≤5MB)写入 tb_image,与 config.example.yaml / .env.example 的示例保持一致:
-# Environment=DB_DSN=dining:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
-#
-# 更省事的写法: 用 deploy.sh 注入(仅首次安装写入 EnvironmentFile):
+# 数据库连接写在 <INSTALL_DIR>/config.yaml 的 database 段。推荐用部署脚本改(自动重写该段):
 #   sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_USER=dining \
-#     DB_PASSWORD=xxx DB_NAME=dining bash deploy/deploy.sh
-# ⚠️ 注意: EnvironmentFile 带 "-" 前缀, 文件缺失或其中没写 DB_* 时服务仍会
-#    以默认 SQLite 正常启动(静默回退), 不会报错。启动后务必核对实际后端:
+#     DB_PASSWORD=xxx DB_NAME=dining bash deploy/deploy.sh --skip-build
+# 也可以手工编辑 config.yaml 的 database 段, 然后 systemctl restart dining-backend。
+#
+# ⚠️ 不要在这里(或 /etc/dining-backend.env)再写 DB_*: 真实环境变量优先级高于 config.yaml,
+#    会把你写在 config.yaml 里的配置顶掉, 表现为「改了 config.yaml 不生效」。
+# 启动后核对实际后端:
 #      journalctl -u dining-backend -n 200 | grep '已连接'
-#    看到 "已连接 mysql 后端" 才算切换成功, 看到 sqlite 说明 DB_* 没生效。
+#    看到 "已连接 mysql 后端" 才算切换成功, 看到 sqlite 说明配置没生效。
 #
 # ⚠️ 主密钥 CONFIG_MASTER_KEY / data/master.key 必须与原库一致,否则已加密的
 #    支付密钥无法解密;迁移时请一并复制 /opt/dining-system/data/master.key。
 #
-# 经 Nginx 反代时务必配置,否则登录限流取不到真实客户端 IP:
+# 可信代理由 config.yaml 的 server.trusted_proxies 提供(deploy.sh 首次安装会自动写入),
+# 一般无需在此声明。只有想用环境变量临时顶掉它时才解除注释(注意: 环境变量优先级更高):
 # Environment=TRUSTED_PROXIES=127.0.0.1
 
 # 崩溃自动重启

@@ -16,9 +16,20 @@
 #   ARCH=amd64                 # amd64 | arm64 | both
 #   SSH_PORT=22
 #
+# 切换数据库(可选): 本地设了下面任一 DB_* 就会原样透传给远程 deploy.sh,
+# 由它重写 <INSTALL_DIR>/config.yaml 的 database 段(其余段落保留), 因此发一次版即可切库。
+#   DB_DRIVER=mysql
+#   DB_HOST=10.0.0.9
+#   DB_USER=dining
+#   DB_PASSWORD=xxx
+#   DB_NAME=dining
+# (也可只给一行连接串: DB_DSN='dining:pw@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864')
+#
 # 产物结构(与仓库相对路径一致, 包内 deploy/deploy.sh 可直接执行):
 #   dining-<版本>-<时间戳>/
 #   ├── backend/bin/dining-backend-linux-*   # 后端二进制
+#   ├── backend/config.prod.yaml             # 生产配置(本机有则带上; deploy.sh 优先据此生成 config.yaml)
+#   ├── backend/config.example.yaml          # 全量注释模板(供查阅 / 老包回退)
 #   ├── print-agent/bin/print-agent-*        # 门店打印代理五平台产物
 #   ├── frontend/dist/                       # 前端产物
 #   ├── deploy/                              # 部署物料(含 deploy.sh / print-agent 自启动模板)
@@ -53,6 +64,7 @@ usage() {
   INSTALL_DIR=/opt/dining-system
   ARCH=amd64|arm64|both   默认 amd64
   SSH_PORT=22
+  DB_*                    切数据库(DB_DRIVER/DB_HOST/DB_USER/DB_PASSWORD/DB_NAME, 或一行 DB_DSN)
 
 示例:
   ./release.sh                          # 出包
@@ -155,6 +167,15 @@ copy_tree() {
 }
 
 copy_tree "$ROOT_DIR/frontend/dist" "$PKG_DIR/frontend/dist"
+# 部署配置: config.prod.yaml 是本机私有文件(不入库), 有则带上 —— deploy.sh 首次安装
+# 优先据此生成 <INSTALL_DIR>/config.yaml; 没有它时会回退 config.example.yaml(一并带上)。
+if [ -f "$ROOT_DIR/backend/config.prod.yaml" ]; then
+  cp -f "$ROOT_DIR/backend/config.prod.yaml" "$PKG_DIR/backend/config.prod.yaml"
+else
+  warn "未找到 backend/config.prod.yaml(本机私有文件, 不入库): 发布包不含生产配置,"
+  warn "服务器上 deploy.sh 会回退到 config.example.yaml。想用固定生产配置请先创建该文件。"
+fi
+cp -f "$ROOT_DIR/backend/config.example.yaml" "$PKG_DIR/backend/config.example.yaml"
 
 for f in deploy.sh setup-nginx.sh check-health.sh dining-backend.service nginx-production.conf; do
   [ -f "$ROOT_DIR/deploy/$f" ] && cp -f "$ROOT_DIR/deploy/$f" "$PKG_DIR/deploy/"
@@ -204,11 +225,21 @@ command -v scp >/dev/null 2>&1 || die "缺少 scp"
 log "上传到 $SERVER:/tmp/ ..."
 scp -P "$SSH_PORT" -q "$OUT_DIR/$TARBALL" "$SERVER:/tmp/$TARBALL"
 
+# 数据库配置透传(可选): 本地给了 DB_* 就原样交给远程 deploy.sh, 由它重写
+# <INSTALL_DIR>/config.yaml 的 database 段(其余内容保留), 实现「发一次版即切库」。
+# 用 printf %q 转义, 避免密码里的 @ : / 空格 等把远程命令拆坏。
+REMOTE_VARS=""
+for _k in DB_DRIVER DB_DSN DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME DB_PARAMS; do
+  _v="${!_k:-}"
+  [ -n "$_v" ] && REMOTE_VARS="$REMOTE_VARS $_k=$(printf '%q' "$_v")"
+done
+[ -n "$REMOTE_VARS" ] && log "将透传数据库配置(DB_*)到远程 deploy.sh"
+
 log "远程执行 deploy.sh (安装或更新, 自动识别) ..."
 # -t 分配 TTY, 便于远程 sudo 提示输入密码
 ssh -p "$SSH_PORT" -t "$SERVER" "set -e
   rm -rf '/tmp/$PKG_NAME' '/tmp/$TARBALL'
   cd /tmp && tar -xzf '$TARBALL'
-  cd '/tmp/$PKG_NAME' && sudo INSTALL_DIR='$INSTALL_DIR' bash deploy/deploy.sh --skip-build"
+  cd '/tmp/$PKG_NAME' && sudo INSTALL_DIR='$INSTALL_DIR'$REMOTE_VARS bash deploy/deploy.sh --skip-build"
 
 log "发布完成: $VERSION -> $SERVER:$INSTALL_DIR"

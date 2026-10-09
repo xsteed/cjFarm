@@ -120,7 +120,7 @@ print-agent-windows-amd64.exe --upgrade   # Windows(自动触发任务计划重�
 把变量换成门店的值后，下面命令**原样复制**执行即可（以 macOS Apple Silicon 为例）：
 
 ```bash
-SERVER=https://你的管理后台域名      # 不带 /prod-api、不带结尾斜杠
+SERVER=https://你的管理后台域名      # 不带 /api、不带结尾斜杠
 TOKEN=你的代理令牌
 AGENT=print-agent-darwin-arm64        # Intel Mac 用 darwin-amd64;Windows 用 windows-amd64.exe;Linux 用 linux-amd64
 

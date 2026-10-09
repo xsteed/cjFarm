@@ -5,8 +5,9 @@
 # 说明: 所有二进制输出到 bin/ 目录; 支持 Linux 后端交叉编译与五平台打印代理交叉编译。
 #
 # 常用命令:
-#   make build            本机编译, 输出 bin/dining-backend(.exe)
-#   make package          本机编译 + 复制 config.example.yaml 模板到 bin/, 自包含部署目录
+#   make build            本机编译, 输出 bin/dining-backend(.exe) + bin/config.yaml(生产配置)
+#   make config           仅生成/刷新 bin/config.yaml(优先 config.prod.yaml, 缺失回退 config.example.yaml)
+#   make package          本机编译 + 生成交付目录 bin/(二进制 + config.yaml)
 #   make build-linux      交叉编译 Linux amd64 + arm64
 #   make build-linux-amd64  交叉编译 Linux amd64
 #   make build-linux-arm64  交叉编译 Linux arm64
@@ -23,6 +24,11 @@
 BINARY     := dining-backend
 BIN_DIR    := bin
 MAIN_PKG   := .
+# 生产环境配置: 编译时复制为 bin/config.yaml, 部署时作为生成 config.yaml 的首选来源。
+# 这是**本机私有文件**(已被 .gitignore 排除, 可安全填写真实密码); 仓库里公开的是
+# CONFIG_EXAMPLE, 缺失时由它兜底。新克隆的仓库请先: cp config.example.yaml config.prod.yaml
+PROD_CONFIG    := config.prod.yaml
+CONFIG_EXAMPLE := config.example.yaml
 # 门店本地打印代理(部署在门店内网,详见 docs/print-agent.md)
 AGENT_BINARY := print-agent
 AGENT_DIR    := ../print-agent
@@ -52,23 +58,35 @@ endif
 .PHONY: all build build-linux build-linux-amd64 build-linux-arm64 \
         build-agent build-agent-linux build-agent-linux-amd64 build-agent-linux-arm64 \
         build-agent-windows-amd64 build-agent-darwin-amd64 build-agent-darwin-arm64 \
-        package dev run test test-race vet fmt tidy clean help
+        config package dev run test test-race vet fmt tidy clean help
 
 ## all: 本机编译 + Linux 后端交叉编译 + 五平台门店打印代理
 all: build build-linux build-agent
 
-## build: 本机编译
-build:
+## config: 生成 bin/config.yaml(优先 config.prod.yaml, 缺失时回退 config.example.yaml)
+# config.prod.yaml 是本机私有文件(不入库, 可写真实密码), 每次都据此覆盖 bin/config.yaml ——
+# bin/ 是编译产物目录, 要改配置请改 config.prod.yaml。
+config:
 	@mkdir -p $(BIN_DIR)
+	@if [ -f $(PROD_CONFIG) ]; then \
+	  cp -f $(PROD_CONFIG) $(BIN_DIR)/config.yaml; \
+	  echo "生产配置: $(BIN_DIR)/config.yaml (来源: $(PROD_CONFIG))"; \
+	else \
+	  cp -f $(CONFIG_EXAMPLE) $(BIN_DIR)/config.yaml; \
+	  echo "[warn] 未找到 $(PROD_CONFIG)(本机私有文件, 不入库), 已回退 $(CONFIG_EXAMPLE)"; \
+	  echo "       建议: cp $(CONFIG_EXAMPLE) $(PROD_CONFIG) 后按需填写。"; \
+	fi
+
+## build: 本机编译 + 生成 bin/config.yaml
+build: config
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(LOCAL_BIN) $(MAIN_PKG)
 	@echo "构建完成: $(LOCAL_BIN)"
 
-## package: 本机编译 + 复制运行物料到 bin/(自包含部署目录)
-# 只复制 config.example.yaml 模板(无真实密码);真实 config.yaml 是本地敏感文件,
-# 按 .gitignore 规则不入包。部署时在目标机器上复制并填写即可。
+## package: 本机编译 + 生成交付目录 bin/(二进制 + config.yaml)
+# 配置这件事只需把 config.prod.yaml 复制成 bin/config.yaml —— 由 build(-> config) 完成,
+# 所以这里不再额外放模板文件, bin/ 保持「二进制 + 一份配置」的干净结构。
 package: build
-	cp config.example.yaml $(BIN_DIR)/config.example.yaml
-	@echo "打包完成: $(BIN_DIR)/ (二进制 + config.example.yaml 模板)"
+	@echo "打包完成: $(BIN_DIR)/ (二进制 + config.yaml)"
 
 ## build-linux: 交叉编译 Linux amd64 + arm64
 build-linux: build-linux-amd64 build-linux-arm64

@@ -91,6 +91,9 @@ frontend/.env.*
 config.yaml
 backend/config.yaml
 frontend/config.yaml
+# 生产配置：本机私有的「值已填好」版本，同样不入库（克隆仓库后用 config.example.yaml 起步）
+config.prod.yaml
+backend/config.prod.yaml
 # 但模板需要入库（见文件末尾的否定规则）
 
 !.env.example

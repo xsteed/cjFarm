@@ -98,7 +98,7 @@ RC=$?
 if [ "$RC" -ne 0 ]; then
   echo
   echo "[失败] 安装没成功(退出码 $RC),后面几步就不做了。"
-  echo "       常见原因:后台地址写成了带 /prod-api 或结尾斜杠的、令牌复制不全。"
+  echo "       常见原因:后台地址写成了带 /api 或结尾斜杠的、令牌复制不全。"
   exit "$RC"
 fi
 echo

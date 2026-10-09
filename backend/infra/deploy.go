@@ -47,6 +47,7 @@ type DeployFile struct {
 	Server   ServerSection   `yaml:"server"`
 	Database DatabaseSection `yaml:"database"`
 	Security SecuritySection `yaml:"security"`
+	Log      LogSection      `yaml:"log"`
 	Admin    AdminSection    `yaml:"admin"`
 }
 
@@ -94,6 +95,20 @@ type SecuritySection struct {
 	MasterKeyOld  *string `yaml:"master_key_old"`
 	TokenTTLHours *int    `yaml:"token_ttl_hours"` // -> TOKEN_TTL_HOURS,默认 24
 	HardenFileACL *bool   `yaml:"harden_file_acl"` // -> HARDEN_FILE_ACL,"1" / "0"
+}
+
+// LogSection 对应日志落盘与轮转。
+//
+// 日志是启动期最先初始化的东西,按默认配置打第一条日志后,main.go 会在
+// LoadDeployConfig 之后**再 Init 一次**,以便生效这里(或 .env / 环境变量)的设置,
+// 因此 YAML 与其它来源完全等价,不存在「日志配置写 YAML 不生效」的问题。
+type LogSection struct {
+	Path       *string `yaml:"path"`         // -> LOG_PATH,默认 ./logs/app.log; off/none/false/0/- 表示只输出控制台
+	AgentPath  *string `yaml:"agent_path"`   // -> LOG_AGENT_PATH,默认 <日志目录>/agent.log
+	Level      *string `yaml:"level"`        // -> LOG_LEVEL,debug/info/warn/error,默认 info
+	MaxSizeMB  *int    `yaml:"max_size_mb"`  // -> LOG_MAX_SIZE_MB,单文件上限(MB),默认 50
+	MaxAgeDays *int    `yaml:"max_age_days"` // -> LOG_MAX_AGE_DAYS,保留天数,默认 30
+	MaxBackups *int    `yaml:"max_backups"`  // -> LOG_MAX_BACKUPS,保留份数,默认 7
 }
 
 // AdminSection 对应管理端初始账号(仅首次建库时写入)。
@@ -238,6 +253,13 @@ func (c *DeployFile) envPairs() map[string]string {
 	if c.Security.HardenFileACL != nil {
 		m[conf.EnvHardenFileACL] = boolFlag(*c.Security.HardenFileACL)
 	}
+
+	setStrPtr(m, conf.EnvLogPath, c.Log.Path)
+	setStrPtr(m, conf.EnvLogAgentPath, c.Log.AgentPath)
+	setStrPtr(m, conf.EnvLogLevel, c.Log.Level)
+	setStr(m, conf.EnvLogMaxSizeMB, intToStr(c.Log.MaxSizeMB))
+	setStr(m, conf.EnvLogMaxAgeDays, intToStr(c.Log.MaxAgeDays))
+	setStr(m, conf.EnvLogMaxBackups, intToStr(c.Log.MaxBackups))
 
 	setStrPtr(m, conf.EnvAdminUser, c.Admin.User)
 	setStrPtr(m, conf.EnvAdminPass, c.Admin.Pass)

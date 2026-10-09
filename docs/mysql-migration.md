@@ -117,12 +117,45 @@ Windows 下写路径请用 `C:/path/config.yaml` 形式。
 | `security.harden_file_acl` | `HARDEN_FILE_ACL` | `false` | 是否收紧主密钥文件 ACL（仅 Windows） |
 | `admin.user` | `ADMIN_USER` | `admin` | 管理端初始账号（仅首次建库生效） |
 | `admin.pass` | `ADMIN_PASS` | `admin123` | 管理端初始口令（**仅首次启动建号生效**，之后在后台「员工管理」维护） |
+| `log.path` | `LOG_PATH` | `./logs/app.log` | 日志落盘路径；设 `off` 则只输出控制台 |
+| `log.agent_path` | `LOG_AGENT_PATH` | `<日志目录>/agent.log` | 门店打印代理日志路径（设 `off` 并入主日志） |
+| `log.level` | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `log.max_size_mb` / `max_age_days` / `max_backups` | `LOG_MAX_SIZE_MB` / `LOG_MAX_AGE_DAYS` / `LOG_MAX_BACKUPS` | `50` / `30` / `7` | 日志轮转：单文件上限 / 保留天数 / 保留份数 |
 
 > **留空 = 未配置**。`config.yaml` 里写 `password: ""` 或整行注释掉，都会继续
 > 回退到 `.env` / 默认值，不会用空值把其它来源顶掉。
 
 > 只设环境变量的例子：Windows 启动脚本 `set DB_DRIVER=mysql`；
 > Linux systemd `Environment="DB_DRIVER=mysql"`。
+
+### 用部署脚本切库（deploy.sh 部署的服务器，推荐）
+
+用 `deploy/deploy.sh` 部署的机器，配置只有一份：**`<INSTALL_DIR>/config.yaml`**
+（默认 `/opt/dining-system/config.yaml`，即 systemd 的 `WorkingDirectory`），
+数据库连接写在它的 `database` 段里 —— **不需要手工编辑任何 `/etc` 下的文件**：
+
+```bash
+# 在服务器上（发布包解压后的根目录），首次安装与覆盖更新是同一条命令
+sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_PORT=3306 DB_USER=dining \
+  DB_PASSWORD='强密码' DB_NAME=dining bash deploy/deploy.sh --skip-build
+# 也可只给一行连接串（非空时优先于上面的分项）：
+#   sudo DB_DSN='dining:密码@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh --skip-build
+```
+
+脚本的行为（幂等，可反复执行）：
+
+- **首次安装**：`config.yaml` 不存在时从 `backend/config.example.yaml` 生成，并写入 `database` 段、
+  `admin` 段与 `server.trusted_proxies`（文件权限 600，因为里面有数据库密码）；
+- **覆盖更新且本次传了 `DB_*`**：只重写 `database` 段，你手写的 `server` / `security` 段一字不动；
+- **覆盖更新且没传 `DB_*`**：`config.yaml` 完全不动；
+- **历史遗留自动迁移**：旧版本写在 `/etc/dining-backend.env` 里的 `DB_*` / `ADMIN_*` / `TRUSTED_PROXIES`
+  会先被读出来写进 `config.yaml`，再从该文件移除（旧文件备份为 `.bak.<时间戳>`）。
+  这一步是必需的 —— 真实环境变量优先级高于 `config.yaml`，留着就会「改了 config.yaml 不生效」；
+- 回滚时连 `config.yaml` 一起还原，不会出现「程序回滚了、配置还指着新库」。
+
+只发版不改库时，也可以把 `DB_*` 写进本地 `.release.env`，`./release.sh` 会透传到远程脚本。
+
+> 切库前务必先**建库 + 搬数据 + 带 `data/master.key`**（见场景 B），否则服务会连到一个空库上。
 
 ---
 
@@ -311,6 +344,10 @@ curl -s -X POST http://localhost:8080/api/auth/login \
 3. 确认 `backend/dining.db` 与 `backend/data/master.key` 还在；
 4. 重启。
 
+> **deploy.sh 部署的服务器**：配置在 `<INSTALL_DIR>/config.yaml`。把 `database` 段的
+> `driver` 改回 `sqlite` 后 `systemctl restart dining-backend` 即可；若刚用部署脚本切过库，
+> 也可以直接拿 `$INSTALL_DIR/backup/<时间戳>/config.yaml` 还原到更新前的版本。
+
 **注意**：切换期间在 MySQL 上产生的新数据（新订单等）不会自动回到 SQLite。
 若需要双向同步，建议在 MySQL 侧用 `mysqldump` 导出后再反向转换，或干脆以 MySQL 为准。
 
@@ -377,7 +414,11 @@ DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&lo
 ② 文件位置要对：默认读**当前工作目录**下的 `.env` 与 `config.yaml`，即从 `backend/` 目录启动；
 ③ Windows 下路径写 `C:/path/.env` 形式，`/tmp/xx` 这类 Unix 路径会被解析成 `C:\tmp\xx`；
 ④ 两个文件同时存在时 **`config.yaml` 优先** —— 启动日志会打印
-   `其中 N 项覆盖了 .env 同键`，把 N 和你要改的项对一下就知道是谁在生效。
+   `其中 N 项覆盖了 .env 同键`，把 N 和你要改的项对一下就知道是谁在生效；
+⑤ 用 `deploy/deploy.sh` 部署的服务器，配置读的是**安装目录下的 `config.yaml`**
+   （systemd 的 `WorkingDirectory`，默认 `/opt/dining-system/config.yaml`），
+   不是仓库里的 `backend/config.yaml`；改完要 `systemctl restart dining-backend`。
+   也可以在部署时带上 `DB_*` 让脚本重写其中的 `database` 段。
 
 **Q9：配置文件里键名拼错了会怎样？**
 启动直接失败并提示行号，例如 `解析 config.yaml 失败: yaml: unmarshal errors: line 8: field portt not found in type store.ServerSection`。
@@ -418,8 +459,9 @@ DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&lo
 
 | 路径 | 说明 |
 |---|---|
-| `backend/config.example.yaml` | **部署配置模板（YAML，复制为 `config.yaml` 使用）** |
-| `backend/config.yaml` | 实际部署配置（**已被 .gitignore 排除，勿提交**） |
+| `backend/config.prod.yaml` | **生产配置（值已填好，本机私有、不入库）：`make build` 复制为 `bin/config.yaml`；`deploy.sh` 优先据此生成服务器上的 `config.yaml`** |
+| `backend/config.example.yaml` | 全量注释模板（全部可配项 + 逐项说明，供查阅） |
+| `backend/config.yaml` | 本机实际部署配置（**已被 .gitignore 排除，勿提交**） |
 | `backend/.env.example` | 环境变量模板（复制为 `.env` 使用） |
 | `backend/internal/store/dialect.go` | 数据库方言层（连接配置、方言差异） |
 | `backend/internal/infra/deploy.go` | `config.yaml` 解析 + 三层来源优先级编排 |
