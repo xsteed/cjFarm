@@ -250,6 +250,19 @@ SERVER_NAME=dining.example.com SSL_CERT=/etc/nginx/ssl/dining.crt \
 需要改路径或级别：改 `$INSTALL_DIR/config.yaml` 的 `log` 段（`path` / `level` / `max_size_mb` / `max_age_days` / `max_backups`）后 `systemctl restart dining-backend`。
 本地直接运行（`make run` 或 `start.bat`）时默认写到 `backend/logs/app.log`，无需任何配置；把 `log.path` 设为 `off` 可只输出控制台。
 
+#### 确认正在运行的版本
+
+部署后想确认「此刻跑的是哪个版本」，三种方式（从「最即时」到「最静态」）：
+
+- **运行期接口（推荐）**：`curl http://127.0.0.1:8080/api/version` 直接读进程内存里的构建信息，与运行态永远一致：
+  ```json
+  { "code": 200, "msg": "操作成功", "data": { "version": "1.0.0", "gitCommit": "xxxxxxx", "buildTime": "2026-10-09T..." } }
+  ```
+- **启动日志**：`journalctl -u dining-backend --no-pager | grep "已启动 v"` 或查 `$INSTALL_DIR/logs/app.log` 里的 `已启动 v{version} (build ..., commit ...)`。
+- **安装目录文件**：`cat $INSTALL_DIR/VERSION`（部署脚本从发布包复制，含 version / git_commit / build_time）。
+
+> ⚠️ 版本号来自编译期 `-ldflags` 注入（`make build VERSION=x.y.z`）；本地 `go run` / `make run` 走 `go run` 不注入，会显示 `dev` / `unknown`。
+
 #### 部署配置统一在 config.yaml
 
 生产部署的配置只有一个落点：**`$INSTALL_DIR/config.yaml`**（默认 `/opt/dining-system/config.yaml`）。

@@ -48,6 +48,10 @@ func setupAPI(r *gin.Engine) {
 		// 退出登录:吊销本设备持有的「记住我」令牌(凭令牌本身鉴权,幂等)。
 		api.POST("/auth/logout", handler.Logout)
 
+		// 运行期版本查询(公开,无需登录):部署后 curl /api/version 即可确认
+		// 正在运行的进程版本/commit,不依赖回翻启动日志或读安装目录 VERSION 文件。
+		api.GET("/version", handler.Version)
+
 		// ---- 顾客端(公开) ----
 		api.GET("/customer/table/:id", handler.CustomerTable)
 		api.GET("/customer/menu", handler.CustomerMenu)
@@ -299,6 +303,10 @@ func main() {
 	// 图片/收款码只有 /uploads/ 一个前缀(历史 /picture/ 已由 migrateUploadPrefix 改写),
 	// 避免同一目录挂两个前缀造成「代码里写哪个才对」的歧义。
 	r.GET("/uploads/*file", handler.ServeImage)
+
+	// 运行期版本信息:把编译期注入的 main.version/gitCommit/buildTime 交给 handler 包,
+	// 供 GET /api/version 在进程中即时读取(与内存态一致,不依赖启动日志或安装目录文件)。
+	handler.InitBuildInfo(version, gitCommit, buildTime)
 
 	// 后端 API 前缀
 	setupAPI(r)
