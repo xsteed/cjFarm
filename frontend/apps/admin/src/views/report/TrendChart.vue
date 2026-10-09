@@ -18,6 +18,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import type { DailyTrendRow } from '@dining/types';
+import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
 import {
   AXIS_COLOR,
@@ -38,6 +39,7 @@ const props = defineProps<{
 }>();
 
 const el = ref<HTMLElement | null>(null);
+const { isMobile } = useIsMobile();
 
 function render(): void {
   const c = chart('daily', el.value);
@@ -48,10 +50,13 @@ function render(): void {
     c.setOption(EMPTY_OPTION);
     return;
   }
+  const mobile = isMobile.value;
   const showSymbol = list.length <= 30;
   const option: EChartOption = {
     tooltip: {
       trigger: 'axis',
+      // 手机上把浮层限制在画布内,避免贴边时溢出到屏幕外
+      confine: true,
       axisPointer: { type: 'cross', label: { backgroundColor: BRAND_DEEP } },
       formatter: ps => {
         const p = pickTooltipParam(ps);
@@ -68,7 +73,7 @@ function render(): void {
       itemHeight: 10,
       textStyle: { color: AXIS_COLOR, fontSize: 12 }
     },
-    grid: { left: 8, right: 8, top: 44, bottom: 4, containLabel: true },
+    grid: { left: 8, right: 8, top: mobile ? 34 : 44, bottom: 4, containLabel: true },
     xAxis: {
       type: 'category',
       boundaryGap: false,
@@ -80,14 +85,15 @@ function render(): void {
     yAxis: [
       {
         type: 'value',
-        name: '营业额',
+        // 窄屏去掉轴名,给绘图区让出横向空间(图例已能区分双轴)
+        name: mobile ? undefined : '营业额',
         nameTextStyle: { color: '#C7C7C7', fontSize: 11 },
         splitLine: { lineStyle: { color: SPLIT_LINE } },
         axisLabel: { color: AXIS_COLOR, fontSize: 11, formatter: axisYuan }
       },
       {
         type: 'value',
-        name: '订单',
+        name: mobile ? undefined : '订单',
         nameTextStyle: { color: '#C7C7C7', fontSize: 11 },
         minInterval: 1,
         splitLine: { show: false },
@@ -138,6 +144,8 @@ function render(): void {
 
 onMounted(render);
 watch(() => props.rows, render);
+// 切换手机/桌面宽度时用不同的 option 重绘
+watch(isMobile, render);
 </script>
 
 <style scoped>

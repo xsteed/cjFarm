@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils';
-import { defineComponent, h } from 'vue';
-import { MessagePlugin } from 'tdesign-vue-next';
+import { defineComponent, h, nextTick } from 'vue';
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import QRCode from 'qrcode';
 import OrderPage from '../../OrderPage.vue';
 import {
@@ -28,6 +28,10 @@ vi.mock('tdesign-vue-next', () => ({
     error: vi.fn(),
     info: vi.fn(),
     close: vi.fn()
+  },
+  // 清空购物车会先弹确认：这里记下最后一次配置，测试据此触发 onConfirm
+  DialogPlugin: {
+    confirm: vi.fn(() => ({ destroy: vi.fn() }))
   }
 }));
 
@@ -162,12 +166,72 @@ beforeEach(() => {
 describe('OrderPage', () => {
   it('挂载后先展示 loading,再进入菜单视图', async () => {
     const wrapper = mountPage();
-    expect(wrapper.text()).toContain('正在进入点餐');
+    expect(wrapper.find('.sk-wrap').exists()).toBe(true);
 
     await flushPromises();
     expect(wrapper.text()).toContain('宫保鸡丁');
-    expect(wrapper.text()).toContain('去结算');
+    // 空车:结算栏按钮显示提示文案「请选择菜品」(与小程序 cart-bar 一致)
+    expect(wrapper.text()).toContain('请选择菜品');
     expect(getTableMock).toHaveBeenCalledWith('1');
+    wrapper.unmount();
+  });
+
+  it('清空购物车先弹二次确认:点了「清空」不直接清,确认后才清', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // 加一道菜，打开购物车抽屉
+    await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
+    await wrapper.find('.op-checkout').trigger('click');
+    await nextTick();
+    expect(wrapper.find('.clear-btn').exists()).toBe(true);
+
+    await wrapper.find('.clear-btn').trigger('click');
+    const dialog = vi.mocked(DialogPlugin.confirm);
+    expect(dialog).toHaveBeenCalledTimes(1);
+    // 还没确认：菜应该还在（角标 1）
+    expect(wrapper.find('.op-cartbtn .b').text()).toBe('1');
+
+    const opts = dialog.mock.calls[0][0] as { onConfirm?: () => void };
+    opts.onConfirm?.();
+    await nextTick();
+    expect(wrapper.find('.op-cartbtn .b').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('底部结算栏整条都能展开购物车:点金额区(非图标)也能打开抽屉', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // 加一道菜,让购物车非空(热区在 totalCount 为 0 时不响应)
+    await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
+    await nextTick();
+
+    // 点「合计 ¥xx」这一块(图标与去结算按钮之外),抽屉应当展开
+    await wrapper.find('.op-total').trigger('click');
+    await nextTick();
+    expect(wrapper.find('.clear-btn').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('结算栏按钮文案随购物车状态切换:空车「请选择菜品」,选菜后「去结算」', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(wrapper.find('.op-checkout').text()).toBe('请选择菜品');
+
+    await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
+    await nextTick();
+    expect(wrapper.find('.op-checkout').text()).toBe('去结算');
+    wrapper.unmount();
+  });
+
+  it('底部导航常驻:还没下单也能进订单页看空态', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.op-tabbar').exists()).toBe(true);
+    await wrapper.findAll('.tb-item')[1].trigger('click'); // 订单
+    expect(wrapper.text()).toContain('没有找到进行中的订单');
     wrapper.unmount();
   });
 

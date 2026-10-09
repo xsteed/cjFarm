@@ -38,47 +38,16 @@
       enhanced
       show-scrollbar="{{false}}"
     >
-      <!-- 订单概要 -->
-      <view class="card head">
-        <view class="head-top">
-          <view class="head-table">{{tableLabel}}</view>
-          <view class="head-top-right">
+      <!-- 菜品明细：顾客最关心「点了什么、多少钱」，放第一张。
+           订单状态与刷新收进卡头，桌台/单号/人数/时间统一挪到最后的「订单信息」卡。 -->
+      <view class="card sec">
+        <view class="sec-head">
+          <view class="sec-title">菜品明细</view>
+          <view class="sec-head-right">
             <view class="tag {{statusClass}}">{{statusText}}</view>
             <view class="head-refresh" bindtap="onRefresh">刷新</view>
           </view>
         </view>
-        <view class="head-no">单号 {{shortNo}}</view>
-        <view class="head-meta">
-          <text>{{personCount}} 人用餐</text>
-          <text wx:if="{{createTimeText}}">{{createTimeText}}</text>
-        </view>
-        <view class="head-amt">
-          <text class="head-amt-label">合计</text>
-          <text class="head-amt-value"><text class="cny">¥</text>{{totalText}}</text>
-          <text class="tag {{payClass}}">{{payText}}</text>
-        </view>
-      </view>
-
-      <!-- 状态提示：只有「已取消 / 已完成 / 已结账」才出这张卡。
-           进行中的单这一格本来只有步骤条，去掉步骤条后就是张空白卡，直接整卡不渲染。 -->
-      <view
-        wx:if="{{canceled || done || settled}}"
-        class="card sec"
-      >
-        <block wx:if="{{canceled}}">
-          <view class="cancel-tip">
-            订单已取消<text wx:if="{{canceledReason}}">：{{canceledReason}}</text>
-          </view>
-        </block>
-        <block wx:else>
-          <view wx:if="{{done}}" class="done-tip">本单已完成，欢迎下次光临</view>
-          <view wx:elif="{{settled}}" class="done-tip">本单已结账，菜品仍在出餐中，请稍候</view>
-        </block>
-      </view>
-
-      <!-- 菜品 -->
-      <view class="card sec">
-        <view class="sec-title">菜品明细</view>
         <view
           wx:for="{{rows}}"
           wx:key="key"
@@ -101,7 +70,8 @@
           订单备注：{{orderRemark}}
         </view>
 
-        <!-- 账单明细：合计比菜品明细多一截是顾客最常见的疑问，把加价项摊开 -->
+        <!-- 账单明细：这几行加起来就是末行的「合计」，用来回答「为什么比点菜金额多」。
+             合计与支付状态放在同一行，全页只出现一次。 -->
         <view class="bill">
           <view class="bill-row">
             <text>菜品小计</text>
@@ -111,7 +81,7 @@
             wx:if="{{showSeatFee}}"
             class="bill-row"
           >
-            <text>茶位费</text>
+            <text>茶位费（{{personCount}}人）</text>
             <text>¥{{seatFeeText}}</text>
           </view>
           <view
@@ -121,13 +91,47 @@
             <text>满减优惠</text>
             <text>-¥{{discountText}}</text>
           </view>
+          <view class="bill-row bill-total">
+            <text>合计</text>
+            <view class="bill-total-right">
+              <view class="tag {{payClass}}">{{payText}}</view>
+              <text class="bill-total-value"><text class="cny">¥</text>{{totalText}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 状态提示：只有「已取消 / 已完成 / 已结账」才出这张卡。
+           进行中的单这一格本来只有步骤条，去掉步骤条后就是张空白卡，直接整卡不渲染。 -->
+      <view
+        wx:if="{{canceled || done || settled}}"
+        class="card sec"
+      >
+        <block wx:if="{{canceled}}">
+          <view class="cancel-tip">
+            订单已取消<text wx:if="{{canceledReason}}">：{{canceledReason}}</text>
+          </view>
+        </block>
+        <block wx:else>
+          <view wx:if="{{done}}" class="done-tip">本单已完成，欢迎下次光临</view>
+          <view wx:elif="{{settled}}" class="done-tip">本单已结账，菜品仍在出餐中，请稍候</view>
+        </block>
+      </view>
+
+      <!-- 订单信息：桌台 / 单号 / 人数 / 时间。顾客核对单据时才看，不再挤在首屏 -->
+      <view class="card sec">
+        <view class="info-table">{{tableLabel}}</view>
+        <view class="info-no">单号 {{shortNo}}</view>
+        <view class="info-meta">
+          <text>{{personCount}} 人用餐</text>
+          <text wx:if="{{createTimeText}}">{{createTimeText}}</text>
         </view>
       </view>
 
       <view class="bottom-pad"></view>
     </scroll-view>
 
-    <!-- 底部动作栏（刷新已移到右上角，避免窄屏下四个按钮挤成一行放不下） -->
+    <!-- 底部动作栏（刷新收在菜品明细卡头，避免窄屏下四个按钮挤成一行放不下） -->
     <view class="foot">
       <view
         wx:if="{{canUrge}}"
@@ -163,7 +167,6 @@
   <!-- 常驻底部主导航：加载中 / 「本桌没有进行中订单」的空态下也能切回点餐 -->
   <tab-bar
     active="order"
-    ordered-count="{{orderedCount}}"
     show-profile="{{showProfile}}"
   />
 </view>

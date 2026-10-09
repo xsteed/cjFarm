@@ -607,7 +607,9 @@ func OldestPendingSec() int {
 // 时间统一以 'YYYY-MM-DD HH:MM:SS' 字符串存储,定宽格式下字典序即时间序,
 // 因此可以直接用字符串比较做「到期」「超时」判断。
 func shiftSeconds(base string, deltaSeconds int) string {
-	t, err := time.Parse(conf.TimeLayout, base)
+	// 必须按本地时区解析:store.Now() 写的是本地墙钟时间,用 time.Parse(按 UTC 解释)
+	// 会在跨越 DST 切换点时把偏移算错(最多 ±1 小时),影响租约到期判定。
+	t, err := time.ParseInLocation(conf.TimeLayout, base, time.Local)
 	if err != nil {
 		return base
 	}

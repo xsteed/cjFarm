@@ -47,11 +47,6 @@
           />
           <path d="M9 13h6M9 17h4" />
         </svg>
-        <span
-          v-if="orderedCount > 0"
-          class="tb-badge"
-          >{{ orderedCount }}</span
-        >
       </span>
       <span class="tb-text">订单</span>
     </div>
@@ -63,7 +58,6 @@ import type { ViewState } from '@dining/customer-core';
 
 defineProps<{
   view: ViewState;
-  orderedCount: number;
 }>();
 
 const emit = defineEmits<{
@@ -114,22 +108,5 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: center;
   height: 21px;
-}
-
-.tb-badge {
-  position: absolute;
-  top: -5px;
-  right: -10px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: var(--r-pill);
-  background: var(--brand);
-  border: 1.5px solid #fff;
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 13px;
-  text-align: center;
 }
 </style>

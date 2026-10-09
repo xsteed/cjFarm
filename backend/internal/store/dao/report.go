@@ -270,10 +270,12 @@ func DishRank(orderCol string, limit int) ([]DishRankRow, error) {
 	out := []DishRankRow{}
 	for rows.Next() {
 		var row DishRankRow
-		rows.Scan(&row.DishName, &row.Quantity, &row.AmountCents)
+		if err := rows.Scan(&row.DishName, &row.Quantity, &row.AmountCents); err != nil {
+			return nil, err
+		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // HourlyStats 按时段统计区间内的营业额/订单数/客流,key 为小时(00-23)。
@@ -294,10 +296,12 @@ func HourlyStats(start, end string) (map[string]HourlyBucket, error) {
 	for rows.Next() {
 		var h string
 		var b HourlyBucket
-		rows.Scan(&h, &b.AmtCents, &b.Count, &b.Guests)
+		if err := rows.Scan(&h, &b.AmtCents, &b.Count, &b.Guests); err != nil {
+			return nil, err
+		}
 		byHour[h] = b
 	}
-	return byHour, nil
+	return byHour, rows.Err()
 }
 
 // SettleMixStats 按结算方式统计区间内的应收/实收/笔数。
@@ -317,8 +321,10 @@ func SettleMixStats(start, end string) ([]SettleMixRow, error) {
 	out := []SettleMixRow{}
 	for rows.Next() {
 		var row SettleMixRow
-		rows.Scan(&row.SettleType, &row.AmountCents, &row.PaidCents, &row.Count)
+		if err := rows.Scan(&row.SettleType, &row.AmountCents, &row.PaidCents, &row.Count); err != nil {
+			return nil, err
+		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }

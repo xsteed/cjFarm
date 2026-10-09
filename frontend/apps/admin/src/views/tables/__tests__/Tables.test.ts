@@ -5,7 +5,7 @@ import TableCardGrid from '../TableCardGrid.vue';
 import { getConfig, listOrders, listTables } from '@dining/api';
 import { PAGE_ON_LOOPBACK } from '@dining/shared';
 import { setAuth } from '@dining/auth';
-import { flushPromises, stubMatchMedia, stubResizeObserver } from '@shell/test/mocks.ts';
+import { flushPromises, stubMatchMedia, stubResizeObserver, clearAllStorage } from '@shell/test/mocks.ts';
 import type { TableInfo } from '@dining/types';
 
 // 与 Tables.vue / BatchQrDialog / perm 共享同一个 @dining/api 模块，统一 mock 全部导出，
@@ -126,6 +126,9 @@ let restoreResizeObserver: () => void;
 beforeEach(() => {
   restoreMatchMedia = stubMatchMedia();
   restoreResizeObserver = stubResizeObserver();
+  // 视图模式(列表/卡片)会按用户名缓存到 localStorage,不清掉的话
+  // 上一条用例切到「列表」会把下一条用例的默认视图带偏。
+  clearAllStorage();
   setAuth({ token: 't', username: 'u', perms: ['table:edit', 'order:view', 'config:view'] });
 
   // load() 会拉两次：分页列表 + 全量(500)统计；本测试数据量小，两处返回同一批即可。

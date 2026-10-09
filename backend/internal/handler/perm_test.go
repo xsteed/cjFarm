@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"dining-system/internal/po"
+	"dining-system/internal/service"
 	"dining-system/internal/store/dao"
 )
 
@@ -166,23 +167,37 @@ func TestHasPermCurrentAuthAdminName(t *testing.T) {
 	}
 }
 
-// TestUsernameFromToken 从令牌载荷兜底解析用户名。
+// TestUsernameFromToken 兜底解析用户名,但必须验签。
+//
+// 这是防「审计日志操作人伪造」的回归:载荷是明文 base64,任何人都能拼出
+// 「任意用户名|uid|ver|exp」。只有签名真正有效的令牌才允许取出用户名,
+// 否则 writeDeniedLog 会把伪造的假名写进 401/403 越权记录。
 func TestUsernameFromToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	payload := base64.RawURLEncoding.EncodeToString([]byte("boss|7|0|9999999999"))
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-	c.Request.Header.Set("Authorization", "Bearer "+payload+".sig")
-	if got := usernameFromToken(c); got != "boss" {
-		t.Fatalf("应解析出用户名 boss, got %q", got)
+	// 合法令牌:签名有效,应解析出用户名。
+	valid, _ := gin.CreateTestContext(httptest.NewRecorder())
+	valid.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	valid.Request.Header.Set("Authorization", "Bearer "+service.GenToken("boss", 7, 0))
+	if got := usernameFromToken(valid); got != "boss" {
+		t.Fatalf("合法令牌应解析出用户名 boss, got %q", got)
 	}
 
-	// 载荷格式错误时返回空串。
-	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c2.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-	c2.Request.Header.Set("Authorization", "Bearer not-base64.sig")
-	if got := usernameFromToken(c2); got != "" {
+	h := func(tok string) string {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		c.Request.Header.Set("Authorization", "Bearer "+tok)
+		return usernameFromToken(c)
+	}
+
+	// 伪造签名:载荷合法但签名错误,必须拒绝(否则可向审计日志注入任意操作人)。
+	forged := base64.RawURLEncoding.EncodeToString([]byte("hacker|7|0|9999999999")) + ".deadbeef"
+	if got := h(forged); got != "" {
+		t.Fatalf("伪造签名的令牌不得解析出用户名, got %q", got)
+	}
+
+	// 载荷非法:返回空串。
+	if got := h("not-base64.sig"); got != "" {
 		t.Fatalf("非法载荷应返回空串, got %q", got)
 	}
 }

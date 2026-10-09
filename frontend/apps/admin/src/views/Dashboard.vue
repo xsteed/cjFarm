@@ -1,5 +1,13 @@
 <template>
   <div>
+    <!-- 移动端下拉刷新:看板是实时数据,随手下拉即可刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
     <!-- KPI 卡片。
          注意:营业额/客单价/今日订单都来自 report/summary 接口(report:view)。
          收银员与员工只有 order:view,若照旧调用会稳定 403 —— 所以这里按权限降级:
@@ -52,11 +60,15 @@
           </router-link>
         </div>
         <div class="table-grid">
-          <div
+          <!-- 点桌台瓦片直达桌台管理,少一层查找;催菜角标保持醒目 -->
+          <button
             v-for="t in board"
             :key="t.tableId"
+            type="button"
             class="tg"
             :class="[t.status === 1 ? 'busy' : 'free', { urging: hasUrge(t) }]"
+            :aria-label="`${t.tableNo} 号桌,${t.status === 1 ? '用餐中' : '空闲'}`"
+            @click="goTables"
           >
             <div class="n">
               {{ t.tableNo }}
@@ -69,7 +81,7 @@
               class="urge-badge"
               >催</span
             >
-          </div>
+          </button>
           <div
             v-if="!board.length"
             class="empty"
@@ -96,10 +108,13 @@
         >
           暂无进行中订单
         </div>
-        <div
+        <button
           v-for="o in activeOrders"
           :key="o.orderId"
+          type="button"
           class="orderline"
+          :aria-label="`订单 ${o.shortNo || o.orderNo.slice(-6)},${statusLabel(o.orderStatus)}`"
+          @click="goOrders"
         >
           <div class="no">#{{ o.shortNo || o.orderNo.slice(-6) }}</div>
           <div class="meta">{{ o.tableName || o.tableNo }} · {{ o.personCount }}人</div>
@@ -114,7 +129,7 @@
             :class="'s' + o.orderStatus"
             >{{ statusLabel(o.orderStatus) }}</span
           >
-        </div>
+        </button>
       </div>
     </div>
   </div>
@@ -122,13 +137,36 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { getReportSummary, getOrderBoard } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { money } from '@dining/shared';
 import type { OrderSummary, ReportSummary, TableInfo } from '@dining/types';
+import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
+import PullRefresh from '../components/PullRefresh.vue';
 
 // 模板里 $money 与全局属性共用 @dining/shared 里 money 的实现(TS 模板消费不到全局属性,须显式导入)。
 const $money = money;
+
+const router = useRouter();
+const { isMobile } = useIsMobile();
+
+// 移动端下拉刷新看板实时数据
+const {
+  distance: refreshDistance,
+  refreshing: refreshRefreshing,
+  pulling: refreshPulling
+} = usePullRefresh(load);
+
+// 看板上的桌台 / 订单点一下直达对应管理页,减少一级查找
+function goTables(): void {
+  router.push('/dining/tables');
+}
+
+function goOrders(): void {
+  router.push('/dining/orders');
+}
 
 // 报表类 KPI(营业额/客单价/订单数)属 report:view;没有就只展示桌台看板。
 const canReport = computed(() => hasPerm('report:view'));
@@ -292,13 +330,29 @@ onMounted(load);
 
 .tg {
   position: relative;
+  width: 100%;
   border-radius: 10px;
   padding: 12px 6px;
   text-align: center;
+  font-family: inherit;
   font-size: 11px;
+  color: inherit;
   border: 1.5px solid var(--line);
   background: #fff;
+  cursor: pointer;
   transition: all 0.15s;
+}
+
+/* 可点反馈:按压变淡、键盘聚焦有描边 */
+.tg:active,
+.orderline:active {
+  opacity: 0.72;
+}
+
+.tg:focus-visible,
+.orderline:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .tg .n {

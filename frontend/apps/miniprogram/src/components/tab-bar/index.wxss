@@ -143,30 +143,6 @@
   width: 60%;
 }
 
-/* ---------- 已点份数角标 ----------
-   挂在单据的右上角：锚点是角标自身右上顶点，再用 transform 挪到「跨在角上」，
-   份数变两位数时自动往外长，不会反着压到图标上。 */
-/* border-box 同上：否则 26rpx(min-width) + 16rpx(padding) + 6rpx(border)
-   会得到一个比 34rpx 的图标还宽的角标。 */
-.tb-badge {
-  position: absolute;
-  top: 0;
-  right: 0;
-  min-width: 26rpx;
-  height: 26rpx;
-  padding: 0 6rpx;
-  border: 2rpx solid #fff;
-  border-radius: var(--r-pill);
-  background: var(--brand);
-  color: #fff;
-  font-size: 17rpx;
-  font-weight: 700;
-  line-height: 22rpx;
-  text-align: center;
-  box-sizing: border-box;
-  transform: translate(35%, -35%);
-}
-
 .tb-text {
   font-size: 21rpx;
   line-height: 1.2;

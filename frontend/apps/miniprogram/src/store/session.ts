@@ -56,7 +56,8 @@ export function applyTable(table: TableInfo): void {
 export function applyConfig(config: PublicConfig): void {
   const s = sessionState();
   s.config = config;
-  s.shopName = String(config.shop_name || '') || '扫码点餐';
+  // 顶部展示「店铺名称 · 标语」(标语为系统配置的独立字段,留空则只显示名称)
+  s.shopName = [config.shop_name, config.shop_slogan].filter(Boolean).join(' · ') || '扫码点餐';
 }
 
 /**

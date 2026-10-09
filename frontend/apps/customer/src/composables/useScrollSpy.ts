@@ -12,7 +12,14 @@ export function useScrollSpy(menu: Ref<MenuCategory[]>) {
   }
 
   function setGroupRef(categoryId: number | undefined, el: unknown): void {
-    if (el && categoryId !== undefined) groupRefs[categoryId] = el as HTMLElement;
+    if (categoryId === undefined) return;
+    // el 为 null 表示标题被卸载(搜索过滤掉该分类时就会发生):必须删掉这一项,
+    // 否则失效的旧元素会一直留在表里,滚动联动拿它算出的偏移全是 0,高亮会错。
+    if (!el) {
+      delete groupRefs[categoryId];
+      return;
+    }
+    groupRefs[categoryId] = el as HTMLElement;
   }
 
   // 分组标题相对"滚动内容顶部"的偏移。用 rect 差值算而不是 offsetTop,

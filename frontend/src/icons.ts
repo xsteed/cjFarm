@@ -25,7 +25,8 @@ import {
   MenuFoldIcon,
   MenuUnfoldIcon,
   EllipsisIcon,
-  HistoryIcon
+  HistoryIcon,
+  FilterIcon
 } from 'tdesign-icons-vue-next';
 
 // 单一图标清单：main.ts 全局注册与 router 的 meta.icon 都从这里取。
@@ -57,5 +58,6 @@ export const iconRegistry = {
   MenuFoldIcon,
   MenuUnfoldIcon,
   EllipsisIcon,
-  HistoryIcon
+  HistoryIcon,
+  FilterIcon
 };

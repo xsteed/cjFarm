@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils';
 import TDesign from 'tdesign-vue-next';
 import SingleQrDialog from '../SingleQrDialog.vue';
 import { getTableWeappCode } from '@dining/api';
-import { renderQrDataUrl } from '../../../utils/tableQr';
+import { renderCardDataUrl, renderQrDataUrl } from '../../../utils/tableQr';
 import { flushPromises } from '@shell/test/mocks.ts';
 import type { TableInfo } from '@dining/types';
 
@@ -31,11 +31,17 @@ vi.mock('../../../utils/tableQr', () => ({
     { key: 900, label: '900 px（高清打印）' },
     { key: 1200, label: '1200 px（大幅面）' }
   ],
+  CARD_PRESETS: [
+    { key: '60x80', label: '60 × 80 mm　竖版桌牌', w: 60, h: 80 },
+    { key: '80x80', label: '80 × 80 mm　方形', w: 80, h: 80 },
+    { key: '100x70', label: '100 × 70 mm　横版', w: 100, h: 70 }
+  ],
+  renderCardDataUrl: vi.fn(),
   renderQrDataUrl: vi.fn(),
-  buildPrintSheetHtml: vi.fn(),
   openPrintWindow: vi.fn()
 }));
 
+const renderCardDataUrlMock = vi.mocked(renderCardDataUrl);
 const renderQrDataUrlMock = vi.mocked(renderQrDataUrl);
 const getTableWeappCodeMock = vi.mocked(getTableWeappCode);
 
@@ -77,7 +83,8 @@ function mountDialog(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  renderQrDataUrlMock.mockResolvedValue('data:image/png;base64,mock');
+  renderCardDataUrlMock.mockResolvedValue('data:image/png;base64,mock');
+  renderQrDataUrlMock.mockResolvedValue('data:image/png;base64,bare');
   getTableWeappCodeMock.mockResolvedValue({
     dataUrl: 'data:image/jpeg;base64,weapp',
     cached: false,
@@ -87,7 +94,7 @@ beforeEach(() => {
 });
 
 describe('SingleQrDialog 单张桌台二维码', () => {
-  it('打开后调用 renderQrDataUrl 并渲染二维码预览 img', async () => {
+  it('打开后调用 renderCardDataUrl 生成矩形桌牌卡片并渲染预览 img', async () => {
     const wrapper = mountDialog();
     await wrapper.setProps({ visible: true });
     await flushPromises();
@@ -95,9 +102,16 @@ describe('SingleQrDialog 单张桌台二维码', () => {
     const img = wrapper.find('.qr-img');
     expect(img.exists()).toBe(true);
     expect(img.attributes('src')).toBe('data:image/png;base64,mock');
-    expect(renderQrDataUrlMock).toHaveBeenCalledWith(
-      'http://example.com/order/C001',
-      expect.objectContaining({ size: 640, logo: 'http://cdn.test/logo.png', centerText: '' })
+    expect(renderCardDataUrlMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'http://example.com/order/C001',
+        width: 640,
+        ratio: 4 / 3,
+        logo: 'http://cdn.test/logo.png',
+        centerText: '',
+        shopName: '测试餐厅',
+        title: '扫码点餐'
+      })
     );
     wrapper.unmount();
   });
@@ -106,7 +120,7 @@ describe('SingleQrDialog 单张桌台二维码', () => {
     const wrapper = mountDialog();
     await wrapper.setProps({ visible: true });
     await flushPromises();
-    expect(renderQrDataUrlMock).toHaveBeenCalledTimes(1);
+    expect(renderCardDataUrlMock).toHaveBeenCalledTimes(1);
 
     const checkboxes = wrapper.findAll('input[type=checkbox]');
     expect(checkboxes).toHaveLength(2);
@@ -121,9 +135,8 @@ describe('SingleQrDialog 单张桌台二维码', () => {
     await new Promise(resolve => setTimeout(resolve, 220));
     await flushPromises();
 
-    expect(renderQrDataUrlMock).toHaveBeenCalledTimes(2);
-    expect(renderQrDataUrlMock).toHaveBeenLastCalledWith(
-      'http://example.com/order/C001',
+    expect(renderCardDataUrlMock).toHaveBeenCalledTimes(2);
+    expect(renderCardDataUrlMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ logo: '', centerText: '01' })
     );
     wrapper.unmount();
@@ -134,8 +147,59 @@ describe('SingleQrDialog 单张桌台二维码', () => {
     await wrapper.setProps({ visible: true });
     await flushPromises();
 
-    expect(renderQrDataUrlMock).toHaveBeenCalledTimes(1);
+    expect(renderCardDataUrlMock).toHaveBeenCalledTimes(1);
     expect(getTableWeappCodeMock).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('提供卡片尺寸预设并默认竖版桌牌', () => {
+    const wrapper = mountDialog();
+    expect(wrapper.text()).toContain('卡片尺寸');
+    const selects = wrapper.findAll('.t-select input.t-input__inner');
+    expect(selects.some(s => (s.element as HTMLInputElement).value.includes('竖版桌牌'))).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('仅下载二维码:H5 现场生成裸码(带 Logo,不带卡片装饰)', async () => {
+    const wrapper = mountDialog();
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    renderQrDataUrlMock.mockClear();
+
+    const btn = wrapper.findAll('button').find(b => b.text().includes('仅下载二维码'));
+    expect(btn).toBeTruthy();
+    await btn!.trigger('click');
+    await flushPromises();
+
+    expect(renderQrDataUrlMock).toHaveBeenCalledTimes(1);
+    expect(renderQrDataUrlMock).toHaveBeenCalledWith(
+      'http://example.com/order/C001',
+      expect.objectContaining({
+        size: 640,
+        logo: 'http://cdn.test/logo.png',
+        centerText: ''
+      })
+    );
+    wrapper.unmount();
+  });
+
+  it('仅下载二维码:小程序码复用出码缓存,不重复请求后端', async () => {
+    const wrapper = mountDialog();
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+    await pickRadio(wrapper, '小程序码');
+    // 等待 180ms 防抖结束,renderSingle 完成出码并写入缓存
+    await new Promise(r => setTimeout(r, 250));
+    await flushPromises();
+    getTableWeappCodeMock.mockClear();
+
+    const btn = wrapper.findAll('button').find(b => b.text().includes('仅下载二维码'));
+    expect(btn).toBeTruthy();
+    await btn!.trigger('click');
+    await flushPromises();
+
+    expect(getTableWeappCodeMock).not.toHaveBeenCalled();
+    expect(renderQrDataUrlMock).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
@@ -151,7 +215,11 @@ describe('SingleQrDialog 单张桌台二维码', () => {
 
     // 用桌台稳定码请求后端(后端带 access_token 换取,前端不接触令牌)
     expect(getTableWeappCodeMock).toHaveBeenCalledWith('C001', 640);
-    expect(wrapper.find('.qr-img').attributes('src')).toBe('data:image/jpeg;base64,weapp');
+    // 小程序码以图片形式嵌入卡片,预览图是卡片本身(而非原小程序码)
+    expect(wrapper.find('.qr-img').attributes('src')).toBe('data:image/png;base64,mock');
+    expect(renderCardDataUrlMock).toHaveBeenCalledWith(
+      expect.objectContaining({ qrImageSrc: 'data:image/jpeg;base64,weapp' })
+    );
     // 小程序码的中心由微信固定为「小程序头像」,两个中心选项都不该再能勾选
     const checkboxes = wrapper.findAll('input[type=checkbox]');
     expect(checkboxes).toHaveLength(2);

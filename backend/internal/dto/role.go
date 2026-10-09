@@ -7,7 +7,9 @@ type Role struct {
 	RoleID    int    `json:"roleId"`
 	RoleKey   string `json:"roleKey"`  // 代码内标识,内置角色不可改
 	RoleName  string `json:"roleName"` // 展示名
-	Perms     string `json:"perms"`    // 权限码 CSV(落库形态)
+	Perms     string `json:"perms"` // 权限码 CSV(落库形态)
+	// DataScope 为表结构预留的数据行级权限位,当前单租户系统不生效(不参与任何过滤),
+	// 仅原样回传。详见 docs/user-permission-design.md 1.3「非目标(预留)」。
 	DataScope string `json:"dataScope"`
 	IsBuiltin int    `json:"isBuiltin"` // 1=内置(不可删除;admin 权限每次启动强制恢复全量)
 	SortOrder int    `json:"sortOrder"`

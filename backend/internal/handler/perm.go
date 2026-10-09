@@ -2,7 +2,6 @@ package handler
 
 import (
 	"dining-system/infra/logger"
-	"encoding/base64"
 	"net/http"
 	"sort"
 	"strings"
@@ -305,23 +304,19 @@ func adminName(c *gin.Context) string {
 	return usernameFromToken(c)
 }
 
-// usernameFromToken 从 Bearer 令牌的载荷第一段取用户名(兜底路径)。
-// 载荷格式: 用户名|uid|token_version|过期时间(见 auth.go)。
+// usernameFromToken 从 Bearer 令牌取用户名(兜底路径)。载荷格式:用户名|uid|token_version|过期时间(见 auth.go)。
+//
+// 必须验签通过才返回:令牌载荷只是 base64,任何人都能伪造出「任意用户名|…」的串。
+// 若把未验签的名字写进审计日志,攻击者仅凭构造一个假令牌,就能在 401/403 留痕里
+// 冒充任意操作人(见 writeDeniedLog),审计数据会彻底失去可信度。
+// 验签失败一律返回空串 —— 宁可不留痕,也不留下会骗人的假名。
 func usernameFromToken(c *gin.Context) string {
 	tok := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
-	parts := strings.SplitN(tok, ".", 2)
-	if len(parts) != 2 {
+	claims, valid := service.VerifyToken(tok)
+	if !valid {
 		return ""
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return ""
-	}
-	fields := strings.SplitN(string(payload), "|", 2)
-	if len(fields) != 2 {
-		return ""
-	}
-	return fields[0]
+	return claims.Username
 }
 
 // ============================================================================

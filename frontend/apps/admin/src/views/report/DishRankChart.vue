@@ -26,6 +26,7 @@
 import { onMounted, ref, watch } from 'vue';
 import { RadioButton, RadioGroup } from 'tdesign-vue-next';
 import type { DishRankRow } from '@dining/types';
+import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
 import { AXIS_COLOR, AXIS_LINE, SPLIT_LINE, BRAND_DEEP, axisYuan, yuan, pickTooltipParam } from './reportShared';
 
@@ -40,6 +41,7 @@ const emit = defineEmits<{
 }>();
 
 const el = ref<HTMLElement | null>(null);
+const { isMobile } = useIsMobile();
 
 function onSortChange(value: string | number | boolean): void {
   const sort: 'qty' | 'amount' = value === 'amount' ? 'amount' : 'qty';
@@ -58,10 +60,12 @@ function render(): void {
     return;
   }
   const byAmount = props.sort === 'amount';
+  const mobile = isMobile.value;
   const values = list.map(r => Number((byAmount ? r.amount : r.quantity) || 0));
   const option: EChartOption = {
     tooltip: {
       trigger: 'axis',
+      confine: true,
       axisPointer: { type: 'shadow' },
       formatter: ps => {
         const p = pickTooltipParam(ps);
@@ -69,7 +73,8 @@ function render(): void {
         return `${row.dishName}<br/>销量 <b>${row.quantity || 0}</b><br/>销售额 <b>¥${yuan(row.amount)}</b>`;
       }
     },
-    grid: { left: 8, right: 56, top: 10, bottom: 4, containLabel: true },
+    // 窄屏收窄菜名列与右侧数值留白,把宽度让给条本身
+    grid: { left: 8, right: mobile ? 40 : 56, top: 10, bottom: 4, containLabel: true },
     xAxis: {
       type: 'value',
       minInterval: byAmount ? undefined : 1,
@@ -81,7 +86,7 @@ function render(): void {
       data: list.map(r => r.dishName as string),
       axisTick: { show: false },
       axisLine: { lineStyle: { color: AXIS_LINE } },
-      axisLabel: { color: '#4A4A4A', fontSize: 12, width: 92, overflow: 'truncate' }
+      axisLabel: { color: '#4A4A4A', fontSize: 12, width: mobile ? 68 : 92, overflow: 'truncate' }
     },
     series: [
       {
@@ -119,6 +124,8 @@ function render(): void {
 
 onMounted(render);
 watch(() => props.rows, render);
+// 断点变化时重绘排行图
+watch(isMobile, render);
 </script>
 
 <style scoped>

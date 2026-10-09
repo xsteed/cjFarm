@@ -1,12 +1,20 @@
 <template>
   <div class="page-card">
+    <!-- 移动端下拉刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
     <div class="toolbar">
       <span class="tip">
         三条通道任选：<b>网络直连</b>要求后端与打印机在同一局域网（后端拼 ESC/POS 走 IP:9100，无需收银电脑开机）；
         <b>飞鹅云</b>由打印机自己联网取单；<b>本地代理</b>由门店内网的代理程序取单后直发打印机，
         后端部署在云服务器时想继续用已有的 9100 网络机，选它（<b>不需要装任何打印机驱动</b>）。
       </span>
-      <t-space v-if="canEdit">
+      <t-space v-if="canEdit && !isMobile">
         <t-button
           variant="outline"
           @click="openBind"
@@ -24,6 +32,27 @@
         </t-button>
       </t-space>
     </div>
+
+    <!-- 移动端:绑定入口放搜索栏位置,新增走悬浮按钮 -->
+    <div
+      v-if="isMobile && canEdit"
+      class="m-bar"
+    >
+      <t-button
+        variant="outline"
+        block
+        @click="openBind"
+      >
+        绑定飞鹅打印机
+      </t-button>
+    </div>
+    <MobileFab
+      v-if="isMobile && canEdit"
+      @click="openAdd"
+    >
+      <span class="m-fab-ic"><add-icon /></span>
+      新增
+    </MobileFab>
 
     <t-alert
       v-if="!feie.configured && hasFeiePrinter"
@@ -402,7 +431,7 @@
       v-model:visible="dialogVisible"
       :header="form.printerId ? '编辑打印机' : '新增打印机'"
       :width="isMobile ? '94vw' : '560px'"
-      :confirm-btn="{ content: '保存', theme: 'primary' }"
+      :confirm-btn="{ content: '保存', theme: 'primary', loading: saving }"
       @confirm="save"
     >
       <t-form
@@ -540,7 +569,7 @@
       v-model:visible="bindVisible"
       header="绑定飞鹅打印机到账号"
       :width="isMobile ? '94vw' : '520px'"
-      :confirm-btn="{ content: '绑定', theme: 'primary' }"
+      :confirm-btn="{ content: '绑定', theme: 'primary', loading: saving }"
       @confirm="doBind"
     >
       <t-form
@@ -595,7 +624,10 @@ import {
   PRINTER_PROVIDER
 } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
+import PullRefresh from '../components/PullRefresh.vue';
+import MobileFab from '../components/MobileFab.vue';
 import type { MenuCategory, PrintAgent, Printer, PrinterPayload } from '@dining/types';
 
 // 列表行在模板/操作函数里要把 printerId 传给各打印机接口(参数为 number | string),
@@ -606,6 +638,8 @@ const list = ref<PrinterRow[]>([]);
 const loading = ref(false);
 const dialogVisible = ref(false);
 const bindVisible = ref(false);
+// 保存 / 绑定在途标记:防连点重复提交
+const saving = ref(false);
 const categories = ref<MenuCategory[]>([]);
 
 interface FeieState {
@@ -667,6 +701,8 @@ const form = reactive<PrinterForm>({
 });
 const bindForm = reactive({ sn: '', key: '', name: '', phone: '' });
 const { isMobile } = useIsMobile();
+// 移动端下拉刷新打印机列表
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
 
 const categoryOptions = computed(() => categories.value.map(c => ({ label: c.categoryName, value: c.categoryId })));
 
@@ -815,6 +851,8 @@ async function save(): Promise<void> {
   // 食客小票必须含全部菜品，后端也会强制清空分类，这里保持一致避免误导。
   const payload: PrinterPayload = { ...form, printerId: form.printerId ?? undefined };
   if (payload.printerType === 2) payload.categoryIdList = [];
+  if (saving.value) return;
+  saving.value = true;
   try {
     if (form.printerId) {
       await updatePrinter(payload);
@@ -828,6 +866,8 @@ async function save(): Promise<void> {
     loadAgent();
   } catch {
     /* 失败已由拦截器统一 toast,弹窗保留已填内容供修改重试 */
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -888,12 +928,16 @@ async function doBind(): Promise<void> {
     MessagePlugin.warning('请填写打印机编号与识别码');
     return;
   }
+  if (saving.value) return;
+  saving.value = true;
   try {
     await bindFeiePrinter({ ...bindForm });
     MessagePlugin.success('绑定成功');
     bindVisible.value = false;
   } catch {
     // 拦截器已提示
+  } finally {
+    saving.value = false;
   }
 }
 

@@ -43,10 +43,32 @@
             label="店铺名称"
             name="shop_name"
           >
-            <t-input
-              v-model="form.shop_name"
-              placeholder="如 长健农场 柴火农家土菜"
-            />
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start; width: 100%"
+            >
+              <t-input
+                v-model="form.shop_name"
+                placeholder="如 长健农场"
+              />
+              <span class="tip">店铺品牌名；用于顾客端顶部、桌牌二维码与单据。如需在顾客端顶部展示标语，请在下方「店铺标语」填写。</span>
+            </t-space>
+          </t-form-item>
+
+          <t-form-item
+            label="店铺标语"
+            name="shop_slogan"
+          >
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start; width: 100%"
+            >
+              <t-input
+                v-model="form.shop_slogan"
+                placeholder="如 柴火农家土菜（留空则不展示）"
+              />
+              <span class="tip">仅用于顾客端 H5 和小程序顶部展示，格式为「店铺名称 · 标语」；桌牌二维码上不会出现。</span>
+            </t-space>
           </t-form-item>
 
           <t-form-item
@@ -982,6 +1004,7 @@ const canEditAgents = computed(() => hasPerm('printer:edit'));
 
 interface ConfigForm {
   shop_name: string;
+  shop_slogan: string;
   shop_logo: string;
   h5_base_url: string;
   seat_fee_enabled: string;
@@ -1064,6 +1087,7 @@ type HttpError = { message?: string; response?: { status?: number } };
 
 const form = reactive<ConfigForm>({
   shop_name: '',
+  shop_slogan: '',
   shop_logo: '',
   h5_base_url: '',
   seat_fee_enabled: '0',

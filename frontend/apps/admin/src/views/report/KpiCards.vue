@@ -2,70 +2,80 @@
   <!-- 关键指标：今日营业额为主卡，环比基准取昨日 / 上月同期 -->
   <div class="kpi-grid">
     <div class="kpi hero">
-      <div class="hero-label">今日营业额</div>
-      <div class="hero-value">¥{{ money(summary.todayAmount) }}</div>
-      <div
-        v-if="deltas.todayAmount !== null"
-        class="hero-delta"
-      >
-        <span
-          class="badge"
-          :class="deltas.todayAmount >= 0 ? 'up' : 'down'"
+      <div class="hero-main">
+        <div class="hero-head">
+          <span class="hero-label">今日营业额</span>
+          <span class="hero-date">{{ today }}</span>
+        </div>
+        <div class="hero-value">¥{{ money(summary.todayAmount) }}</div>
+        <div
+          v-if="deltas.todayAmount !== null"
+          class="hero-delta"
         >
-          {{ arrow(deltas.todayAmount) }} {{ Math.abs(deltas.todayAmount).toFixed(1) }}%
-        </span>
-        <span class="hero-delta-label">较昨日</span>
+          <span
+            class="badge"
+            :class="deltas.todayAmount >= 0 ? 'up' : 'down'"
+          >
+            {{ arrow(deltas.todayAmount) }} {{ Math.abs(deltas.todayAmount).toFixed(1) }}%
+          </span>
+          <span class="hero-delta-label">较昨日</span>
+        </div>
       </div>
       <div class="hero-stats">
         <div class="hs">
-          <span class="hs-v">{{ summary.todayOrderCount || 0 }}</span>
+          <div class="hs-top">
+            <span class="hs-v">{{ summary.todayOrderCount || 0 }}</span>
+            <em
+              v-if="deltas.todayOrder !== null"
+              class="hs-d"
+              :class="deltas.todayOrder >= 0 ? 'up' : 'down'"
+            >
+              {{ arrow(deltas.todayOrder) }}{{ Math.abs(deltas.todayOrder).toFixed(0) }}%
+            </em>
+          </div>
           <span class="hs-k">订单</span>
-          <em
-            v-if="deltas.todayOrder !== null"
-            class="hs-d"
-            :class="deltas.todayOrder >= 0 ? 'up' : 'down'"
-          >
-            {{ arrow(deltas.todayOrder) }}{{ Math.abs(deltas.todayOrder).toFixed(0) }}%
-          </em>
         </div>
         <div class="hs">
-          <span class="hs-v">{{ summary.todayGuestCount || 0 }}</span>
+          <div class="hs-top">
+            <span class="hs-v">{{ summary.todayGuestCount || 0 }}</span>
+            <em
+              v-if="deltas.todayGuest !== null"
+              class="hs-d"
+              :class="deltas.todayGuest >= 0 ? 'up' : 'down'"
+            >
+              {{ arrow(deltas.todayGuest) }}{{ Math.abs(deltas.todayGuest).toFixed(0) }}%
+            </em>
+          </div>
           <span class="hs-k">到店人次</span>
-          <em
-            v-if="deltas.todayGuest !== null"
-            class="hs-d"
-            :class="deltas.todayGuest >= 0 ? 'up' : 'down'"
-          >
-            {{ arrow(deltas.todayGuest) }}{{ Math.abs(deltas.todayGuest).toFixed(0) }}%
-          </em>
         </div>
         <div class="hs">
-          <span class="hs-v">¥{{ money(summary.todayAvgAmount) }}</span>
+          <div class="hs-top">
+            <span class="hs-v">¥{{ money(summary.todayAvgAmount) }}</span>
+          </div>
           <span class="hs-k">客单价</span>
         </div>
       </div>
-      <div class="hero-date">
-        {{ today }}
-      </div>
     </div>
 
-    <div class="kpi">
+    <div class="kpi month">
       <div class="kpi-label">本月营业额</div>
-      <div class="kpi-value money">¥{{ money(summary.monthAmount) }}</div>
+      <div class="kpi-row">
+        <div class="kpi-value money">¥{{ money(summary.monthAmount) }}</div>
+        <div
+          v-if="deltas.monthAmount !== null"
+          class="kpi-delta"
+        >
+          <span
+            class="badge"
+            :class="deltas.monthAmount >= 0 ? 'up' : 'down'"
+          >
+            {{ arrow(deltas.monthAmount) }} {{ Math.abs(deltas.monthAmount).toFixed(1) }}%
+          </span>
+          <span class="kpi-delta-label">较上月同期</span>
+        </div>
+      </div>
       <div class="kpi-sub">
         本月 {{ summary.monthOrderCount || 0 }} 单 · 客流 {{ summary.monthGuestCount || 0 }} 人次
-      </div>
-      <div
-        v-if="deltas.monthAmount !== null"
-        class="kpi-delta"
-      >
-        <span
-          class="badge"
-          :class="deltas.monthAmount >= 0 ? 'up' : 'down'"
-        >
-          {{ arrow(deltas.monthAmount) }} {{ Math.abs(deltas.monthAmount).toFixed(1) }}%
-        </span>
-        <span class="kpi-delta-label">较上月同期</span>
       </div>
     </div>
 
@@ -115,18 +125,27 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
 </script>
 
 <style scoped>
+/* 12 栅格：主卡占 2/3、本月占 1/3、其余四张各占 1/4。
+   8+4 / 3*4 两行刚好铺满，末行不会再留下空位。 */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 16px;
 }
 
 .kpi {
-  position: relative;
+  grid-column: span 3;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border-radius: var(--r-lg);
   padding: 18px 20px;
   box-shadow: var(--shadow-1);
+}
+
+/* 本月营业额是仅次于今日的主指标，占 1/3 */
+.kpi.month {
+  grid-column: span 4;
 }
 
 .kpi-label {
@@ -139,6 +158,7 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   font-size: 24px;
   font-weight: 800;
   color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .kpi-value.free {
@@ -147,6 +167,11 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
 
 .kpi-value.credit {
   color: #2b6cd4;
+}
+
+/* 本月卡更宽，数值同步放大一档 */
+.kpi.month .kpi-value {
+  font-size: 26px;
 }
 
 .kpi-sub {
@@ -165,12 +190,34 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   text-decoration: underline;
 }
 
-/* 今日营业额：品牌渐变主卡，横跨两列压住版面重心 */
+.kpi-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+/* 今日营业额：品牌渐变主卡，占 2/3 版面，左金额右明细 */
 .kpi.hero {
-  grid-column: span 2;
+  grid-column: span 8;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 18px 22px;
+  padding: 18px 22px;
   background: var(--grad-brand);
   color: #fff;
   box-shadow: 0 10px 24px rgb(240 72 31 / 22%);
+}
+
+.hero-main {
+  min-width: 0;
+}
+
+.hero-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .hero-label {
@@ -178,12 +225,18 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   color: rgb(255 255 255 / 85%);
 }
 
+.hero-date {
+  font-size: 12px;
+  color: rgb(255 255 255 / 80%);
+}
+
 .hero-value {
   font-size: 34px;
   font-weight: 800;
   line-height: 1.2;
-  margin-top: 10px;
+  margin-top: 8px;
   letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .hero-delta {
@@ -198,17 +251,26 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   color: rgb(255 255 255 / 80%);
 }
 
+/* 明细靠右、竖排成三列，用分隔线与金额区隔开 */
 .hero-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px;
-  margin-top: 16px;
+  gap: 10px 28px;
+  margin-left: auto;
+  padding-left: 22px;
+  border-left: 1px solid rgb(255 255 255 / 22%);
 }
 
 .hs {
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hs-top {
+  display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 4px;
 }
 
 .hs-v {
@@ -225,14 +287,6 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   font-style: normal;
   font-size: 11px;
   color: rgb(255 255 255 / 90%);
-}
-
-.hero-date {
-  position: absolute;
-  top: 18px;
-  right: 20px;
-  font-size: 12px;
-  color: rgb(255 255 255 / 80%);
 }
 
 /* 环比徽标 */
@@ -268,14 +322,25 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   margin-top: 10px;
 }
 
+/* 与金额同行时不额外留上边距 */
+.kpi-row .kpi-delta {
+  margin-top: 0;
+}
+
 .kpi-delta-label {
   font-size: 12px;
   color: var(--ink-4);
 }
 
+/* 中屏 6 栅格：主卡与本月各占整行，其余四张两两成行 */
 @media (width <= 1200px) {
   .kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .kpi.month,
+  .kpi.hero {
+    grid-column: span 6;
   }
 }
 
@@ -285,8 +350,20 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
     gap: 12px;
   }
 
+  .kpi,
+  .kpi.month,
   .kpi.hero {
     grid-column: span 1;
+  }
+
+  .kpi {
+    padding: 14px 16px;
+  }
+
+  .kpi.hero {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
     padding: 16px;
   }
 
@@ -294,12 +371,14 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
     font-size: 28px;
   }
 
+  /* 单列时明细改为横向排布，分隔线从上边移到左边 */
   .hero-stats {
-    gap: 16px;
-  }
-
-  .kpi {
-    padding: 14px 16px;
+    gap: 12px 20px;
+    margin-left: 0;
+    padding-left: 0;
+    padding-top: 14px;
+    border-left: none;
+    border-top: 1px solid rgb(255 255 255 / 22%);
   }
 }
 </style>

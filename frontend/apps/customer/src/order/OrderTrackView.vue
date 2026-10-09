@@ -3,9 +3,11 @@
     class="track-body"
     :class="{ lifted: showTabbar }"
   >
-    <!-- 订单概要:状态 · 单号 · 人数 · 时间 · 合计 · 支付状态,与小程序 head 卡一致 -->
-    <div class="st-head">
-      <div class="st-head-top">
+    <!-- 菜品明细卡:顾客最关心「点了什么、多少钱」,所以放第一张。
+         订单状态收进卡头,单号 / 人数 / 时间挪到卡后的「订单信息」卡,顶部不再堆概要。 -->
+    <div class="st-card st-card-first">
+      <div class="st-card-head">
+        <div class="tt">菜品明细</div>
         <div
           class="st-tag"
           :class="'st-tag--' + statusTheme"
@@ -13,38 +15,6 @@
           {{ statusLabel }}
         </div>
       </div>
-      <div class="st-head-no">单号 {{ currentOrder.shortNo || currentOrder.orderNo }}</div>
-      <div class="st-head-meta">
-        <span>{{ currentOrder.personCount }} 人用餐</span>
-        <span v-if="currentOrder.createTime">{{ currentOrder.createTime }}</span>
-      </div>
-      <div class="st-head-amt">
-        <span class="st-head-amt-label">合计</span>
-        <span class="st-head-amt-value">¥{{ Number(currentOrder.totalAmount).toFixed(2) }}</span>
-        <span
-          class="st-tag"
-          :class="'st-tag--' + payTheme"
-        >{{ payText }}</span>
-      </div>
-    </div>
-
-    <!-- 状态提示:已完成 / 已取消 / 已结账,与小程序 sec 卡一致(白色卡片 + 内嵌彩色提示块) -->
-    <div
-      v-if="done || canceled || settled"
-      class="st-card"
-    >
-      <div
-        class="st-tip"
-        :class="{ 'st-tip--cancel': canceled }"
-      >
-        <template v-if="canceled">订单已取消<template v-if="currentOrder.cancelReason">：{{ currentOrder.cancelReason }}</template></template>
-        <template v-else-if="done">本单已完成，欢迎下次光临</template>
-        <template v-else-if="settled">本单已结账，菜品仍在出餐中，请稍候</template>
-      </div>
-    </div>
-
-    <div class="st-card">
-      <div class="tt">菜品明细</div>
       <div
         v-for="it in renderItems"
         :key="it.itemId"
@@ -52,7 +22,20 @@
       >
         <div class="si-main">
           <span class="si-name"
-            ><b v-if="it.batchLabel" class="si-batch">{{ it.batchLabel }}</b><b v-if="it.isGift" class="si-gift">赠 </b>{{ it.dishName }}<em v-if="it.specName" class="si-spec">{{ it.specName }}</em></span
+            ><b
+              v-if="it.batchLabel"
+              class="si-batch"
+              >{{ it.batchLabel }}</b
+            ><b
+              v-if="it.isGift"
+              class="si-gift"
+              >赠 </b
+            >{{ it.dishName
+            }}<em
+              v-if="it.specName"
+              class="si-spec"
+              >{{ it.specName }}</em
+            ></span
           >
           <span
             v-if="it.itemRemark"
@@ -76,7 +59,8 @@
         订单备注：{{ currentOrder.orderRemark }}
       </div>
 
-      <!-- 账单明细:菜品小计 + 加价项,与小程序一致摊开 -->
+      <!-- 账单明细:菜品小计 + 加价项,与小程序一致摊开。
+           末行给出「合计 + 支付状态」:合计只在这里出现一次,与上面几行前因后果对得上。 -->
       <div class="st-bill">
         <div class="st-bill-row">
           <span>菜品小计</span>
@@ -86,7 +70,7 @@
           v-if="Number(currentOrder.seatFee) > 0"
           class="st-bill-row"
         >
-          <span>茶位费</span>
+          <span>茶位费（{{ currentOrder.personCount }}人）</span>
           <span>¥{{ Number(currentOrder.seatFee).toFixed(2) }}</span>
         </div>
         <div
@@ -95,6 +79,17 @@
         >
           <span>满减优惠</span>
           <span>-¥{{ Number(currentOrder.discountAmount).toFixed(2) }}</span>
+        </div>
+        <div class="st-bill-row st-bill-total">
+          <span>合计</span>
+          <span class="st-bill-total-right">
+            <span
+              class="st-tag"
+              :class="'st-tag--' + payTheme"
+              >{{ payText }}</span
+            >
+            <span class="st-bill-total-value">¥{{ Number(currentOrder.totalAmount).toFixed(2) }}</span>
+          </span>
         </div>
       </div>
 
@@ -168,6 +163,32 @@
         {{ view === 'canceled' ? '重新点菜' : '再点一单' }}
       </div>
     </div>
+
+    <!-- 状态提示:已完成 / 已取消 / 已结账,与小程序 sec 卡一致(白色卡片 + 内嵌彩色提示块) -->
+    <div
+      v-if="done || canceled || settled"
+      class="st-card"
+    >
+      <div
+        class="st-tip"
+        :class="{ 'st-tip--cancel': canceled }"
+      >
+        <template v-if="canceled"
+          >订单已取消<template v-if="currentOrder.cancelReason">：{{ currentOrder.cancelReason }}</template></template
+        >
+        <template v-else-if="done">本单已完成，欢迎下次光临</template>
+        <template v-else-if="settled">本单已结账，菜品仍在出餐中，请稍候</template>
+      </div>
+    </div>
+
+    <!-- 订单信息:单号 / 人数 / 时间,顾客核对单据时才看,放菜品之后不再挤在首屏 -->
+    <div class="st-info">
+      <div class="st-info-no">单号 {{ currentOrder.shortNo || currentOrder.orderNo }}</div>
+      <div class="st-info-meta">
+        <span>{{ currentOrder.personCount }} 人用餐</span>
+        <span v-if="currentOrder.createTime">{{ currentOrder.createTime }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -194,7 +215,7 @@ const emit = defineEmits<{
   newOrder: [];
 }>();
 
-// 订单状态标签:短文案 + 主题,与小程序 ORDER_STATUS 字典一致(概要卡右上角的状态标签)
+// 订单状态标签:短文案 + 主题,与小程序 ORDER_STATUS 字典一致(挂在菜品明细卡头右侧)
 const STATUS_LABEL: Record<number, string> = { 1: '已下单', 2: '制作中', 3: '已上齐', 4: '已完成', 5: '已取消' };
 const STATUS_THEME: Record<number, string> = { 1: 'primary', 2: 'warning', 3: 'success', 4: 'default', 5: 'danger' };
 const orderStatus = computed(() => Number(props.currentOrder.orderStatus) || 1);
@@ -244,58 +265,27 @@ const renderItems = computed<RenderItem[]>(() => {
   padding-bottom: 86px;
 }
 
-/* 订单概要卡:对齐小程序 order 页 head(桌台由 HeroHeader 展示,这里放状态/单号/人数/时间/合计/支付) */
-.st-head {
+/* 订单信息卡:单号 / 人数 / 时间。放菜品之后,顾客核对单据时才看(桌台由 HeroHeader 展示) */
+.st-info {
   background: #fff;
   border-radius: var(--r-lg);
-  padding: 16px;
-
-  /* 同原步骤条卡片:抵掉 track-body 的 8px 上内边距,卡片贴住 hero 横幅且圆角完整 */
-  margin-top: -8px;
-  margin-bottom: 12px;
+  padding: 14px 16px;
+  margin-top: 12px;
   box-shadow: var(--shadow-1);
 }
 
-.st-head-top {
-  display: flex;
-  align-items: center;
-  /* 状态标签置于右上角,与小程序 head-top 右侧一致 */
-  justify-content: flex-end;
-}
-
-.st-head-no {
-  margin-top: 8px;
+.st-info-no {
   color: var(--ink-3);
   font-size: 12px;
   letter-spacing: 0.5px;
 }
 
-.st-head-meta {
+.st-info-meta {
   display: flex;
   gap: 16px;
   margin-top: 6px;
   color: var(--ink-3);
   font-size: 12px;
-}
-
-.st-head-amt {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--line);
-}
-
-.st-head-amt-label {
-  color: var(--ink-3);
-  font-size: 12px;
-}
-
-.st-head-amt-value {
-  color: var(--brand-deep);
-  font-size: 21px;
-  font-weight: 700;
 }
 
 /* 状态 / 支付标签:对齐小程序 app.wxss 的 .tag 体系 */
@@ -357,10 +347,28 @@ const renderItems = computed<RenderItem[]>(() => {
   box-shadow: var(--shadow-1);
 }
 
+/* 首张卡(菜品明细):抵掉 track-body 的 8px 上内边距,卡片贴住 hero 横幅且圆角完整 */
+.st-card-first {
+  margin-top: -8px;
+}
+
+/* 卡头:标题 + 右侧状态标签(订单状态挂在最显眼的菜品卡上,不另开概要卡) */
+.st-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .st-card .tt {
   font-size: 13px;
   font-weight: 700;
   margin-bottom: 8px;
+}
+
+.st-card-head .tt {
+  margin-bottom: 0;
 }
 
 /* 加菜批次行内标签(首单 / 加菜N):与小程序 row-batch 一致 */
@@ -452,6 +460,27 @@ const renderItems = computed<RenderItem[]>(() => {
 
 .st-bill-row.st-discount {
   color: var(--brand-deep);
+}
+
+/* 合计行:账单收尾,金额与「未支付 / 已支付」标签同排 */
+.st-bill-total {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.st-bill-total-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.st-bill-total-value {
+  color: var(--brand-deep);
+  font-size: 17px;
+  font-weight: 700;
 }
 
 .st-paybtn {

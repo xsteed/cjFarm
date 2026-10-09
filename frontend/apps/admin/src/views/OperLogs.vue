@@ -1,5 +1,13 @@
 <template>
   <div class="page-card">
+    <!-- 移动端下拉刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
     <div class="toolbar">
       <span class="tip">
         管理端的每次写操作都会记一条：谁、在什么时间、从哪个 IP、对哪个对象做了什么。
@@ -15,7 +23,10 @@
       </t-button>
     </div>
 
-    <div class="filters">
+    <div
+      v-if="!isMobile"
+      class="filters"
+    >
       <t-input
         v-model="query.operator"
         placeholder="操作人"
@@ -72,6 +83,36 @@
       >
         重置
       </t-button>
+    </div>
+
+    <!-- 移动端 App 式搜索栏 -->
+    <div
+      v-if="isMobile"
+      class="m-bar"
+    >
+      <div class="m-search">
+        <t-input
+          v-model="query.operator"
+          placeholder="搜索操作人 / 对象"
+          clearable
+          @enter="reload"
+        >
+          <template #prefix-icon>
+            <search-icon />
+          </template>
+        </t-input>
+        <t-button
+          theme="primary"
+          variant="outline"
+          class="m-filter-btn"
+          aria-label="筛选"
+          @click="filterSheetVisible = true"
+        >
+          <template #icon>
+            <filter-icon />
+          </template>
+        </t-button>
+      </div>
     </div>
 
     <!-- 移动端：卡片流 -->
@@ -242,6 +283,74 @@
       </div>
     </template>
 
+    <!-- 移动端筛选弹层 -->
+    <BottomSheet
+      v-model="filterSheetVisible"
+      title="筛选操作日志"
+    >
+      <div class="ff-list">
+        <label class="ff">
+          <span class="ff-k">模块</span>
+          <t-select
+            v-model="query.module"
+            :options="moduleOptions"
+            clearable
+            placeholder="全部模块"
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">类型</span>
+          <t-select
+            v-model="query.businessType"
+            :options="typeOptions"
+            clearable
+            placeholder="全部类型"
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">结果</span>
+          <t-select
+            v-model="query.status"
+            :options="statusOptions"
+            clearable
+            placeholder="全部结果"
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">对象ID / 订单号</span>
+          <t-input
+            v-model="query.targetId"
+            placeholder="对象ID / 订单号"
+            clearable
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">时间范围</span>
+          <t-date-range-picker
+            v-model="dateRange"
+            clearable
+            enable-time-picker
+            value-type="YYYY-MM-DD HH:mm:ss"
+            style="width: 100%"
+          />
+        </label>
+      </div>
+      <template #footer>
+        <t-button
+          theme="default"
+          @click="resetFilters"
+        >
+          重置
+        </t-button>
+        <t-button
+          theme="primary"
+          @click="applyFilters"
+        >
+          查询
+        </t-button>
+      </template>
+    </BottomSheet>
+
     <!-- 请求参数(脱敏后) -->
     <t-dialog
       v-model:visible="paramVisible"
@@ -260,7 +369,10 @@ import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import type { DateRangeValue } from 'tdesign-vue-next';
 import { listOperLogs, cleanOperLogs, OPER_TYPE, OPER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
+import BottomSheet from '../components/BottomSheet.vue';
+import PullRefresh from '../components/PullRefresh.vue';
 import type { OperLog, PageQuery } from '@dining/types';
 
 // 列表行在模板里要拿 status/businessType 当字典下标,OperLog 字段全可选,
@@ -271,6 +383,23 @@ const list = ref<OperLogRow[]>([]);
 const total = ref<number>(0);
 const loading = ref(false);
 const { isMobile } = useIsMobile();
+
+// ---- 移动端:下拉刷新 + 筛选弹层 ----
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
+const filterSheetVisible = ref(false);
+
+function applyFilters(): void {
+  filterSheetVisible.value = false;
+  reload();
+}
+
+function resetFilters(): void {
+  query.module = '';
+  query.businessType = '';
+  query.status = '';
+  query.targetId = '';
+  dateRange.value = [];
+}
 
 // 清理会真的删数据，单独收口到 log:manage（只读的 log:view 看不到这个按钮）。
 const canManage = computed(() => hasPerm('log:manage'));

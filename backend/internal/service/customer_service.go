@@ -153,6 +153,7 @@ func CustomerSettings() map[string]string {
 	}
 	return map[string]string{
 		"shop_name":           settings["shop_name"],
+		"shop_slogan":         settings["shop_slogan"],
 		"seat_fee_enabled":    flag("seat_fee_enabled"),
 		"seat_fee":            settings["seat_fee"],
 		"promotion_enabled":   flag("promotion_enabled"),

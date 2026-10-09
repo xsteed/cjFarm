@@ -17,6 +17,7 @@
     <OrderInfoSection
       :detail="detail"
       :refunds="refunds"
+      :busy="acting"
       @handle-urge="onHandleUrge"
       @set-status="setStatus"
       @edit="openEdit"
@@ -101,6 +102,9 @@ const emit = defineEmits<{
 const detail = ref<OrderDetail | null>(null);
 const refunds = ref<Refund[]>([]);
 const editVisible = ref(false);
+// 在途标记:详情里的直接请求操作(改状态/催办/补打)进行中时禁止再次触发,
+// 尤其「补打」会真的出纸 —— 连点会打出多张重复小票。
+const acting = ref(false);
 
 const settleDialogRef = ref<InstanceType<typeof SettleDialog> | null>(null);
 const creditDialogRef = ref<InstanceType<typeof CreditSettleDialog> | null>(null);
@@ -168,25 +172,31 @@ function onClosed(): void {
 }
 
 async function setStatus(status: number): Promise<void> {
-  if (!detail.value) return;
+  if (!detail.value || acting.value) return;
+  acting.value = true;
   try {
     await changeOrderStatus({ orderId: detail.value.orderId, orderStatus: status });
     MessagePlugin.success('操作成功');
     await refresh();
   } catch {
     /* 失败已由拦截器统一 toast */
+  } finally {
+    acting.value = false;
   }
 }
 
 // onHandleUrge 消解该订单全部待处理催菜(已加急/已解释)，角标随之消失
 async function onHandleUrge(): Promise<void> {
-  if (!detail.value) return;
+  if (!detail.value || acting.value) return;
+  acting.value = true;
   try {
     await handleUrge({ orderId: detail.value.orderId });
     MessagePlugin.success('催菜已标记为已处理');
     await refresh();
   } catch {
     /* 失败已由拦截器统一 toast */
+  } finally {
+    acting.value = false;
   }
 }
 
@@ -295,13 +305,16 @@ async function syncRefund(row: Refund): Promise<void> {
 // onReprint 人工补打：纸没装好、打歪了、打印机离线导致没出纸时用。
 // 不传 printerId，由后端自动挑一台该单据类型的启用打印机。
 async function onReprint(docType: DocType): Promise<void> {
-  if (!detail.value) return;
+  if (!detail.value || acting.value) return;
+  acting.value = true;
   const label = docType === 'kitchen' ? '厨房单' : '食客小票';
   try {
     const res = await reprintOrder({ orderId: detail.value.orderId, docType });
     MessagePlugin.success(res?.msg || `${label}补打指令已发送`);
   } catch {
     /* 失败原因(如「没有启用中的厨房单打印机」)由请求拦截器统一提示 */
+  } finally {
+    acting.value = false;
   }
 }
 

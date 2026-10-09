@@ -48,8 +48,10 @@ const tableLabel = computed(() => props.table.tableName || (props.table.tableNo 
 .op-hero {
   background: linear-gradient(135deg, #ff8a50 0%, #ff6b35 55%, #f0481f 100%);
 
-  /* 顶部预留刘海/灵动岛安全区(iPhone X 及以后),避免店名被状态栏裁切 */
-  padding: calc(26px + env(safe-area-inset-top, 0px)) 18px 24px;
+  /* 安全区(刘海/灵动岛/独立窗口)保留。
+     18px 顶 / 30px 底:白卡上移 16px 后,内容行在可见橙色区域里基本居中
+     (上 18px / 下 14px),搜索框距头部底边也更从容 */
+  padding: calc(18px + env(safe-area-inset-top, 0px)) 18px 30px;
   position: relative;
   overflow: hidden;
   flex-shrink: 0;

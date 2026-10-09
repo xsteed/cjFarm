@@ -3,6 +3,7 @@ package dto
 // Settings 门店配置快照(tb_setting 为 KV 表,无对应 PO)。全部字段为 string,json tag 为 snake_case。
 type Settings struct {
 	ShopName           string `json:"shop_name"`
+	ShopSlogan         string `json:"shop_slogan"` // 门店标语:仅顾客端 H5/小程序顶部与品牌名拼接展示,桌牌二维码不放
 	ShopLogo           string `json:"shop_logo"`
 	SeatFeeEnabled     string `json:"seat_fee_enabled"`
 	SeatFee            string `json:"seat_fee"`

@@ -1,6 +1,10 @@
 <template>
   <div class="page-card">
-    <div class="toolbar tables-toolbar">
+    <!-- 桌面端工具栏 -->
+    <div
+      v-if="!isMobile"
+      class="toolbar tables-toolbar"
+    >
       <div class="toolbar-left">
         <t-input
           v-model="query.tableName"
@@ -18,10 +22,7 @@
       </div>
       <t-space>
         <div class="view-mode-switch">
-          <t-radio-group
-            v-model="viewMode"
-            variant="default"
-          >
+          <t-radio-group v-model="viewMode">
             <t-radio-button value="table"> 列表 </t-radio-button>
             <t-radio-button value="card"> 卡片 </t-radio-button>
           </t-radio-group>
@@ -47,6 +48,53 @@
         </t-button>
       </t-space>
     </div>
+
+    <!-- 移动端下拉刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
+    <!-- 移动端 App 式搜索栏 -->
+    <div
+      v-if="isMobile"
+      class="m-bar"
+    >
+      <div class="m-search">
+        <t-input
+          v-model="query.tableName"
+          placeholder="搜索桌台名称"
+          clearable
+          @enter="load"
+        >
+          <template #prefix-icon>
+            <search-icon />
+          </template>
+        </t-input>
+        <t-button
+          theme="primary"
+          variant="outline"
+          class="m-filter-btn"
+          aria-label="批量导出 / 打印"
+          @click="openBatch"
+        >
+          <template #icon>
+            <qrcode-icon />
+          </template>
+        </t-button>
+      </div>
+    </div>
+
+    <!-- 移动端悬浮「新增桌台」 -->
+    <MobileFab
+      v-if="isMobile && canEdit"
+      @click="openAdd"
+    >
+      <span class="m-fab-ic"><add-icon /></span>
+      新增
+    </MobileFab>
 
     <TableStatBar :summary="summary" />
 
@@ -164,12 +212,18 @@ import { AddIcon, QrcodeIcon } from 'tdesign-icons-vue-next';
 import { listTables, saveTable, updateTable, deleteTable, getConfig, listOrders } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { isActiveStatus, LOOPBACK_RE, PAGE_ON_LOOPBACK, normalizeBaseUrl } from '@dining/shared';
+import { shopBrandName } from '../utils/tableQr';
 import OrderDetailDialog from '../components/OrderDetailDialog.vue';
 import TableStatBar from './tables/TableStatBar.vue';
 import TableCardGrid from './tables/TableCardGrid.vue';
 import SingleQrDialog from './tables/SingleQrDialog.vue';
 import BatchQrDialog from './tables/BatchQrDialog.vue';
-import type { PageInfo, RadioValue } from 'tdesign-vue-next';
+import { useViewMode } from '../composables/useViewMode';
+import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
+import PullRefresh from '../components/PullRefresh.vue';
+import MobileFab from '../components/MobileFab.vue';
+import type { PageInfo } from 'tdesign-vue-next';
 import type { TableInfo, TablePayload } from '@dining/types';
 
 const list = ref<TableInfo[]>([]);
@@ -181,11 +235,19 @@ const pagination = reactive({ current: 1, pageSize: 10, total: 0 });
 // 桌台展示模式:列表(t-table) / 卡片(响应式网格)。
 // 桌面与移动端都尊重手动切换:默认卡片(楼层平面图式铺开更贴合前台看桌况直觉),
 // 选「列表」时切到表格;窄屏下的表格由 TableCardGrid 内 .table-scroll 横向滚动兜底,
-// 不再强制锁死卡片视图。
-const viewMode = ref<RadioValue>('card');
-const showCard = computed(() => viewMode.value === 'card');
+// 不再强制锁死卡片视图。选择按「用户名 + 页面」缓存在本地(见 useViewMode),
+// 下次进来直接是上次的视图。
+const viewMode = useViewMode('tables');
+const { isMobile } = useIsMobile();
+// 移动端下拉刷新当前桌台列表
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
+// 移动端强制卡片(楼层平面图式铺开、单列大卡),不再走定宽横向滚动的「列表」表格。
+// 桌面端仍尊重用户手动选择的 列表/卡片。
+const showCard = computed(() => (isMobile.value ? true : viewMode.value === 'card'));
 const dialogVisible = ref(false);
-const saveConfirmBtn = { content: '保存', theme: 'primary' as const };
+// 保存在途标记:确认按钮据此 loading 并禁用,防连点重复建桌
+const saving = ref(false);
+const saveConfirmBtn = computed(() => ({ content: '保存', theme: 'primary' as const, loading: saving.value }));
 
 interface TableForm {
   tableId: number | null;
@@ -338,6 +400,8 @@ async function save(): Promise<void> {
     capacity: Number(form.capacity) || 10,
     sortOrder: Number(form.sortOrder) || 0
   };
+  if (saving.value) return;
+  saving.value = true;
   try {
     if (form.tableId) {
       await updateTable(payload);
@@ -350,6 +414,8 @@ async function save(): Promise<void> {
     load();
   } catch {
     /* 失败已由拦截器统一 toast,弹窗保留已填内容供修改重试 */
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -405,7 +471,8 @@ async function loadConfig(): Promise<void> {
   try {
     const cfg = await getConfig();
     shopLogo.value = cfg.shop_logo || '';
-    shopTitle.value = cfg.shop_name || '';
+    // 「店铺名称」可能是「品牌 · 标语」组合(顾客端顶部整体展示);桌牌二维码顶部只放品牌名。
+    shopTitle.value = shopBrandName(cfg.shop_name || '');
     const configured = normalizeBaseUrl(cfg.h5_base_url);
     if (!configured) return;
     // 出厂默认的 H5 地址是 http://localhost:8080。生产环境照搬,二维码就会指向
@@ -457,5 +524,13 @@ onMounted(async () => {
   padding: 8px 12px;
   border-radius: 8px;
   margin-bottom: 12px;
+}
+
+/* 移动端搜索栏右侧的图标按钮:正方形 */
+.m-filter-btn {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0;
 }
 </style>

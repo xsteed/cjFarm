@@ -36,6 +36,7 @@
       <t-button
         theme="danger"
         size="small"
+        :disabled="busy"
         @click="emit('handle-urge')"
       >
         标记已处理
@@ -85,7 +86,7 @@
         ><span class="od-k">菜品</span><b>¥{{ money(detail.dishAmount) }}</b></span
       >
       <span class="od-t-item"
-        ><span class="od-k">茶位费</span><b>¥{{ money(detail.seatFee) }}</b></span
+        ><span class="od-k">茶位费（{{ detail.personCount }}人）</span><b>¥{{ money(detail.seatFee) }}</b></span
       >
       <span
         v-if="(detail.discountAmount || 0) > 0"
@@ -144,8 +145,9 @@
       取消原因：{{ detail.cancelReason }}
     </div>
 
-    <!-- 主操作：改单 / 推进状态 / 收款 / 结账 -->
-    <div class="od-actions">
+    <!-- 主操作：改单 / 推进状态 / 收款 / 结账。
+         移动端(见 scoped media)把它排到最后并 sticky 常驻底部,滚动看明细时主操作始终可点。 -->
+    <div class="od-actions od-actions-main">
       <button
         type="button"
         class="ab ab-edit"
@@ -157,7 +159,7 @@
       <button
         type="button"
         class="ab ab-make"
-        :disabled="!canMake"
+        :disabled="!canMake || busy"
         @click="emit('set-status', 2)"
       >
         开始制作
@@ -165,7 +167,7 @@
       <button
         type="button"
         class="ab ab-serve"
-        :disabled="!canServe"
+        :disabled="!canServe || busy"
         @click="emit('set-status', 3)"
       >
         上齐/用餐中
@@ -196,7 +198,7 @@
       <button
         type="button"
         class="ab ab-re"
-        :disabled="!canReprint"
+        :disabled="!canReprint || busy"
         @click="emit('reprint', 'kitchen')"
       >
         重打厨房单
@@ -204,7 +206,7 @@
       <button
         type="button"
         class="ab ab-re"
-        :disabled="!canReprint"
+        :disabled="!canReprint || busy"
         @click="emit('reprint', 'guest')"
       >
         重打小票
@@ -325,6 +327,8 @@ import type { OrderDetail, Refund } from '@dining/types';
 const props = defineProps<{
   detail: OrderDetail | null;
   refunds: Refund[];
+  /** 有操作在途时置灰「改状态/补打/催办」等直接请求按钮,防连点重复触发(补打会真的出纸) */
+  busy?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -685,5 +689,48 @@ function refreshRefunds(): void {
 .refund-empty {
   font-size: 13px;
   color: #999;
+}
+
+/* 移动端:操作按钮放大、两列排布,拇指好点;金额区左右分布更清晰 */
+@media (width <= 767px) {
+  .od-actions {
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  /* 主操作组:排到内容末尾并常驻弹层底部,滚动查看明细时收款/结算/制作始终可点。
+     负外边距 + 等量内边距让它横向铺满弹层(否则两侧 16px 内边距会露出滚动内容)。 */
+  .od-actions-main {
+    order: 1;
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    gap: 8px;
+    margin: 14px -16px 0;
+    padding: 10px 16px 2px;
+    background: #fff;
+    border-top: 1px solid var(--line);
+  }
+
+  .ab {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    height: 44px;
+    font-size: 14px;
+  }
+
+  .ab-more {
+    flex: 1 1 calc(50% - 4px);
+    height: 40px;
+  }
+
+  .od-total {
+    justify-content: space-between;
+    gap: 6px 12px;
+  }
+
+  .od-extra-label {
+    flex-basis: 100%;
+  }
 }
 </style>

@@ -252,7 +252,9 @@ func checkCloud(d *doctor, cfg config) {
 		return
 	}
 	client := newHTTPClient(cfg.insecure)
-	if err := ping(client, cfg.server, cfg); err != nil {
+	// 与常驻主流程(main.go 的 base)一致:去掉 server 末尾的 "/",否则 --server 带尾斜杠时
+	// 会拼出 "https://host//api/..." 的双斜杠地址,可能被反代判 404 而误报「连接云端失败」。
+	if err := ping(client, strings.TrimSuffix(cfg.server, "/"), cfg); err != nil {
 		d.bad("连接云端失败: %v", err)
 		return
 	}

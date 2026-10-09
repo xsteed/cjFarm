@@ -32,6 +32,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import type { HourlyRow, SettleMixRow } from '@dining/types';
+import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
 import {
   AXIS_COLOR,
@@ -54,6 +55,7 @@ const props = defineProps<{
 
 const hourlyEl = ref<HTMLElement | null>(null);
 const mixEl = ref<HTMLElement | null>(null);
+const { isMobile } = useIsMobile();
 
 function renderHourly(): void {
   const c = chart('hourly', hourlyEl.value);
@@ -64,9 +66,11 @@ function renderHourly(): void {
     c.setOption(EMPTY_OPTION);
     return;
   }
+  const mobile = isMobile.value;
   const option: EChartOption = {
     tooltip: {
       trigger: 'axis',
+      confine: true,
       axisPointer: { type: 'shadow' },
       formatter: ps => {
         const p = pickTooltipParam(ps);
@@ -94,7 +98,8 @@ function renderHourly(): void {
     yAxis: [
       {
         type: 'value',
-        name: '订单',
+        // 窄屏去掉轴名,给绘图区让出横向空间
+        name: mobile ? undefined : '订单',
         nameTextStyle: { color: '#C7C7C7', fontSize: 11 },
         minInterval: 1,
         splitLine: { lineStyle: { color: SPLIT_LINE } },
@@ -102,7 +107,7 @@ function renderHourly(): void {
       },
       {
         type: 'value',
-        name: '营业额',
+        name: mobile ? undefined : '营业额',
         nameTextStyle: { color: '#C7C7C7', fontSize: 11 },
         splitLine: { show: false },
         axisLabel: { color: AXIS_COLOR, fontSize: 11, formatter: axisYuan }
@@ -159,6 +164,7 @@ function renderMix(): void {
   const option: EChartOption = {
     tooltip: {
       trigger: 'item',
+      confine: true,
       formatter: ps => {
         const p = pickTooltipParam(ps);
         const row: SettleMixRow = list[p.dataIndex] || {};
@@ -198,6 +204,8 @@ onMounted(() => {
 });
 watch(() => props.hourly, renderHourly);
 watch(() => props.mix, renderMix);
+// 断点变化时重绘时段图(其 option 依赖是否窄屏)
+watch(isMobile, renderHourly);
 </script>
 
 <style scoped>

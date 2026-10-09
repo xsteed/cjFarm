@@ -1,13 +1,19 @@
 <template>
   <div
     class="remark-mask"
-    @click.self="emit('save')"
+    @click.self="emit('close')"
   >
     <div class="remark-sheet">
       <div class="remark-head">
-        <span>菜品备注</span>
-        <span class="remark-target">{{ dishName }}</span>
+        <span class="remark-title">菜品备注</span>
+        <!-- 右上角的关闭必须与「确定」严格区分:点它是「不改了」,不能写回购物车 -->
+        <span
+          class="remark-close"
+          @click="emit('close')"
+          >×</span
+        >
       </div>
+      <div class="remark-target">{{ dishName }}</div>
       <div class="remark-options">
         <span
           v-for="r in remarks"
@@ -25,12 +31,21 @@
         maxlength="50"
         @input="onCustomInput"
       />
-      <button
-        class="remark-confirm"
-        @click="emit('save')"
-      >
-        确定
-      </button>
+      <div class="remark-foot">
+        <button
+          v-if="hasRemark"
+          class="remark-clear"
+          @click="emit('clear')"
+        >
+          清除
+        </button>
+        <button
+          class="remark-confirm"
+          @click="emit('save')"
+        >
+          确定
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -43,11 +58,15 @@ defineProps<{
   selected: string[];
   custom: string;
   remarks: RemarkOption[];
+  /** 该行是否已有备注:只有已有备注时「清除」才有意义 */
+  hasRemark: boolean;
 }>();
 
 const emit = defineEmits<{
   toggle: [name: string];
   'update:custom': [value: string];
+  clear: [];
+  close: [];
   save: [];
 }>();
 
@@ -58,11 +77,13 @@ function onCustomInput(e: Event): void {
 
 <style scoped>
 /* ---------- 单项备注弹窗 ---------- */
+/* 层级必须高过购物车抽屉:TDesign 的 .t-drawer 是 z-index 1500,
+   低于它的话弹层会整个被抽屉盖住,表现为「点了添加备注没反应」。 */
 .remark-mask {
   position: fixed;
   inset: 0;
   background: rgb(0 0 0 / 50%);
-  z-index: 200;
+  z-index: 1600;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -80,14 +101,31 @@ function onCustomInput(e: Event): void {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.remark-title {
   font-size: 15px;
   font-weight: 700;
   color: var(--ink);
 }
 
+/* 关闭按钮:放大点击热区到 32px,手指点得中 */
+.remark-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-right: -6px;
+  color: var(--ink-4);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .remark-target {
+  margin-top: 2px;
   font-size: 12.5px;
-  font-weight: 400;
   color: var(--ink-3);
 }
 
@@ -132,10 +170,28 @@ function onCustomInput(e: Event): void {
   border-color: var(--brand);
 }
 
-.remark-confirm {
-  width: 100%;
-  height: 46px;
+/* 底部两个按钮:清除是次要操作,不抢「确定」的视线 */
+.remark-foot {
+  display: flex;
+  gap: 10px;
   margin-top: 16px;
+}
+
+.remark-clear {
+  flex-shrink: 0;
+  height: 46px;
+  padding: 0 18px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-3);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.remark-confirm {
+  flex: 1;
+  height: 46px;
   border: none;
   border-radius: var(--r-pill);
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));

@@ -40,7 +40,8 @@ INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_threshold'
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee', '6');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee_enabled', '1');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_logo', '');
-INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场 柴火农家土菜');
+INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场');
+INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_slogan', '柴火农家土菜');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_app_secret', '');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_code_env_version', 'release');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_apiv3_key', '');  -- 敏感项,落库前会自动加密

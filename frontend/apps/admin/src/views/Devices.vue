@@ -1,6 +1,14 @@
 <template>
   <div>
     <div class="page-card">
+      <!-- 移动端下拉刷新 -->
+      <PullRefresh
+        v-if="isMobile"
+        :distance="refreshDistance"
+        :refreshing="refreshRefreshing"
+        :pulling="refreshPulling"
+      />
+
       <div class="dev-tip">
         以下设备开启了「记住我(免登录)」,在有效期内打开系统无需输入密码。若发现不认识的设备,请立即吊销。
       </div>
@@ -9,7 +17,7 @@
         <div class="toolbar-left">
           <span class="dev-count">共 {{ list.length }} 台设备在免登录有效期内</span>
         </div>
-        <t-space>
+        <t-space v-if="!isMobile">
           <t-button
             v-if="list.length"
             theme="danger"
@@ -29,6 +37,34 @@
             刷新
           </t-button>
         </t-space>
+      </div>
+
+      <!-- 移动端操作栏:刷新 / 全部吊销 -->
+      <div
+        v-if="isMobile"
+        class="m-bar"
+      >
+        <div class="m-search">
+          <t-button
+            theme="primary"
+            variant="outline"
+            @click="load"
+          >
+            <template #icon>
+              <refresh-icon />
+            </template>
+            刷新
+          </t-button>
+          <t-button
+            v-if="list.length"
+            theme="danger"
+            variant="outline"
+            :disabled="loading"
+            @click="askRevokeAll"
+          >
+            全部吊销
+          </t-button>
+        </div>
       </div>
 
       <!-- 桌面:表格 -->
@@ -156,8 +192,12 @@ import { listRememberSessions, revokeRememberSession } from '@dining/api';
 import type { RememberSession } from '@dining/types';
 import { getRemember, clearRemember } from '@dining/auth';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
+import PullRefresh from '../components/PullRefresh.vue';
 
 const { isMobile } = useIsMobile();
+// 移动端下拉刷新设备列表
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
 const loading = ref(false);
 const revoking = ref(false);
 const list = ref<RememberSession[]>([]);

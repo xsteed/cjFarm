@@ -1,6 +1,10 @@
 <template>
   <div class="page-card">
-    <div class="toolbar">
+    <!-- 桌面端工具栏:移动端由下方 App 式筛选栏替代 -->
+    <div
+      v-if="!isMobile"
+      class="toolbar"
+    >
       <div class="toolbar-left">
         <t-input
           v-model="query.orderNo"
@@ -83,25 +87,80 @@
       </t-button>
     </div>
 
-    <!-- 窄屏:表格列宽合计 900px+(操作列独占 290px),只能横向拖;改为卡片流 -->
-    <div
-      v-if="isMobile"
-      class="m-list"
-    >
-      <div
-        v-if="!list.length"
-        class="m-empty"
-      >
-        {{ loading ? '加载中…' : '暂无订单' }}
+    <!-- 移动端:App 式订单流(下拉刷新 + 搜索 + 状态药丸 + 卡片 + 底部筛选/操作弹层) -->
+    <template v-if="isMobile">
+      <PullRefresh
+        :distance="refreshDistance"
+        :refreshing="refreshRefreshing"
+        :pulling="refreshPulling"
+      />
+      <div class="m-bar">
+        <div class="m-search">
+          <t-input
+            v-model="query.orderNo"
+            placeholder="搜索订单号 / 桌号"
+            clearable
+            @enter="onSearch"
+          >
+            <template #prefix-icon>
+              <search-icon />
+            </template>
+          </t-input>
+          <t-button
+            theme="primary"
+            variant="outline"
+            class="m-filter-btn"
+            aria-label="筛选"
+            @click="filterSheetVisible = true"
+          >
+            <template #icon>
+              <filter-icon />
+            </template>
+          </t-button>
+        </div>
+        <div class="m-seg">
+          <button
+            v-for="t in statusTabs"
+            :key="t.value"
+            type="button"
+            class="m-seg-item"
+            :class="{ on: query.orderStatus === t.value }"
+            @click="onStatusTab(t.value)"
+          >
+            {{ t.label }}
+          </button>
+        </div>
       </div>
-      <div
-        v-for="row in list"
-        :key="row.orderId"
-        class="mcard"
-      >
-        <div class="mcard-hd">
-          <div style="min-width: 0">
-            <span class="mcard-no">#{{ row.shortNo || row.orderNo.slice(-6) }}</span>
+
+      <div class="m-list">
+        <div
+          v-if="!list.length"
+          class="m-empty"
+        >
+          {{ loading ? '加载中…' : '暂无订单' }}
+        </div>
+        <!-- 点整卡看详情;底部按钮用 @click.stop 阻断冒泡。键盘可达(Enter/Space)。 -->
+        <div
+          v-for="row in list"
+          :key="row.orderId"
+          class="ocard ocard-tap"
+          role="button"
+          tabindex="0"
+          @click="openDetail(row)"
+          @keydown.enter="openDetail(row)"
+          @keydown.space.prevent="openDetail(row)"
+        >
+          <div class="ocard-top">
+            <span class="ocard-no">#{{ row.shortNo || row.orderNo.slice(-6) }}</span>
+            <t-tag
+              :theme="ORDER_STATUS[row.orderStatus]?.theme"
+              variant="light"
+            >
+              {{ ORDER_STATUS[row.orderStatus]?.label }}
+            </t-tag>
+          </div>
+          <div class="ocard-meta">
+            {{ row.tableNo }} 号桌 · {{ row.personCount }} 人 · {{ row.createTime }}
             <t-tag
               v-if="row.pendingUrge"
               theme="danger"
@@ -111,133 +170,66 @@
             >
               催菜
             </t-tag>
-            <div class="mcard-sub">{{ row.tableNo }} 号桌 · {{ row.personCount }} 人 · {{ row.createTime }}</div>
           </div>
-          <t-tag
-            :theme="ORDER_STATUS[row.orderStatus]?.theme"
-            variant="light"
+          <div class="ocard-amt">
+            <span class="money">¥{{ $money(row.totalAmount) }}</span>
+            <span
+              v-if="row.settleType === 'free'"
+              class="settle-flag free"
+              >免单</span
+            >
+            <span
+              v-else-if="row.settleType === 'credit'"
+              class="settle-flag credit"
+            >
+              {{ row.creditStatus === 1 ? '挂账' : '挂账已结' }}
+            </span>
+            <t-tag
+              v-if="row.refundAmount > 0"
+              :theme="row.refundAmount >= row.totalAmount ? 'danger' : 'warning'"
+              variant="light"
+            >
+              {{ row.refundAmount >= row.totalAmount ? '已退款' : '部分退款' }}
+            </t-tag>
+            <t-tag
+              v-else
+              :theme="payTheme(row)"
+              variant="light"
+            >
+              {{ payText(row) }}
+            </t-tag>
+          </div>
+          <!-- 所有可执行操作直接铺在卡片上(不再收进「更多」),一眼看清、一键直达 -->
+          <div
+            class="ocard-ft"
+            @click.stop
           >
-            {{ ORDER_STATUS[row.orderStatus]?.label }}
-          </t-tag>
-        </div>
-
-        <div class="mcard-grid">
-          <div class="mcard-cell">
-            <div class="k">应收金额</div>
-            <div class="v">
-              <span class="money">¥{{ $money(row.totalAmount) }}</span>
-              <span
-                v-if="row.settleType === 'free'"
-                class="settle-flag free"
-                >免单</span
-              >
-              <span
-                v-else-if="row.settleType === 'credit'"
-                class="settle-flag credit"
-              >
-                {{ row.creditStatus === 1 ? '挂账' : '挂账已结' }}
-              </span>
-            </div>
-          </div>
-          <div class="mcard-cell">
-            <div class="k">支付状态</div>
-            <div class="v">
-              <t-tag
-                v-if="row.refundAmount > 0"
-                :theme="row.refundAmount >= row.totalAmount ? 'danger' : 'warning'"
-                variant="light"
-              >
-                {{ row.refundAmount >= row.totalAmount ? '已退款' : '部分退款' }} ¥{{ $money(row.refundAmount) }}
-              </t-tag>
-              <t-tag
-                v-else
-                :theme="payTheme(row)"
-                variant="light"
-              >
-                {{ payText(row) }}
-              </t-tag>
-            </div>
+            <t-button
+              v-for="a in cardActions(row)"
+              :key="a.key"
+              :theme="a.theme"
+              variant="outline"
+              :disabled="a.disabled"
+              @click="a.run()"
+            >
+              {{ a.label }}
+            </t-button>
           </div>
         </div>
 
-        <div class="mcard-ft">
-          <t-button
-            theme="primary"
-            variant="text"
-            size="small"
-            @click="openDetail(row)"
-          >
-            详情
-          </t-button>
-          <t-button
-            v-if="row.pendingUrge && canOperate"
-            theme="danger"
-            variant="text"
-            size="small"
-            @click="onHandleUrge(row)"
-          >
-            已催办
-          </t-button>
-          <t-button
-            v-if="row.orderStatus === 1 && canOperate"
-            theme="warning"
-            variant="text"
-            size="small"
-            @click="setStatus(row, 2)"
-          >
-            制作
-          </t-button>
-          <t-button
-            v-if="row.orderStatus === 2 && canOperate"
-            theme="warning"
-            variant="text"
-            size="small"
-            @click="setStatus(row, 3)"
-          >
-            上菜
-          </t-button>
-          <t-button
-            v-if="[1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle"
-            theme="success"
-            variant="text"
-            size="small"
-            @click="openSettle(row, 'settle')"
-          >
-            结算
-          </t-button>
-          <t-button
-            v-if="[1, 2, 3].includes(row.orderStatus) && canCancel"
-            theme="danger"
-            variant="text"
-            size="small"
-            @click="onCancel(row)"
-          >
-            取消
-          </t-button>
-          <t-button
-            v-if="canRefund(row)"
-            theme="danger"
-            variant="text"
-            size="small"
-            @click="openRefund(row)"
-          >
-            退款
-          </t-button>
+        <div
+          v-if="pagination.total > pagination.pageSize"
+          class="m-pager"
+        >
+          <t-pagination
+            :current="pagination.current"
+            :page-size="pagination.pageSize"
+            :total="pagination.total"
+            @change="onPageChange"
+          />
         </div>
       </div>
-
-      <div
-        v-if="pagination.total > pagination.pageSize"
-        class="m-pager"
-      >
-        <t-pagination
-          :current="pagination.current"
-          :page-size="pagination.pageSize"
-          :total="pagination.total"
-          @change="onPageChange"
-        />
-      </div>
-    </div>
+    </template>
 
     <t-table
       v-else
@@ -376,6 +368,79 @@
       </template>
     </t-table>
 
+    <!-- 移动端高级筛选:桌号 / 支付状态 / 结算方式收进底部弹层 -->
+    <BottomSheet
+      v-model="filterSheetVisible"
+      title="筛选订单"
+    >
+      <div class="ff-list">
+        <label class="ff">
+          <span class="ff-k">桌号</span>
+          <t-input
+            v-model="query.tableNo"
+            placeholder="如 01"
+            clearable
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">支付状态</span>
+          <t-select
+            v-model="query.payStatus"
+            placeholder="全部"
+            clearable
+          >
+            <t-option
+              value="0"
+              label="未支付"
+            />
+            <t-option
+              value="1"
+              label="已支付"
+            />
+          </t-select>
+        </label>
+        <label class="ff">
+          <span class="ff-k">结算方式</span>
+          <t-select
+            v-model="query.settleFilter"
+            placeholder="全部"
+            clearable
+          >
+            <t-option
+              value="normal"
+              label="正常收款"
+            />
+            <t-option
+              value="free"
+              label="免单"
+            />
+            <t-option
+              value="creditPending"
+              label="挂账待收"
+            />
+            <t-option
+              value="creditSettled"
+              label="挂账已结"
+            />
+          </t-select>
+        </label>
+      </div>
+      <template #footer>
+        <t-button
+          theme="default"
+          @click="resetFilters"
+        >
+          重置
+        </t-button>
+        <t-button
+          theme="primary"
+          @click="applyFilters"
+        >
+          查询
+        </t-button>
+      </template>
+    </BottomSheet>
+
     <!-- 订单详情：与「桌台管理」页点击桌台共用同一个组件，收款/退款/改单等子弹窗都在组件内，
          避免两处各写一套后长期跑偏。列表行的快捷按钮通过 ref 调用组件暴露的方法。 -->
     <OrderDetailDialog
@@ -392,9 +457,12 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { listOrders, changeOrderStatus, cancelOrder, handleUrge, ORDER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
 import { payStatusText, payStatusTheme, money } from '@dining/shared';
 import OrderDetailDialog from '../components/OrderDetailDialog.vue';
+import BottomSheet from '../components/BottomSheet.vue';
+import PullRefresh from '../components/PullRefresh.vue';
 import type { PageInfo } from 'tdesign-vue-next';
 import type { OrderSummary, PageQuery } from '@dining/types';
 
@@ -433,6 +501,10 @@ interface OrderQuery {
 const query = reactive<OrderQuery>({ orderNo: '', tableNo: '', orderStatus: '', payStatus: '', settleFilter: '' });
 const pagination = reactive({ current: 1, pageSize: 10, total: 0 });
 const { isMobile } = useIsMobile();
+// 移动端下拉刷新当前列表(沿用当前筛选与页码)
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
+// 列表内直接请求操作(制作/上齐/已催办)的在途标记:防连点重复提交
+const acting = ref(false);
 
 // 详情弹窗已抽成共享组件 components/OrderDetailDialog.vue ——
 // 详情展示、收款/结算、挂账核销、退款、手动改单全在组件内实现；
@@ -574,23 +646,31 @@ async function afterRowAction(orderId: number): Promise<void> {
 }
 
 async function setStatus(row: OrderRow, status: number): Promise<void> {
+  if (acting.value) return;
+  acting.value = true;
   try {
     await changeOrderStatus({ orderId: row.orderId, orderStatus: status });
     MessagePlugin.success('操作成功');
     await afterRowAction(row.orderId);
   } catch {
     /* 失败已由拦截器统一 toast */
+  } finally {
+    acting.value = false;
   }
 }
 
 // onHandleUrge 消解该订单全部待处理催菜(已加急/已解释),角标随之消失。
 async function onHandleUrge(row: OrderRow): Promise<void> {
+  if (acting.value) return;
+  acting.value = true;
   try {
     await handleUrge({ orderId: row.orderId });
     MessagePlugin.success('催菜已标记为已处理');
     await afterRowAction(row.orderId);
   } catch {
     /* 失败已由拦截器统一 toast */
+  } finally {
+    acting.value = false;
   }
 }
 
@@ -619,6 +699,65 @@ function onCancel(row: OrderRow): void {
       }
     }
   });
+}
+
+// ---- 移动端订单卡片的操作按钮 ----
+// 直接铺在卡片上,不再有「更多」二级面板:能做什么一眼可见、一键直达。
+interface CardAction {
+  key: string;
+  label: string;
+  theme: 'default' | 'primary' | 'success' | 'warning' | 'danger';
+  run: () => void;
+  disabled?: boolean;
+}
+
+function cardActions(row: OrderRow): CardAction[] {
+  const items: CardAction[] = [{ key: 'detail', label: '详情', theme: 'primary', run: () => openDetail(row) }];
+  if (row.pendingUrge && canOperate.value)
+    items.push({ key: 'urge', label: '已催办', theme: 'danger', run: () => onHandleUrge(row), disabled: acting.value });
+  if (row.orderStatus === 1 && canOperate.value)
+    items.push({
+      key: 'make',
+      label: '开始制作',
+      theme: 'warning',
+      run: () => setStatus(row, 2),
+      disabled: acting.value
+    });
+  if (row.orderStatus === 2 && canOperate.value)
+    items.push({ key: 'serve', label: '上齐', theme: 'warning', run: () => setStatus(row, 3), disabled: acting.value });
+  if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle.value)
+    items.push({ key: 'settle', label: '结算', theme: 'success', run: () => openSettle(row, 'settle') });
+  if ([1, 2, 3].includes(row.orderStatus) && canCancel.value)
+    items.push({ key: 'cancel', label: '取消', theme: 'danger', run: () => onCancel(row) });
+  if (canRefund(row)) items.push({ key: 'refund', label: '退款', theme: 'danger', run: () => openRefund(row) });
+  return items;
+}
+
+// ---- 移动端 App 式筛选 ----
+// 状态药丸:全部 + ORDER_STATUS 全部状态;点击即查,不再需要一个「查询」按钮。
+const statusTabs = computed(() => [
+  { label: '全部', value: '' },
+  ...Object.entries(ORDER_STATUS).map(([k, v]) => ({ label: v.label, value: String(k) }))
+]);
+
+function onStatusTab(value: string): void {
+  query.orderStatus = value;
+  pagination.current = 1;
+  load();
+}
+
+// 高级筛选弹层
+const filterSheetVisible = ref(false);
+
+function applyFilters(): void {
+  filterSheetVisible.value = false;
+  onSearch();
+}
+
+function resetFilters(): void {
+  query.tableNo = '';
+  query.payStatus = '';
+  query.settleFilter = '';
 }
 
 onMounted(load);
@@ -657,5 +796,32 @@ onMounted(load);
 .urgent-mini {
   margin-left: 6px;
   vertical-align: 1px;
+}
+
+/* 移动端搜索栏右侧的筛选图标按钮:正方形 */
+.m-filter-btn {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+/* 筛选弹层里的字段:标签在上、控件占满整行 */
+.ff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ff-k {
+  font-size: 13px;
+  color: var(--ink-2);
+  font-weight: 500;
 }
 </style>

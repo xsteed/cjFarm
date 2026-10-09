@@ -423,6 +423,8 @@ type RoleRow struct {
 	UserCount int
 }
 
+// roleCols 角色投影列。data_scope 仅原样读出回传(见 po.Role.DataScope 的说明),
+// 不参与任何权限判定 —— 当前系统是单租户,没有任何数据行的范围过滤。
 const roleCols = `role_id, role_key, role_name, COALESCE(perms,''), COALESCE(data_scope,'all'), COALESCE(is_builtin,0),
 	sort_order, status, COALESCE(create_time,''), COALESCE(update_time,''), COALESCE(remark,'')`
 
@@ -601,7 +603,15 @@ func InsertRole(r po.Role, permList []string, operatorName string) (int64, error
 	return res.LastInsertId()
 }
 
-// UpdateRole 修改角色(名称/权限/排序/备注)。内置角色的标识与权限不可改。
+// UpdateRole 修改角色(名称/权限/排序/备注)。
+//
+// 限制(与实现严格一致,勿凭注释臆测):
+//   - admin 角色的权限不可修改 —— 它每次启动都会被 SyncBuiltinRoles 强制恢复为全量,是防锁死的最后保险;
+//   - 内置角色的标识 role_key 不可修改(role_id 才是员工引用的外键,改名不影响关联)。
+//
+// 除 admin 外的内置角色(店长/收银员/员工)权限**允许**商户按需调整:
+// SyncBuiltinRoles 用 INSERT OR IGNORE 补建角色,不会覆盖商户改过的权限
+// (见 docs/user-permission-design.md 6.2)。前端 Roles.vue 也只对内置角色的「删除」做禁用。
 func UpdateRole(r po.Role, permList []string, operatorName string) error {
 	old, err := GetRoleByID(r.RoleID)
 	if err != nil {

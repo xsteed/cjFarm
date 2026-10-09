@@ -98,7 +98,7 @@
           wx:if="{{showSeatFee}}"
           class="amt-row"
         >
-          <text>茶位费</text>
+          <text>茶位费（{{personCount}}人）</text>
           <text>¥{{seatFeeText}}</text>
         </view>
         <view

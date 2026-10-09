@@ -1,6 +1,10 @@
 <template>
   <div class="page-card">
-    <div class="toolbar">
+    <!-- 桌面端工具栏 -->
+    <div
+      v-if="!isMobile"
+      class="toolbar"
+    >
       <div class="toolbar-left">
         <t-input
           v-model="query.keyword"
@@ -45,6 +49,53 @@
         新增员工
       </t-button>
     </div>
+
+    <!-- 移动端下拉刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
+    <!-- 移动端 App 式搜索栏 -->
+    <div
+      v-if="isMobile"
+      class="m-bar"
+    >
+      <div class="m-search">
+        <t-input
+          v-model="query.keyword"
+          placeholder="搜索用户名 / 姓名 / 手机号"
+          clearable
+          @enter="load"
+        >
+          <template #prefix-icon>
+            <search-icon />
+          </template>
+        </t-input>
+        <t-button
+          theme="primary"
+          variant="outline"
+          class="m-filter-btn"
+          aria-label="筛选"
+          @click="filterSheetVisible = true"
+        >
+          <template #icon>
+            <filter-icon />
+          </template>
+        </t-button>
+      </div>
+    </div>
+
+    <!-- 移动端悬浮「新增员工」 -->
+    <MobileFab
+      v-if="isMobile && canEdit"
+      @click="openAdd"
+    >
+      <span class="m-fab-ic"><add-icon /></span>
+      新增
+    </MobileFab>
 
     <!-- 窄屏:7 列表格合计 1030px 只能横向拖;改为卡片流 -->
     <div
@@ -254,7 +305,7 @@
       v-model:visible="dialogVisible"
       :header="form.userId ? '编辑员工' : '新增员工'"
       width="520px"
-      :confirm-btn="{ content: '保存', theme: 'primary' }"
+      :confirm-btn="{ content: '保存', theme: 'primary', loading: saving }"
       @confirm="save"
     >
       <t-form
@@ -354,7 +405,7 @@
       v-model:visible="pwdVisible"
       :header="`重置密码 - ${pwdTarget.realName || pwdTarget.username}`"
       width="420px"
-      :confirm-btn="{ content: '确认重置', theme: 'primary' }"
+      :confirm-btn="{ content: '确认重置', theme: 'primary', loading: saving }"
       @confirm="submitResetPwd"
     >
       <div class="pwd-form">
@@ -379,6 +430,47 @@
       </div>
       <div class="hint">重置后该员工当前登录会立即失效，需要用新密码重新登录。</div>
     </t-dialog>
+
+    <!-- 移动端筛选弹层 -->
+    <BottomSheet
+      v-model="filterSheetVisible"
+      title="筛选员工"
+    >
+      <div class="ff-list">
+        <label class="ff">
+          <span class="ff-k">角色</span>
+          <t-select
+            v-model="query.roleId"
+            :options="roleOptions"
+            placeholder="全部角色"
+            clearable
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">状态</span>
+          <t-select
+            v-model="query.status"
+            :options="statusOptions"
+            placeholder="全部状态"
+            clearable
+          />
+        </label>
+      </div>
+      <template #footer>
+        <t-button
+          theme="default"
+          @click="resetFilters"
+        >
+          重置
+        </t-button>
+        <t-button
+          theme="primary"
+          @click="applyFilters"
+        >
+          查询
+        </t-button>
+      </template>
+    </BottomSheet>
   </div>
 </template>
 
@@ -397,6 +489,10 @@ import {
 } from '@dining/api';
 import { getUsername, hasPerm } from '@dining/auth';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
+import BottomSheet from '../components/BottomSheet.vue';
+import PullRefresh from '../components/PullRefresh.vue';
+import MobileFab from '../components/MobileFab.vue';
 import type { Role, UserInfo } from '@dining/types';
 
 // user:edit 才显示增删改类按钮;user:view 进来只看列表。
@@ -424,6 +520,21 @@ interface UserQuery {
 }
 
 const query = reactive<UserQuery>({ keyword: '', roleId: undefined, status: undefined, pageNum: 1, pageSize: 10 });
+
+// ---- 移动端:下拉刷新 + 筛选弹层 ----
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
+const filterSheetVisible = ref(false);
+
+function applyFilters(): void {
+  filterSheetVisible.value = false;
+  query.pageNum = 1;
+  load();
+}
+
+function resetFilters(): void {
+  query.roleId = undefined;
+  query.status = undefined;
+}
 
 const roleOptions = computed(() =>
   roles.value.filter(r => r.status === 1).map(r => ({ label: r.roleName, value: r.roleId }))
@@ -496,6 +607,8 @@ function onPageChange(pageInfo: PageInfo): void {
 
 // ---- 新增 / 编辑 ----
 const dialogVisible = ref(false);
+// 保存 / 重置密码的在途标记:避免连点重复提交(确认按钮据此 loading 并禁用)
+const saving = ref(false);
 interface UserForm {
   userId: number | null;
   username: string;
@@ -557,6 +670,8 @@ async function save(): Promise<void> {
     MessagePlugin.warning('请选择角色');
     return;
   }
+  if (saving.value) return;
+  saving.value = true;
   try {
     if (form.userId) {
       await updateUser({
@@ -581,6 +696,8 @@ async function save(): Promise<void> {
     load();
   } catch {
     /* 失败已由拦截器统一 toast,弹窗保留已填内容供修改重试 */
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -605,12 +722,16 @@ async function submitResetPwd(): Promise<void> {
     MessagePlugin.warning('两次输入的密码不一致');
     return;
   }
+  if (saving.value) return;
+  saving.value = true;
   try {
     await resetUserPassword({ userId: pwdTarget.value.userId, password: pwdForm.password });
     MessagePlugin.success('密码已重置');
     pwdVisible.value = false;
   } catch {
     /* 失败已由拦截器统一 toast,弹窗保留供重试 */
+  } finally {
+    saving.value = false;
   }
 }
 

@@ -134,13 +134,13 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import { useIsMobile } from '../../utils/useMobile';
 import { listTables } from '@dining/api';
 import {
-  buildPrintSheetHtml,
+  buildCardImagesSheetHtml,
   CARD_PRESETS,
   openPrintWindow,
   QR_PIXEL_PRESETS,
-  renderQrDataUrl
+  renderCardDataUrl
 } from '../../utils/tableQr';
-import type { PrintSheetOptions, QrCard } from '../../utils/tableQr';
+import type { QrCard } from '../../utils/tableQr';
 import { dataUrlToBytes, downloadZip } from '../../utils/zip';
 import { getTableWeappCode } from '@dining/api';
 import type { CheckboxGroupValue, RadioValue } from 'tdesign-vue-next';
@@ -189,7 +189,7 @@ const batch = reactive<BatchState>({
   codeType: 'h5',
   mode: 'sheet',
   columns: 3,
-  cardKey: '60x90',
+  cardKey: '60x80',
   size: 900,
   useLogo: true,
   useTableNo: false,
@@ -258,42 +258,40 @@ async function collectCards(): Promise<QrCard[] | null> {
   return cards;
 }
 
-// 单张码图的来源。两条路径最终都产出 dataURL,所以下面的打印排版与打包下载完全不用改。
-//
+// 单张码图的来源:一律产出「完整桌牌卡片」(含商家名/扫码提醒/桌号),与单张导出一致。
 // 小程序码:后端带 access_token 向微信换取并按桌台码落盘缓存,同一桌台只有第一次
 // 真正打微信接口;几十张批量导出时这里是 4 路并发的若干个「本店后端」请求,不是
 // 几十次微信调用。任一张失败会整体中断并向用户抛出可操作的错误(如「页面未发布」)。
 async function makeCodeDataUrl(t: TableInfo): Promise<string> {
-  const size = Number(batch.size) || 900;
+  const preset = CARD_PRESETS.find(c => c.key === batch.cardKey) || CARD_PRESETS[0];
+  const width = Number(batch.size) || 900;
+  const ratio = preset.h / preset.w;
+  const wantShop = batch.fields.includes('shop');
+  const wantName = batch.fields.includes('tableName');
+  const wantNo = batch.fields.includes('tableNo');
+  const wantHint = batch.fields.includes('hint');
+  const common = {
+    width,
+    ratio,
+    shopName: wantShop ? props.shopTitle : '',
+    title: '扫码点餐',
+    // 小程序码是「微信扫一扫 → 直接进小程序」,与 H5 码的提示语故意区分开,
+    // 免得顾客看到「自助点餐」却不知道会跳到哪里。
+    hint: wantHint ? (isWeapp.value ? '微信扫一扫 · 进小程序点餐' : '微信扫码 · 自助点餐') : '',
+    tableName: wantName ? t.tableName : '',
+    tableNo: wantNo ? t.tableNo : ''
+  };
   if (isWeapp.value) {
-    const res = await getTableWeappCode(String(t.tableCode || t.tableId), size);
+    const res = await getTableWeappCode(String(t.tableCode || t.tableId), width);
     if (!res.dataUrl) throw new Error('微信未返回小程序码图片');
-    return res.dataUrl;
+    return renderCardDataUrl({ ...common, qrImageSrc: res.dataUrl });
   }
-  return renderQrDataUrl(tableQrUrl(t), {
-    size,
+  return renderCardDataUrl({
+    ...common,
+    text: tableQrUrl(t),
     logo: batch.useLogo && props.shopLogo ? props.shopLogo : '',
     centerText: !batch.useLogo && batch.useTableNo ? (t.tableNo ?? '') : ''
   });
-}
-
-function sheetOpts(): PrintSheetOptions {
-  const preset = CARD_PRESETS.find(c => c.key === batch.cardKey) || CARD_PRESETS[0];
-  return {
-    mode: batch.mode as 'sheet' | 'label',
-    columns: Number(batch.columns) || 3,
-    cardW: preset.w,
-    cardH: preset.h,
-    gap: 6,
-    showShop: batch.fields.includes('shop'),
-    shopName: props.shopTitle,
-    showTableName: batch.fields.includes('tableName'),
-    showTableNo: batch.fields.includes('tableNo'),
-    // 小程序码是「微信扫一扫 → 直接进小程序」,与 H5 码的提示语故意区分开,
-    // 免得顾客看到「自助点餐」却不知道会跳到哪里。
-    hint: batch.fields.includes('hint') ? (isWeapp.value ? '微信扫一扫 · 进小程序点餐' : '微信扫码 · 自助点餐') : '',
-    cutLine: batch.fields.includes('cutLine')
-  };
 }
 
 async function runBatch(kind: 'print' | 'zip'): Promise<void> {
@@ -303,7 +301,19 @@ async function runBatch(kind: 'print' | 'zip'): Promise<void> {
     const cards = await collectCards();
     if (!cards) return;
     if (kind === 'print') {
-      const html = buildPrintSheetHtml(cards, sheetOpts());
+      const preset = CARD_PRESETS.find(c => c.key === batch.cardKey) || CARD_PRESETS[0];
+      const html = buildCardImagesSheetHtml(
+        cards.map(c => ({ dataUrl: c.dataUrl, name: `${c.tableNo}_${c.tableName}` })),
+        {
+          mode: batch.mode as 'sheet' | 'label',
+          columns: Number(batch.columns) || 3,
+          cardW: preset.w,
+          cardH: preset.h,
+          gap: 6,
+          cutLine: batch.fields.includes('cutLine'),
+          shopName: batch.fields.includes('shop') ? props.shopTitle : ''
+        }
+      );
       if (!openPrintWindow(html)) {
         MessagePlugin.warning('浏览器拦截了弹窗，请允许弹出窗口后重试，或改用「打包下载 PNG」');
         return;
@@ -311,7 +321,7 @@ async function runBatch(kind: 'print' | 'zip'): Promise<void> {
       MessagePlugin.success(`已生成 ${cards.length} 张二维码打印页`);
     } else {
       const files = cards.map(c => {
-        // 扩展名跟随图片真实类型:H5 码是 PNG,微信回的小程序码是 JPEG。
+        // 卡片统一为 PNG(H5 码与嵌入小程序码的卡片都经 canvas 导出)
         const ext = c.dataUrl.startsWith('data:image/png') ? 'png' : 'jpg';
         return {
           // 去掉 Windows 文件名不允许的字符

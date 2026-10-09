@@ -11,10 +11,14 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    ActionSheet: typeof import('./apps/admin/src/components/ActionSheet.vue')['default']
+    BottomSheet: typeof import('./apps/admin/src/components/BottomSheet.vue')['default']
     CreditSettleDialog: typeof import('./apps/admin/src/components/order/CreditSettleDialog.vue')['default']
+    MobileFab: typeof import('./apps/admin/src/components/MobileFab.vue')['default']
     OrderDetailDialog: typeof import('./apps/admin/src/components/OrderDetailDialog.vue')['default']
     OrderEditDialog: typeof import('./apps/admin/src/components/OrderEditDialog.vue')['default']
     OrderInfoSection: typeof import('./apps/admin/src/components/order/OrderInfoSection.vue')['default']
+    PullRefresh: typeof import('./apps/admin/src/components/PullRefresh.vue')['default']
     RefundDialog: typeof import('./apps/admin/src/components/order/RefundDialog.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

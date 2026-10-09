@@ -37,6 +37,7 @@ function render(): void {
   const option: EChartOption = {
     tooltip: {
       trigger: 'axis',
+      confine: true,
       axisPointer: { type: 'shadow' },
       formatter: ps => {
         const p = pickTooltipParam(ps);

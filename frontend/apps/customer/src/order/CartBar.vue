@@ -3,45 +3,51 @@
     class="op-bar"
     :class="{ lifted: showTabbar }"
   >
+    <!-- 购物车图标 + 金额合成一个「展开购物车」热区:顾客习惯点整条,
+         只有图标响应会让中间一大片点不动。去结算按钮不在这个区里,保持独立。 -->
     <div
-      class="op-cartbtn"
-      :class="{ has: totalCount > 0 }"
+      class="op-cartarea"
       @click="totalCount > 0 && emit('open')"
     >
-      <svg
-        viewBox="0 0 24 24"
-        width="22"
-        height="22"
-        fill="#fff"
+      <div
+        class="op-cartbtn"
+        :class="{ has: totalCount > 0 }"
       >
-        <path
-          d="M7 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm10 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM3 2h2.6l.9 2H21a1 1 0 0 1 .94 1.34l-2.6 7.3A2 2 0 0 1 17.46 14H8.4l-.4 2H19v2H6.72a1 1 0 0 1-.98-1.2L6.6 12 4.4 4H3a1 1 0 0 1 0-2z"
-        />
-      </svg>
-      <span
-        v-if="totalCount > 0"
-        class="b"
-        >{{ totalCount }}</span
-      >
-    </div>
-    <div class="op-total">
-      <div class="l">
-        {{ canAppend ? '本次加菜' : '合计' }}
+        <svg
+          viewBox="0 0 24 24"
+          width="22"
+          height="22"
+          fill="#fff"
+        >
+          <path
+            d="M7 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm10 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM3 2h2.6l.9 2H21a1 1 0 0 1 .94 1.34l-2.6 7.3A2 2 0 0 1 17.46 14H8.4l-.4 2H19v2H6.72a1 1 0 0 1-.98-1.2L6.6 12 4.4 4H3a1 1 0 0 1 0-2z"
+          />
+        </svg>
+        <span
+          v-if="totalCount > 0"
+          class="b"
+          >{{ totalCount }}</span
+        >
       </div>
-      <div class="v"><small>¥</small>{{ totalPrice }}</div>
+      <div class="op-total">
+        <div class="l">合计</div>
+        <div class="v"><small>¥</small>{{ totalPrice }}</div>
+      </div>
     </div>
     <div
       class="op-checkout"
       :class="{ disabled: !totalCount }"
       @click="totalCount > 0 && emit('open')"
     >
-      去结算
+      {{ actionText }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue';
+
+const props = defineProps<{
   showTabbar: boolean;
   totalCount: number;
   totalPrice: number;
@@ -51,6 +57,12 @@ defineProps<{
 const emit = defineEmits<{
   open: [];
 }>();
+
+// 按钮文案:空车提示「请选择菜品」;加菜场景是「去加菜」;其余「去结算」。
+// 与小程序 cart-bar 的 actionText 口径一致(加菜区分放在按钮上,金额标签统一写「合计」)。
+const actionText = computed(() =>
+  props.totalCount > 0 ? (props.canAppend ? '去加菜' : '去结算') : '请选择菜品'
+);
 </script>
 
 <style scoped>
@@ -78,6 +90,16 @@ const emit = defineEmits<{
   bottom: calc(70px + env(safe-area-inset-bottom));
 }
 
+/* 图标 + 金额的热区:整块都能展开购物车(去结算按钮不在此区) */
+.op-cartarea {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  cursor: pointer;
+}
+
 .op-cartbtn {
   position: relative;
   width: 42px;
@@ -97,21 +119,30 @@ const emit = defineEmits<{
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
 }
 
+/* 份数角标。
+   注意:本工程没有全局 `box-sizing: border-box`,默认的 content-box 会让
+   min-width/height 只作用于内容区,border + padding 再往外撑——
+   结果是单个数字也被撑成 29px 宽,且 line-height(13px) 小于内容高(17px),
+   数字顶在内容区上沿、视觉偏高约 2px。
+   这里显式 border-box + flex 居中:尺寸可控,且无论几位数字都真正居中。 */
 .op-cartbtn .b {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
+  top: -4px;
+  right: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: var(--r-pill);
   background: var(--ink);
   border: 2px solid #fff;
   color: #fff;
-  font-size: 9px;
-  line-height: 13px;
+  font-size: 10px;
   font-weight: 700;
-  text-align: center;
+  line-height: 1;
 }
 
 .op-total {

@@ -6,7 +6,7 @@
         <b>超级管理员始终拥有全部权限</b>，不可修改（防止把系统锁死）。
       </span>
       <t-button
-        v-if="canEdit"
+        v-if="canEdit && !isMobile"
         theme="primary"
         @click="openAdd"
       >
@@ -16,6 +16,23 @@
         新增角色
       </t-button>
     </div>
+
+    <!-- 移动端下拉刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
+    <!-- 移动端悬浮「新增角色」 -->
+    <MobileFab
+      v-if="isMobile && canEdit"
+      @click="openAdd"
+    >
+      <span class="m-fab-ic"><add-icon /></span>
+      新增
+    </MobileFab>
 
     <!-- 窄屏:表格 + 720px 弹窗在手机上都不适用,列表改卡片,权限勾选见下方分栏 -->
     <div
@@ -140,7 +157,7 @@
       v-model:visible="dialogVisible"
       :header="form.roleId ? '编辑角色' : '新增角色'"
       width="720px"
-      :confirm-btn="{ content: '保存', theme: 'primary' }"
+      :confirm-btn="{ content: '保存', theme: 'primary', loading: saving }"
       @confirm="save"
     >
       <t-form
@@ -260,6 +277,9 @@ import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { deleteRole, getPermCatalog, listRoles, saveRole, updateRole } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
+import PullRefresh from '../components/PullRefresh.vue';
+import MobileFab from '../components/MobileFab.vue';
 import type { Role } from '@dining/types';
 
 const canEdit = computed(() => hasPerm('role:edit'));
@@ -281,6 +301,8 @@ type RoleRow = Role & { roleId: number };
 const list = ref<RoleRow[]>([]);
 const loading = ref(false);
 const { isMobile } = useIsMobile();
+// 移动端下拉刷新角色列表
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
 const groups = ref<PermGroup[]>([]);
 // 跨模块隐含依赖表,由 /perm/catalog 的 implies 字段下发: { 'credit:view': 'order:view' }
 const impliesMap = ref<Record<string, string>>({});
@@ -451,6 +473,8 @@ async function loadCatalog(): Promise<void> {
 
 // ---- 新增 / 编辑 ----
 const dialogVisible = ref(false);
+// 保存在途标记:防止连点重复提交
+const saving = ref(false);
 interface RoleForm {
   roleId: number | null;
   roleKey: string;
@@ -514,6 +538,8 @@ async function save(): Promise<void> {
     remark: form.remark,
     permList: form.permList
   };
+  if (saving.value) return;
+  saving.value = true;
   try {
     if (form.roleId) {
       await updateRole(payload);
@@ -525,6 +551,8 @@ async function save(): Promise<void> {
     load();
   } catch {
     /* 失败已由拦截器统一 toast,弹窗保留已填内容供修改重试 */
+  } finally {
+    saving.value = false;
   }
 }
 

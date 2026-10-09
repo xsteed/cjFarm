@@ -66,7 +66,7 @@
         <input
           class="search-input"
           value="{{keyword}}"
-          placeholder="搜索菜名 / 口味，如「牛肉」"
+          placeholder="搜索菜名 / 口味，如「五指毛桃鸡」"
           placeholder-class="search-ph"
           confirm-type="search"
           bindinput="onSearchInput"
@@ -337,7 +337,6 @@
   <!-- 常驻底部主导航：放在 wx:if 分支之外，加载中/加载失败时也能切去订单页 -->
   <tab-bar
     active="menu"
-    ordered-count="{{orderedCount}}"
     show-profile="{{showProfile}}"
   />
 </view>

@@ -2,8 +2,9 @@
 //
 // 这段逻辑决定「顾客能不能搜到自己想吃的」，而匹配得太松（满屏无关结果）与
 // 太紧（明明有却搜不到）都是差体验，所以把几种输入形态都钉住。
+// H5 与小程序共用这一份实现，两端搜出来的结果才一致。
 import { describe, expect, it } from 'vitest';
-import { dishMatches, filterMenu, isSubsequence, parseKeywords } from '../search';
+import { dishMatches, filterMenu, isSearching, isSubsequence, parseKeywords } from '../search';
 import type { Dish, MenuCategory } from '@dining/types';
 
 function dish(dishName: string, description = '', specs: string[] = []): Dish {
@@ -26,6 +27,15 @@ describe('parseKeywords', () => {
     expect(parseKeywords('')).toEqual([]);
     expect(parseKeywords('   ')).toEqual([]);
     expect(parseKeywords(undefined as unknown as string)).toEqual([]);
+  });
+});
+
+describe('isSearching', () => {
+  it('只有真的输入了内容才算搜索态（左栏据此收起）', () => {
+    expect(isSearching('牛肉')).toBe(true);
+    expect(isSearching(' 牛 ')).toBe(true);
+    expect(isSearching('')).toBe(false);
+    expect(isSearching('   ')).toBe(false);
   });
 });
 

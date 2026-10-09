@@ -31,10 +31,11 @@
           <t-input-number
             v-model="form.personCount"
             :min="1"
-            :max="50"
+            :max="20"
             size="small"
             style="width: 110px"
           />
+          <!-- 上限 20 与顾客端(H5 抽屉/小程序会话)统一:茶位费按人数算,口径不一致会产生异常大额 -->
         </span>
       </div>
 
@@ -160,7 +161,7 @@
           >菜品金额 <b>¥{{ money(dishTotal) }}</b></span
         >
         <span
-          >茶位费(预估) <b>¥{{ money(seatPreview) }}</b></span
+          >茶位费(预估·{{ form?.personCount || 0 }}人) <b>¥{{ money(seatPreview) }}</b></span
         >
         <span
           v-if="giftTotal > 0"

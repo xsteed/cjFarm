@@ -61,19 +61,20 @@
   box-sizing: border-box;
 }
 
-/* ---------- 概要 ---------- */
-.head {
-  margin-bottom: 20rpx;
-  padding: 28rpx;
-}
-
-.head-top {
+/* ---------- 菜品明细卡头：标题 + 状态标签 + 手动刷新 ---------- */
+.sec-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 12rpx;
 }
 
-.head-top-right {
+.sec-head .sec-title {
+  margin-bottom: 0;
+}
+
+.sec-head-right {
   display: flex;
   align-items: center;
   gap: 16rpx;
@@ -86,44 +87,25 @@
   font-size: 24rpx;
 }
 
-.head-table {
-  font-size: 34rpx;
+/* ---------- 订单信息卡：桌台 / 单号 / 人数 / 时间（放菜品之后） ---------- */
+.info-table {
+  font-size: 30rpx;
   font-weight: 700;
 }
 
-.head-no {
+.info-no {
   margin-top: 8rpx;
   color: var(--ink-3);
   font-size: 24rpx;
   letter-spacing: 0.5rpx;
 }
 
-.head-meta {
+.info-meta {
   display: flex;
   gap: 24rpx;
   margin-top: 12rpx;
   color: var(--ink-3);
   font-size: 23rpx;
-}
-
-.head-amt {
-  display: flex;
-  align-items: baseline;
-  gap: 16rpx;
-  margin-top: 20rpx;
-  padding-top: 20rpx;
-  border-top: 2rpx dashed var(--line);
-}
-
-.head-amt-label {
-  color: var(--ink-3);
-  font-size: 24rpx;
-}
-
-.head-amt-value {
-  color: var(--brand-deep);
-  font-size: 42rpx;
-  font-weight: 700;
 }
 
 /* ---------- 通用卡 ---------- */
@@ -240,7 +222,7 @@
   line-height: 1.6;
 }
 
-/* 账单明细：这几行加起来就是头部那个「合计」，用来回答「为什么比点菜金额多」 */
+/* 账单明细：这几行加起来就是末行的「合计」，用来回答「为什么比点菜金额多」 */
 .bill {
   margin-top: 18rpx;
   padding-top: 18rpx;
@@ -258,6 +240,28 @@
 
 .bill-discount {
   color: var(--warning);
+}
+
+/* 合计行：账单收尾，金额与「未支付 / 已支付」标签同排 */
+.bill-total {
+  margin-top: 8rpx;
+  padding-top: 20rpx;
+  border-top: 2rpx dashed var(--line);
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.bill-total-right {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.bill-total-value {
+  color: var(--brand-deep);
+  font-size: 36rpx;
+  font-weight: 700;
 }
 
 /* ---------- 底部动作栏 ---------- */

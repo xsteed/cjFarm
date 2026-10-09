@@ -216,7 +216,9 @@ func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg
 	lines = append(lines, hr(w))
 	lines = append(lines, twoCol("菜品金额", money(po.ToYuan(o.DishAmount)), w)...)
 	if cfg.showSeatFee {
-		lines = append(lines, twoCol("茶位费", money(po.ToYuan(o.SeatFee)), w)...)
+		// 标签带上人数(如「茶位费(3人)」):客人看到的总额是 人数×单价,
+		// 不标人数容易被误读成单价或漏乘。
+		lines = append(lines, twoCol(fmt.Sprintf("茶位费(%d人)", o.PersonCount), money(po.ToYuan(o.SeatFee)), w)...)
 	}
 	if o.DiscountAmount > 0 && cfg.showDiscount {
 		lines = append(lines, twoCol("优惠", "-"+money(po.ToYuan(o.DiscountAmount)), w)...)

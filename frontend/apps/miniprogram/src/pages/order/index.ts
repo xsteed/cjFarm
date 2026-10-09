@@ -59,8 +59,6 @@ Page({
     createTimeText: '',
     orderRemark: '',
     rows: [] as OrderRow[],
-    /** 本单已下单的总份数（底部导航「订单」上的角标） */
-    orderedCount: 0,
     // 动作可用性
     canAppend: false,
     canUrge: false,
@@ -214,7 +212,6 @@ Page({
         batchLabel: multiBatch ? (seq <= 1 ? '首单' : `加菜${seq - 1}`) : ''
       };
     });
-    const orderedCount = (order.items || []).reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
 
     const table = sessionState().table;
     this.setData({
@@ -235,7 +232,6 @@ Page({
       createTimeText: String(order.createTime || ''),
       orderRemark: String(order.orderRemark || ''),
       rows,
-      orderedCount,
       canAppend: active && payStatus === 0,
       canUrge: active,
       canPay: active && payStatus === 0,

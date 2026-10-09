@@ -96,7 +96,7 @@ export function buildA4Html(order: OrderDetail, docType: 'kitchen' | 'guest', op
 
   const sumRows = withPrice
     ? `<div class="sum"><span>菜品金额</span><b>¥${money(order.dishAmount)}</b></div>
-       <div class="sum"><span>茶位费</span><b>¥${money(order.seatFee)}</b></div>
+       <div class="sum"><span>茶位费(${order.personCount || '-'}人)</span><b>¥${money(order.seatFee)}</b></div>
        ${discountRow}
        ${giftRow}
        <div class="sum total"><span>应收金额</span><b>¥${money(order.totalAmount)}</b></div>

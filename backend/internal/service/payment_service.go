@@ -144,12 +144,15 @@ func ApplyPaymentSuccess(orderNo, channel, channelTradeNo, payType string, amoun
 		logger.Infof("[pay] 支付成功 订单%s 渠道%s 金额%d分 渠道流水号%s", orderNo, channel, amountCents, channelTradeNo)
 	} else {
 		// 并发重复回调:同渠道两个通知同时到达,先到者已把流水置为已支付,后到者
-		// 条件 UPDATE 命中 0 行 —— 复核流水状态后再告警,避免误导人工核对。
+		// 条件 UPDATE 命中 0 行 —— 复核流水状态,确认流水确已支付时才成功应答。
 		if _, fs, _, e := dao.GetPayment(orderNo, channel); e == nil && fs == dao.PayStatusPaid {
 			return PaymentSuccessResult{}
 		}
-		// 流水缺失/已关闭却收到了成功回调:钱到了但订单未入账,必须留痕人工核对。
-		logger.Warnf("[pay][告警] 支付成功但无待支付流水可回写(请人工核对) 订单%s 渠道%s 流水号%s", orderNo, channel, channelTradeNo)
+		// 流水缺失/已关闭却收到成功回调,且订单尚未支付:钱到了但订单没入账,属于掉单。
+		// 与「已支付重复回调」不同,这里绝不能折叠成成功应答 —— 否则渠道停止重试、
+		// 订单永远不入账。应答 Failed 让渠道重试,并以 Error 级别留痕供人工核对。
+		logger.Errorf("[pay][告警] 支付成功但无待支付流水可回写,应答失败待渠道重试(请人工核对) 订单%s 渠道%s 流水号%s", orderNo, channel, channelTradeNo)
+		return PaymentSuccessResult{Failed: true}
 	}
 	return PaymentSuccessResult{}
 }

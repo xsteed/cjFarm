@@ -202,11 +202,14 @@ func recordLog(p po.Printer, o po.Order, docType, triggerBy, operator, remoteID,
 }
 
 // truncate 按字符数截断(避免超长错误信息撑爆 VARCHAR(500))。
+// 必须按 rune 截断:按字节切会把多字节 UTF-8 字符切一半,写入 utf8mb4 列时
+// 轻则乱码、重则整行 INSERT 被拒(诊断信息反而丢失)。
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
-	return s[:max]
+	return string(r[:max])
 }
 
 // ============================================================================

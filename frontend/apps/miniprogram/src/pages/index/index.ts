@@ -20,18 +20,13 @@ import {
 } from '../../store/session';
 import { toast } from '../../utils/toast';
 import { resolveTableCode } from '../../utils/scene';
-import { filterMenu } from '../../utils/search';
 import { money } from '@dining/shared/money';
 import { ORDER_STATUS } from '@dining/shared/dicts';
 import { isActiveStatus } from '@dining/shared/orderStatus';
+// 搜索与「几个规格算多」都与 H5 共用同一份实现：改一处两端同步
+import { filterMenu } from '@dining/customer-core/search';
+import { INLINE_SPEC_MAX } from '@dining/customer-core/spec';
 import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo } from '@dining/types';
-
-/**
- * 规格多到几个还放在菜品行里让顾客直接点。
- * 上限取 3：菜品行的文本列窄（扣掉左栏与图片后约 340rpx），
- * 3 个 chip 基本放得下；再多会换行把行高撑乱，不如统一进弹层。
- */
-const INLINE_SPEC_MAX = 3;
 
 /** 右栏顶部的锚点 id：换搜索词后要把列表拉回顶部（见 scrollListTop）。 */
 const LIST_TOP_ANCHOR = 'list-top';
@@ -161,8 +156,6 @@ Page({
     remarks: [] as RemarkOption[],
     cartCount: 0,
     cartTotalText: '0.00',
-    /** 本桌已下单的总份数（底部导航「订单」上的角标，不是购物车份数） */
-    orderedCount: 0,
     sheetVisible: false,
     sheetDishId: 0,
     /** 该菜在购物车里的现有份数：弹层据此提示「确定后是再加一份」 */
@@ -343,7 +336,6 @@ Page({
    */
   refreshRows() {
     const ordered = this.orderedQtyMap();
-    const orderedCount = Object.values(ordered).reduce((sum, n) => sum + n, 0);
     const rows: MenuRow[] = [];
     const sections: SectionRef[] = [];
 
@@ -378,7 +370,6 @@ Page({
     this.setData(
       {
         rows,
-        orderedCount,
         appendNotice,
         searchEmpty: this.data.searching && !rows.length,
         cartCount: cartCount(),

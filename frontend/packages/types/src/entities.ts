@@ -343,6 +343,8 @@ export interface SettleMixRow extends Extensible {
 
 export interface PublicConfig extends Extensible {
   shop_name?: string;
+  /** 门店标语:仅顾客端 H5/小程序顶部与店铺名称拼接展示,桌牌二维码不放 */
+  shop_slogan?: string;
   seat_fee_enabled?: string;
   seat_fee?: string;
   promotion_enabled?: string;

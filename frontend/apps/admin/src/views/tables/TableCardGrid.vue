@@ -1,8 +1,58 @@
 <template>
+  <!-- 移动端:App 式桌台瓦片网格(2 列),占用暖橙 / 空闲薄荷绿,点瓦片看订单、右上角「⋯」出操作面板 -->
+  <div
+    v-if="isMobile"
+    class="m-tiles"
+  >
+    <div
+      v-if="!list.length"
+      class="m-empty"
+      style="grid-column: 1 / -1"
+    >
+      {{ loading ? '加载中…' : '暂无桌台' }}
+    </div>
+    <div
+      v-for="row in list"
+      :key="rowKey(row)"
+      class="m-tile"
+      :class="row.status === 1 ? 'busy' : 'free'"
+      role="button"
+      tabindex="0"
+      @click="onTileClick(row, $event)"
+      @keydown.enter="onTileKey(row)"
+      @keydown.space.prevent="onTileKey(row)"
+    >
+      <div class="m-tile-no">{{ row.tableNo }}</div>
+      <div class="m-tile-sub">{{ row.tableName }}</div>
+      <div class="m-tile-sub">{{ row.status === 1 ? '占用中' : '空闲' }} · {{ row.capacity }} 人</div>
+      <button
+        type="button"
+        class="m-tile-more"
+        aria-label="桌台操作"
+        @click.stop="openTableSheet(row)"
+      >
+        <ellipsis-icon />
+      </button>
+    </div>
+
+    <div
+      v-if="pagination.total > pagination.pageSize"
+      class="m-pager"
+      style="grid-column: 1 / -1"
+    >
+      <t-pagination
+        :current="pagination.current"
+        :page-size="pagination.pageSize"
+        :total="pagination.total"
+        @change="handlePageChange"
+      />
+    </div>
+  </div>
+
   <!-- 卡片视图:桌面/移动端统一,响应式网格铺排,像楼层平面图;
        占用桌台暖橙描边+浅底、空闲绿描边,前台一眼分辨。移动端窄屏仍单列(见 scoped media 查询)。 -->
   <div
-    v-if="showCard"
+    v-else-if="showCard"
     class="tcard-grid"
   >
     <div
@@ -48,40 +98,52 @@
       </div>
 
       <div class="mcard-ft">
+        <!-- 移动端:行内小按钮收成单个「操作」,点开底部面板(大按钮、单手可点) -->
         <t-button
-          v-if="tapable(row)"
+          v-if="isMobile"
           theme="primary"
-          variant="text"
+          variant="outline"
           size="small"
-          @click="openOrder(row)"
+          block
+          @click="openTableSheet(row)"
+          >操作</t-button
         >
-          详情
-        </t-button>
-        <t-button
-          v-if="canEdit"
-          theme="primary"
-          variant="text"
-          size="small"
-          @click="emit('edit', row)"
-        >
-          编辑
-        </t-button>
-        <t-button
-          variant="text"
-          size="small"
-          @click="emit('qr', row)"
-        >
-          二维码
-        </t-button>
-        <t-button
-          v-if="canEdit"
-          theme="danger"
-          variant="text"
-          size="small"
-          @click="emit('delete', row)"
-        >
-          删除
-        </t-button>
+        <template v-else>
+          <t-button
+            v-if="tapable(row)"
+            theme="primary"
+            variant="text"
+            size="small"
+            @click="openOrder(row)"
+          >
+            详情
+          </t-button>
+          <t-button
+            v-if="canEdit"
+            theme="primary"
+            variant="text"
+            size="small"
+            @click="emit('edit', row)"
+          >
+            编辑
+          </t-button>
+          <t-button
+            variant="text"
+            size="small"
+            @click="emit('qr', row)"
+          >
+            二维码
+          </t-button>
+          <t-button
+            v-if="canEdit"
+            theme="danger"
+            variant="text"
+            size="small"
+            @click="emit('delete', row)"
+          >
+            删除
+          </t-button>
+        </template>
       </div>
     </div>
 
@@ -164,12 +226,23 @@
       </template>
     </t-table>
   </div>
+
+  <!-- 移动端桌台卡片的「操作」底部面板:订单详情 / 编辑 / 二维码 / 删除 -->
+  <ActionSheet
+    v-model="tableSheetVisible"
+    title="桌台操作"
+    :actions="tableActions"
+    @pick="onTablePick"
+  />
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { PageInfo, RowEventContext } from 'tdesign-vue-next';
 import type { TableInfo } from '@dining/types';
+import { useIsMobile } from '../../utils/useMobile';
+import ActionSheet from '../../components/ActionSheet.vue';
+import type { SheetAction } from '../../components/ActionSheet.vue';
 
 const props = defineProps<{
   list: TableInfo[];
@@ -218,12 +291,57 @@ function onCardClick(row: TableInfo, e: Event): void {
   openOrder(row);
 }
 
+// 移动端瓦片:占用桌台点一下直接看订单详情;空闲桌台点一下直接进编辑(最常用动作);
+// 无编辑权限或需要二维码/删除时走右上角「⋯」的操作面板。
+function onTileClick(row: TableInfo, e: Event): void {
+  if (fromControl(e)) return;
+  onTileKey(row);
+}
+
+// 键盘(Enter/Space)触发:与点击同样「占用看订单、空闲编辑」的语义
+function onTileKey(row: TableInfo): void {
+  if (tapable(row)) openOrder(row);
+  else if (props.canEdit) emit('edit', row);
+  else openTableSheet(row);
+}
+
 function rowClassName({ row }: { row: TableInfo }): string {
   return tapable(row) ? 'row-clickable' : '';
 }
 
 function handlePageChange(page: PageInfo): void {
   emit('page-change', page);
+}
+
+// ---- 移动端桌台卡片的「操作」底部面板 ----
+const { isMobile } = useIsMobile();
+const tableSheetVisible = ref(false);
+const tableSheetRow = ref<TableInfo | null>(null);
+
+const tableActions = computed<SheetAction[]>(() => {
+  const row = tableSheetRow.value;
+  if (!row) return [];
+  const items: SheetAction[] = [];
+  if (tapable(row)) items.push({ key: 'order', label: '查看订单详情', theme: 'primary' });
+  if (props.canEdit) items.push({ key: 'edit', label: '编辑桌台', theme: 'primary' });
+  items.push({ key: 'qr', label: '查看二维码', theme: 'default' });
+  if (props.canEdit) items.push({ key: 'delete', label: '删除桌台', theme: 'danger' });
+  return items;
+});
+
+function openTableSheet(row: TableInfo): void {
+  tableSheetRow.value = row;
+  tableSheetVisible.value = true;
+}
+
+function onTablePick(key: string): void {
+  const row = tableSheetRow.value;
+  tableSheetVisible.value = false;
+  if (!row) return;
+  if (key === 'order') emit('open-order', row);
+  else if (key === 'edit') emit('edit', row);
+  else if (key === 'qr') emit('qr', row);
+  else if (key === 'delete') emit('delete', row);
 }
 
 const columns = computed(() => {
@@ -317,5 +435,28 @@ const columns = computed(() => {
   color: #374151;
   border-radius: 4px;
   padding: 2px 8px;
+}
+
+/* 移动端瓦片右上角的「⋯」操作按钮 */
+.m-tile-more {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 70%);
+  color: var(--ink-2);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.m-tile-more:active {
+  background: #fff;
 }
 </style>

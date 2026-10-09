@@ -15,7 +15,7 @@
         <button
           v-if="cart.length"
           class="clear-btn"
-          @click="clearCart"
+          @click="emit('clear')"
         >
           清空
         </button>
@@ -135,10 +135,27 @@
                   <path d="M5 12h14" />
                 </svg>
               </button>
-              <span class="qty-num big">{{ personCount }}</span>
+              <input
+                v-if="editingCount"
+                ref="countInputEl"
+                v-model="countInput"
+                class="qty-num big count-input"
+                type="number"
+                inputmode="numeric"
+                :min="PERSON_MIN"
+                :max="PERSON_MAX"
+                @blur="commitCount"
+                @keyup.enter="($event.target as HTMLInputElement).blur()"
+              />
+              <span
+                v-else
+                class="qty-num big"
+                title="点击输入人数"
+                @click="startEditCount"
+              >{{ personCount }}</span>
               <button
                 class="qty-btn plus"
-                @click="personCount < 20 && emit('update:personCount', personCount + 1)"
+                @click="personCount < PERSON_MAX && emit('update:personCount', personCount + 1)"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -211,10 +228,27 @@
               <path d="M5 12h14" />
             </svg>
           </button>
-          <span class="qty-num big">{{ personCount }}</span>
+          <input
+            v-if="editingCount"
+            ref="countInputEl"
+            v-model="countInput"
+            class="qty-num big count-input"
+            type="number"
+            inputmode="numeric"
+            :min="PERSON_MIN"
+            :max="PERSON_MAX"
+            @blur="commitCount"
+            @keyup.enter="($event.target as HTMLInputElement).blur()"
+          />
+          <span
+            v-else
+            class="qty-num big"
+            title="点击输入人数"
+            @click="startEditCount"
+          >{{ personCount }}</span>
           <button
             class="qty-btn plus"
-            @click="personCount < 20 && emit('update:personCount', personCount + 1)"
+            @click="personCount < PERSON_MAX && emit('update:personCount', personCount + 1)"
           >
             <svg
               viewBox="0 0 24 24"
@@ -232,9 +266,11 @@
       </div>
 
       <div class="sheet-submit">
+        <!-- 金额标签固定「合计」,金额用结算总额(菜品+茶位费-满减):
+             加菜与否的区分由下方按钮文案承担,口径与小程序购物车页一致 -->
         <div class="ss-total">
-          {{ canAppend ? '本次加菜' : '合计' }}
-          <span class="money"><i>¥</i>{{ canAppend ? dishTotal.toFixed(2) : totalPrice }}</span>
+          合计
+          <span class="money"><i>¥</i>{{ totalPrice }}</span>
         </div>
         <button
           class="submit-btn"
@@ -253,9 +289,33 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import type { OrderDetail } from '@dining/types';
 import type { CartItem } from '@dining/customer-core';
+
+/** 人数上下限:与小程序会话(setPersonCount)、管理端编辑弹窗三方统一 —— 茶位费按人数算,口径不一致会产生异常大额 */
+const PERSON_MIN = 1;
+const PERSON_MAX = 20;
+
+/** 点数字直接输入:大桌不必连点 19 下加号 */
+const editingCount = ref(false);
+const countInput = ref('');
+const countInputEl = ref<HTMLInputElement | null>(null);
+
+function startEditCount(): void {
+  countInput.value = String(props.personCount);
+  editingCount.value = true;
+  nextTick(() => countInputEl.value?.focus());
+}
+
+function commitCount(): void {
+  if (!editingCount.value) return;
+  editingCount.value = false;
+  // 非法输入(空/非数字)保持原值;范围收敛与小程序 setPersonCount 同规则
+  const n = Math.floor(Number(countInput.value));
+  const next = Number.isFinite(n) ? Math.max(PERSON_MIN, Math.min(PERSON_MAX, n)) : props.personCount;
+  if (next !== props.personCount) emit('update:personCount', next);
+}
 
 const props = defineProps<{
   visible: boolean;
@@ -270,7 +330,6 @@ const props = defineProps<{
   orderRemark: string;
   submitting: boolean;
   currentOrder: OrderDetail | null;
-  clearCart: () => void;
   openRemark: (item: CartItem) => void;
   changeCartQty: (item: CartItem, delta: number) => void;
 }>();
@@ -279,6 +338,8 @@ const emit = defineEmits<{
   'update:visible': [value: boolean];
   'update:personCount': [value: number];
   'update:orderRemark': [value: string];
+  /** 请求清空：真正清不清除页面层弹确认后决定（误触成本太高） */
+  clear: [];
   submit: [];
 }>();
 
@@ -358,10 +419,18 @@ const remarkModel = computed({
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   font-size: 12px;
   color: var(--ink-3);
   margin-top: 4px;
   cursor: pointer;
+}
+
+/* 备注可以很长,单行截断:整行被撑高会把右侧的加减按钮挤下去 */
+.ci-remark span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ci-remark svg {
@@ -425,6 +494,27 @@ const remarkModel = computed({
 
 .qty-num.big {
   font-size: 16px;
+}
+
+/* 人数直接输入态:去掉数字步进箭头,下划线提示可编辑 */
+.qty-num.count-input {
+  width: 44px;
+  padding: 2px 0;
+  border: none;
+  border-bottom: 1.5px solid var(--brand);
+  border-radius: 0;
+  background: none;
+  outline: none;
+  font: inherit;
+  font-size: 16px;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.qty-num.count-input::-webkit-outer-spin-button,
+.qty-num.count-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .cart-empty {

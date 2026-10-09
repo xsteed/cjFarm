@@ -165,12 +165,9 @@ func (c *FeieClient) call(apiname string, params map[string]string) (*feieResp, 
 
 	var r feieResp
 	if err := json.Unmarshal(body, &r); err != nil {
-		// 飞鹅在维护或网关异常时可能返回非 JSON,把前 200 字符带上便于排查。
-		snippet := string(body)
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-		return nil, fmt.Errorf("飞鹅云响应格式异常: %s", snippet)
+		// 飞鹅在维护或网关异常时可能返回非 JSON,把前 200 个字符带上便于排查
+		// (按字符而非字节截断,避免多字节响应被切出乱码)。
+		return nil, fmt.Errorf("飞鹅云响应格式异常: %s", truncateRunesForLog(string(body), 200))
 	}
 	if r.Ret != 0 {
 		// 返回码类错误属于「参数/配置问题」,重试也不会变好,标记为永久错误。

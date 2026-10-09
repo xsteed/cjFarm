@@ -1,5 +1,7 @@
 import { computed, reactive, ref } from 'vue';
 import type { Ref } from 'vue';
+import { ui } from '@dining/shared';
+import { isOrderable, isSoldOut } from './spec';
 import type { Dish, DishSpec, RemarkOption } from '@dining/types';
 
 export interface CartItem {
@@ -60,9 +62,20 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
   }
 
   function changeQty(d: Dish, delta: number): void {
-    // 售罄菜不下单：后端下单时也会拦（ResolveOrderItems），这里提前挡在 UI 层，
-    // 避免顾客点到最后一步才收到「已售罄」。
-    if (Number(d.soldOut) === 1) return;
+    // 只有「加」才校验:减号操作的是购物车里已有的条目,不该因为今天沽清就减不掉。
+    if (delta > 0) {
+      if (!isOrderable(d)) {
+        // 小程序的 ui 适配器只分 success/warning/error,这里的 info 档落到 warning
+        ui.warning('该菜品暂不可点，请联系店员');
+        return;
+      }
+      // 售罄菜不下单：后端下单时也会拦（ResolveOrderItems），这里提前挡在 UI 层，
+      // 避免顾客点到最后一步才收到「已售罄」。
+      if (isSoldOut(d)) {
+        ui.warning('该菜品已售罄，看看别的吧');
+        return;
+      }
+    }
     const spec = currentSpec(d);
     // 当前选中规格已售罄（库存 0）时不可加减。
     if (Number(spec.stock) === 0) return;
@@ -94,11 +107,23 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     cart.value = [];
   }
 
+  /** 把已存的备注反解成「命中的选项 + 其余自定义文本」(与小程序 spec-sheet 同规则)。 */
+  function parseRemark(remark: string): { selected: string[]; custom: string } {
+    const names = remarks.value.map(r => String(r.optionName || ''));
+    const parts = String(remark || '')
+      .split('、')
+      .filter(Boolean);
+    return {
+      selected: parts.filter(p => names.includes(p)),
+      custom: parts.filter(p => !names.includes(p)).join('、')
+    };
+  }
+
   function openRemark(item: CartItem): void {
     remarkTarget.item = item;
-    const parts = (item.remark || '').split('、').filter(Boolean);
-    remarkTarget.selected = parts.filter(p => remarks.value.some(r => r.optionName === p));
-    remarkTarget.custom = parts.filter(p => !remarks.value.some(r => r.optionName === p)).join('、');
+    const parsed = parseRemark(item.remark);
+    remarkTarget.selected = parsed.selected;
+    remarkTarget.custom = parsed.custom;
     remarkVisible.value = true;
   }
 
@@ -108,11 +133,120 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     else remarkTarget.selected.push(name);
   }
 
+  /** 关闭但不写入:与 saveRemark 严格区分,顾客「看看选项又不想改」时不该动到购物车。 */
+  function closeRemark(): void {
+    resetRemarkTarget();
+  }
+
+  /** 清空当前编辑的选项与自定义文本(真正生效要再点「确定」)。 */
+  function clearRemark(): void {
+    remarkTarget.selected = [];
+    remarkTarget.custom = '';
+  }
+
   function saveRemark(): void {
     const parts = [...remarkTarget.selected];
     if (remarkTarget.custom.trim()) parts.push(remarkTarget.custom.trim());
     if (remarkTarget.item) remarkTarget.item.remark = parts.join('、');
+    resetRemarkTarget();
+  }
+
+  /** 收尾:关弹层 + 丢掉对购物车行的引用(该行可能已被减到 0 移除)。 */
+  function resetRemarkTarget(): void {
     remarkVisible.value = false;
+    remarkTarget.item = null;
+    remarkTarget.selected = [];
+    remarkTarget.custom = '';
+  }
+
+  // ---------- 规格 / 备注弹层(对齐小程序 components/spec-sheet) ----------
+  const sheetVisible = ref(false);
+  const sheetDish = ref<Dish | null>(null);
+  const sheetSpecId = ref(0);
+  const sheetRemark = reactive({ selected: [] as string[], custom: '' });
+  /** 该菜在购物车里的份数(同菜多规格合计,与小程序 cartDishQty 同口径) */
+  const sheetInCartQty = ref(0);
+  /** 防重入:连点「确定」会来多次 confirm,每收一次就多加一份 */
+  let sheetConfirming = false;
+
+  function openSheet(d: Dish): void {
+    if (isSoldOut(d)) {
+      ui.warning('该菜品已售罄，看看别的吧');
+      return;
+    }
+    if (!isOrderable(d)) {
+      ui.warning('该菜品暂不可点，请联系店员');
+      return;
+    }
+    // 打开时定位到「这道菜当前选中的规格」,连同该规格已填的备注一起带进来,点开即可改
+    const spec = currentSpec(d);
+    const line = cart.value.find(i => i.key === `${d.dishId}-${spec.specId || 0}`);
+    sheetDish.value = d;
+    sheetSpecId.value = Number(spec.specId) || 0;
+    const parsed = parseRemark(line ? line.remark : '');
+    sheetRemark.selected = parsed.selected;
+    sheetRemark.custom = parsed.custom;
+    sheetInCartQty.value = cart.value.filter(i => i.dishId === d.dishId).reduce((s, i) => s + i.quantity, 0);
+    sheetVisible.value = true;
+  }
+
+  function closeSheet(): void {
+    sheetVisible.value = false;
+    sheetDish.value = null;
+    sheetSpecId.value = 0;
+    sheetRemark.selected = [];
+    sheetRemark.custom = '';
+    sheetInCartQty.value = 0;
+    sheetConfirming = false;
+  }
+
+  function pickSheetSpec(specId: number): void {
+    const s = (sheetDish.value?.specs || []).find(x => Number(x.specId) === specId);
+    if (!s || Number(s.stock) === 0) return; // 售罄规格点不动
+    sheetSpecId.value = Number(s.specId) || 0;
+  }
+
+  function toggleSheetRemark(name: string): void {
+    const i = sheetRemark.selected.indexOf(name);
+    if (i > -1) sheetRemark.selected.splice(i, 1);
+    else sheetRemark.selected.push(name);
+  }
+
+  /** 加一份;同一 dish+spec 合并成一行(与小程序 cartAdd 同规则:合并时覆盖备注)。 */
+  function addToCart(d: Dish, spec: DishSpec, remark?: string): void {
+    const key = `${d.dishId}-${spec.specId || 0}`;
+    const exist = cart.value.find(i => i.key === key);
+    if (exist) {
+      exist.quantity += 1;
+      if (remark !== undefined) exist.remark = remark;
+      return;
+    }
+    cart.value.push({
+      key,
+      dishId: d.dishId as number,
+      dishName: d.dishName || '',
+      specId: spec.specId as number,
+      specName: spec.specName || '',
+      price: Number(spec.price) || 0,
+      quantity: 1,
+      remark: remark ?? ''
+    });
+  }
+
+  function confirmSheet(): void {
+    const d = sheetDish.value;
+    if (!d || sheetConfirming) return;
+    const spec = (d.specs || []).find(s => Number(s.specId) === sheetSpecId.value);
+    if (!spec || Number(spec.stock) === 0) return; // 售罄规格兜底再拦一次
+    sheetConfirming = true;
+    const parts = [...sheetRemark.selected];
+    const custom = sheetRemark.custom.trim();
+    if (custom) parts.push(custom);
+    // 弹层里选的规格就是这道菜之后的「当前规格」:行内 chip / 价格 / 步进器都要跟着走
+    selectedSpec[d.dishId as number] = sheetSpecId.value;
+    addToCart(d, spec, parts.join('、'));
+    ui.success('已加入购物车');
+    closeSheet();
   }
 
   return {
@@ -131,6 +265,19 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     clearCart,
     openRemark,
     toggleRemark,
-    saveRemark
+    closeRemark,
+    clearRemark,
+    saveRemark,
+    sheetVisible,
+    sheetDish,
+    sheetSpecId,
+    sheetRemark,
+    sheetInCartQty,
+    openSheet,
+    closeSheet,
+    pickSheetSpec,
+    toggleSheetRemark,
+    confirmSheet,
+    addToCart
   };
 }

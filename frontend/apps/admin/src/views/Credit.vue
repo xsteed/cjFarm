@@ -27,7 +27,10 @@
       class="page-card"
       :style="canReport ? 'margin-top: 16px' : ''"
     >
-      <div class="toolbar">
+      <div
+        v-if="!isMobile"
+        class="toolbar"
+      >
         <div class="toolbar-left">
           <t-radio-group
             v-model="tab"
@@ -61,6 +64,45 @@
           </template>
           刷新
         </t-button>
+      </div>
+
+      <!-- 移动端下拉刷新 -->
+      <PullRefresh
+        v-if="isMobile"
+        :distance="refreshDistance"
+        :refreshing="refreshRefreshing"
+        :pulling="refreshPulling"
+      />
+
+      <!-- 移动端 App 式搜索栏 + 状态药丸 -->
+      <div
+        v-if="isMobile"
+        class="m-bar"
+      >
+        <div class="m-search">
+          <t-input
+            v-model="keyword"
+            placeholder="搜索挂账人 / 订单号"
+            clearable
+            @enter="onSearch"
+          >
+            <template #prefix-icon>
+              <search-icon />
+            </template>
+          </t-input>
+        </div>
+        <div class="m-seg">
+          <button
+            v-for="t in creditTabs"
+            :key="t.value"
+            type="button"
+            class="m-seg-item"
+            :class="{ on: tab === t.value }"
+            @click="onTabSelect(t.value)"
+          >
+            {{ t.label }}
+          </button>
+        </div>
       </div>
 
       <!-- 窄屏:8 列表格合计 1060px 只能横向拖;改为卡片流 -->
@@ -300,8 +342,10 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { listOrders, getOrder, settleCreditOrder, getReportSummary } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
 import { money } from '@dining/shared';
+import PullRefresh from '../components/PullRefresh.vue';
 import type { PageInfo, RadioValue } from 'tdesign-vue-next';
 import type { OrderDetail, OrderSummary, ReportSummary, PageQuery } from '@dining/types';
 
@@ -315,6 +359,18 @@ const keyword = ref('');
 const pagination = reactive({ current: 1, pageSize: 10, total: 0 });
 const summary = ref<ReportSummary>({});
 const { isMobile } = useIsMobile();
+
+// ---- 移动端:下拉刷新 + 状态药丸 ----
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
+const creditTabs = [
+  { value: 'pending', label: '待收款' },
+  { value: 'settled', label: '已结清' },
+  { value: 'all', label: '全部挂账' }
+];
+function onTabSelect(value: string): void {
+  tab.value = value;
+  onTabChange();
+}
 
 const settleVisible = ref(false);
 const submitting = ref(false);

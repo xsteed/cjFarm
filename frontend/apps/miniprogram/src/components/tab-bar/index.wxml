@@ -21,10 +21,6 @@
         <view class="ic-line"></view>
         <view class="ic-line ic-line-short"></view>
       </view>
-      <view
-        wx:if="{{orderedCount > 0}}"
-        class="tb-badge"
-      >{{orderedCount}}</view>
     </view>
     <view class="tb-text">订单</view>
   </view>

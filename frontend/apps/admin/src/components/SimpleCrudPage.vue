@@ -1,9 +1,17 @@
 <template>
   <div class="page-card">
+    <!-- 移动端下拉刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
     <div class="toolbar">
       <span class="tip">{{ tip }}</span>
       <t-button
-        v-if="canEdit"
+        v-if="canEdit && !isMobile"
         theme="primary"
         @click="openAdd"
       >
@@ -13,6 +21,15 @@
         {{ addLabel }}
       </t-button>
     </div>
+
+    <!-- 移动端悬浮「新增」 -->
+    <MobileFab
+      v-if="isMobile && canEdit"
+      @click="openAdd"
+    >
+      <span class="m-fab-ic"><add-icon /></span>
+      新增
+    </MobileFab>
 
     <!-- 窄屏:改用卡片,避免 ID/排序/操作三列把表格挤到横向滚动 -->
     <div
@@ -95,7 +112,7 @@
       v-model:visible="dialogVisible"
       :header="form.id ? editLabel : addLabel"
       width="420px"
-      :confirm-btn="{ content: '保存', theme: 'primary' }"
+      :confirm-btn="{ content: '保存', theme: 'primary', loading: saving }"
       @confirm="save"
     >
       <t-form
@@ -129,7 +146,10 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
+import PullRefresh from './PullRefresh.vue';
+import MobileFab from './MobileFab.vue';
 
 /** 简单 CRUD 列表页的通用行结构:ID + 名称 + 排序。 */
 export interface CrudRow {
@@ -168,8 +188,12 @@ const props = defineProps<{
 const list = ref<CrudRow[]>([]);
 const loading = ref(false);
 const dialogVisible = ref(false);
+// 保存在途标记:防止连点重复提交
+const saving = ref(false);
 const form = reactive<CrudRow>({ id: null, name: '', sortOrder: 0 });
 const { isMobile } = useIsMobile();
+// 移动端下拉刷新列表
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
 
 // 无写权限时隐藏「新增/编辑/删除」——只读浏览。后端接口同样会 403,这里只是体验层。
 const canEdit = computed(() => hasPerm(props.editPerm));
@@ -211,6 +235,8 @@ async function save(): Promise<void> {
     MessagePlugin.warning(`请填写${props.nameLabel}`);
     return;
   }
+  if (saving.value) return;
+  saving.value = true;
   try {
     await props.saveApi({ ...form });
     MessagePlugin.success('保存成功');
@@ -218,6 +244,8 @@ async function save(): Promise<void> {
     load();
   } catch {
     /* 失败已由拦截器统一 toast,弹窗保留已填内容供修改重试 */
+  } finally {
+    saving.value = false;
   }
 }
 

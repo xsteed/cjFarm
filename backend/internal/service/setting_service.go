@@ -33,7 +33,7 @@ func SetSetting(key, value string) error { return dao.SetSetting(key, value) }
 // agent_last_seen(代理心跳,秒级变化)、admin_pass_hash 等内部键——
 // 它们的变化不该把管理员的保存误判为并发冲突。
 var ManagedSettingKeys = []string{
-	"shop_name", "shop_logo", "h5_base_url",
+	"shop_name", "shop_slogan", "shop_logo", "h5_base_url",
 	"seat_fee_enabled", "seat_fee",
 	"promotion_enabled", "promotion_threshold", "promotion_discount",
 	"pay_qr_wx", "pay_qr_ali",
@@ -96,6 +96,7 @@ func SettingFlagDefaultOn(key string) string {
 func ListSettings() dto.Settings {
 	return dto.Settings{
 		ShopName:           dao.GetSetting("shop_name"),
+		ShopSlogan:         dao.GetSetting("shop_slogan"),
 		ShopLogo:           dao.GetSetting("shop_logo"),
 		SeatFeeEnabled:     SettingFlag("seat_fee_enabled"),
 		SeatFee:            dao.GetSetting("seat_fee"),
@@ -165,6 +166,7 @@ func SaveSettings(settings dto.Settings, actor string) (detail string, conflict 
 
 	vals := map[string]string{
 		"shop_name":                settings.ShopName,
+		"shop_slogan":              settings.ShopSlogan,
 		"shop_logo":                settings.ShopLogo,
 		"seat_fee_enabled":         normFlagValue(settings.SeatFeeEnabled),
 		"seat_fee":                 settings.SeatFee,

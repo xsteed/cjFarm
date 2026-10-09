@@ -16,8 +16,6 @@ Component({
   properties: {
     /** 当前页所属的 tab：menu（点餐）| order（订单）| profile（我的） */
     active: { type: String, value: 'menu' },
-    /** 订单 tab 的角标（已下单份数），0 表示不显示 */
-    orderedCount: { type: Number, value: 0 },
     /**
      * 是否显示「我的」（会员）tab。跟随后端开关：系统配置里配了小程序
      * AppID/AppSecret 才显示；关闭时回到两档导航，会员入口整体消失。

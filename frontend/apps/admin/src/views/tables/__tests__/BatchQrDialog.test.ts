@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils';
 import TDesign, { MessagePlugin } from 'tdesign-vue-next';
 import BatchQrDialog from '../BatchQrDialog.vue';
 import { getTableWeappCode, listTables } from '@dining/api';
-import { buildPrintSheetHtml, openPrintWindow, renderQrDataUrl } from '../../../utils/tableQr';
+import { buildCardImagesSheetHtml, openPrintWindow, renderCardDataUrl } from '../../../utils/tableQr';
 import { dataUrlToBytes, downloadZip } from '../../../utils/zip';
 import { flushPromises } from '@shell/test/mocks.ts';
 import type { TableInfo } from '@dining/types';
@@ -28,7 +28,7 @@ vi.mock('@dining/api', () => ({
 
 vi.mock('../../../utils/tableQr', () => ({
   CARD_PRESETS: [
-    { key: '60x90', label: '60 × 90 mm　竖版桌牌', w: 60, h: 90 },
+    { key: '60x80', label: '60 × 80 mm　竖版桌牌', w: 60, h: 80 },
     { key: '80x80', label: '80 × 80 mm　方形', w: 80, h: 80 },
     { key: '100x70', label: '100 × 70 mm　横版', w: 100, h: 70 }
   ],
@@ -38,8 +38,8 @@ vi.mock('../../../utils/tableQr', () => ({
     { key: 900, label: '900 px（高清打印）' },
     { key: 1200, label: '1200 px（大幅面）' }
   ],
-  renderQrDataUrl: vi.fn(),
-  buildPrintSheetHtml: vi.fn(),
+  renderCardDataUrl: vi.fn(),
+  buildCardImagesSheetHtml: vi.fn(),
   openPrintWindow: vi.fn()
 }));
 
@@ -50,8 +50,8 @@ vi.mock('../../../utils/zip', () => ({
 
 const listTablesMock = vi.mocked(listTables);
 const getTableWeappCodeMock = vi.mocked(getTableWeappCode);
-const renderQrDataUrlMock = vi.mocked(renderQrDataUrl);
-const buildPrintSheetHtmlMock = vi.mocked(buildPrintSheetHtml);
+const renderCardDataUrlMock = vi.mocked(renderCardDataUrl);
+const buildCardImagesSheetHtmlMock = vi.mocked(buildCardImagesSheetHtml);
 const openPrintWindowMock = vi.mocked(openPrintWindow);
 const dataUrlToBytesMock = vi.mocked(dataUrlToBytes);
 const downloadZipMock = vi.mocked(downloadZip);
@@ -96,14 +96,14 @@ async function pickRadio(wrapper: ReturnType<typeof mountDialog>, text: string):
 
 beforeEach(() => {
   listTablesMock.mockResolvedValue({ total: tablesFixture.length, items: tablesFixture });
-  renderQrDataUrlMock.mockResolvedValue('data:image/png;base64,mock');
+  renderCardDataUrlMock.mockResolvedValue('data:image/png;base64,mock');
   getTableWeappCodeMock.mockResolvedValue({
     dataUrl: 'data:image/jpeg;base64,weapp',
     cached: false,
     envVersion: 'release',
     width: 900
   });
-  buildPrintSheetHtmlMock.mockReturnValue('<html>print</html>');
+  buildCardImagesSheetHtmlMock.mockReturnValue('<html>print</html>');
   openPrintWindowMock.mockReturnValue(true);
   dataUrlToBytesMock.mockReturnValue(new Uint8Array([1, 2, 3]));
   downloadZipMock.mockResolvedValue('mock.zip');
@@ -123,14 +123,14 @@ describe('BatchQrDialog 批量导出 / 打印', () => {
     expect(text).toContain('卡片尺寸');
     // TDesign 的 t-select 把选中值渲染在只读 input 的 value 上,而非文本节点,故断言 input value。
     const cardSizeInput = wrapper.find<HTMLInputElement>('.t-select input.t-input__inner');
-    expect(cardSizeInput.element.value).toContain('60 × 90 mm');
+    expect(cardSizeInput.element.value).toContain('60 × 80 mm');
     expect(text).toContain('清晰度');
     wrapper.unmount();
   });
 
-  it('打印分支并发生成二维码并调用打印页构建与打开', async () => {
+  it('打印分支并发生成卡片并调用打印页构建与打开', async () => {
     const resolvers: Array<(value: string) => void> = [];
-    renderQrDataUrlMock.mockImplementation(
+    renderCardDataUrlMock.mockImplementation(
       () =>
         new Promise<string>(resolve => {
           resolvers.push(resolve);
@@ -153,7 +153,7 @@ describe('BatchQrDialog 批量导出 / 打印', () => {
     resolvers[1]('data:image/png;base64,2');
     await flushPromises();
 
-    expect(buildPrintSheetHtmlMock).toHaveBeenCalledTimes(1);
+    expect(buildCardImagesSheetHtmlMock).toHaveBeenCalledTimes(1);
     expect(openPrintWindowMock).toHaveBeenCalledTimes(1);
     expect(openPrintWindowMock).toHaveBeenCalledWith('<html>print</html>');
     expect(wrapper.find('.batch-progress').text()).toContain('已生成 2 张二维码');
@@ -177,7 +177,7 @@ describe('BatchQrDialog 批量导出 / 打印', () => {
     wrapper.unmount();
   });
 
-  it('切到小程序码后改走后端出码，不再本地渲染，且文件扩展名为 jpg', async () => {
+  it('切到小程序码后改走后端出码并嵌入卡片，ZIP 内为完整卡片 PNG', async () => {
     const wrapper = mountDialog();
     await pickRadio(wrapper, '小程序码');
     expect(wrapper.text()).toContain('小程序码由微信生成');
@@ -187,17 +187,20 @@ describe('BatchQrDialog 批量导出 / 打印', () => {
     await zipBtn!.trigger('click');
     await flushPromises();
 
-    // 小程序码由微信生成:不再走本地 renderQrDataUrl,改为逐个桌台请求后端
-    // (后端带 access_token 换取并缓存,前端不接触令牌)。
-    expect(renderQrDataUrlMock).not.toHaveBeenCalled();
+    // 小程序码由微信生成:逐个桌台请求后端(后端带 access_token 换取并缓存,前端不接触令牌),
+    // 并以图片形式嵌入卡片,前端不再本地渲染裸二维码。
+    expect(renderCardDataUrlMock).toHaveBeenCalledTimes(2);
+    expect(renderCardDataUrlMock).toHaveBeenCalledWith(
+      expect.objectContaining({ qrImageSrc: 'data:image/jpeg;base64,weapp' })
+    );
     expect(getTableWeappCodeMock).toHaveBeenCalledTimes(2);
     expect(getTableWeappCodeMock).toHaveBeenCalledWith('C001', 900);
     expect(getTableWeappCodeMock).toHaveBeenCalledWith('C002', 900);
 
     const [files] = downloadZipMock.mock.calls[0];
-    // 微信回的是 JPEG,扩展名必须跟着真实类型走,否则看图工具会报损坏。
-    expect(files[0].name).toBe('01_大厅01桌.jpg');
-    expect(files[1].name).toBe('02_大厅02桌.jpg');
+    // 卡片统一经 canvas 导出为 PNG,扩展名随之
+    expect(files[0].name).toBe('01_大厅01桌.png');
+    expect(files[1].name).toBe('02_大厅02桌.png');
     wrapper.unmount();
   });
 
@@ -209,8 +212,11 @@ describe('BatchQrDialog 批量导出 / 打印', () => {
     await printBtn!.trigger('click');
     await flushPromises();
 
-    // 顾客看到「自助点餐」并不知道会跳去哪;小程序码明确写「进小程序点餐」。
-    expect(buildPrintSheetHtmlMock.mock.calls[0][1]?.hint).toBe('微信扫一扫 · 进小程序点餐');
+    // 顾客看到「自助点餐」并不知道会跳去哪;小程序码明确写「进小程序点餐」,
+    // 该提示语已烤进卡片(renderCardDataUrl 的 hint),而非打印页另置。
+    expect(renderCardDataUrlMock).toHaveBeenCalledWith(
+      expect.objectContaining({ hint: '微信扫一扫 · 进小程序点餐' })
+    );
     wrapper.unmount();
   });
 

@@ -86,6 +86,15 @@
           style="width: 190px"
         />
       </div>
+      <div class="qr-card-size">
+        <span class="opt-label">卡片尺寸</span>
+        <t-select
+          v-model="cardKey"
+          :options="cardOptions"
+          size="small"
+          style="width: 220px"
+        />
+      </div>
       <div
         v-if="!shopLogo"
         class="qr-hint"
@@ -99,7 +108,15 @@
           :disabled="!qrDataUrl"
           @click="downloadQr"
         >
-          下载 PNG
+          下载桌牌 PNG
+        </t-button>
+        <t-button
+          variant="outline"
+          :loading="bareLoading"
+          :disabled="!qrDataUrl"
+          @click="downloadQrOnly"
+        >
+          仅下载二维码
         </t-button>
         <t-button
           variant="outline"
@@ -123,7 +140,13 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
-import { buildPrintSheetHtml, openPrintWindow, renderQrDataUrl, QR_PIXEL_PRESETS } from '../../utils/tableQr';
+import {
+  openPrintWindow,
+  renderCardDataUrl,
+  renderQrDataUrl,
+  QR_PIXEL_PRESETS,
+  CARD_PRESETS
+} from '../../utils/tableQr';
 import { getTableWeappCode } from '@dining/api';
 import type { TableInfo } from '@dining/types';
 
@@ -140,6 +163,9 @@ const emit = defineEmits<{
   copy: [text?: string];
 }>();
 
+const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+const esc = (s: string): string => s.replace(/[<>&"]/g, c => escMap[c]);
+
 const dialogVisible = computed({
   get: () => props.visible,
   set: (v: boolean) => emit('update:visible', v)
@@ -147,11 +173,17 @@ const dialogVisible = computed({
 
 const qrLoading = ref(false);
 const qrDataUrl = ref('');
+const bareLoading = ref(false);
+// 小程序码原图缓存:renderSingle 时由后端返回,「仅下载二维码」直接复用,避免重复请求。
+const weappCodeUrl = ref('');
 const qrUrl = ref('');
 const qrError = ref('');
 const qrUseLogo = ref(true);
 const qrUseText = ref(false);
 const qrSize = ref(640);
+// 卡片尺寸预设(与批量导出一致):比例 = h/w,使单张与批量打印的卡片形态统一。
+const cardKey = ref('60x80');
+const cardOptions = CARD_PRESETS.map(c => ({ value: c.key, label: c.label }));
 // 码类型。默认 h5:存量桌牌都是这个形态,默认值保持与历史行为一致。
 const qrType = ref('h5');
 // 出码实际指向的小程序版本,由后端回传;非正式版时必须提醒,否则会把体验版码印到桌牌上。
@@ -183,15 +215,27 @@ async function renderSingle(): Promise<void> {
   if (!row) return;
   qrLoading.value = true;
   try {
+    const preset = CARD_PRESETS.find(c => c.key === cardKey.value) || CARD_PRESETS[0];
+    const baseOpts = {
+      width: Number(qrSize.value) || 640,
+      ratio: preset.h / preset.w,
+      shopName: props.shopTitle,
+      title: '扫码点餐',
+      hint: isWeapp.value ? '微信扫一扫 · 小程序点餐' : '微信扫码 · 自助点餐',
+      tableName: row.tableName,
+      tableNo: row.tableNo
+    };
     if (isWeapp.value) {
-      // 小程序码由微信生成、后端缓存;中心是「小程序头像」,因此不传 logo/centerText。
+      // 小程序码由微信生成、后端缓存;中心是「小程序头像」,因此以图片形式嵌入卡片。
       const res = await getTableWeappCode(String(row.tableCode || row.tableId), Number(qrSize.value) || 640);
       if (!res.dataUrl) throw new Error('微信未返回小程序码图片');
-      qrDataUrl.value = res.dataUrl;
+      weappCodeUrl.value = res.dataUrl; // 供「仅下载二维码」复用
+      qrDataUrl.value = await renderCardDataUrl({ ...baseOpts, qrImageSrc: res.dataUrl });
       qrEnv.value = res.envVersion || 'release';
     } else {
-      qrDataUrl.value = await renderQrDataUrl(qrUrl.value, {
-        size: Number(qrSize.value) || 640,
+      qrDataUrl.value = await renderCardDataUrl({
+        ...baseOpts,
+        text: qrUrl.value,
         logo: qrUseLogo.value && props.shopLogo ? props.shopLogo : '',
         centerText: !qrUseLogo.value && qrUseText.value ? (row.tableNo ?? '') : ''
       });
@@ -219,7 +263,7 @@ watch(
 );
 
 let renderTimer: ReturnType<typeof setTimeout> | null = null;
-watch([qrType, qrUseLogo, qrUseText, qrSize], () => {
+watch([qrType, qrUseLogo, qrUseText, qrSize, cardKey], () => {
   if (!props.visible) return;
   if (renderTimer) clearTimeout(renderTimer);
   renderTimer = setTimeout(() => {
@@ -239,6 +283,7 @@ function onQrClose(): void {
   qrUrl.value = '';
   qrError.value = '';
   qrEnv.value = 'release';
+  weappCodeUrl.value = '';
 }
 
 function downloadQr(): void {
@@ -253,19 +298,55 @@ function downloadQr(): void {
   a.click();
 }
 
+// 仅下载裸二维码(不带桌牌卡片装饰):H5 现场生成,小程序码用 renderSingle 缓存的原图。
+async function downloadQrOnly(): Promise<void> {
+  const row = props.row;
+  if (!row) return;
+  bareLoading.value = true;
+  try {
+    let url = '';
+    if (isWeapp.value) {
+      url = weappCodeUrl.value;
+      if (!url) {
+        const res = await getTableWeappCode(String(row.tableCode || row.tableId), Number(qrSize.value) || 640);
+        if (!res.dataUrl) throw new Error('微信未返回小程序码图片');
+        url = res.dataUrl;
+        weappCodeUrl.value = url;
+      }
+    } else {
+      url = await renderQrDataUrl(qrUrl.value, {
+        size: Number(qrSize.value) || 640,
+        logo: qrUseLogo.value && props.shopLogo ? props.shopLogo : '',
+        centerText: !qrUseLogo.value && qrUseText.value ? (row.tableNo ?? '') : ''
+      });
+    }
+    const a = document.createElement('a');
+    a.href = url;
+    const ext = url.startsWith('data:image/png') ? 'png' : 'jpg';
+    a.download = `桌台码_${row.tableNo}_${row.tableName}_仅二维码.${ext}`;
+    a.click();
+  } catch (e) {
+    MessagePlugin.error(e instanceof Error && e.message ? e.message : '二维码生成失败');
+  } finally {
+    bareLoading.value = false;
+  }
+}
+
 function printSingle(): void {
   const row = props.row;
   if (!row || !qrDataUrl.value) return;
-  const card = { tableNo: row.tableNo, tableName: row.tableName, dataUrl: qrDataUrl.value };
-  const html = buildPrintSheetHtml([card], {
-    mode: 'sheet',
-    columns: 1,
-    cardW: 90,
-    cardH: 120,
-    showShop: true,
-    shopName: props.shopTitle,
-    hint: isWeapp.value ? '微信扫一扫 · 进小程序点餐' : '微信扫码 · 自助点餐'
-  });
+  // 单张已是完整桌牌卡片,直接整图打印到 A4 居中。
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>桌台码 ${esc(
+    row.tableName || ''
+  )}</title>
+<style>
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @page { size: A4; margin: 0; }
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; background: #fff; }
+  img { width: auto; height: auto; max-width: 88%; max-height: 88%; }
+</style></head>
+<body><img src="${qrDataUrl.value}" alt="桌台码"></body></html>`;
   if (!openPrintWindow(html)) {
     MessagePlugin.warning('浏览器拦截了弹窗，请改用「下载 PNG」后自行打印');
   }
@@ -286,21 +367,21 @@ function copy(text?: string): void {
 }
 
 .qr-img-wrap {
-  width: 260px;
-  height: 260px;
+  width: 100%;
+  max-width: 360px;
+  min-height: 200px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px dashed var(--line);
-  border-radius: 10px;
   background: #fff;
-  overflow: hidden;
+  padding: 4px;
 }
 
 .qr-img {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
+  height: auto;
+  display: block;
+  border-radius: 10px;
 }
 
 .qr-placeholder {
@@ -367,6 +448,19 @@ function copy(text?: string): void {
   color: var(--ink-3);
   text-align: center;
   line-height: 1.6;
+}
+
+.qr-card-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.opt-label {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 32px;
 }
 
 .qr-actions {

@@ -28,7 +28,8 @@
       "@dining/shared": ["../../packages/shared/src/index.ts"],
       "@dining/shared/*": ["../../packages/shared/src/*"],
       "@dining/api": ["../../packages/api/src/index.ts"],
-      "@dining/api/*": ["../../packages/api/src/*"]
+      "@dining/api/*": ["../../packages/api/src/*"],
+      "@dining/customer-core/*": ["../../packages/customer-core/src/*"]
     }
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]

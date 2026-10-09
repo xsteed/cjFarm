@@ -1,5 +1,13 @@
 <template>
   <div class="page-card">
+    <!-- 移动端下拉刷新 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
     <div class="toolbar">
       <span class="tip">
         每向一台打印机发一次单据都会记一条。小票没出来时先看这里：是没发出去、还是打印机离线、还是内容被平台拒了。
@@ -7,7 +15,10 @@
       </span>
     </div>
 
-    <div class="filters">
+    <div
+      v-if="!isMobile"
+      class="filters"
+    >
       <t-select
         v-model="query.status"
         :options="statusOptions"
@@ -50,6 +61,36 @@
       >
         重置
       </t-button>
+    </div>
+
+    <!-- 移动端 App 式搜索栏 -->
+    <div
+      v-if="isMobile"
+      class="m-bar"
+    >
+      <div class="m-search">
+        <t-input
+          v-model="query.orderNo"
+          placeholder="搜索订单号 / 短号"
+          clearable
+          @enter="reload"
+        >
+          <template #prefix-icon>
+            <search-icon />
+          </template>
+        </t-input>
+        <t-button
+          theme="primary"
+          variant="outline"
+          class="m-filter-btn"
+          aria-label="筛选"
+          @click="filterSheetVisible = true"
+        >
+          <template #icon>
+            <filter-icon />
+          </template>
+        </t-button>
+      </div>
     </div>
 
     <div
@@ -294,6 +335,56 @@
       :chunks="previewData?.chunks"
       :line-width="previewData?.lineWidth ?? 48"
     />
+
+    <!-- 移动端筛选弹层 -->
+    <BottomSheet
+      v-model="filterSheetVisible"
+      title="筛选打印记录"
+    >
+      <div class="ff-list">
+        <label class="ff">
+          <span class="ff-k">结果</span>
+          <t-select
+            v-model="query.status"
+            :options="statusOptions"
+            clearable
+            placeholder="全部结果"
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">单据</span>
+          <t-select
+            v-model="query.docType"
+            :options="docOptions"
+            clearable
+            placeholder="全部单据"
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">通道</span>
+          <t-select
+            v-model="query.provider"
+            :options="providerOptions"
+            clearable
+            placeholder="全部通道"
+          />
+        </label>
+      </div>
+      <template #footer>
+        <t-button
+          theme="default"
+          @click="resetFilters"
+        >
+          重置
+        </t-button>
+        <t-button
+          theme="primary"
+          @click="applyFilters"
+        >
+          查询
+        </t-button>
+      </template>
+    </BottomSheet>
   </div>
 </template>
 
@@ -310,8 +401,11 @@ import {
   PRINTER_PROVIDER
 } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
 import TicketPreviewDialog from '../components/TicketPreviewDialog.vue';
+import BottomSheet from '../components/BottomSheet.vue';
+import PullRefresh from '../components/PullRefresh.vue';
 import type { PrintLog, TicketPreview, PageQuery } from '@dining/types';
 
 // 列表行在模板里要拿 printId/status/docType/triggerBy 当字典下标或传给补打接口,
@@ -338,6 +432,21 @@ interface PrintLogQuery {
 }
 
 const query = reactive<PrintLogQuery>({ status: '', docType: '', provider: '', orderNo: '', pageNum: 1, pageSize: 10 });
+
+// ---- 移动端:下拉刷新 + 筛选弹层 ----
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
+const filterSheetVisible = ref(false);
+
+function applyFilters(): void {
+  filterSheetVisible.value = false;
+  reload();
+}
+
+function resetFilters(): void {
+  query.status = '';
+  query.docType = '';
+  query.provider = '';
+}
 
 // 通道中文名统一取自 api 枚举,避免这里再硬编码一遍导致两处漂移。
 const providerLabel = (p?: string): string => PRINTER_PROVIDER[p || '']?.label || '网络直连';

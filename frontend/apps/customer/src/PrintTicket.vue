@@ -79,7 +79,7 @@
         <span>菜品金额</span><span>¥{{ $money(order.dishAmount) }}</span>
       </div>
       <div class="ticket-row">
-        <span>茶位费</span><span>¥{{ $money(order.seatFee) }}</span>
+        <span>茶位费（{{ order.personCount }}人）</span><span>¥{{ $money(order.seatFee) }}</span>
       </div>
       <div
         v-if="(order.discountAmount ?? 0) > 0"
