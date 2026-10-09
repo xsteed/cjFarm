@@ -15,6 +15,7 @@
           {{ statusLabel }}
         </div>
       </div>
+
       <div
         v-for="it in renderItems"
         :key="it.itemId"
@@ -142,18 +143,13 @@
         </div>
       </div>
 
+      <!-- 按钮只给动作，金额由上方账单末行的「合计」承担，避免同屏出现两次 -->
       <div
         v-if="view === 'order' && currentOrder.payStatus === 0"
         class="st-paybtn"
         @click="emit('pay')"
       >
-        去支付 ¥{{ Number(currentOrder.totalAmount).toFixed(2) }}
-      </div>
-      <div
-        v-else-if="(view === 'order' || view === 'settled') && currentOrder.payStatus === 1"
-        class="paid-badge"
-      >
-        已结账
+        去支付
       </div>
       <div
         v-if="view === 'settled' || view === 'done' || view === 'canceled'"
@@ -173,20 +169,25 @@
         class="st-tip"
         :class="{ 'st-tip--cancel': canceled }"
       >
-        <template v-if="canceled"
-          >订单已取消<template v-if="currentOrder.cancelReason">：{{ currentOrder.cancelReason }}</template></template
-        >
-        <template v-else-if="done">本单已完成，欢迎下次光临</template>
-        <template v-else-if="settled">本单已结账，菜品仍在出餐中，请稍候</template>
+        <template v-if="canceled">{{ cancelTip }}</template>
+        <template v-else-if="done">🎉 这顿吃完啦，欢迎下次光临</template>
+        <template v-else-if="settled">已结账，后厨正在做啦～出餐进度会自动更新</template>
       </div>
     </div>
 
-    <!-- 订单信息:单号 / 人数 / 时间,顾客核对单据时才看,放菜品之后不再挤在首屏 -->
+    <!-- 订单信息:单号 / 人数 / 时间 / 支付凭证,顾客核对单据时才看,放菜品之后不再挤在首屏 -->
     <div class="st-info">
       <div class="st-info-no">单号 {{ currentOrder.shortNo || currentOrder.orderNo }}</div>
       <div class="st-info-meta">
         <span>{{ currentOrder.personCount }} 人用餐</span>
         <span v-if="currentOrder.createTime">{{ currentOrder.createTime }}</span>
+      </div>
+      <!-- 支付凭证行:结账后留一条可核对的记录(渠道 + 时间),不再只有一个「已结账」标签 -->
+      <div
+        v-if="Number(currentOrder.payStatus) === 1"
+        class="st-info-paid"
+      >
+        <span class="st-info-paid-dot"></span>{{ payText }}<template v-if="paidAtText"> · {{ paidAtText }}</template>
       </div>
     </div>
   </div>
@@ -196,7 +197,7 @@
 import { computed } from 'vue';
 import type { OrderDetail, OrderItem } from '@dining/types';
 import type { ViewState } from '@dining/customer-core';
-import { payStatusText, payStatusTheme } from '@dining/shared/orderDisplay';
+import { payStatusText, payStatusTheme, batchLabels } from '@dining/shared/orderDisplay';
 
 const props = defineProps<{
   view: ViewState;
@@ -231,27 +232,35 @@ const settled = computed(() => props.view === 'settled');
 const payText = computed(() => payStatusText(props.currentOrder));
 const payTheme = computed(() => payStatusTheme(props.currentOrder));
 
+// 付款时间:后端是「2026-10-09 12:03:07」这类字符串,截到分钟即可,不当时间解析用
+const paidAtText = computed(() => {
+  const t = props.currentOrder.payTime;
+  return t ? String(t).replace('T', ' ').slice(0, 16) : '';
+});
+
+// 取消提示:后端已对取消原因做可展示性收口(通用标签「商家取消」会置空),
+// 有真实原因就带上,没有就给标准说明。取消只可能发生在未支付订单上(后端强制 pay_status=0),
+// 所以能明确告诉顾客「不产生费用」,不必让顾客去猜钱到底扣没扣。
+const cancelTip = computed(() =>
+  props.currentOrder.cancelReason
+    ? `订单已取消：${props.currentOrder.cancelReason}`
+    : '订单已取消，本单未支付、不会产生任何费用'
+);
+
 // 菜品明细行:与小程序一致,给「加过菜」的批次打行内小标签(首单 / 加菜N);单批次不标。
-// 批次编号按出现顺序取,后端批次号跳号(1、3)时文案也不会错位。
+// 编号口径收敛在 @dining/shared 的 batchLabels(与管理端订单详情共用)。
 type RenderItem = OrderItem & { batchLabel: string };
 
 const renderItems = computed<RenderItem[]>(() => {
   const list = props.currentOrder.items || [];
-  const batchOrder = new Map<number, number>();
-  for (const it of list) {
-    const b = Number(it.batchNo) || 1;
-    if (!batchOrder.has(b)) batchOrder.set(b, batchOrder.size + 1);
-  }
-  const multiBatch = batchOrder.size > 1;
-  return list.map(it => {
-    const seq = batchOrder.get(Number(it.batchNo) || 1) || 1;
-    return { ...it, batchLabel: multiBatch ? (seq <= 1 ? '首单' : `加菜${seq - 1}`) : '' };
-  });
+  const labels = batchLabels(list);
+  return list.map((it, i) => ({ ...it, batchLabel: labels[i] }));
 });
 </script>
 
 <style scoped>
-/* 订单状态 / 完成:同样上移压住 hero 底部,需要定位层否则卡片上沿被橙色横幅裁掉 */
+/* 订单视图滚动区:整页是一张张白卡(菜品明细 → 状态提示 → 订单信息),
+   与菜单页「白卡上移压住 hero」不同,这里首张卡与横幅之间留出边距 */
 .track-body {
   flex: 1;
   padding: 8px 14px 24px;
@@ -265,11 +274,12 @@ const renderItems = computed<RenderItem[]>(() => {
   padding-bottom: 86px;
 }
 
-/* 订单信息卡:单号 / 人数 / 时间。放菜品之后,顾客核对单据时才看(桌台由 HeroHeader 展示) */
+/* 订单信息卡:单号 / 人数 / 时间。放菜品之后,顾客核对单据时才看(桌台由 HeroHeader 展示)。
+   内边距与 .st-card 一致,几张卡的留白口径统一 */
 .st-info {
   background: #fff;
   border-radius: var(--r-lg);
-  padding: 14px 16px;
+  padding: 16px;
   margin-top: 12px;
   box-shadow: var(--shadow-1);
 }
@@ -286,6 +296,23 @@ const renderItems = computed<RenderItem[]>(() => {
   margin-top: 6px;
   color: var(--ink-3);
   font-size: 12px;
+}
+
+/* 支付凭证:绿点 + 「已支付（微信）· 2026-10-09 12:03」,可核对可回看 */
+.st-info-paid {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--success);
+  font-size: 12px;
+}
+
+.st-info-paid-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
 }
 
 /* 状态 / 支付标签:对齐小程序 app.wxss 的 .tag 体系 */
@@ -330,7 +357,7 @@ const renderItems = computed<RenderItem[]>(() => {
   border-radius: var(--r-md);
   background: var(--brand-ghost);
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.6;
 }
 
@@ -347,9 +374,10 @@ const renderItems = computed<RenderItem[]>(() => {
   box-shadow: var(--shadow-1);
 }
 
-/* 首张卡(菜品明细):抵掉 track-body 的 8px 上内边距,卡片贴住 hero 横幅且圆角完整 */
+/* 首张卡(菜品明细):不再上移压住 hero,与横幅之间留出呼吸感。
+   8px(track-body 上内边距) + 6px = 14px,与左右 14px 的页边距对齐 */
 .st-card-first {
-  margin-top: -8px;
+  margin-top: 6px;
 }
 
 /* 卡头:标题 + 右侧状态标签(订单状态挂在最显眼的菜品卡上,不另开概要卡) */
@@ -362,7 +390,7 @@ const renderItems = computed<RenderItem[]>(() => {
 }
 
 .st-card .tt {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   margin-bottom: 8px;
 }
@@ -384,14 +412,15 @@ const renderItems = computed<RenderItem[]>(() => {
   line-height: 1.7;
 }
 
-/* 菜品行:名称(含备注) | 数量 | 金额 三栏,与小程序一致(每行上边框,首行也有分隔线) */
+/* 菜品行:名称(含备注) | 数量 | 金额 三栏,与小程序一致(每行上边框,首行也有分隔线)。
+   字号对齐全站菜品口径(菜单 .op-name 14px / 购物车 14.5px),不再比按钮小一截 */
 .st-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 0;
+  padding: 11px 0;
   border-top: 1px solid #f5f5f5;
-  font-size: 12px;
+  font-size: 13.5px;
 }
 
 .si-main {
@@ -414,12 +443,12 @@ const renderItems = computed<RenderItem[]>(() => {
   border-radius: var(--r-sm);
   background: #f4f4f4;
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 400;
 }
 
 .si-remark {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
   line-height: 1.5;
 }
@@ -427,7 +456,7 @@ const renderItems = computed<RenderItem[]>(() => {
 .si-qty {
   flex-shrink: 0;
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .si-amount {
@@ -435,6 +464,8 @@ const renderItems = computed<RenderItem[]>(() => {
   min-width: 60px;
   text-align: right;
   color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
 }
 
 .si-gift {
@@ -455,24 +486,28 @@ const renderItems = computed<RenderItem[]>(() => {
   align-items: center;
   padding: 5px 0;
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .st-bill-row.st-discount {
   color: var(--brand-deep);
 }
 
-/* 合计行:账单收尾,金额与「未支付 / 已支付」标签同排 */
+/* 合计行:账单收尾,金额与「未支付 / 已支付」标签同排。
+   虚线上下的留白对齐(上一行 5px 下内边距 + 7px 外边距 = 12px,下方 12px) */
 .st-bill-total {
-  margin-top: 4px;
-  padding-top: 10px;
+  margin-top: 7px;
+  padding: 12px 0 0;
   border-top: 1px dashed var(--line);
   color: var(--ink);
+  font-size: 13.5px;
   font-weight: 600;
 }
 
+/* 窄屏兜底:标签文案较长(如「挂账待收 ¥12.00」)时也不把金额挤变形 */
 .st-bill-total-right {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
 }
@@ -483,43 +518,32 @@ const renderItems = computed<RenderItem[]>(() => {
   font-weight: 700;
 }
 
+/* 支付按钮:与卡内「加菜 / 催菜」同为 42px,去掉重投影 ——
+   主次靠底色(实心品牌渐变 vs 描边)区分,不再靠体积压住菜品明细 */
 .st-paybtn {
   width: 100%;
-  height: 44px;
+  height: 42px;
   border-radius: var(--r-pill);
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
   color: #fff;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 14.5px;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-top: 12px;
-  box-shadow: var(--shadow-3);
   cursor: pointer;
 }
 
-.paid-badge {
-  display: flex;
-  justify-content: center;
-  margin-top: 12px;
-  padding: 10px 22px;
-  border-radius: var(--r-pill);
-  background: var(--success-soft);
-  color: var(--success);
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-/* 顾客侧已结束(已结账/完成/取消)后的「再点一单」出口 */
+/* 顾客侧已结束(已结账/完成/取消)后的「再点一单」出口:与去支付同尺寸同级 */
 .st-neworder {
   width: 100%;
-  height: 44px;
+  height: 42px;
   border-radius: var(--r-pill);
   border: 1.5px solid #ffd5c4;
   background: #fff;
   color: var(--brand-deep);
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -539,7 +563,7 @@ const renderItems = computed<RenderItem[]>(() => {
   padding-top: 10px;
   border-top: 1px dashed #f5f5f5;
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.6;
 }
 

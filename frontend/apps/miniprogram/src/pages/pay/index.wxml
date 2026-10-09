@@ -33,9 +33,13 @@
       </view>
 
       <block wx:if="{{paid}}">
+        <!-- 付款成功卡：勾选描边动效，把全流程的情绪高点做出来 -->
         <view class="card paid">
-          <view class="paid-title">已收到付款</view>
-          <view class="paid-sub">感谢惠顾，出餐进度可在订单页查看</view>
+          <view class="paid-check">
+            <view class="paid-tick"></view>
+          </view>
+          <view class="paid-title">支付成功</view>
+          <view class="paid-sub">后厨已经在做啦，出餐进度可在订单页查看</view>
         </view>
       </block>
 
@@ -77,7 +81,7 @@
         <view class="card sec">
           <view class="sec-title">如何完成支付</view>
           <view class="tip-line">{{chanTip}}</view>
-          <view class="tip-line">商家在后台确认收款后，本页与订单页会自动更新为「已支付」。</view>
+          <view class="tip-line">不用一直盯着，商家确认收款后本页会自动更新。</view>
         </view>
 
         <view class="bottom-pad"></view>

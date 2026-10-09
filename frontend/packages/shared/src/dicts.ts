@@ -13,6 +13,13 @@ export const ORDER_STATUS: Record<number, DictOption> = {
   5: { label: '已取消', theme: 'danger' }
 };
 
+// 桌台人工可用性状态(与订单自动占用无关):0 正常 / 1 停用(不可用) / 2 预约。
+export const TABLE_LOCK_STATUS: Record<number, DictOption> = {
+  0: { label: '正常', theme: 'default' },
+  1: { label: '停用', theme: 'danger' },
+  2: { label: '预约', theme: 'primary' }
+};
+
 // 结算方式:normal 正常收款 / free 免单 / credit 挂账
 export const SETTLE_TYPE: Record<string, DictOption> = {
   normal: { label: '正常收款', theme: 'success' },

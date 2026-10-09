@@ -4,6 +4,7 @@ import { createApp } from 'vue';
 import 'tdesign-vue-next/es/style/index.css';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { formatMoney, setUiNotifier } from '@dining/shared';
+import { setupDialogSheetGesture } from './composables/dialogSheetGesture';
 import { iconRegistry } from './icons';
 import App from './App.vue';
 import router from './router';
@@ -28,3 +29,6 @@ Object.entries(iconRegistry).forEach(([name, comp]) => app.component(name, comp)
 app.config.globalProperties.$money = formatMoney;
 
 app.mount('#app');
+
+// 移动端把 t-dialog 改造成贴底弹层后,顶部横杠支持点击/下拉关闭(见 style.css 移动端断点)
+setupDialogSheetGesture();

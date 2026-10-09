@@ -161,8 +161,8 @@ Page({
         // 先落「已付款」再回拉详情：详情失败也不能让顾客看到「还没付款」的假象
         this.poller?.stop();
         this.setData({ paid: true });
-        // 7 字以内：带 success 图标的 toast 会被微信截断
-        toast.success('收款成功');
+        // 与成功卡文案一致；7 字以内：带 success 图标的 toast 会被微信截断
+        toast.success('支付成功');
         try {
           applyOrder((await getOrderByNo(orderNo)) as OrderDetail);
         } catch {

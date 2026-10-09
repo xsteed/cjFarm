@@ -58,6 +58,12 @@
             class="chip"
             >{{ row.specName }}</span
           >
+          <!-- 加菜批次标签(首单/加菜N):与顾客端/详情弹窗同口径,改单时能看清批次归属 -->
+          <span
+            v-if="batchTag(row)"
+            class="chip oe-batch-chip"
+            >{{ batchTag(row) }}</span
+          >
           <span
             v-if="row.isGift"
             class="chip oe-gift-chip"
@@ -194,6 +200,7 @@
 import { ref, reactive, computed, watch } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { getMenu, editOrder } from '@dining/api';
+import { batchLabels } from '@dining/shared';
 import { useIsMobile } from '../utils/useMobile';
 import type { Dish, MenuCategory, OrderDetail } from '@dining/types';
 
@@ -206,6 +213,9 @@ interface EditFormItem {
   price: number;
   quantity: number;
   itemRemark?: string;
+  // 加菜批次:随提交原样回传,改单重建明细后顾客的加菜批次不丢;
+  // 商家新加的菜归入「下一个批次」(见 nextBatchNo),后厨能按批次出菜。
+  batchNo?: number;
   isGift?: number;
   giftReason?: string;
 }
@@ -346,6 +356,7 @@ function init(): void {
       price: Number(it.price || 0),
       quantity: it.quantity || 1,
       itemRemark: it.itemRemark || '',
+      batchNo: it.batchNo || 1,
       isGift: it.isGift || 0,
       giftReason: it.giftReason || ''
     }))
@@ -373,6 +384,26 @@ function onPickDish(id: unknown): void {
   add.specId = specs.length === 1 ? specs[0].specId : undefined;
 }
 
+// 加菜批次标签(_key → 首单/加菜N):与详情弹窗同一实现(@dining/shared 的 batchLabels)。
+// 商家在改单里新加的菜会拿到新批次号,标签随之出现,提交前后所见一致。
+const batchTagMap = computed(() => {
+  const items = form.value?.items || [];
+  const labels = batchLabels(items);
+  const map = new Map<number, string>();
+  items.forEach((it, i) => map.set(it._key, labels[i]));
+  return map;
+});
+
+function batchTag(row: EditFormItem): string {
+  return batchTagMap.value.get(row._key) || '';
+}
+
+// 商家改单新加的菜归入「下一个批次」:与顾客加菜同一编号逻辑(上次最大批次 +1),
+// 后厨按批次出菜时,商家加的菜和顾客加的菜一视同仁。
+function nextBatchNo(): number {
+  return (form.value?.items || []).reduce((m, it) => Math.max(m, it.batchNo || 1), 0) + 1;
+}
+
 function doAdd(): void {
   const f = form.value;
   if (!f) return;
@@ -393,6 +424,7 @@ function doAdd(): void {
       price: Number(s.price || 0),
       quantity: 1,
       itemRemark: '',
+      batchNo: nextBatchNo(),
       isGift: 0,
       giftReason: ''
     });
@@ -449,6 +481,7 @@ async function submit(): Promise<void> {
         specId: it.specId,
         quantity: it.quantity,
         itemRemark: it.itemRemark,
+        batchNo: it.batchNo || 1,
         isGift: it.isGift || 0,
         giftReason: it.giftReason || ''
       }))
@@ -531,6 +564,12 @@ async function submit(): Promise<void> {
   background: #fff3e0;
   color: #e8850c;
   font-weight: 700;
+}
+
+/* 加菜批次标签:与「赠」标同为浅橙底,区别是不加粗(非强调,是归属信息) */
+.oe-batch-chip {
+  background: #fff3e0;
+  color: #e8850c;
 }
 
 .oe-gift-reason {

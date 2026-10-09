@@ -3,6 +3,14 @@
     ref="rootRef"
     class="report"
   >
+    <!-- 移动端下拉刷新当前区间报表 -->
+    <PullRefresh
+      v-if="isMobile"
+      :distance="refreshDistance"
+      :refreshing="refreshRefreshing"
+      :pulling="refreshPulling"
+    />
+
     <!-- 顶部：报表区间 + 导出 / 刷新 -->
     <div class="toolbar">
       <div class="toolbar-left">
@@ -100,6 +108,9 @@ import type {
 } from '@dining/types';
 import type { PageQuery } from '@dining/types';
 import { useEChart } from '../composables/useEChart';
+import { useIsMobile } from '../utils/useMobile';
+import { usePullRefresh } from '../composables/usePullRefresh';
+import PullRefresh from '../components/PullRefresh.vue';
 import { yuan, type Deltas } from './report/reportShared';
 import KpiCards from './report/KpiCards.vue';
 import MetaStrip from './report/MetaStrip.vue';
@@ -267,6 +278,11 @@ function exportCsv(): void {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+// ---------- 移动端 ----------
+const { isMobile } = useIsMobile();
+// 下拉刷新:重新拉取当前区间的全部报表数据
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(loadAll);
+
 // ---------- 生命周期 ----------
 const { observeRoot } = useEChart();
 
@@ -295,9 +311,20 @@ onMounted(() => {
 }
 
 @media (width <= 767px) {
+  /* 「更新于」独占一行,导出 / 刷新两个按钮等宽平分下一行,拇指好点 */
   .toolbar-acts {
     width: 100%;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+
+  .updated {
+    flex: 1 1 100%;
+  }
+
+  .toolbar-acts .t-button {
+    flex: 1;
   }
 }
 </style>

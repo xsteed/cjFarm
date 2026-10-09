@@ -15,7 +15,7 @@
       v-for="row in list"
       :key="rowKey(row)"
       class="m-tile"
-      :class="row.status === 1 ? 'busy' : 'free'"
+      :class="[row.status === 1 ? 'busy' : 'free', lockClass(row)]"
       role="button"
       tabindex="0"
       @click="onTileClick(row, $event)"
@@ -24,7 +24,19 @@
     >
       <div class="m-tile-no">{{ row.tableNo }}</div>
       <div class="m-tile-sub">{{ row.tableName }}</div>
-      <div class="m-tile-sub">{{ row.status === 1 ? '占用中' : '空闲' }} · {{ row.capacity }} 人</div>
+      <div
+        class="m-tile-sub m-tile-meta"
+        :title="row.lockRemark || undefined"
+      >
+        <span class="m-tile-meta-text">{{ row.status === 1 ? '占用中' : '空闲' }} · {{ row.capacity }} 人</span>
+        <span
+          v-if="lockLabel(row)"
+          class="m-tile-lock"
+          :class="lockClass(row)"
+        >
+          {{ lockLabel(row) }}
+        </span>
+      </div>
       <button
         type="button"
         class="m-tile-more"
@@ -66,7 +78,10 @@
       v-for="row in list"
       :key="rowKey(row)"
       class="mcard"
-      :class="{ 'mcard-tap': tapable(row), 'tcard-occ': row.status === 1, 'tcard-idle': row.status === 0 }"
+      :class="[
+        { 'mcard-tap': tapable(row), 'tcard-occ': row.status === 1, 'tcard-idle': row.status === 0 },
+        lockClass(row)
+      ]"
       @click="onCardClick(row, $event)"
     >
       <div class="mcard-hd">
@@ -76,12 +91,21 @@
             {{ row.tableName }}
           </div>
         </div>
-        <t-tag
-          :theme="row.status === 0 ? 'success' : 'warning'"
-          variant="light"
-        >
-          {{ row.status === 0 ? '空闲' : '占用' }}
-        </t-tag>
+        <t-space size="4">
+          <t-tag
+            :theme="row.status === 0 ? 'success' : 'warning'"
+            variant="light"
+          >
+            {{ row.status === 0 ? '空闲' : '占用' }}
+          </t-tag>
+          <t-tag
+            v-if="lockLabel(row)"
+            :theme="lockTheme(row)"
+            variant="light"
+          >
+            {{ lockLabel(row) }}
+          </t-tag>
+        </t-space>
       </div>
 
       <div class="mcard-grid">
@@ -95,6 +119,13 @@
           <div class="k">容纳人数 / 排序</div>
           <div class="v">{{ row.capacity }} 人 · 第 {{ row.sortOrder }} 位</div>
         </div>
+      </div>
+
+      <div
+        v-if="row.lockRemark"
+        class="mcard-lock-remark"
+      >
+        {{ lockLabel(row) }}：{{ row.lockRemark }}
       </div>
 
       <div class="mcard-ft">
@@ -120,6 +151,15 @@
           </t-button>
           <t-button
             v-if="canEdit"
+            :theme="lockStatusOf(row) ? 'warning' : 'primary'"
+            variant="text"
+            size="small"
+            @click="emit('lock', row)"
+          >
+            状态
+          </t-button>
+          <t-button
+            v-if="canEdit"
             theme="primary"
             variant="text"
             size="small"
@@ -127,21 +167,28 @@
           >
             编辑
           </t-button>
+          <!-- 低频/危险操作(二维码/删除)收进「更多」,footer 常驻按钮不超过 4 个、不折行 -->
+          <t-dropdown
+            v-if="canEdit"
+            trigger="click"
+            :options="MORE_OPTIONS"
+            @click="onMoreClick($event, row)"
+          >
+            <t-button
+              theme="default"
+              variant="text"
+              size="small"
+            >
+              更多
+            </t-button>
+          </t-dropdown>
           <t-button
+            v-else
             variant="text"
             size="small"
             @click="emit('qr', row)"
           >
             二维码
-          </t-button>
-          <t-button
-            v-if="canEdit"
-            theme="danger"
-            variant="text"
-            size="small"
-            @click="emit('delete', row)"
-          >
-            删除
           </t-button>
         </template>
       </div>
@@ -179,12 +226,33 @@
         <span class="code-chip">{{ row.tableCode || '-' }}</span>
       </template>
       <template #status="{ row }">
-        <t-tag
-          :theme="row.status === 0 ? 'success' : 'warning'"
-          variant="light"
-        >
-          {{ row.status === 0 ? '空闲' : '占用' }}
-        </t-tag>
+        <t-space size="4">
+          <t-tag
+            :theme="row.status === 0 ? 'success' : 'warning'"
+            variant="light"
+          >
+            {{ row.status === 0 ? '空闲' : '占用' }}
+          </t-tag>
+          <!-- 停用/预约的备注(预约人/原因)挂在悬浮提示上,列表里不占列宽 -->
+          <t-tooltip
+            v-if="lockLabel(row) && row.lockRemark"
+            :content="row.lockRemark"
+          >
+            <t-tag
+              :theme="lockTheme(row)"
+              variant="light"
+            >
+              {{ lockLabel(row) }}
+            </t-tag>
+          </t-tooltip>
+          <t-tag
+            v-else-if="lockLabel(row)"
+            :theme="lockTheme(row)"
+            variant="light"
+          >
+            {{ lockLabel(row) }}
+          </t-tag>
+        </t-space>
       </template>
       <template #op="{ row }">
         <t-space>
@@ -199,6 +267,15 @@
           </t-button>
           <t-button
             v-if="canEdit"
+            :theme="lockStatusOf(row) ? 'warning' : 'primary'"
+            variant="text"
+            size="small"
+            @click="emit('lock', row)"
+          >
+            状态
+          </t-button>
+          <t-button
+            v-if="canEdit"
             theme="primary"
             variant="text"
             size="small"
@@ -206,21 +283,27 @@
           >
             编辑
           </t-button>
+          <t-dropdown
+            v-if="canEdit"
+            trigger="click"
+            :options="MORE_OPTIONS"
+            @click="onMoreClick($event, row)"
+          >
+            <t-button
+              theme="default"
+              variant="text"
+              size="small"
+            >
+              更多
+            </t-button>
+          </t-dropdown>
           <t-button
+            v-else
             variant="text"
             size="small"
             @click="emit('qr', row)"
           >
             二维码
-          </t-button>
-          <t-button
-            v-if="canEdit"
-            theme="danger"
-            variant="text"
-            size="small"
-            @click="emit('delete', row)"
-          >
-            删除
           </t-button>
         </t-space>
       </template>
@@ -238,7 +321,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { PageInfo, RowEventContext } from 'tdesign-vue-next';
+import type { DropdownOption, PageInfo, RowEventContext } from 'tdesign-vue-next';
 import type { TableInfo } from '@dining/types';
 import { useIsMobile } from '../../utils/useMobile';
 import ActionSheet from '../../components/ActionSheet.vue';
@@ -257,12 +340,47 @@ const emit = defineEmits<{
   'page-change': [page: PageInfo];
   'open-order': [row: TableInfo];
   edit: [row: TableInfo];
+  lock: [row: TableInfo];
   delete: [row: TableInfo];
   qr: [row: TableInfo];
 }>();
 
 function rowKey(row: TableInfo): string | number {
   return row.tableId ?? row.tableNo ?? '';
+}
+
+// ---- 人工可用性状态(与占用正交):0 正常 / 1 停用 / 2 预约 ----
+function lockStatusOf(row: TableInfo): number {
+  return Number(row.lockStatus) || 0;
+}
+
+// 非正常时返回展示文案,用于徽标;正常返回空串(不渲染)。
+function lockLabel(row: TableInfo): string {
+  const s = lockStatusOf(row);
+  return s === 1 ? '停用' : s === 2 ? '预约' : '';
+}
+
+// 锁定态的样式类:停用(灰)、预约(蓝),用于瓦片/卡片描边。
+function lockClass(row: TableInfo): string {
+  const s = lockStatusOf(row);
+  return s === 1 ? 'locked-disabled' : s === 2 ? 'locked-reserved' : '';
+}
+
+function lockTheme(row: TableInfo): 'danger' | 'primary' {
+  return lockStatusOf(row) === 1 ? 'danger' : 'primary';
+}
+
+// ---- 桌面端「更多」下拉:收纳低频(二维码)与危险(删除)操作,
+// 让卡片/表格的常驻按钮不超过 4 个、不折行;移动端仍走底部操作面板。 ----
+const MORE_OPTIONS: DropdownOption[] = [
+  { content: '二维码', value: 'qr' },
+  { content: '删除', value: 'delete', theme: 'error' }
+];
+
+function onMoreClick(opt: unknown, row: TableInfo): void {
+  const value = String((opt as { value?: unknown } | null)?.value ?? '');
+  if (value === 'qr') emit('qr', row);
+  else if (value === 'delete') emit('delete', row);
 }
 
 // 可点开 = 有 order:view 权限且桌台处于占用状态。空闲桌台点了也只能提示
@@ -324,6 +442,13 @@ const tableActions = computed<SheetAction[]>(() => {
   const items: SheetAction[] = [];
   if (tapable(row)) items.push({ key: 'order', label: '查看订单详情', theme: 'primary' });
   if (props.canEdit) items.push({ key: 'edit', label: '编辑桌台', theme: 'primary' });
+  if (props.canEdit) {
+    items.push({
+      key: 'lock',
+      label: lockStatusOf(row) ? '修改桌台状态' : '设为停用 / 预约',
+      theme: 'warning'
+    });
+  }
   items.push({ key: 'qr', label: '查看二维码', theme: 'default' });
   if (props.canEdit) items.push({ key: 'delete', label: '删除桌台', theme: 'danger' });
   return items;
@@ -340,6 +465,7 @@ function onTablePick(key: string): void {
   if (!row) return;
   if (key === 'order') emit('open-order', row);
   else if (key === 'edit') emit('edit', row);
+  else if (key === 'lock') emit('lock', row);
   else if (key === 'qr') emit('qr', row);
   else if (key === 'delete') emit('delete', row);
 }
@@ -350,11 +476,13 @@ const columns = computed(() => {
     { colKey: 'tableName', title: '桌台名称' },
     { colKey: 'tableCode', title: '点餐码', width: 130 },
     { colKey: 'capacity', title: '容纳人数', width: 100 },
-    { colKey: 'status', title: '状态', width: 90 },
+    // 状态列要容得下「占用/空闲 + 停用/预约」两枚标签
+    { colKey: 'status', title: '状态', width: 112 },
     { colKey: 'sortOrder', title: '排序', width: 80 }
   ];
   // 只读时操作列只剩「二维码」,宽度收窄;占用中的桌台会多一个「详情」按钮。
-  const opWidth = 100 + (props.canEdit ? 110 : 0) + (props.canViewOrder ? 60 : 0);
+  // canEdit 时为「详情(占用时) / 状态 / 编辑 / 更多」四个元素。
+  const opWidth = 100 + (props.canEdit ? 120 : 0) + (props.canViewOrder ? 60 : 0);
   cols.push({ colKey: 'op', title: '操作', width: opWidth });
   return cols;
 });
@@ -417,6 +545,69 @@ const columns = computed(() => {
 
 .tcard-idle {
   border-left: 4px solid #2ba24a;
+}
+
+/* 人工锁定态:放在 .tcard-occ/.tcard-idle 之后声明,同优先级下覆盖占用/空闲的颜色条。
+   停用(灰底灰条,一眼看出「这张桌现在不能用」)、预约(蓝条蓝底,语义是「留给了别人」) */
+.locked-disabled {
+  border-left: 4px solid #8a8f99;
+  background: #f4f5f7;
+}
+
+.locked-reserved {
+  border-left: 4px solid #3d6ff0;
+  background: #f4f7ff;
+}
+
+/* 卡片视图里的停用/预约备注(如「设备维修」「张先生 18:00」) */
+.mcard-lock-remark {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2, #4b5563);
+  background: #f3f4f6;
+  border-radius: 6px;
+  padding: 5px 8px;
+  word-break: break-all;
+}
+
+/* 瓦片第三行「占用中 · N 人 + 锁定徽标」:行内排布,避免徽标与左上角桌号重叠 */
+.m-tile-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.m-tile-meta-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 瓦片上的「停用 / 预约」小徽标(行内 chip,紧跟在占用状态后面) */
+.m-tile-lock {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: #fff;
+}
+
+.m-tile-lock.locked-disabled {
+  background: #8a8f99;
+}
+
+.m-tile-lock.locked-reserved {
+  background: #3d6ff0;
+}
+
+/* 移动端瓦片被锁定时整体压暗,与「还能正常接待」的桌台拉开层次 */
+.m-tile.locked-disabled,
+.m-tile.locked-reserved {
+  opacity: 0.78;
 }
 
 @media (width <= 767px) {

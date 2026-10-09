@@ -11,7 +11,6 @@
         <div class="sk-bar sk-table"></div>
       </div>
       <div class="sk-sheet">
-        <div class="sk-bar sk-search"></div>
         <div class="sk-body">
           <div class="sk-cats">
             <div
@@ -60,16 +59,16 @@
       <HeroHeader
         :shop-name="shopName"
         :table="table"
+        :show-search="view === 'menu'"
+        @search="searchOpen = true"
       />
 
-      <!-- 白色圆角卡片:承载出餐提示条 + 菜单,整体上移盖住 hero 底部 -->
+      <!-- 白色圆角卡片:承载出餐提示条 + 菜单,整体上移盖住 hero 底部。
+           搜索进行中整页切到独立搜索页,菜单卡让位 -->
       <div
-        v-if="view === 'menu'"
+        v-if="view === 'menu' && !searchOpen"
         class="menu-sheet"
       >
-        <!-- 搜索框:放在白卡最顶部(不随菜单滚动),位置与小程序一致 -->
-        <MenuSearch v-model:keyword="keyword" />
-
         <!-- 本桌「已付款但出餐未完成」的订单:顾客可查看进度 -->
         <div
           v-if="servingOrders.length"
@@ -87,6 +86,7 @@
 
         <MenuView
           :menu="menu"
+          :cart="cart"
           :selected-spec="selectedSpec"
           :img-errs="imgErrs"
           :show-tabbar="showTabbar"
@@ -103,7 +103,25 @@
           :handle-scroll="handleScroll"
           :keyword="keyword"
           :open-sheet="openSheet"
+          @fly="onFly"
         />
+      </div>
+
+      <!-- 桌台被店员停用/预约:不允许新点餐,给出明确解释与出口(本桌已有订单的顾客不受影响) -->
+      <div
+        v-else-if="view === 'locked'"
+        class="state-box"
+      >
+        <div class="err-icon">!</div>
+        <div class="state-text">
+          {{ lockText }}
+        </div>
+        <button
+          class="retry-btn"
+          @click="load"
+        >
+          刷新状态
+        </button>
       </div>
 
       <OrderTrackView
@@ -141,11 +159,44 @@
         @online-pay="startOnlinePay"
         @back="backFromPay"
       />
+
+      <!-- 独立搜索页:hero 搜索按钮进入,整页覆盖点餐视图;
+           复用 MenuView 渲染结果(未输入时就是完整菜单,输入即过滤,左栏自动收起) -->
+      <div
+        v-if="view === 'menu' && searchOpen"
+        class="search-layer"
+      >
+        <MenuSearch
+          v-model:keyword="keyword"
+          v-model:open="searchOpen"
+        />
+        <MenuView
+          :menu="menu"
+          :cart="cart"
+          :selected-spec="selectedSpec"
+          :img-errs="imgErrs"
+          :show-tabbar="showTabbar"
+          :active-cat="activeCat"
+          :ordered-qty="orderedQty"
+          :current-spec="currentSpec"
+          :dish-qty="dishQty"
+          :select-spec="selectSpec"
+          :change-qty="changeQty"
+          :on-img-err="onImgErr"
+          :set-list-ref="setListRef"
+          :set-group-ref="setGroupRef"
+          :jump-to="jumpTo"
+          :handle-scroll="handleScroll"
+          :keyword="keyword"
+          :open-sheet="openSheet"
+          @fly="onFly"
+        />
+      </div>
     </template>
 
-    <!-- 底部悬浮结算栏 -->
+    <!-- 底部悬浮结算栏:仅本次会话从未点过菜时隐藏;一旦出现过(cartEverShown)就常驻 -->
     <CartBar
-      v-if="view === 'menu'"
+      v-if="view === 'menu' && (cartEverShown || totalCount > 0 || canAppend)"
       :show-tabbar="showTabbar"
       :total-count="totalCount"
       :total-price="totalPrice"
@@ -178,6 +229,14 @@
       :change-cart-qty="changeCartQty"
       @clear="onClearCart"
       @submit="submit"
+    />
+
+    <!-- 付款成功反馈:覆盖在页面之上,1.8s 后自动收起(点遮罩也可立即关掉) -->
+    <PayDoneCard
+      v-if="payDoneVisible && currentOrder"
+      :amount="Number(currentOrder.totalAmount || 0)"
+      :sub="payDoneSub"
+      @close="payDoneVisible = false"
     />
 
     <!-- 菜品单项备注弹窗。层级高于购物车抽屉,详见 RemarkSheet 的 .remark-mask -->
@@ -215,7 +274,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import {
@@ -239,6 +298,7 @@ import HeroHeader from './order/HeroHeader.vue';
 import MenuView from './order/MenuView.vue';
 import OrderTrackView from './order/OrderTrackView.vue';
 import PayView from './order/PayView.vue';
+import PayDoneCard from './order/PayDoneCard.vue';
 import CartBar from './order/CartBar.vue';
 import BottomTabBar from './order/BottomTabBar.vue';
 import CartDrawer from './order/CartDrawer.vue';
@@ -270,9 +330,33 @@ let pendingRequestId = '';
 const payTab = ref<'wx' | 'ali'>('wx');
 const onlineQr = ref(''); // 在线支付二维码(dataURL)
 const paying = ref(false);
+// 付款成功反馈:轮询发现「刚变成已支付」时弹一次,1.8s 后自动收起(也可点遮罩提前关)
+const payDoneVisible = ref(false);
+let payDoneTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showPayDone(): void {
+  payDoneVisible.value = true;
+  if (payDoneTimer) clearTimeout(payDoneTimer);
+  payDoneTimer = setTimeout(() => {
+    payDoneVisible.value = false;
+    payDoneTimer = null;
+  }, 1800);
+}
+
+// 成功卡副标题:带上支付渠道(渠道支付时 payType 为「微信 / 支付宝」,前台收款多为「现金」)
+const payDoneSub = computed(() => {
+  const t = currentOrder.value?.payType;
+  return t ? `${t}支付 · 后厨已在做啦` : '后厨已在做啦';
+});
 const imgErrs = ref(new Set<number>());
 // 菜单搜索关键词:放在页面层,搜索框与菜单列表共用(搜索框在白卡顶部,菜单里面只做过滤)
 const keyword = ref('');
+// 搜索框展开态:hero 头部的搜索按钮控制展开,空词点 × 收起
+const searchOpen = ref(false);
+// 收起搜索页时清掉关键词,回到菜单页不残留搜索态
+watch(searchOpen, v => {
+  if (!v) keyword.value = '';
+});
 
 const ORDER_STATUS_TEXT: Record<number, string> = {
   1: '已下单，后厨正在接单',
@@ -314,7 +398,13 @@ const {
 } = useCart(remarks);
 
 const { urging, urgeCooldown, urge, clearUrgeTimer } = useUrge(currentOrder, tableId);
-const { startPolling, stopPolling } = useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer });
+const { startPolling, stopPolling } = useOrderPolling({
+  view,
+  currentOrder,
+  onlineQr,
+  clearUrgeTimer,
+  onPaid: showPayDone
+});
 const { activeCat, setListRef, setGroupRef, jumpTo, handleScroll } = useScrollSpy(menu);
 // 刷新/重进不丢购物车:菜单到位后再按当前菜单复核恢复
 const { restore: restoreCart } = useCartPersist(cart, tableId);
@@ -332,6 +422,13 @@ const discount = computed(() => {
 });
 // 未选菜时不展示茶位费(合计为 0),选菜后才计入茶位费与优惠
 const totalPrice = computed(() => (dishTotal.value > 0 ? round2(dishTotal.value + seatFee.value - discount.value) : 0));
+
+// 结算栏显隐:仅「本次会话从未点过菜」时隐藏;购物车一旦出现过(含刷新后从持久化恢复)
+// 就置位并永不复位——之后清空、支付、取消都不再隐藏,给顾客一个稳定的加菜入口。
+const cartEverShown = ref(false);
+watch(totalCount, n => {
+  if (n > 0) cartEverShown.value = true;
+});
 
 const currentPayQr = computed(() => (payTab.value === 'wx' ? config.value.pay_qr_wx : config.value.pay_qr_ali));
 // 该渠道是否已启用在线支付(未申请 key 前为 false,前端自动降级为码牌收款)
@@ -371,6 +468,55 @@ function onImgErr(id: number | undefined): void {
   imgErrs.value = s;
 }
 
+/** 「+」加菜的小球抛物线动画(美团外卖同款):
+ *  从点击位置飞向底部购物车图标。外层水平位移用线性,内层竖直位移用
+ *  缓入曲线,两者叠加即标准抛物线;落地后购物车图标弹一下做反馈。 */
+function onFly(x: number, y: number): void {
+  if (typeof document === 'undefined') return;
+  const target = document.querySelector<HTMLElement>('.op-cartbtn');
+  if (target) {
+    startFly(x, y, target);
+    return;
+  }
+  // 首次加菜:结算栏要等 totalCount>0 触发 v-if 挂载,本帧 DOM 还没更新,
+  // 查不到 .op-cartbtn;等挂载并完成布局后再起飞,落点与弹跳反馈才准确。
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>('.op-cartbtn');
+      if (el) startFly(x, y, el);
+    });
+  });
+}
+
+function startFly(x: number, y: number, target: HTMLElement): void {
+  const rect = target.getBoundingClientRect();
+
+  const outer = document.createElement('div');
+  outer.className = 'fly-ball-x';
+  outer.style.left = `${x - 7}px`;
+  outer.style.top = `${y - 7}px`;
+  outer.style.setProperty('--fly-x', `${rect.left + rect.width / 2 - x}px`);
+  const mid = document.createElement('div');
+  mid.className = 'fly-ball-y';
+  mid.style.setProperty('--fly-y', `${rect.top + rect.height / 2 - y}px`);
+  const core = document.createElement('div');
+  core.className = 'fly-ball-core';
+  mid.appendChild(core);
+  outer.appendChild(mid);
+  document.body.appendChild(outer);
+
+  const done = () => {
+    outer.remove();
+    // 落地反馈:购物车图标弹一下
+    target.classList.remove('cart-bump');
+    void target.offsetWidth; // 强制 reflow,连续加菜也能重启动画
+    target.classList.add('cart-bump');
+  };
+  outer.addEventListener('animationend', done, { once: true });
+  // 兜底:动画事件丢失(如测试环境)也不残留节点
+  setTimeout(() => outer.remove(), 900);
+}
+
 // 清空前二次确认:抽屉里一键清空太容易误触(与小程序 showModal 同文案)
 function onClearCart(): void {
   if (!cart.value.length) return;
@@ -381,6 +527,8 @@ function onClearCart(): void {
     cancelBtn: '再想想',
     onConfirm: () => {
       clearCart();
+      // 清空后抽屉自动收起,顾客直接回到菜单继续点菜
+      cartVisible.value = false;
       dlg.destroy();
     }
   });
@@ -413,6 +561,8 @@ function startNewOrder(): void {
 // 底部 tabbar 切页。加菜时随时切回订单页核对已下单菜品,购物车内容保留不丢。
 function switchView(v: 'menu' | 'order'): void {
   if (view.value === v) return;
+  // 离开菜单页顺手收起搜索页,避免切回时残留
+  searchOpen.value = false;
   if (v === 'order') {
     view.value = 'order';
     // 没单时展示空态即可,起轮询只会白拉接口(与小程序一致:订单页常驻可进)
@@ -430,7 +580,7 @@ function genRequestId(): string {
 
 async function submit(): Promise<void> {
   if (!cart.value.length) {
-    MessagePlugin.warning('请先选择菜品');
+    MessagePlugin.warning('先挑几道想吃的菜吧～');
     return;
   }
   submitting.value = true;
@@ -452,7 +602,7 @@ async function submit(): Promise<void> {
         personCount: personCount.value,
         clientRequestId
       });
-      MessagePlugin.success('加菜成功，已通知后厨');
+      MessagePlugin.success('加菜成功～新菜已进后厨，马上安排');
       currentOrder.value = await getOrderByNo(res.orderNo);
     } else {
       const res = await createOrder({
@@ -462,7 +612,7 @@ async function submit(): Promise<void> {
         items,
         clientRequestId
       });
-      MessagePlugin.success('下单成功，已通知后厨');
+      MessagePlugin.success('下单成功～大厨已收到，火力全开中');
       currentOrder.value = await getOrderByNo(res.orderNo);
     }
     pendingRequestId = '';
@@ -504,6 +654,13 @@ function backFromPay(): void {
   view.value = 'order';
 }
 
+// 桌台人工状态:0 正常 / 1 停用 / 2 预约(店员在管理端「桌台管理」里设置)。
+// 非 0 时本桌不让新开单 —— 避免顾客白点一车菜,给出联系店员的出口。
+const lockStatus = computed(() => Number(table.value.lockStatus) || 0);
+const lockText = computed(() =>
+  lockStatus.value === 2 ? '该桌台已被预订，如需用餐请联系店员' : '该桌台暂不可用，如需用餐请联系店员'
+);
+
 async function load(): Promise<void> {
   view.value = 'loading';
   loadError.value = '';
@@ -529,10 +686,13 @@ async function load(): Promise<void> {
     // 菜单到位后再恢复上次没提交的车:要拿当前菜单复核菜还在不在、有没有售罄
     restoreCart(m);
     // 桌台已有未结账订单 → 进入订单状态;已付款但出餐未完成则进入已结账视图。
+    // 没有本桌订单时,被停用/预约的桌台进「锁定」页,不进菜单。
     if (tb && tb.currentOrder) {
       currentOrder.value = tb.currentOrder;
       view.value = Number(tb.currentOrder.payStatus) === 1 ? 'settled' : 'order';
       startPolling();
+    } else if (lockStatus.value) {
+      view.value = 'locked';
     } else {
       view.value = 'menu';
     }
@@ -557,6 +717,7 @@ onMounted(load);
 onUnmounted(() => {
   stopPolling();
   clearUrgeTimer();
+  if (payDoneTimer) clearTimeout(payDoneTimer);
 });
 </script>
 
@@ -647,13 +808,6 @@ onUnmounted(() => {
   border-radius: 18px 18px 0 0;
   background: #fff;
   overflow: hidden;
-}
-
-.sk-search {
-  flex-shrink: 0;
-  height: 36px;
-  margin: 10px 12px;
-  border-radius: var(--r-pill);
 }
 
 .sk-body {
@@ -790,6 +944,19 @@ onUnmounted(() => {
   z-index: 1;
 }
 
+/* 独立搜索页:整页白底盖住 hero 与菜单卡,压在结算栏/底部导航之下
+   (z-index 60 < tabbar 88 / cartbar 90),顾客搜索时仍能看车、切页签 */
+.search-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  max-width: 480px;
+  margin: 0 auto;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+
 /* 订单空态:还没下单时进「订单」页看到的是它(底部导航常驻后进得来) */
 .order-empty {
   flex: 1;
@@ -820,5 +987,61 @@ onUnmounted(() => {
   background: #fff;
   color: var(--brand-deep);
   font-size: 11px;
+}
+</style>
+
+<!-- 飞球动画:由 JS 动态插入 body,不在组件树里,必须用全局样式 -->
+<style>
+/* 外层只做水平位移(线性) */
+.fly-ball-x {
+  position: fixed;
+  z-index: 250; /* 高于结算栏(90)/搜索页(60),低于弹层抽屉(1500) */
+  pointer-events: none;
+  animation: fly-ball-x 0.4s linear forwards;
+  will-change: transform;
+}
+
+/* 中层只做竖直位移(缓入),与外层线性水平位移叠加成抛物线 */
+.fly-ball-y {
+  animation: fly-ball-y 0.4s cubic-bezier(0.5, 0, 0.85, 0.42) forwards;
+  will-change: transform;
+}
+
+/* 内层是「小球包裹」本体:品牌渐变球 + 高光,飞行途中略微缩小,
+   落袋更有「收进去」的感觉(缩放独立分层,避免与位移的 transform 相互覆盖) */
+.fly-ball-core {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 28%, #ffb27d 0%, var(--brand, #ff6b35) 55%, var(--brand-deep, #f0481f) 100%);
+  box-shadow: 0 2px 6px rgb(240 72 31 / 35%);
+  animation: fly-ball-shrink 0.4s ease-in forwards;
+}
+
+@keyframes fly-ball-x {
+  to {
+    transform: translate3d(var(--fly-x, 0), 0, 0);
+  }
+}
+
+@keyframes fly-ball-y {
+  to {
+    transform: translate3d(0, var(--fly-y, 0), 0);
+  }
+}
+
+@keyframes fly-ball-shrink {
+  0% {
+    transform: scale(1.15);
+  }
+
+  70% {
+    transform: scale(0.9);
+  }
+
+  100% {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
 }
 </style>

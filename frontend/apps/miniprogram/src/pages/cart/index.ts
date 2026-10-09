@@ -186,7 +186,7 @@ Page({
 
   async onSubmit() {
     if (!this.data.rows.length) {
-      toast.info('请先选择菜品');
+      toast.info('先挑几道想吃的菜吧～');
       return;
     }
     if (this.data.submitting) return;
@@ -214,7 +214,7 @@ Page({
         });
         orderNo = String(res.orderNo || '');
         // 文案控制在 7 字以内：带 success 图标的 toast 会被微信截断
-        toast.success('加菜成功');
+        toast.success('加菜成功，冲呀');
       } else {
         const res = await createOrder({
           tableId: s.tableId,
@@ -224,7 +224,8 @@ Page({
           clientRequestId
         });
         orderNo = String(res.orderNo || '');
-        toast.success('下单成功');
+        // 与 H5 统一语气（年轻化、安抚），7 字以内避免 success 图标截断
+        toast.success('下单成功，冲呀');
       }
 
       this.pendingRequestId = '';

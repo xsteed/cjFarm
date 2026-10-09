@@ -153,11 +153,7 @@ const router = useRouter();
 const { isMobile } = useIsMobile();
 
 // 移动端下拉刷新看板实时数据
-const {
-  distance: refreshDistance,
-  refreshing: refreshRefreshing,
-  pulling: refreshPulling
-} = usePullRefresh(load);
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
 
 // 看板上的桌台 / 订单点一下直达对应管理页,减少一级查找
 function goTables(): void {
@@ -442,9 +438,16 @@ onMounted(load);
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 11px 0;
+  border: none;
   border-bottom: 1px solid #f5f5f5;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
   font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .orderline:last-child {
@@ -533,6 +536,15 @@ onMounted(load);
   .kpi .v {
     font-size: 22px;
     margin-top: 6px;
+  }
+
+  .panels {
+    gap: 12px;
+  }
+
+  .panel {
+    padding: 14px;
+    border-radius: 12px;
   }
 
   /* minmax(0,1fr) 阻止桌号卡内容把网格撑宽;padding 收窄给内容让位 */

@@ -15,7 +15,8 @@ export function useUrge(currentOrder: Ref<OrderDetail | null>, tableId: Ref<numb
     try {
       // silent:冷却拒绝不弹全局错误 toast,倒计时由本函数自行展示。
       const res = await urgeOrder(currentOrder.value.orderNo as string, tableId.value, { silent: true });
-      ui.success('已通知后厨加急，请稍候');
+      // 年轻化 + 安抚语气：确认"催到了"，同时把等待包装成期待感
+      ui.success('催单成功～大厨火力全开，美味正在冲刺赶来的路上');
       startUrgeCooldown(Number(res?.cooldown) || 180);
     } catch (e) {
       // 冷却拒绝时后端在响应体附带结构化剩余秒数 {data: {cooldown}},

@@ -1,7 +1,12 @@
 <template>
-  <div class="op-search">
+  <!-- 展开态:白卡最顶部(不随菜单滚动)。入口收进 hero 头部,是否显示由页面层控制 -->
+  <div
+    v-if="open"
+    class="op-search"
+  >
     <span class="search-ico"></span>
     <input
+      ref="inputRef"
       :value="keyword"
       class="search-input"
       placeholder="搜索菜名 / 口味，如「五指毛桃鸡」"
@@ -9,25 +14,60 @@
       @input="onInput"
     />
     <span
-      v-if="keyword"
       class="search-clear"
-      @click="emit('update:keyword', '')"
+      @click="onClear"
       >×</span
     >
   </div>
 </template>
 
 <script setup lang="ts">
-defineProps<{ keyword: string }>();
-const emit = defineEmits<{ 'update:keyword': [value: string] }>();
+import { nextTick, ref, watch } from 'vue';
+
+const props = defineProps<{
+  keyword: string;
+  /** 搜索框展开态:由页面层持有(hero 头部的搜索按钮控制展开) */
+  open: boolean;
+}>();
+const emit = defineEmits<{
+  'update:keyword': [value: string];
+  'update:open': [value: boolean];
+}>();
+
+const inputRef = ref<HTMLInputElement>();
+
+// 打开时聚焦输入框
+watch(
+  () => props.open,
+  v => {
+    if (v) nextTick(() => inputRef.value?.focus());
+  }
+);
+
+// 有词(历史输入)时保持展开,避免「框收起了但还在搜」的错位
+watch(
+  () => props.keyword,
+  v => {
+    if (v && !props.open) emit('update:open', true);
+  }
+);
 
 function onInput(e: Event): void {
   emit('update:keyword', (e.target as HTMLInputElement).value);
 }
+
+function onClear(): void {
+  if (props.keyword) {
+    emit('update:keyword', '');
+    nextTick(() => inputRef.value?.focus());
+    return;
+  }
+  // 空词点 ×:收起搜索框
+  emit('update:open', false);
+}
 </script>
 
 <style scoped>
-/* 搜索框:放在白卡最顶部(不随菜单滚动),菜多的店一眼能看到。位置与小程序一致 */
 .op-search {
   display: flex;
   flex-shrink: 0;
@@ -78,15 +118,16 @@ function onInput(e: Event): void {
   color: var(--ink-4);
 }
 
+/* ×:有词清词,空词收起,可点热区放宽 */
 .search-clear {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
+  margin-right: -8px;
   border-radius: 50%;
-  background: #d8d8d8;
-  color: #fff;
-  font-size: 14px;
-  line-height: 18px;
+  color: var(--ink-3);
+  font-size: 18px;
+  line-height: 24px;
   text-align: center;
   cursor: pointer;
 }

@@ -2,7 +2,7 @@
   <t-drawer
     :visible="visible"
     placement="bottom"
-    size="86%"
+    size="auto"
     :show-header="false"
     :footer="false"
     @update:visible="(v: boolean) => emit('update:visible', v)"
@@ -270,6 +270,12 @@
              加菜与否的区分由下方按钮文案承担,口径与小程序购物车页一致 -->
         <div class="ss-total">
           合计
+          <!-- 加菜时该金额只含本次追加的菜品,不是订单总额,必须标出来避免误解 -->
+          <span
+            v-if="canAppend"
+            class="ss-append-tag"
+            >仅加菜</span
+          >
           <span class="money"><i>¥</i>{{ totalPrice }}</span>
         </div>
         <button
@@ -351,6 +357,17 @@ const remarkModel = computed({
 
 <style scoped>
 /* ---------- 购物车抽屉 ---------- */
+/* TDesign 抽屉默认 24px 内边距与 .cart-sheet 自身的 padding 叠加,导致底部空白过多,这里去掉 */
+/* Teleport 未启用时 .t-drawer 根节点带本组件 scoped 属性,可用 :deep 命中其内部结构 */
+:deep(.t-drawer__body) {
+  padding: 0;
+}
+
+/* 高度自适应后兜底:内容再多也不允许超过 86% 视口,超出部分由列表内部滚动 */
+:deep(.t-drawer__content-wrapper--bottom) {
+  max-height: 86%;
+}
+
 .cart-sheet {
   padding: 20px 18px calc(16px + env(safe-area-inset-bottom));
   display: flex;
@@ -635,6 +652,18 @@ const remarkModel = computed({
 .ss-total {
   font-size: 13px;
   color: var(--ink-3);
+}
+
+/* 「仅加菜」标注:提示金额只含本次追加部分,非订单总额 */
+.ss-append-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: var(--r-pill);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 10px;
+  vertical-align: 2px;
 }
 
 .ss-total .money {

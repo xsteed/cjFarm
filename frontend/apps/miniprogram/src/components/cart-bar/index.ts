@@ -1,6 +1,11 @@
 // 底部结算栏：已选份数 + 合计金额 + 去结算。
 // 对应 Web 端 apps/customer/src/order/CartBar.vue。
 Component({
+  data: {
+    /** 飞球落袋后的弹跳反馈：由页面通过 selectComponent 置位/复位 */
+    bump: false
+  },
+
   properties: {
     /** 已选总份数 */
     count: { type: Number, value: 0 },

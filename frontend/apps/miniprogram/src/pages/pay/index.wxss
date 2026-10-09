@@ -90,6 +90,36 @@
   text-align: center;
 }
 
+/* 绿色圆形底 + 纯 CSS 勾（右下两条边旋转 45°），入场时描边放大 */
+.paid-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96rpx;
+  height: 96rpx;
+  margin: 0 auto 20rpx;
+  border-radius: 50%;
+  background: var(--success-soft);
+}
+
+.paid-tick {
+  width: 22rpx;
+  height: 40rpx;
+  /* 勾的短边在上、重心偏下，往上提一点才是圆的视觉中心 */
+  margin-top: -10rpx;
+  border-right: 6rpx solid var(--success);
+  border-bottom: 6rpx solid var(--success);
+  transform: rotate(45deg);
+  animation: paid-tick 0.32s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+@keyframes paid-tick {
+  from {
+    opacity: 0;
+    transform: rotate(45deg) scale(0.2);
+  }
+}
+
 .paid-title {
   color: var(--success);
   font-size: 36rpx;

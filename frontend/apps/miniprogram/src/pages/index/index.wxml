@@ -125,7 +125,11 @@
             data-id="{{item.categoryId}}"
             bindtap="onSwitchCat"
           >
-            {{item.categoryName}}
+            <!-- 角标紧贴分类名：WXML 换行会在胶囊内渲染出前导空格（见下方「已点」注） -->
+            {{item.categoryName}}<text
+              wx:if="{{item.qty}}"
+              class="cat-badge"
+            >{{item.qty}}</text>
           </view>
         </scroll-view>
 
@@ -184,6 +188,13 @@
                   class="dish-img dish-img-none"
                 >
                   暂无图片
+                </view>
+                <!-- 招牌角标：图片左上角，帮顾客快速锁定镇店菜（与 H5 op-signature 同视觉） -->
+                <view
+                  wx:if="{{item.signature}}"
+                  class="sig-tag"
+                >
+                  招牌
                 </view>
                 <view
                   wx:if="{{item.soldOut}}"
@@ -316,6 +327,7 @@
 
   <cart-bar
     wx:if="{{cartCount > 0 && !loading && !error}}"
+    class="cart-bar-host"
     lifted="{{true}}"
     count="{{cartCount}}"
     total-text="{{cartTotalText}}"
@@ -333,6 +345,26 @@
     bind:close="onSheetClose"
     bind:confirm="onSheetConfirm"
   />
+
+  <!-- 抛物线飞球：「+」加菜的小球包裹，从点击位置飞向底部购物车图标（美团外卖同款）。
+       每次加菜挂载一个新节点：位移量以内联 CSS 变量注入，挂载即自动播放 keyframes，
+       没有两段 setData 的首帧竞态；连点时多球并行。外层水平线性 + 中层竖直缓入 = 抛物线 -->
+  <block
+    wx:for="{{flyBalls}}"
+    wx:key="id"
+  >
+    <view
+      class="fly-x"
+      style="left:{{item.x}}px;top:{{item.y}}px;--fx:{{item.dx}}px;"
+    >
+      <view
+        class="fly-y"
+        style="--fy:{{item.dy}}px;"
+      >
+        <view class="fly-core"></view>
+      </view>
+    </view>
+  </block>
 
   <!-- 常驻底部主导航：放在 wx:if 分支之外，加载中/加载失败时也能切去订单页 -->
   <tab-bar

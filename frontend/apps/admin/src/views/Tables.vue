@@ -105,10 +105,15 @@
       <b>二维码地址提示：</b>{{ h5BaseWarn }}
     </div>
 
-    <div class="tip-bar">
-      桌台二维码由「H5 访问地址 + 点餐码」生成，点餐码在桌台创建时即固定、永不变更，可放心印制成桌牌。
-      <br />
-      点击「占用」中的桌台行（或窄屏卡片）可直接查看该桌当前订单详情，并在弹窗内改单、制作、收款、补打。
+    <div class="tip-bar" :class="{ collapsed: !tipExpanded }" @click="tipExpanded = !tipExpanded">
+      <div class="tip-body">
+        桌台二维码由「H5 访问地址 + 点餐码」生成，点餐码在桌台创建时即固定、永不变更，可放心印制成桌牌。
+        <br />
+        点击「占用」中的桌台行（或窄屏卡片）可直接查看该桌当前订单详情，并在弹窗内改单、制作、收款、补打。
+        <br />
+        可用「状态」把桌台设为「停用（不可用）」或「预约」：此时顾客扫码无法下单，避免被其他客人占用；客人到店后再改回「正常」即可。
+      </div>
+      <span class="tip-toggle">{{ tipExpanded ? '收起 ▲' : '展开 ▼' }}</span>
     </div>
 
     <TableCardGrid
@@ -121,6 +126,7 @@
       @page-change="onPageChange"
       @open-order="openTableOrder"
       @edit="openEdit"
+      @lock="openLock"
       @delete="onDelete"
       @qr="openQr"
     />
@@ -176,6 +182,41 @@
       </t-form>
     </t-dialog>
 
+    <t-dialog
+      v-model:visible="lockVisible"
+      header="桌台状态"
+      width="440px"
+      :confirm-btn="lockConfirmBtn"
+      @confirm="saveLock"
+    >
+      <t-form
+        :data="lockForm"
+        label-width="90px"
+      >
+        <t-form-item label="桌台">
+          <span>{{ lockForm.tableName }}（{{ lockForm.tableNo }} 号桌）</span>
+        </t-form-item>
+        <t-form-item label="状态">
+          <t-radio-group v-model="lockForm.lockStatus">
+            <t-radio :value="0"> 正常 </t-radio>
+            <t-radio :value="1"> 停用（不可用） </t-radio>
+            <t-radio :value="2"> 预约 </t-radio>
+          </t-radio-group>
+        </t-form-item>
+        <t-form-item
+          v-if="lockForm.lockStatus !== 0"
+          label="备注"
+        >
+          <t-input
+            v-model="lockForm.lockRemark"
+            :maxlength="60"
+            placeholder="如 设备维修 / 张先生 18:00"
+          />
+        </t-form-item>
+        <div class="lock-hint">设为「停用」或「预约」后，顾客扫码将无法下单；客人到店后改回「正常」即可继续点餐。</div>
+      </t-form>
+    </t-dialog>
+
     <SingleQrDialog
       v-model:visible="qrVisible"
       :row="qrRow"
@@ -209,7 +250,7 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { AddIcon, QrcodeIcon } from 'tdesign-icons-vue-next';
-import { listTables, saveTable, updateTable, deleteTable, getConfig, listOrders } from '@dining/api';
+import { listTables, saveTable, updateTable, deleteTable, lockTable, getConfig, listOrders } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { isActiveStatus, LOOPBACK_RE, PAGE_ON_LOOPBACK, normalizeBaseUrl } from '@dining/shared';
 import { shopBrandName } from '../utils/tableQr';
@@ -270,17 +311,22 @@ const shopTitle = ref('');
 const h5Base = ref('');
 // 配置里的 H5 地址不可用(如仍是出厂的 localhost)时的提示文案,空串表示无需提示。
 const h5BaseWarn = ref('');
+// 使用说明提示默认只显示一行,点击展开看完整内容。
+const tipExpanded = ref(false);
 const allCount = ref(0);
 
-// 顶部总览:基于全量桌台统计(忽略分页/搜索),反映整层楼面桌况
+// 顶部总览:基于全量桌台统计(忽略分页/搜索),反映整层楼面桌况。
+// 「停用 / 预约」是人工设置的不可用状态,不算空闲(放不进客人),需从 idle 里剔除。
 const summary = computed(() => {
   const rows = allRows.value;
   const total = rows.length;
   const occupied = rows.filter(r => r.status === 1).length;
-  const idle = total - occupied;
+  const disabled = rows.filter(r => Number(r.lockStatus) === 1).length;
+  const reserved = rows.filter(r => Number(r.lockStatus) === 2).length;
+  const idle = Math.max(0, total - occupied - disabled - reserved);
   const rate = total ? Math.round((occupied / total) * 100) : 0;
   const capacity = rows.reduce((s, r) => s + (Number(r.capacity) || 0), 0);
-  return { total, occupied, idle, rate, capacity };
+  return { total, occupied, idle, disabled, reserved, rate, capacity };
 });
 
 // ---- 点击桌台 → 当前订单详情 ----
@@ -419,6 +465,57 @@ async function save(): Promise<void> {
   }
 }
 
+// ---- 桌台人工状态:停用(不可用) / 预约 / 恢复正常 ----
+// 与订单占用状态正交:占用由下单/结账自动流转,这里只改「能否被扫码点餐」。
+const lockVisible = ref(false);
+const lockSaving = ref(false);
+const lockConfirmBtn = computed(() => ({ content: '确定', theme: 'primary' as const, loading: lockSaving.value }));
+const lockForm = reactive<{
+  tableId: number;
+  tableNo: string;
+  tableName: string;
+  lockStatus: number;
+  lockRemark: string;
+}>({
+  tableId: 0,
+  tableNo: '',
+  tableName: '',
+  lockStatus: 0,
+  lockRemark: ''
+});
+
+function openLock(row: TableInfo): void {
+  Object.assign(lockForm, {
+    tableId: row.tableId ?? 0,
+    tableNo: row.tableNo ?? '',
+    tableName: row.tableName ?? '',
+    lockStatus: Number(row.lockStatus) || 0,
+    lockRemark: row.lockRemark ?? ''
+  });
+  lockVisible.value = true;
+}
+
+async function saveLock(): Promise<void> {
+  if (!lockForm.tableId || lockSaving.value) return;
+  lockSaving.value = true;
+  try {
+    await lockTable({
+      tableId: lockForm.tableId,
+      lockStatus: Number(lockForm.lockStatus) || 0,
+      // 恢复「正常」时清空备注,避免残留旧信息误导。
+      lockRemark: lockForm.lockStatus === 0 ? '' : String(lockForm.lockRemark || '')
+    });
+    MessagePlugin.success('桌台状态已更新');
+    lockVisible.value = false;
+    void loadAll(true);
+    load();
+  } catch {
+    /* 失败已由拦截器统一 toast,弹窗保留已填内容供修改重试 */
+  } finally {
+    lockSaving.value = false;
+  }
+}
+
 function onDelete(row: TableInfo): void {
   const dlg = DialogPlugin.confirm({
     header: '确认删除',
@@ -516,6 +613,9 @@ onMounted(async () => {
 }
 
 .tip-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   background: #fff7f3;
   border: 1px solid #ffe0d2;
   color: #a0401c;
@@ -524,6 +624,38 @@ onMounted(async () => {
   padding: 8px 12px;
   border-radius: 8px;
   margin-bottom: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 折叠态:正文压成一行,超出省略 */
+.tip-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.tip-bar.collapsed .tip-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.tip-toggle {
+  flex-shrink: 0;
+  color: #c06a3a;
+  white-space: nowrap;
+}
+
+.lock-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  background: #fff8f5;
+  border: 1px solid #ffe0d2;
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-top: 4px;
 }
 
 /* 移动端搜索栏右侧的图标按钮:正方形 */

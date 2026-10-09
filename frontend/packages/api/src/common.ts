@@ -27,6 +27,9 @@ export const updateTable = (data: TablePayload): Promise<ApiResponse<unknown>> =
   http.post<unknown, ApiResponse<unknown>>('/admin/table/update', data);
 export const deleteTable = (id: Id): Promise<ApiResponse<unknown>> =>
   http.delete<unknown, ApiResponse<unknown>>(`/admin/table/${id}`);
+// 设置桌台人工可用性状态:lockStatus 0 正常 / 1 停用 / 2 预约(与订单占用正交)。
+export const lockTable = (data: TablePayload): Promise<ApiResponse<unknown>> =>
+  http.post<unknown, ApiResponse<unknown>>('/admin/table/lock', data);
 // 桌台小程序码:后端拿 access_token 向微信换取,并按参数指纹落盘缓存
 // (同一桌台第二次出码不会再打微信接口)。未配置 AppSecret 时返回可读的中文错误。
 export const getTableWeappCode = (tableCode: string, width?: number): Promise<WeappCodeResult> =>

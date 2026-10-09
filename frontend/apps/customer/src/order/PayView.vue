@@ -40,7 +40,7 @@
           />
         </div>
         <div class="pay-tip">请用{{ payTab === 'wx' ? '微信' : '支付宝' }}扫码完成支付</div>
-        <div class="pay-tip sub">支付成功后本页面自动更新，请勿关闭</div>
+        <div class="pay-tip sub">付完自动刷新，不用手动确认</div>
       </div>
       <div
         v-if="currentPayQr"
@@ -62,7 +62,7 @@
         />
       </div>
       <div class="pay-tip">长按识别二维码 或 用{{ payTab === 'wx' ? '微信' : '支付宝' }}扫码付款</div>
-      <div class="pay-tip sub">支付完成后收银台确认即可，本页面会自动更新状态</div>
+      <div class="pay-tip sub">付完到收银台确认一下即可，本页会自动更新</div>
     </div>
     <div
       v-if="!onlineEnabled && !currentPayQr"

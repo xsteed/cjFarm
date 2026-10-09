@@ -13,6 +13,9 @@ export interface TableInfo extends Extensible {
   tableCode?: string;
   capacity?: number;
   status?: number;
+  // 人工可用性状态:0 正常 / 1 停用(不可用) / 2 预约;与订单自动占用(status)正交。
+  lockStatus?: number;
+  lockRemark?: string;
   sortOrder?: number;
   delFlag?: string;
   createBy?: string;
@@ -61,6 +64,8 @@ export interface Dish extends Extensible {
   status?: number;
   /** 0 未售罄 / 1 售罄（上架中但今日沽清：顾客端可见但不可下单，与 status 下架正交） */
   soldOut?: number;
+  /** 0 普通 / 1 招牌菜（顾客端在菜品图片左上角渲染「招牌」角标） */
+  signature?: number;
   sortOrder?: number;
   delFlag?: string;
   createBy?: string;
@@ -128,6 +133,8 @@ export interface OrderSummary extends Extensible {
   updateTime?: string;
   remark?: NullableString;
   pendingUrge?: boolean;
+  /** 加菜批次数(明细 distinct batch_no):>1 表示本单加过菜,列表据此打「加菜×N」角标。列表接口填充 */
+  batchCount?: number;
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -452,6 +459,8 @@ export interface TablePayload extends ApiPayload {
   tableCode?: string;
   capacity?: number;
   status?: number;
+  lockStatus?: number;
+  lockRemark?: string;
   sortOrder?: number;
 }
 
@@ -469,6 +478,7 @@ export interface DishPayload extends ApiPayload {
   description?: string;
   status?: number;
   soldOut?: number;
+  signature?: number;
   sortOrder?: number;
   specs?: DishSpec[];
 }

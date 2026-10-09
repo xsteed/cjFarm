@@ -43,7 +43,7 @@ describe('购物车页 · 下单', () => {
     const page = await mount();
     page.onShow();
     await page.onSubmit();
-    expect(wxMock.lastToast).toBe('请先选择菜品');
+    expect(wxMock.lastToast).toBe('先挑几道想吃的菜吧～');
     expect(wxMock.requests).toHaveLength(0);
   });
 
@@ -76,7 +76,7 @@ describe('购物车页 · 下单', () => {
 
     expect(cartState()).toHaveLength(0);
     expect(sessionState().currentOrder?.orderNo).toBe('D001');
-    expect(wxMock.lastToast).toBe('下单成功');
+    expect(wxMock.lastToast).toBe('下单成功，冲呀');
     expect(wxMock.navigations).toContainEqual({ type: 'redirectTo', url: '/pages/order/index' });
   });
 
@@ -100,7 +100,7 @@ describe('购物车页 · 下单', () => {
     const post = wxMock.requests.find(r => r.method === 'POST');
     expect(post?.url).toBe(`${API_BASE_URL}/customer/order/append`);
     expect(post?.data).toMatchObject({ orderNo: 'D001', personCount: 3 });
-    expect(wxMock.lastToast).toBe('加菜成功');
+    expect(wxMock.lastToast).toBe('加菜成功，冲呀');
   });
 
   it('业务错误：完整提示后端原因，停留本页、保留购物车与幂等键', async () => {

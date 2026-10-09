@@ -4,10 +4,11 @@
     :class="{ lifted: showTabbar }"
   >
     <!-- 购物车图标 + 金额合成一个「展开购物车」热区:顾客习惯点整条,
-         只有图标响应会让中间一大片点不动。去结算按钮不在这个区里,保持独立。 -->
+         只有图标响应会让中间一大片点不动。去结算按钮不在这个区里,保持独立。
+         空车也允许展开:清空后顾客仍能打开抽屉看空态/重新加菜。 -->
     <div
       class="op-cartarea"
-      @click="totalCount > 0 && emit('open')"
+      @click="emit('open')"
     >
       <div
         class="op-cartbtn"
@@ -30,14 +31,22 @@
         >
       </div>
       <div class="op-total">
-        <div class="l">合计</div>
+        <div class="l">
+          合计
+          <!-- 加菜时金额只含本次追加的菜品,与购物车抽屉的「仅加菜」标注同口径 -->
+          <span
+            v-if="canAppend"
+            class="l-tag"
+            >（仅加菜）</span
+          >
+        </div>
         <div class="v"><small>¥</small>{{ totalPrice }}</div>
       </div>
     </div>
     <div
       class="op-checkout"
       :class="{ disabled: !totalCount }"
-      @click="totalCount > 0 && emit('open')"
+      @click="emit('open')"
     >
       {{ actionText }}
     </div>
@@ -85,9 +94,9 @@ const actionText = computed(() =>
   z-index: 90;
 }
 
-/* 底部有 tabbar 时结算栏整体上移,避免压住导航 */
+/* 底部有 tabbar(高 58px)时结算栏整体上移,上方留 4px 间隙,减少纵向占用 */
 .op-bar.lifted {
-  bottom: calc(70px + env(safe-area-inset-bottom));
+  bottom: calc(62px + env(safe-area-inset-bottom));
 }
 
 /* 图标 + 金额的热区:整块都能展开购物车(去结算按钮不在此区) */
@@ -117,6 +126,25 @@ const actionText = computed(() =>
 
 .op-cartbtn.has {
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+}
+
+/* 飞球落袋后的弹性反馈:OrderPage 在 animationend 时挂上 cart-bump 类 */
+.op-cartbtn.cart-bump {
+  animation: cart-bump 0.35s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+@keyframes cart-bump {
+  0% {
+    transform: scale(1);
+  }
+
+  35% {
+    transform: scale(1.18);
+  }
+
+  100% {
+    transform: scale(1);
+  }
 }
 
 /* 份数角标。
@@ -152,6 +180,12 @@ const actionText = computed(() =>
 .op-total .l {
   font-size: 9.5px;
   color: var(--ink-4);
+}
+
+/* 加菜态的「（仅加菜）」标注:跟在「合计」后,小一号、品牌色 */
+.op-total .l-tag {
+  font-size: 9px;
+  color: var(--brand-deep);
 }
 
 .op-total .v {

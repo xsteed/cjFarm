@@ -61,6 +61,12 @@
           class="od-spec"
           >{{ row.specName }}</span
         >
+        <!-- 加菜批次标签(首单/加菜N):与顾客端同口径,商家能对上「这单加过几次菜」 -->
+        <span
+          v-if="batchTag(row)"
+          class="od-spec od-batch-tag"
+          >{{ batchTag(row) }}</span
+        >
         <span
           v-if="row.isGift"
           class="od-spec od-gift-tag"
@@ -190,11 +196,9 @@
       </button>
     </div>
 
-    <!-- 补打：两排按钮是两条**互不相干**的通道，别合并。
-         第一行走打印服务出真实热敏纸（小票机在线时用这个）；
-         第二行 (A4) 走浏览器打印页，由人手动出纸或另存 PDF ——
-         适用于小票机坏了、需要留档、挂账要顾客签字等场景。 -->
-    <div class="od-actions">
+    <!-- 次要操作一行铺开(按钮按内容自适应宽度,不再拉伸占满整行):
+         补打走打印服务出真实热敏纸(小票机在线时用这个),与取消订单互不相干。 -->
+    <div class="od-actions od-actions-sub">
       <button
         type="button"
         class="ab ab-re"
@@ -211,8 +215,6 @@
       >
         重打小票
       </button>
-    </div>
-    <div class="od-actions">
       <button
         type="button"
         class="ab ab-cancel"
@@ -320,7 +322,7 @@
 import { computed, toRef } from 'vue';
 import { ORDER_STATUS, REFUND_STATUS } from '@dining/api';
 import { useIsMobile } from '../../utils/useMobile';
-import { payStatusText } from '@dining/shared';
+import { batchLabels, payStatusText } from '@dining/shared';
 import { useOrderActions } from '../../composables/useOrderActions';
 import type { OrderDetail, Refund } from '@dining/types';
 
@@ -378,6 +380,22 @@ const statusOption = computed(() => {
   const status = props.detail?.orderStatus;
   return status != null ? ORDER_STATUS[status] : undefined;
 });
+
+// 加菜批次标签(itemId → 首单/加菜N):计算逻辑收敛在 @dining/shared 的 batchLabels,
+// 与顾客端 H5/小程序同一口径 —— 只有多批次才打标,单批次订单不打。
+const batchTagMap = computed(() => {
+  const items = props.detail?.items || [];
+  const labels = batchLabels(items);
+  const map = new Map<number, string>();
+  items.forEach((it, i) => {
+    if (it.itemId != null) map.set(it.itemId, labels[i]);
+  });
+  return map;
+});
+
+function batchTag(row: { itemId?: number }): string {
+  return row.itemId != null ? (batchTagMap.value.get(row.itemId) || '') : '';
+}
 
 // 明细表：窄屏只留「菜品/数量/小计」，规格与单价在收银看单时不是必需，
 // 少了它们才不需要横向拖动。
@@ -493,6 +511,12 @@ function refreshRefunds(): void {
   color: var(--ink-3);
 }
 
+/* 加菜批次标签(首单/加菜N):浅橙底与「赠」标呼应,又和灰底规格标区分开 */
+.od-batch-tag {
+  background: #fff3e0;
+  color: #e8850c;
+}
+
 .od-gift-tag {
   background: #fff3e0;
   color: #e8850c;
@@ -588,6 +612,16 @@ function refreshRefunds(): void {
   margin-top: 18px;
 }
 
+/* 主操作组保持等宽铺满(工具条观感);次要操作按内容自适应,不拉伸占满整行 */
+.od-actions-sub {
+  margin-top: 12px;
+}
+
+.od-actions-sub .ab {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .od-actions-extra {
   align-items: center;
   margin-top: 10px;
@@ -602,11 +636,11 @@ function refreshRefunds(): void {
 .ab {
   flex: 1 1 0;
   min-width: 100px;
-  height: 38px;
-  padding: 0 10px;
-  border-radius: 8px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 7px;
   border: 1px solid transparent;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -664,8 +698,6 @@ function refreshRefunds(): void {
 .ab-more {
   flex: 0 1 auto;
   min-width: 88px;
-  height: 32px;
-  font-size: 13px;
   color: var(--ink-2);
   border-color: #dcdcdc;
 }
@@ -717,6 +749,11 @@ function refreshRefunds(): void {
     min-width: 0;
     height: 44px;
     font-size: 14px;
+  }
+
+  /* 移动端次要按钮恢复两列等宽大按钮(覆盖桌面端的按内容自适应) */
+  .od-actions-sub .ab {
+    flex: 1 1 calc(50% - 4px);
   }
 
   .ab-more {

@@ -31,6 +31,18 @@ import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo
 /** 右栏顶部的锚点 id：换搜索词后要把列表拉回顶部（见 scrollListTop）。 */
 const LIST_TOP_ANCHOR = 'list-top';
 
+/** 飞球自增 id：wx:key 用，保证连点时每个球都是独立节点（挂载即重播动画）。 */
+let flySeq = 0;
+
+/** 飞球动画状态：x/y 起点(px)、dx/dy 目标位移(px)，以内联 CSS 变量注入模板。 */
+interface FlyBall {
+  id: number;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+}
+
 /** 规格 chip：菜品行内直接点选的那几个规格。 */
 interface SpecChip {
   /** 带上 dishId：模板里嵌套 wx:for 后拿不到外层行的字段 */
@@ -55,6 +67,8 @@ interface DishRow {
   orderable: boolean;
   /** 已售罄：上架中但今日沽清，顾客端仍展示（知道有什么），但置灰不可点 */
   soldOut: boolean;
+  /** 招牌菜：图片左上角渲染「招牌」角标 */
+  signature: boolean;
   /** 当前选中的规格 id：步进器要用 `菜品:规格` 定位购物车行 */
   specId: number;
   /** 单规格的规格名（只有单规格才显示，多规格由 chip 体现） */
@@ -97,6 +111,8 @@ interface CatRow {
   categoryName: string;
   /** 左栏自身的 scroll-into-view 锚点：分类多时把当前项带回可视区 */
   navId: string;
+  /** 分类内已点份数角标（购物车 + 订单已点），0 时 WXML 不渲染；与 H5 catQty 同口径 */
+  qty: number;
 }
 
 interface ServingRow {
@@ -160,7 +176,9 @@ Page({
     sheetDishId: 0,
     /** 该菜在购物车里的现有份数：弹层据此提示「确定后是再加一份」 */
     sheetInCart: 0,
-    sheetDish: { dishName: '', specs: [], initialSpecId: 0, initialRemark: '' } as SheetDish
+    sheetDish: { dishName: '', specs: [], initialSpecId: 0, initialRemark: '' } as SheetDish,
+    /** 抛物线飞球列表：每次「+」挂载一个新节点，挂载即播放动画，动画完由 JS 移除 */
+    flyBalls: [] as FlyBall[]
   },
 
   /** 菜单与备注原始数据（不进 data，避免整棵树参与 setData 序列化）。 */
@@ -279,6 +297,17 @@ Page({
       if ((info.servingOrders || []).length) clearCurrentOrder();
       else applyOrder(null);
 
+      // 店员停用/预约的桌台（lockStatus 0 正常 / 1 停用 / 2 预约）：本桌没有进行中
+      // 订单的顾客不进菜单，避免白点一车菜；文案给出「联系店员」的出口。
+      const lockStatus = Number(info.lockStatus) || 0;
+      if (lockStatus) {
+        this.setData({
+          loading: false,
+          error: lockStatus === 2 ? '该桌台已被预订，如需用餐请联系店员' : '该桌台暂不可用，如需用餐请联系店员'
+        });
+        return;
+      }
+
       this.renderMenu(info);
     } catch (e) {
       this.setData({ loading: false, error: this.friendlyError(e) });
@@ -291,7 +320,9 @@ Page({
       categoryId: Number(c.categoryId) || 0,
       categoryName: String(c.categoryName || ''),
       // 锚点用下标：HTML id 不能以数字开头，也不是每个分类都有 id
-      navId: `nav-${i}`
+      navId: `nav-${i}`,
+      // 角标在紧随其后的 refreshRows 里按购物车/订单算好补上
+      qty: 0
     }));
 
     this.setData({
@@ -374,7 +405,9 @@ Page({
         searchEmpty: this.data.searching && !rows.length,
         cartCount: cartCount(),
         // 人数取自会话：购物车页改过人数后，这里的合计要跟着一致（茶位费按人数算）
-        cartTotalText: money(cartSettle(sessionState().config, sessionState().personCount).total)
+        cartTotalText: money(cartSettle(sessionState().config, sessionState().personCount).total),
+        // 左栏分类角标：进入页面 / 从购物车或订单页返回时都要按最新数据重算
+        ...this.syncCatBadges()
       },
       // 行高定下来之后才能量标题位置（图片是固定尺寸，不依赖加载完成）
       () => this.measureSections()
@@ -419,6 +452,7 @@ Page({
       manySpecs: specs.length > INLINE_SPEC_MAX,
       orderable: specs.length > 0,
       soldOut,
+      signature: Number(dish.signature) === 1,
       specId,
       specName: only ? String(picked?.specName || '') : '',
       specChips: inline
@@ -561,6 +595,46 @@ Page({
     return map;
   },
 
+  /**
+   * 各分类的已点份数（左栏角标用），与 H5 MenuView.catQtyMap 同口径：
+   * 购物车 + 当前订单已点一起计入。购物车条目只带 dishId，先建 dishId→categoryId
+   * 的映射再按分类累计；同一菜出现在多个分类时以首次出现为准，数量不会重复计入。
+   */
+  catQtyMap(): Map<number, number> {
+    const dishCat = new Map<number, number>();
+    for (const c of this.menu) {
+      for (const d of (c.dishes || []) as Dish[]) {
+        const id = Number(d.dishId) || 0;
+        if (id && !dishCat.has(id)) dishCat.set(id, Number(c.categoryId) || 0);
+      }
+    }
+    const m = new Map<number, number>();
+    const ordered = this.orderedQtyMap();
+    for (const c of this.menu) {
+      for (const d of (c.dishes || []) as Dish[]) {
+        const cid = dishCat.get(Number(d.dishId) || 0);
+        const q = ordered[Number(d.dishId) || 0] || 0;
+        if (cid && q) m.set(cid, (m.get(cid) || 0) + q);
+      }
+    }
+    for (const l of cartState()) {
+      const cid = dishCat.get(l.dishId);
+      if (cid) m.set(cid, (m.get(cid) || 0) + l.quantity);
+    }
+    return m;
+  },
+
+  /** 只把变化的角标写进 setData patch；加/减份数、返回本页时共用。 */
+  syncCatBadges(): Record<string, number> {
+    const m = this.catQtyMap();
+    const patch: Record<string, number> = {};
+    (this.data.cats as CatRow[]).forEach((c, i) => {
+      const q = m.get(c.categoryId) || 0;
+      if (q !== c.qty) patch[`cats[${i}].qty`] = q;
+    });
+    return patch;
+  },
+
   /** 点左侧分类：只滚动定位，不再重建右栏（右栏是所有分类的连续列表）。 */
   onSwitchCat(e: WechatMiniprogram.TouchEvent): void {
     const categoryId = Number(e.currentTarget.dataset.id) || 0;
@@ -649,8 +723,59 @@ Page({
       toast.info('该菜品已售罄，看看别的吧');
       return;
     }
+    // 飞球起点用点击时的视口坐标（tap 事件里 changedTouches 仍保留触点位置）
+    const touch = e.changedTouches && e.changedTouches[0];
     // 不传备注 = 不改动该行已填的备注（快速「+」不该抹掉顾客填好的「不要辣」）
     this.addToCart(dishId, picked);
+    if (touch) this.flyToCart(touch.clientX, touch.clientY);
+  },
+
+  /**
+   * 「+」加菜的抛物线飞球（与 H5 OrderPage.onFly 同款）：
+   * 从点击位置飞向底部结算栏的购物车图标。每次挂载一个新节点（数组追加），
+   * 位移量以内联 CSS 变量注入，挂载即自动播放 keyframes —— 没有首帧竞态，连点多球并行；
+   * 落袋后购物车图标弹一下（bump 由 cart-bar 组件渲染）。
+   */
+  flyToCart(x: number, y: number): void {
+    const win = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync();
+    const k = win.windowWidth / 750; // rpx → px
+    // 落点：购物车图标中心。结算栏组件里 .cart-bar 是 fixed 定位（脱离文档流），
+    // 宿主节点在页面流里是塌缩的，量宿主拿不到真实位置 —— 必须用
+    // SelectorQuery.in(组件实例) 跨组件去量组件内部的 .cb-cart 图标本体。
+    const launch = (cx: number, cy: number) => {
+      const ball: FlyBall = { id: ++flySeq, x, y, dx: cx - x, dy: cy - y };
+      this.setData({ flyBalls: [...this.data.flyBalls, ball] });
+      // 飞行 0.4s：结束时移除节点，并让购物车图标弹一下
+      setTimeout(() => {
+        this.setData({ flyBalls: this.data.flyBalls.filter(b => b.id !== ball.id) });
+        const bar = this.selectComponent('.cart-bar-host');
+        if (bar) {
+          bar.setData({ bump: true });
+          setTimeout(() => bar.setData({ bump: false }), 400);
+        }
+      }, 470);
+    };
+    // 布局常量兜底：结算栏高 108rpx，坐在 104rpx 的 tab-bar 之上，图标中心距左 54rpx
+    const fallback = () => launch(54 * k, win.windowHeight - (104 + 54) * k);
+    // 首次加菜时结算栏才刚被 wx:if 渲染出来，等一帧再量
+    setTimeout(() => {
+      const bar = this.selectComponent('.cart-bar-host');
+      if (!bar) {
+        fallback();
+        return;
+      }
+      wx.createSelectorQuery()
+        .in(bar)
+        .select('.cb-cart')
+        .boundingClientRect(rect => {
+          if (rect && rect.width > 0) {
+            launch(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          } else {
+            fallback();
+          }
+        })
+        .exec();
+    }, 50);
   },
 
   /** 点菜名：打开规格 / 备注弹层。 */
@@ -714,7 +839,9 @@ Page({
     const patch: Record<string, number | string | MenuRow> = {
       cartCount: cartCount(),
       // 人数取自会话：购物车页改过人数后，这里的合计要跟着一致（茶位费按人数算）
-      cartTotalText: money(cartSettle(sessionState().config, sessionState().personCount).total)
+      cartTotalText: money(cartSettle(sessionState().config, sessionState().personCount).total),
+      // 该菜所在分类的已点角标同步变化
+      ...this.syncCatBadges()
     };
     const idx = this.data.rows.findIndex(r => r.kind === 'dish' && r.dishId === dishId);
     const dish = idx >= 0 ? this.findDish(dishId) : undefined;

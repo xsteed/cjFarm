@@ -53,6 +53,25 @@
   color: rgb(255 255 255 / 45%);
 }
 
+/* 飞球落袋后的弹性反馈：页面在动画结束时通过 selectComponent 置位 bump */
+.cb-cart.bump {
+  animation: cb-bump 0.35s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+@keyframes cb-bump {
+  0% {
+    transform: scale(1);
+  }
+
+  35% {
+    transform: scale(1.18);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
 /* 车把：上边 + 右边，右边那条竖线落进车筐左上沿 */
 .cb-cart-hd {
   position: absolute;

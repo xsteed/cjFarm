@@ -95,7 +95,7 @@ describe('购物车页 · 下单成功后的跳转', () => {
       type: 'redirectTo',
       url: '/pages/order/index?orderNo=D001'
     });
-    expect(wxMock.toasts.map(t => t.title)).toContain('下单成功');
+    expect(wxMock.toasts.map(t => t.title)).toContain('下单成功，冲呀');
   });
 
   it('详情回拉成功：走会话直接跳订单页（不多带一次请求的参数）', async () => {

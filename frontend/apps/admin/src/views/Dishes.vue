@@ -140,6 +140,7 @@
             <img
               v-if="d.dishImage"
               class="m-row-img"
+              :class="{ 'is-off': d.status !== 1 }"
               :src="d.dishImage"
               :alt="d.dishName"
             />
@@ -149,40 +150,72 @@
             >
               无图
             </div>
-            <!-- 售罄蒙版:与桌面卡片视图 .pic-mask 同一套视觉,窄屏里也能一眼扫到 -->
+            <!-- 招牌角标:图片左上角,与顾客端同视觉,店长一眼确认哪些菜设了招牌 -->
             <span
-              v-if="d.soldOut === 1"
+              v-if="d.signature === 1"
+              class="sig-tag"
+            >招牌</span>
+            <!-- 蒙版:下架优先于售罄(顾客端完全看不到 vs 临时沽清),同一套视觉 -->
+            <span
+              v-if="d.status !== 1"
+              class="m-row-out is-off"
+              >已下架</span
+            >
+            <span
+              v-else-if="d.soldOut === 1"
               class="m-row-out"
               >售罄</span
             >
           </div>
           <div class="m-row-main">
-            <div class="m-row-name">{{ d.dishName }}</div>
+            <div class="m-row-head">
+              <div class="m-row-name">{{ d.dishName }}</div>
+              <label
+                v-if="canEdit"
+                class="m-row-shelf"
+                @click.stop
+              >
+                <t-switch
+                  :value="Number(d.status)"
+                  :custom-value="[1, 0]"
+                  size="small"
+                  :disabled="statusBusyId === d.dishId"
+                  @change="(val: string | number | boolean) => toggleStatus(d, val)"
+                />
+                <span
+                  class="m-row-shelf-txt"
+                  :class="d.status === 1 ? 'is-on' : 'is-off'"
+                  >{{ d.status === 1 ? '上架中' : '已下架' }}</span
+                >
+              </label>
+            </div>
             <div class="m-row-sub">
               {{ d.categoryName || '未分类' }} ·
               {{ d.soldOut === 1 ? '售罄' : d.status === 1 ? '上架中' : '已下架' }}
             </div>
-            <div class="m-row-price">¥{{ minPrice(d) }}<small v-if="d.specs && d.specs.length > 1"> 起</small></div>
-          </div>
-          <div
-            v-if="canEdit"
-            class="m-row-ops"
-            @click.stop
-          >
-            <t-button
-              theme="primary"
-              variant="text"
-              size="small"
-              @click="openEdit(d)"
-              >编辑</t-button
-            >
-            <t-button
-              theme="danger"
-              variant="text"
-              size="small"
-              @click="onDelete(d)"
-              >删除</t-button
-            >
+            <div class="m-row-foot">
+              <div class="m-row-price">¥{{ minPrice(d) }}<small v-if="d.specs && d.specs.length > 1"> 起</small></div>
+              <div
+                v-if="canEdit"
+                class="m-row-ops"
+                @click.stop
+              >
+                <t-button
+                  theme="primary"
+                  variant="text"
+                  size="small"
+                  @click="openEdit(d)"
+                  >编辑</t-button
+                >
+                <t-button
+                  theme="danger"
+                  variant="text"
+                  size="small"
+                  @click="onDelete(d)"
+                  >删除</t-button
+                >
+              </div>
+            </div>
           </div>
         </div>
 
@@ -194,7 +227,7 @@
             :current="pagination.current"
             :page-size="pagination.pageSize"
             :total="pagination.total"
-            @change="onPageChange"
+            @current-change="onPageChange"
           />
         </div>
       </div>
@@ -220,6 +253,7 @@
             <img
               v-if="row.dishImage"
               class="thumb"
+              :class="{ 'is-off': row.status !== 1 }"
               :src="row.dishImage"
               :alt="row.dishName"
             />
@@ -228,9 +262,19 @@
               class="thumb thumb-ph"
               >无图</span
             >
-            <!-- 售罄蒙版:缩略图太小,状态列的标签不够「一眼看出」,直接在图上压暗 -->
+            <!-- 招牌角标:缩略图左上角,与顾客端同视觉 -->
             <span
-              v-if="row.soldOut === 1"
+              v-if="row.signature === 1"
+              class="sig-tag"
+            >招牌</span>
+            <!-- 蒙版:下架优先于售罄,缩略图太小直接在图上压字,一眼可辨 -->
+            <span
+              v-if="row.status !== 1"
+              class="thumb-out is-off"
+              >已下架</span
+            >
+            <span
+              v-else-if="row.soldOut === 1"
               class="thumb-out"
               >售罄</span
             >
@@ -322,6 +366,7 @@
           <div class="pic">
             <img
               v-if="d.dishImage"
+              :class="{ 'is-off': d.status !== 1 }"
               :src="d.dishImage"
               :alt="d.dishName"
             />
@@ -331,8 +376,22 @@
             >
               无图
             </div>
+            <!-- 招牌角标:图片左上角(右上角已被状态 flag 占用),与顾客端同视觉 -->
             <div
-              v-if="d.soldOut === 1"
+              v-if="d.signature === 1"
+              class="sig-tag"
+            >
+              招牌
+            </div>
+            <!-- 蒙版:下架优先于售罄,与移动端行卡同一套视觉 -->
+            <div
+              v-if="d.status !== 1"
+              class="pic-mask is-off"
+            >
+              <span>已下架</span>
+            </div>
+            <div
+              v-else-if="d.soldOut === 1"
               class="pic-mask"
             >
               <span>售罄</span>
@@ -527,6 +586,16 @@
           <span style="margin-left: 8px; color: #999">今日沽清（顾客端仍能看到，但不可下单）</span>
         </t-form-item>
         <t-form-item
+          label="招牌"
+          name="signature"
+        >
+          <t-switch
+            v-model="form.signature"
+            :custom-value="[1, 0]"
+          />
+          <span style="margin-left: 8px; color: #999">设为招牌菜（顾客端图片左上角显示「招牌」角标）</span>
+        </t-form-item>
+        <t-form-item
           label="排序"
           name="sortOrder"
         >
@@ -588,6 +657,7 @@ interface DishForm {
   description: string;
   status: number;
   soldOut: number;
+  signature: number;
   sortOrder: number;
   specs: SpecForm[];
   imageFiles: UploadFile[];
@@ -601,6 +671,7 @@ const form = reactive<DishForm>({
   description: '',
   status: 1,
   soldOut: 0,
+  signature: 0,
   sortOrder: 0,
   specs: [],
   imageFiles: []
@@ -681,6 +752,43 @@ function onTablePageChange(pageInfo: PageInfo): void {
   load();
 }
 
+// 移动端卡片上的上下架开关。后端 /admin/dish/update 强校验分类/名称/规格必填,
+// 不能只传 status,因此用行内已有数据组装完整 payload;specId 原样带回以增量更新、保留库存。
+// 先乐观更新开关状态,请求失败再回滚(错误提示由拦截器统一 toast)。
+const statusBusyId = ref<number | null>(null);
+
+async function toggleStatus(d: Dish, val: string | number | boolean): Promise<void> {
+  const next = Number(val) === 1 ? 1 : 0;
+  if (Number(d.status) === next || statusBusyId.value !== null) return;
+  statusBusyId.value = d.dishId ?? null;
+  const previous = Number(d.status) === 1 ? 1 : 0;
+  d.status = next;
+  try {
+    await updateDish({
+      dishId: d.dishId,
+      categoryId: d.categoryId,
+      dishName: d.dishName ?? '',
+      dishImage: d.dishImage ?? '',
+      description: d.description ?? '',
+      status: next,
+      soldOut: Number(d.soldOut) === 1 ? 1 : 0,
+      signature: Number(d.signature) === 1 ? 1 : 0,
+      sortOrder: d.sortOrder ?? 0,
+      specs: (d.specs ?? []).map(s => ({
+        specId: s.specId,
+        specName: s.specName ?? '',
+        price: s.price ?? 0,
+        stock: s.stock ?? -1
+      }))
+    });
+    MessagePlugin.success(next === 1 ? '已上架' : '已下架');
+  } catch {
+    d.status = previous;
+  } finally {
+    statusBusyId.value = null;
+  }
+}
+
 // t-upload 的回显项:只带 url(没有 raw)时组件会按普通图片渲染缩略图,
 // 但不会触发上传 —— 保存时按 raw 是否存在区分「沿用旧图」与「上传新图」。
 function imageFileList(url: string): UploadFile[] {
@@ -697,6 +805,7 @@ function openAdd(): void {
     description: '',
     status: 1,
     soldOut: 0,
+    signature: 0,
     sortOrder: 0,
     specs: [{ specName: '份', price: 0, stock: -1 }],
     imageFiles: []
@@ -713,6 +822,7 @@ function openEdit(row: Dish): void {
     description: row.description ?? '',
     status: Number(row.status) === 1 ? 1 : 0,
     soldOut: Number(row.soldOut) === 1 ? 1 : 0,
+    signature: Number(row.signature) === 1 ? 1 : 0,
     sortOrder: row.sortOrder ?? 0,
     specs: (row.specs ?? []).map(s => ({
       specId: s.specId,
@@ -768,6 +878,7 @@ async function save(): Promise<void> {
       description: form.description,
       status: form.status,
       soldOut: form.soldOut,
+      signature: form.signature,
       sortOrder: form.sortOrder,
       // specId 必须带上：后端据此增量更新（保留库存），否则每次都重建规格、库存清零
       specs: form.specs
@@ -857,6 +968,23 @@ onMounted(() => {
   justify-content: center;
   font-size: 11px;
   color: var(--ink-4);
+}
+
+/* 招牌角标:贴图片左上角,品牌色渐变底 + 白字,三处图片(移动端行卡/表格缩略图/卡片视图)共用 */
+.sig-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 2px 7px;
+  border-radius: 6px 0 6px 0;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 1px;
+  pointer-events: none;
 }
 
 /* 售罄蒙版(列表缩略图):44px 里放不下带描边的胶囊标签,
@@ -1187,8 +1315,52 @@ onMounted(() => {
 .m-row-ops {
   flex-shrink: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 0;
+}
+
+/* 菜名行:菜名占满,右侧放上下架开关——状态一眼可见 */
+.m-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.m-row-head .m-row-name {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 上下架开关:开关 + 状态文字,按状态着色(上架中绿 / 已下架灰) */
+.m-row-shelf {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.m-row-shelf-txt.is-on {
+  color: var(--td-success-color, #2ba471);
+  font-weight: 500;
+}
+
+.m-row-shelf-txt.is-off {
+  color: var(--ink-3);
+}
+
+/* 底部行:价格在左、编辑/删除在右,与信息区分离,卡片更紧凑 */
+.m-row-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 5px;
+}
+
+.m-row-foot .m-row-price {
+  margin-top: 0;
 }
 
 /* 移动端行卡缩略图容器:只为承载售罄蒙版(原先是裸 img,没有可定位的祖先)。
@@ -1213,5 +1385,11 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 已下架:图片整体置灰(顾客端完全看不到,区别于售罄的临时沽清);蒙版文字同为居中白字 */
+img.is-off {
+  filter: grayscale(1);
+  opacity: 0.9;
 }
 </style>

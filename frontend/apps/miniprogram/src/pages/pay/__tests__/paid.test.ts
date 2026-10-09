@@ -38,7 +38,7 @@ describe('支付页', () => {
     await flush();
 
     expect(page.data.paid).toBe(true);
-    expect(wxMock.toasts.map(t => t.title)).toContain('收款成功');
+    expect(wxMock.toasts.map(t => t.title)).toContain('支付成功');
   });
 
   it('离页导航只发一次（延时跳转与手动返回撞车时不重复导航）', async () => {

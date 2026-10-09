@@ -54,10 +54,11 @@
   text-align: center;
 }
 
+/* 首张卡（菜品明细）与左右边距对齐：上下都是 24rpx，卡片不贴住顶部 */
 .body {
   flex: 1;
   min-height: 0;
-  padding: 20rpx 24rpx 0;
+  padding: 24rpx 24rpx 0;
   box-sizing: border-box;
 }
 
@@ -70,7 +71,10 @@
   margin-bottom: 12rpx;
 }
 
+/* 标题占满剩余宽度：状态标签与刷新始终贴右，标题再长也不会把右侧挤出去 */
 .sec-head .sec-title {
+  flex: 1;
+  min-width: 0;
   margin-bottom: 0;
 }
 
@@ -81,7 +85,7 @@
 }
 
 /* 手动刷新：轮询每 3s 一次，这里只是「等不及」时的出口，做小、做轻 */
-.head-refresh {
+.sec-refresh {
   padding: 6rpx 4rpx;
   color: var(--ink-3);
   font-size: 24rpx;
@@ -106,6 +110,23 @@
   margin-top: 12rpx;
   color: var(--ink-3);
   font-size: 23rpx;
+}
+
+/* 支付凭证：绿点 + 「已支付（微信）· 2026-10-09 12:03」，可核对可回看 */
+.info-paid {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 16rpx;
+  color: var(--success);
+  font-size: 23rpx;
+}
+
+.info-paid-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: var(--success);
 }
 
 /* ---------- 通用卡 ---------- */
@@ -136,6 +157,67 @@
 .cancel-tip {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* ---------- 出餐进度（对应 H5 OrderProgress.vue） ----------
+   三步只映射后厨的真实节点，不承诺时间；当前节点用品牌光晕标出。 */
+.steps {
+  display: flex;
+  align-items: flex-start;
+  padding: 4rpx 0 20rpx;
+}
+
+.step {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12rpx;
+}
+
+/* 连接线：从本步圆点拉到下一步圆点（flex:1 等宽保证两端对齐） */
+.step-bar {
+  position: absolute;
+  top: 8rpx;
+  left: 50%;
+  width: 100%;
+  height: 4rpx;
+  border-radius: 4rpx;
+  background: var(--line);
+}
+
+.step-bar.on {
+  background: var(--brand);
+}
+
+.step-dot {
+  position: relative;
+  z-index: 1;
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  background: #e6e6e6;
+  transition: background 0.25s;
+}
+
+.step.on .step-dot {
+  background: var(--brand);
+}
+
+.step.now .step-dot {
+  box-shadow: 0 0 0 8rpx var(--brand-soft);
+}
+
+.step-txt {
+  color: var(--ink-4);
+  font-size: 21rpx;
+  line-height: 1.2;
+}
+
+.step.on .step-txt {
+  color: var(--brand-deep);
+  font-weight: 600;
 }
 
 /* ---------- 菜品行 ---------- */
@@ -242,18 +324,21 @@
   color: var(--warning);
 }
 
-/* 合计行：账单收尾，金额与「未支付 / 已支付」标签同排 */
+/* 合计行：账单收尾，金额与「未支付 / 已支付」标签同排。
+   虚线上下的留白对齐（上一行 6rpx 下内边距 + 18rpx 外边距 = 24rpx，下方 24rpx） */
 .bill-total {
-  margin-top: 8rpx;
-  padding-top: 20rpx;
+  margin-top: 18rpx;
+  padding: 24rpx 0 0;
   border-top: 2rpx dashed var(--line);
   color: var(--ink);
   font-size: 28rpx;
   font-weight: 600;
 }
 
+/* 窄屏兜底：标签文案较长（如「挂账待收 ¥12.00」）时也不把金额挤变形 */
 .bill-total-right {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 16rpx;
 }

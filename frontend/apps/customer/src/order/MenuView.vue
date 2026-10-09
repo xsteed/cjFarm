@@ -14,6 +14,12 @@
           @click="jumpTo(c.categoryId)"
         >
           {{ c.categoryName }}
+          <!-- 分类内已点份数角标:0 时不渲染 -->
+          <span
+            v-if="catQty(c.categoryId)"
+            class="cat-badge"
+            >{{ catQty(c.categoryId) }}</span
+          >
         </div>
       </div>
 
@@ -84,6 +90,11 @@
                 </svg>
                 <span>暂无图片</span>
               </div>
+              <!-- 招牌角标:图片左上角,帮顾客快速锁定镇店菜(与售罄蒙版互不干扰) -->
+              <span
+                v-if="Number(d.signature) === 1"
+                class="op-signature"
+              >招牌</span>
               <!-- 售罄蒙版:盖住图片(或占位图),与菜名后的「售罄」标签互相印证,与小程序端一致 -->
               <div
                 v-if="isSoldOut(d)"
@@ -165,10 +176,12 @@
                     >
                       <path d="M5 12h14" /></svg
                   ></span>
-                  <span class="n">{{ dishQty(d.dishId) }}</span>
+                  <span class="n"
+                    >{{ dishQty(d.dishId) }}</span
+                  >
                   <span
                     class="p"
-                    @click.stop="onAdd(d)"
+                    @click.stop="onAdd(d, $event)"
                     ><svg
                       viewBox="0 0 24 24"
                       width="13"
@@ -184,7 +197,7 @@
                 <span
                   v-else
                   class="op-add"
-                  @click.stop="onAdd(d)"
+                  @click.stop="onAdd(d, $event)"
                   ><svg
                     viewBox="0 0 24 24"
                     width="16"
@@ -208,11 +221,15 @@
 <script setup lang="ts">
 import { computed, nextTick, shallowRef, watch } from 'vue';
 import { INLINE_SPEC_MAX, filterMenu, isManySpecs, isOrderable, isSearching, isSoldOut } from '@dining/customer-core';
+import type { CartItem } from '@dining/customer-core';
 import { money } from '@dining/shared/money';
 import type { Dish, DishSpec, MenuCategory } from '@dining/types';
 
+// cart 可选:分类角标只是锦上添花,调用方(含单测)不传也不该渲染失败
 const props = defineProps<{
   menu: MenuCategory[];
+  /** 购物车条目:用于计算各分类的已点份数角标 */
+  cart?: CartItem[];
   /** 搜索关键词：由页面层持有（搜索框在白卡顶部），这里只负责按它过滤 */
   keyword: string;
   selectedSpec: Record<number, number>;
@@ -231,6 +248,11 @@ const props = defineProps<{
   handleScroll: () => void;
   /** 打开规格/备注弹层（多规格菜点「+」或点菜名时） */
   openSheet: (d: Dish) => void;
+}>();
+
+const emit = defineEmits<{
+  /** 直接加菜成功:把「+」的点击坐标抛给页面层,做小球飞入购物车动画 */
+  fly: [x: number, y: number];
 }>();
 
 // ---------- 搜索 ----------
@@ -260,6 +282,40 @@ function specOn(d: Dish, s: DishSpec): boolean {
   return props.selectedSpec[d.dishId as number] === s.specId;
 }
 
+// ---------- 分类角标 ----------
+// 购物车条目只带 dishId,先建 dishId→categoryId 的映射再按分类累计份数;
+// 同一菜出现在多个分类时以首次出现为准,数量不会重复计入
+const catQtyMap = computed(() => {
+  const dishCat = new Map<number, number>();
+  for (const c of props.menu) {
+    const cid = c.categoryId;
+    if (cid === undefined) continue;
+    for (const d of c.dishes || []) {
+      if (d.dishId !== undefined && !dishCat.has(d.dishId)) dishCat.set(d.dishId, cid);
+    }
+  }
+  const m = new Map<number, number>();
+  // 已下单份数也要计入:加菜时顾客看角标就能知道该分类点了多少,与菜品行的「已点 N」同口径
+  for (const c of props.menu) {
+    for (const d of c.dishes || []) {
+      if (d.dishId === undefined) continue;
+      const cid = dishCat.get(d.dishId);
+      const q = props.orderedQty(d.dishId);
+      if (cid !== undefined && q) m.set(cid, (m.get(cid) || 0) + q);
+    }
+  }
+  for (const it of props.cart || []) {
+    const cid = dishCat.get(it.dishId);
+    if (cid !== undefined) m.set(cid, (m.get(cid) || 0) + it.quantity);
+  }
+  return m;
+});
+
+function catQty(categoryId: number | undefined): number {
+  if (categoryId === undefined) return 0;
+  return catQtyMap.value.get(categoryId) || 0;
+}
+
 function imgErr(id: number | undefined): boolean {
   return id !== undefined && props.imgErrs.has(id);
 }
@@ -286,13 +342,15 @@ function priceText(d: Dish): string {
   return money(props.currentSpec(d).price);
 }
 
-/** 「+」:规格多到行内放不下时进弹层,否则按当前选中规格直接加一份(与小程序 onAdd 同规则)。 */
-function onAdd(d: Dish): void {
+/** 「+」:规格多到行内放不下时进弹层,否则按当前选中规格直接加一份(与小程序 onAdd 同规则)。
+ *  直接加菜时把点击坐标抛给页面层,驱动「小球抛物线飞入购物车」动画(美团外卖同款)。 */
+function onAdd(d: Dish, e?: MouseEvent): void {
   if (isManySpecs(d)) {
     props.openSheet(d);
     return;
   }
   props.changeQty(d, 1);
+  if (e) emit('fly', e.clientX, e.clientY);
 }
 </script>
 
@@ -351,6 +409,26 @@ function onAdd(d: Dish): void {
   height: 16px;
   border-radius: 0 3px 3px 0;
   background: linear-gradient(180deg, var(--brand), var(--brand-deep));
+}
+
+/* 分类已点份数角标:固定在分类项右上角,单/双位数都居中 */
+.cat-badge {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .op-list {
@@ -435,6 +513,22 @@ function onAdd(d: Dish): void {
   flex-shrink: 0;
   overflow: hidden;
   background: #f5f5f5;
+}
+
+/* 招牌角标:贴图片左上角,品牌色渐变底 + 白字,售罄蒙版(soldout-mask)层级更高会盖住它 */
+.op-signature {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 2px 7px;
+  border-radius: 0 0 var(--r-md) 0;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 1px;
 }
 
 /* 售罄蒙版:半透明盖住图片,居中白字「售罄」。没图/坏图的占位图同样会被盖住 */

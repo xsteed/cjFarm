@@ -170,6 +170,16 @@
             >
               催菜
             </t-tag>
+            <!-- 加菜角标:与桌面列表/详情弹窗同口径 -->
+            <t-tag
+              v-if="(row.batchCount || 0) > 1"
+              theme="warning"
+              variant="light"
+              size="small"
+              class="urgent-mini"
+            >
+              加菜×{{ row.batchCount! - 1 }}
+            </t-tag>
           </div>
           <div class="ocard-amt">
             <span class="money">¥{{ $money(row.totalAmount) }}</span>
@@ -254,6 +264,16 @@
           style="margin-left: 6px"
         >
           催菜
+        </t-tag>
+        <!-- 加菜角标:batchCount>1 即本单加过菜,N=加菜次数;与详情弹窗的批次标签同口径 -->
+        <t-tag
+          v-if="(row.batchCount || 0) > 1"
+          theme="warning"
+          variant="light"
+          size="small"
+          style="margin-left: 6px"
+        >
+          加菜×{{ row.batchCount! - 1 }}
         </t-tag>
       </template>
       <template #orderStatus="{ row }">

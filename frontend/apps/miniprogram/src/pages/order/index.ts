@@ -33,6 +33,17 @@ interface OrderRow {
   batchLabel: string;
 }
 
+/** 出餐进度的一步（对应 H5 OrderProgress.vue，WXML 不做函数调用，状态全部预计算） */
+interface StepRow {
+  label: string;
+  /** 这一步是否已到达（圆点与文案高亮） */
+  on: boolean;
+  /** 本步到下一步的连接线是否点亮 */
+  barOn: boolean;
+  /** 当前所在步（加一圈光晕）；已完成的单不再标「当前」 */
+  now: boolean;
+}
+
 Page({
   data: {
     loading: true,
@@ -69,7 +80,13 @@ Page({
     settled: false,
     done: false,
     canceled: false,
-    canceledReason: ''
+    /** 取消提示整句：有真实原因带上，没有就给标准说明（后端已对原因做可展示性收口） */
+    cancelTip: '',
+    /** 出餐进度：1已下单 → 2制作中 → 3已上齐（取消单不渲染） */
+    steps: [] as StepRow[],
+    showProgress: false,
+    /** 支付凭证行：已支付时给出「已支付（微信）· 结账时间」，可核对可回看 */
+    paidInfo: ''
   },
 
   poller: null as Poller | null,
@@ -213,8 +230,35 @@ Page({
       };
     });
 
+    // 出餐进度：只映射后厨的三个真实节点（1已下单 → 2制作中 → 3已上齐），
+    // 已完成的单三步全亮；不承诺时间、不做倒计时 —— 后厨改状态才是唯一事实来源。
+    const stepIdx = done ? 3 : Math.min(Math.max(status - 1, 0), 2);
+    const steps: StepRow[] = [
+      { label: '已下单', on: true, barOn: stepIdx >= 1, now: stepIdx === 0 },
+      { label: '制作中', on: stepIdx >= 1, barOn: stepIdx >= 2, now: stepIdx === 1 },
+      { label: '已上齐', on: stepIdx >= 2, barOn: false, now: stepIdx === 2 }
+    ];
+
+    // 取消提示：有真实原因（后端已把「商家取消」这类无信息标签抹平）就带上，
+    // 没有就给标准说明 —— 取消只可能发生在未支付订单上（后端强制），能明确告诉顾客不产生费用。
+    const cancelReason = String(order.cancelReason || '').trim();
+    const cancelTip = canceled
+      ? cancelReason
+        ? `订单已取消：${cancelReason}`
+        : '订单已取消，本单未支付、不会产生任何费用'
+      : '';
+
+    // 支付凭证：payTime 是「2026-10-09 12:03:07」这类字符串，截到分钟即可
+    const paidAt = String(order.payTime || '')
+      .replace('T', ' ')
+      .slice(0, 16);
+    const paidInfo = payStatus === 1 ? [payStatusText(order), paidAt].filter(Boolean).join(' · ') : '';
+
     const table = sessionState().table;
     this.setData({
+      steps,
+      showProgress: !canceled,
+      paidInfo,
       orderNo: String(order.orderNo || ''),
       shortNo: String(order.shortNo || order.orderNo || ''),
       tableLabel: String(table?.tableName || table?.tableNo || '').trim() || '本桌',
@@ -238,7 +282,7 @@ Page({
       settled,
       done,
       canceled,
-      canceledReason: String(order.cancelReason || '')
+      cancelTip
     });
   },
 
@@ -251,7 +295,8 @@ Page({
     this.setData({ urging: true });
     try {
       const res = await urgeOrder(this.data.orderNo, s.tableId, { silent: true });
-      toast.success('已通知后厨加急');
+      // 与 H5 useUrge 统一语气；7 字以内避免 success 图标截断
+      toast.success('催单成功，冲呀');
       this.startUrgeCooldown(Number(res?.cooldown) || URGE_COOLDOWN_FALLBACK_S);
     } catch (e) {
       // 冷却被拒时后端在响应体里给出剩余秒数，直接拿来展示倒计时

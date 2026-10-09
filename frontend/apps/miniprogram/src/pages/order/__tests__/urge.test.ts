@@ -41,7 +41,7 @@ describe('订单页 · 催菜', () => {
     await page.onUrge();
     await flush();
 
-    expect(wxMock.toasts.map(t => t.title)).toContain('已通知后厨加急');
+    expect(wxMock.toasts.map(t => t.title)).toContain('催单成功，冲呀');
     expect(page.data.urgeCooldown).toBe(90);
     expect(page.data.urging).toBe(false);
   });

@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils';
-import TDesign from 'tdesign-vue-next';
+import TDesign, { Dropdown as TDropdown } from 'tdesign-vue-next';
 import Tables from '../../Tables.vue';
 import TableCardGrid from '../TableCardGrid.vue';
 import { getConfig, listOrders, listTables } from '@dining/api';
@@ -158,18 +158,20 @@ function mountTables() {
 }
 
 describe('Tables 桌台管理页', () => {
-  it('挂载后顶部统计数值正确（总数/占用空闲/上座率/容量）', async () => {
+  it('挂载后顶部统计数值正确（总数/占用空闲/停用预约/上座率/容量）', async () => {
     const wrapper = mountTables();
     await flushPromises();
 
     const nums = wrapper.findAll('.stat .num').map(n => n.text());
-    expect(nums).toHaveLength(4);
+    expect(nums).toHaveLength(5);
     expect(nums[0]).toContain('4');
     // 合并卡「占用 / 空闲」:斜杠两侧分别是 2 / 2
     expect(nums[1]).toContain('2');
     expect(nums[1]).toContain('/');
-    expect(nums[2]).toContain('50');
-    expect(nums[3]).toContain('28');
+    // 合并卡「停用 / 预约」:默认数据无人为锁定,均为 0
+    expect(nums[2]).toContain('0');
+    expect(nums[3]).toContain('50');
+    expect(nums[4]).toContain('28');
     wrapper.unmount();
   });
 
@@ -207,16 +209,19 @@ describe('Tables 桌台管理页', () => {
     wrapper.unmount();
   });
 
-  it('点击卡片「二维码」按钮打开单码弹窗并传入桌台', async () => {
+  it('点击卡片「更多 → 二维码」打开单码弹窗并传入桌台', async () => {
     const wrapper = mountTables();
     await flushPromises();
 
-    const qrBtn = wrapper
-      .findAll('.mcard')[0]
-      .findAll('button')
-      .find(b => b.text().includes('二维码'));
-    expect(qrBtn).toBeTruthy();
-    await qrBtn!.trigger('click');
+    // 二维码/删除已收进「更多」下拉。弹层的开合是 TDesign Popup 的内部行为,
+    // jsdom 里点击触发器无法可靠展开(悬浮定位 + Teleport),这里直接在
+    // Dropdown 实例上触发 click,验证「菜单项 → emit('qr') → 弹窗打开」的接线。
+    const dropdown = wrapper.findComponent(TDropdown);
+    expect(dropdown.exists()).toBe(true);
+    (dropdown.vm as unknown as { $emit: (event: string, ...args: unknown[]) => void }).$emit('click', {
+      value: 'qr'
+    });
+    await flushPromises();
 
     const stub = wrapper.find('.single-qr-stub');
     expect(stub.exists()).toBe(true);

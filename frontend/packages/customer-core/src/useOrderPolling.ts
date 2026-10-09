@@ -4,19 +4,25 @@ import { ORDER_STATUS_CODE } from '@dining/shared';
 import type { OrderDetail } from '@dining/types';
 import { subscribeVisibility } from './visibility';
 
-export type ViewState = 'loading' | 'error' | 'menu' | 'order' | 'settled' | 'done' | 'canceled' | 'pay';
+export type ViewState = 'loading' | 'error' | 'locked' | 'menu' | 'order' | 'settled' | 'done' | 'canceled' | 'pay';
 
 interface PollOptions {
   view: Ref<ViewState>;
   currentOrder: Ref<OrderDetail | null>;
   onlineQr: Ref<string>;
   clearUrgeTimer: () => void;
+  /**
+   * 「这一拍才变成已支付」时回调(付前 payStatus≠1、付后 =1),用于支付成功反馈。
+   * 只在真正从未支付翻到已支付时触发:刷新页面进到已结账单、顾客返回已付款的订单页
+   * 都不会重复弹 —— 那些情况下 base.payStatus 已经是 1。
+   */
+  onPaid?: () => void;
 }
 
 // 轮询节奏:顾客端 3s 一拍,够快感知后厨状态又不至于打爆后端。
 const POLL_INTERVAL_MS = 3000;
 
-export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer }: PollOptions) {
+export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer, onPaid }: PollOptions) {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   // 可见性订阅的取消函数(startPolling 建立、stopPolling 释放)
   let unsubscribeVisibility: (() => void) | null = null;
@@ -47,6 +53,7 @@ export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer }
             currentOrder.value = o;
             onlineQr.value = '';
             view.value = 'settled';
+            onPaid?.();
           }
           return;
         }
@@ -71,6 +78,8 @@ export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer }
       if (o.payStatus === 1 && (view.value === 'order' || view.value === 'pay')) {
         onlineQr.value = '';
         view.value = 'settled';
+        // 只有「这一拍才付的款」才给反馈:已是已支付状态的订单(刷新/返回)不重复弹
+        if (Number(base?.payStatus) !== 1) onPaid?.();
       } else if (o.payStatus === 0 && view.value === 'settled') {
         // 撤销结算:订单回到未结账,顾客侧恢复到可加菜/付款的订单视图。
         view.value = 'order';

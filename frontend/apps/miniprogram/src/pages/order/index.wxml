@@ -45,7 +45,27 @@
           <view class="sec-title">菜品明细</view>
           <view class="sec-head-right">
             <view class="tag {{statusClass}}">{{statusText}}</view>
-            <view class="head-refresh" bindtap="onRefresh">刷新</view>
+            <view class="sec-refresh" bindtap="onRefresh">刷新</view>
+          </view>
+        </view>
+
+        <!-- 出餐进度：等餐的顾客最想知道「到哪一步了」。取消单没有进度可言，整块不渲染 -->
+        <view
+          wx:if="{{showProgress}}"
+          class="steps"
+        >
+          <view
+            wx:for="{{steps}}"
+            wx:key="label"
+            class="step {{item.on ? 'on' : ''}} {{item.now ? 'now' : ''}}"
+          >
+            <!-- 连接线：最后一步之后不再画（index 由 wx:for 提供） -->
+            <view
+              wx:if="{{index < 2}}"
+              class="step-bar {{item.barOn ? 'on' : ''}}"
+            ></view>
+            <view class="step-dot"></view>
+            <view class="step-txt">{{item.label}}</view>
           </view>
         </view>
         <view
@@ -102,19 +122,17 @@
       </view>
 
       <!-- 状态提示：只有「已取消 / 已完成 / 已结账」才出这张卡。
-           进行中的单这一格本来只有步骤条，去掉步骤条后就是张空白卡，直接整卡不渲染。 -->
+           进行中的单没有额外提示可说（进度在上面的菜品卡里），整卡不渲染 -->
       <view
         wx:if="{{canceled || done || settled}}"
         class="card sec"
       >
         <block wx:if="{{canceled}}">
-          <view class="cancel-tip">
-            订单已取消<text wx:if="{{canceledReason}}">：{{canceledReason}}</text>
-          </view>
+          <view class="cancel-tip">{{cancelTip}}</view>
         </block>
         <block wx:else>
-          <view wx:if="{{done}}" class="done-tip">本单已完成，欢迎下次光临</view>
-          <view wx:elif="{{settled}}" class="done-tip">本单已结账，菜品仍在出餐中，请稍候</view>
+          <view wx:if="{{done}}" class="done-tip">🎉 这顿吃完啦，欢迎下次光临</view>
+          <view wx:elif="{{settled}}" class="done-tip">已结账，后厨正在做啦～出餐进度会自动更新</view>
         </block>
       </view>
 
@@ -125,6 +143,13 @@
         <view class="info-meta">
           <text>{{personCount}} 人用餐</text>
           <text wx:if="{{createTimeText}}">{{createTimeText}}</text>
+        </view>
+        <!-- 支付凭证：结账后留一条可核对的记录（渠道 + 时间） -->
+        <view
+          wx:if="{{paidInfo}}"
+          class="info-paid"
+        >
+          <view class="info-paid-dot"></view>{{paidInfo}}
         </view>
       </view>
 

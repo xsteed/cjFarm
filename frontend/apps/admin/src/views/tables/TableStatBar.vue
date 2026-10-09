@@ -16,6 +16,14 @@
       </div>
     </div>
     <div class="stat">
+      <div class="label">停用 / 预约</div>
+      <div class="num">
+        <span class="n-dis">{{ summary.disabled }}</span>
+        <span class="nslash">/</span>
+        <span class="n-res">{{ summary.reserved }}</span>
+      </div>
+    </div>
+    <div class="stat">
       <div class="label">占用率</div>
       <div class="num">{{ summary.rate }}<span class="unit">%</span></div>
     </div>
@@ -31,6 +39,9 @@ interface TableSummary {
   total: number;
   occupied: number;
   idle: number;
+  // 人工设置的「停用 / 预约」桌台数(与占用正交,不计入空闲)。
+  disabled: number;
+  reserved: number;
   rate: number;
   capacity: number;
 }
@@ -83,6 +94,15 @@ defineProps<{
 
 .stat .num .n-idle {
   color: #2ba24a;
+}
+
+/* 停用(灰) / 预约(蓝) 两个数字:与占用/空闲同款区分 */
+.stat .num .n-dis {
+  color: #8a8f99;
+}
+
+.stat .num .n-res {
+  color: #3d6ff0;
 }
 
 .stat .num .nslash {

@@ -69,6 +69,15 @@
             />
             <span>30 天</span>
           </label>
+          <label :class="{ active: rememberDays === REMEMBER_PERMANENT_DAYS }">
+            <input
+              v-model="rememberDays"
+              type="radio"
+              :value="REMEMBER_PERMANENT_DAYS"
+              :disabled="!remember"
+            />
+            <span>永久</span>
+          </label>
         </div>
       </div>
 
@@ -108,6 +117,8 @@ const form = reactive<{ username: string; password: string }>({ username: '', pa
 const loading = ref(false);
 const remember = ref(false);
 const rememberDays = ref(7);
+// 「永久」档:后端以此天数识别永久(36500 天 = 100 年,语义上等于不过期)。
+const REMEMBER_PERMANENT_DAYS = 36500;
 // 密码明文/密文切换:默认密文,由右侧小眼睛图标控制。
 const showPassword = ref(false);
 // 用户是否已明确表达「我要手动登录」(开始输入 / 点击登录)。一旦置位,
@@ -238,6 +249,9 @@ onMounted(() => {
   background: radial-gradient(circle, rgb(255 107 53 / 18%), transparent 70%);
   top: -140px;
   left: -100px;
+  /* 纯装饰的背景圆:必须放行指针事件,否则窄屏(手机)上它会盖住下半张登录卡,
+     点击登录按钮实际命中的是 .login-wrap,表现为「点了登录没反应」。 */
+  pointer-events: none;
 }
 
 .login-wrap::after {
@@ -249,6 +263,7 @@ onMounted(() => {
   background: radial-gradient(circle, rgb(240 72 31 / 12%), transparent 70%);
   bottom: -140px;
   right: -80px;
+  pointer-events: none;
 }
 
 .login-card {
@@ -390,9 +405,11 @@ onMounted(() => {
 }
 
 .remember {
+  /* 档位有 7 天/30 天/永久三档,单行放不下,改为两行:勾选一行、档位一行 */
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   margin: -2px 0 18px;
   font-size: 12.5px;
   color: var(--ink-2);

@@ -217,9 +217,10 @@ function parseTime(s: unknown): number {
   return new Date(String(s || '').replace(/-/g, '/')).getTime();
 }
 
-// 档位:由「到期 - 签发」反推,即登录时勾选的 7 天 / 30 天。
+// 档位:由「到期 - 签发」反推,即登录时勾选的 7 天 / 30 天 / 永久。
 function planText(row: RememberSession): string {
   const days = Math.round((parseTime(row.expireTime) - parseTime(row.createTime)) / 86400000);
+  if (days >= 36500) return '永久';
   return `${days} 天`;
 }
 

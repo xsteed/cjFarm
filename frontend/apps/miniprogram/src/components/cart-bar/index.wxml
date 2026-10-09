@@ -5,7 +5,7 @@
   <view class="cb-left">
     <!-- 购物车图标 + 份数角标。组件样式隔离、也不引外部图片，
          所以图标用 CSS 画：车把 + 车筐（梯形）+ 两个轮子，全部 currentColor。 -->
-    <view class="cb-cart {{count > 0 ? '' : 'off'}}">
+    <view class="cb-cart {{count > 0 ? '' : 'off'}} {{bump ? 'bump' : ''}}">
       <view class="cb-cart-hd"></view>
       <view class="cb-cart-bd"></view>
       <view class="cb-cart-w"></view>

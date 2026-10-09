@@ -346,6 +346,8 @@
 }
 
 .cat {
+  /* 角标的定位基准：分类项本身即包含块（高亮态的左条也要用，提到基类） */
+  position: relative;
   padding: 28rpx 16rpx;
   color: var(--ink-2);
   font-size: 26rpx;
@@ -354,10 +356,29 @@
 }
 
 .cat.on {
-  position: relative;
   background: #fff;
   color: var(--brand-deep);
   font-weight: 700;
+}
+
+/* 分类已点份数角标：固定在分类项右上角，与 H5 MenuView 的 .cat-badge 同款（px→rpx ×2） */
+.cat-badge {
+  position: absolute;
+  top: 6rpx;
+  right: 10rpx;
+  min-width: 30rpx;
+  height: 30rpx;
+  padding: 0 8rpx;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .cat.on::before {
@@ -445,6 +466,21 @@
   justify-content: center;
   color: var(--ink-4);
   font-size: 22rpx;
+}
+
+/* 招牌角标：贴图片左上角，品牌色渐变底 + 白字（与 H5 op-signature 同视觉） */
+.sig-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 2rpx 14rpx;
+  border-radius: var(--r-md) 0 var(--r-md) 0;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 700;
+  letter-spacing: 2rpx;
 }
 
 /* 售罄：半透明遮罩盖住图片 + 居中「售罄」，即使没图/坏图也能一眼认出 */
@@ -754,4 +790,71 @@
 /* 结算栏固定定位在导航之上，列表末尾留出等高空隙，避免最后一道菜被挡住 */
 .list-pad {
   height: 140rpx;
+}
+
+/* ---------- 抛物线飞球：「+」加菜飞入购物车（与 H5 OrderPage.onFly 同款） ----------
+   每次加菜由页面挂载一个新节点，位移量以内联 CSS 变量（--fx/--fy）注入，
+   节点挂载即自动播放 keyframes —— 没有两段 setData 的首帧竞态，连点多球并行。
+   外层 .fly-x 水平位移线性、中层 .fly-y 竖直位移缓入，叠加成抛物线；
+   内层 .fly-core 是「小球包裹」本体，用纯 CSS keyframes 缩小。 */
+.fly-x {
+  position: fixed;
+  /* 高于结算栏(20)，低于规格弹层/购物车半屏 */
+  z-index: 50;
+  pointer-events: none;
+  /* 变量兜底定义：正常由内联 style 注入 */
+  --fx: 0px;
+  animation: fly-x-move 0.4s linear forwards;
+  will-change: transform;
+}
+
+/* 中层只承担竖直位移（缓入），与外层线性水平位移叠加成抛物线 */
+.fly-y {
+  --fy: 0px;
+  animation: fly-y-move 0.4s cubic-bezier(0.5, 0, 0.85, 0.42) forwards;
+  will-change: transform;
+}
+
+/* 结算栏宿主：页面 JS 用它量购物车图标位置 / 拿组件实例，本身无需样式 */
+.cart-bar-host {
+  position: static;
+}
+
+.fly-core {
+  width: 28rpx;
+  height: 28rpx;
+  /* 负外边距把球心对到坐标点上（left/top 对齐的是触点/图标中心，不是左上角） */
+  margin: -14rpx 0 0 -14rpx;
+  border-radius: 50%;
+  /* 品牌渐变球 + 左上高光，与 cart-bar 的 --grad-brand-soft 同色系 */
+  background: radial-gradient(circle at 30% 28%, #ffb27d 0%, #ff6b35 55%, #f0481f 100%);
+  box-shadow: 0 4rpx 12rpx rgb(240 72 31 / 35%);
+  animation: fly-shrink 0.4s ease-in forwards;
+}
+
+@keyframes fly-x-move {
+  to {
+    transform: translate(var(--fx), 0);
+  }
+}
+
+@keyframes fly-y-move {
+  to {
+    transform: translate(0, var(--fy));
+  }
+}
+
+@keyframes fly-shrink {
+  0% {
+    transform: scale(1.15);
+  }
+
+  70% {
+    transform: scale(0.9);
+  }
+
+  100% {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
 }

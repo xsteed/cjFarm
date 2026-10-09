@@ -170,8 +170,8 @@ describe('OrderPage', () => {
 
     await flushPromises();
     expect(wrapper.text()).toContain('宫保鸡丁');
-    // 空车:结算栏按钮显示提示文案「请选择菜品」(与小程序 cart-bar 一致)
-    expect(wrapper.text()).toContain('请选择菜品');
+    // 一道菜都还没点时结算栏不出现,避免首屏一条空栏压住菜单
+    expect(wrapper.find('.op-checkout').exists()).toBe(false);
     expect(getTableMock).toHaveBeenCalledWith('1');
     wrapper.unmount();
   });
@@ -203,7 +203,7 @@ describe('OrderPage', () => {
     const wrapper = mountPage();
     await flushPromises();
 
-    // 加一道菜,让购物车非空(热区在 totalCount 为 0 时不响应)
+    // 加一道菜,让购物车非空
     await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
     await nextTick();
 
@@ -214,14 +214,49 @@ describe('OrderPage', () => {
     wrapper.unmount();
   });
 
-  it('结算栏按钮文案随购物车状态切换:空车「请选择菜品」,选菜后「去结算」', async () => {
+  it('结算栏按钮文案随购物车状态切换:选菜后「去结算」,清空后回到「请选择菜品」', async () => {
     const wrapper = mountPage();
     await flushPromises();
-    expect(wrapper.find('.op-checkout').text()).toBe('请选择菜品');
+    // 从未点过菜:结算栏还没出现
+    expect(wrapper.find('.op-checkout').exists()).toBe(false);
 
     await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
     await nextTick();
     expect(wrapper.find('.op-checkout').text()).toBe('去结算');
+
+    // 清空后结算栏常驻,文案回到空车提示(与小程序 cart-bar 一致)
+    await wrapper.find('.op-cartarea').trigger('click');
+    await nextTick();
+    await wrapper.find('.clear-btn').trigger('click');
+    const opts = vi.mocked(DialogPlugin.confirm).mock.calls[0][0] as { onConfirm?: () => void };
+    opts.onConfirm?.();
+    await nextTick();
+    expect(wrapper.find('.op-checkout').text()).toBe('请选择菜品');
+    wrapper.unmount();
+  });
+
+  it('清空购物车后仍能展开抽屉:空车热区点击也打开,并展示空态', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // 加菜 → 打开抽屉 → 清空(确认弹窗)后抽屉保持空态;此时关掉再点结算栏,应能重新展开
+    await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
+    await nextTick();
+    await wrapper.find('.op-cartarea').trigger('click');
+    await nextTick();
+
+    await wrapper.find('.clear-btn').trigger('click');
+    const dialog = vi.mocked(DialogPlugin.confirm);
+    const opts = dialog.mock.calls[0][0] as { onConfirm?: () => void };
+    opts.onConfirm?.();
+    await nextTick();
+    // 清空后抽屉自动收起
+    expect(wrapper.find('.tdrawer-stub').exists()).toBe(false);
+
+    // 收起后,空车状态下点金额区热区仍应能重新展开并展示空态
+    await wrapper.find('.op-cartarea').trigger('click');
+    await nextTick();
+    expect(wrapper.text()).toContain('购物车空空如也');
     wrapper.unmount();
   });
 
@@ -235,6 +270,35 @@ describe('OrderPage', () => {
     wrapper.unmount();
   });
 
+  it('搜索:点 hero 搜索按钮进独立搜索页,输入过滤结果,收起后回到菜单', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // 装饰伪元素曾拦住按钮点击,这里钉住入口可达
+    await wrapper.find('.op-searchbtn').trigger('click');
+    await nextTick();
+    expect(wrapper.find('.search-layer').exists()).toBe(true);
+    expect(wrapper.find('.menu-sheet').exists()).toBe(false);
+
+    // 输入关键词:命中菜名
+    const input = wrapper.find('.search-input');
+    (input.element as HTMLInputElement).value = '宫保';
+    await input.trigger('input');
+    await nextTick();
+    expect(wrapper.text()).toContain('宫保鸡丁');
+
+    // 清词后 × 收起搜索页,回到菜单(左栏恢复)
+    (input.element as HTMLInputElement).value = '';
+    await input.trigger('input');
+    await nextTick();
+    await wrapper.find('.search-clear').trigger('click');
+    await nextTick();
+    expect(wrapper.find('.search-layer').exists()).toBe(false);
+    expect(wrapper.find('.menu-sheet').exists()).toBe(true);
+    expect(wrapper.find('.op-side').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   it('getTable 失败展示错误视图,点击重试后恢复菜单', async () => {
     getTableMock.mockRejectedValueOnce({ message: '桌号不存在' });
 
@@ -242,6 +306,24 @@ describe('OrderPage', () => {
     await flushPromises();
     expect(wrapper.text()).toContain('桌号不存在，请重新扫描餐桌上的二维码');
 
+    await wrapper.find('.retry-btn').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('宫保鸡丁');
+    wrapper.unmount();
+  });
+
+  it('桌台被停用/预约时不进菜单,展示锁定提示', async () => {
+    getTableMock.mockResolvedValue({ ...tableNoOrder, lockStatus: 2 });
+
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(wrapper.text()).toContain('该桌台已被预订，如需用餐请联系店员');
+    // 锁定态不渲染菜单与结算栏,顾客点不出菜品
+    expect(wrapper.find('.op-body').exists()).toBe(false);
+    expect(wrapper.find('.op-checkout').exists()).toBe(false);
+
+    // 店员改回「正常」后,顾客点「刷新状态」即可正常点餐
+    getTableMock.mockResolvedValue(tableNoOrder);
     await wrapper.find('.retry-btn').trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('宫保鸡丁');
@@ -386,6 +468,54 @@ describe('OrderPage', () => {
       expect(getOrderByNoMock).toHaveBeenCalledWith('NO001');
       expect(wrapper.text()).toContain('已上齐');
 
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('轮询发现刚支付成功时弹一次成功卡,1.8s 后自动收起', async () => {
+    vi.useFakeTimers();
+    try {
+      const unpaid = makeOrder({ orderStatus: 2, payStatus: 0 });
+      const paid = makeOrder({ orderStatus: 2, payStatus: 1, payType: '微信', payTime: '2026-10-09 12:03:07' });
+      getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: unpaid });
+      getOrderByNoMock.mockResolvedValue(paid);
+
+      const wrapper = mountPage();
+      await drainMicrotasks();
+      expect(wrapper.find('.pd-card').exists()).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await drainMicrotasks();
+
+      // 成功卡:金额 + 渠道,并且订单已切到已结账视图
+      expect(wrapper.find('.pd-card').exists()).toBe(true);
+      expect(wrapper.find('.pd-amt').text()).toContain('28.00');
+      expect(wrapper.text()).toContain('微信支付');
+      expect(wrapper.text()).toContain('已结账，后厨正在做啦');
+
+      await vi.advanceTimersByTimeAsync(1800);
+      expect(wrapper.find('.pd-card').exists()).toBe(false);
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('进入已结账订单(刷新进来)不重复弹成功卡', async () => {
+    vi.useFakeTimers();
+    try {
+      const paid = makeOrder({ orderStatus: 2, payStatus: 1, payType: '微信' });
+      getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: paid });
+      getOrderByNoMock.mockResolvedValue(paid);
+
+      const wrapper = mountPage();
+      await drainMicrotasks();
+      await vi.advanceTimersByTimeAsync(3000);
+      await drainMicrotasks();
+
+      expect(wrapper.find('.pd-card').exists()).toBe(false);
       wrapper.unmount();
     } finally {
       vi.useRealTimers();

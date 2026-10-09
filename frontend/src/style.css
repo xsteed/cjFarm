@@ -200,6 +200,29 @@ svg.ic-svg {
     padding: 0;
   }
 
+  /* 贴底弹层的进出场改为竖向滑入/滑出,替换 TDesign 默认的中心缩放
+     (tDialogZoomIn/Out)。滑出 keyframes 只定义终点,起点取元素当前
+     transform——下拉手势拖到一半松手时能从当前位置平滑滑出,不跳变。 */
+  .t-dialog-zoom__vue-enter-active .t-dialog {
+    animation-name: tDialogSlideUp;
+  }
+
+  .t-dialog-zoom__vue-leave-active .t-dialog {
+    animation-name: tDialogSlideDown;
+  }
+
+  @keyframes tDialogSlideUp {
+    from {
+      transform: translateY(100%);
+    }
+  }
+
+  @keyframes tDialogSlideDown {
+    to {
+      transform: translateY(100%);
+    }
+  }
+
   /* 顶部抓取条:一眼看出可下拉关闭的移动端弹层形态 */
   .t-dialog__header {
     position: relative;
@@ -518,6 +541,17 @@ svg.ic-svg {
 
   .page-card {
     padding: 12px;
+  }
+
+  /* 卡片操作区:由「挤在右下角的小文字按钮」改为两列等宽大按钮,拇指好点、更整齐。
+     只剩一个操作时 flex-grow 会让它自然铺满整行。 */
+  .mcard-ft {
+    gap: 8px;
+  }
+
+  .mcard-ft .t-button {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
   }
 }
 
@@ -995,16 +1029,14 @@ svg.ic-svg {
 
   .t-date-range-picker__panel .t-date-picker__footer--left,
   .t-date-range-picker__panel .t-date-picker__footer--right {
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-flow: row wrap;
     border-right: none;
     border-left: none;
     border-bottom: 1px solid var(--line);
   }
 
   .t-date-range-picker__panel .t-date-picker__presets {
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-flow: row wrap;
   }
 
   .t-date-range-picker__panel-content,
