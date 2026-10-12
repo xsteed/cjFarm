@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 扫码点餐管理系统 - 部署 / 更新脚本（服务器端，同一个命令两件事）
+# 点餐管理系统 - 部署 / 更新脚本（服务器端，同一个命令两件事）
 #
 # 自动识别模式:
 #   安装目录下没有后端二进制 → 首次安装(建用户 + 装 systemd + 配 Nginx + 启动)
@@ -23,13 +23,18 @@
 #   --rebuild         强制重新编译(仓库内开发时用)
 #   --no-fix-nginx    不自动修复线上遗留的 /prod-api 旧前缀(默认会自动修复)
 #   --allow-db-switch 允许把 driver 从 sqlite 改为 mysql(默认拒绝, 见下方「切换 MySQL」)
+#   --refresh-config  按发布包内 backend/config.prod.yaml **整份重建** <INSTALL_DIR>/config.yaml
+#                     (原文件先备份为 config.yaml.bak.<时间戳>); 不加时只同步 database 段
 #   默认: 有产物就直接用, 没有才编译(更新包内天然走这条路)
 #
 # 部署配置(统一落在 config.yaml, 后端启动时读工作目录下这个文件):
 #   <INSTALL_DIR>/config.yaml —— 端口/静态目录/日志路径/数据库/管理端账号/可信代理全在这里
 #     · 首次安装: 从 backend/config.prod.yaml 生成(包里没有则回退 config.example.yaml), 并校正上述各项;
-#     · 覆盖更新: database 段仅在本次传了 DB_* 时重写;
+#     · 覆盖更新: database 段**每次都与模板同步** —— 改了 config.prod.yaml 里 mysql 的
+#       host/user/password 重新发版即生效, 无需额外传参; 本次传了 DB_* 则以参数为准;
 #       server.static_dir / log.path / log.agent_path 只在缺失时补写(模板给过或手改过则保留);
+#       其余段落(server.port / trusted_proxies / security / admin 等)保持线上值不动,
+#       想整份按模板重建须加 --refresh-config(会先把原文件备份成 config.yaml.bak.<时间戳>);
 #     · 端口: 显式传 BACKEND_PORT 时写入该值, 否则沿用文件里已有的值;
 #     · 历史版本写在 /etc/dining-backend.env 的 DB_* / ADMIN_* / TRUSTED_PROXIES
 #       会自动迁移进 config.yaml 并从该文件移除(旧文件备份为 .bak.<时间戳>) —— 因为
@@ -37,9 +42,11 @@
 #   systemd 服务单元因此不再声明任何配置项(只留 WorkingDirectory / ExecStart / EnvironmentFile)。
 #
 # 切换 MySQL(config.yaml 的 database 段由此重写, 详见 docs/mysql-migration.md):
+#   · 发布包里的 backend/config.prod.yaml 已填好 mysql 时, 首次安装直接采用, **无需传 DB_***;
+#   · 已有安装(当前是 sqlite)要切到 mysql 时必须显式传参 + --allow-db-switch:
 #   sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_USER=dining \
 #     DB_PASSWORD=xxx DB_NAME=dining bash deploy/deploy.sh --allow-db-switch
-#   或一行完整连接串: sudo DB_DSN='dining:pw@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh --allow-db-switch
+#   或一行完整连接串: sudo DB_DSN='dining:pw@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728' bash deploy/deploy.sh --allow-db-switch
 #
 #   ⚠️ 数据不会自动搬迁。本脚本**默认拒绝** sqlite -> mysql 的切换(必须显式加
 #      --allow-db-switch), 因为切到空库后系统会建表并灌入出厂种子, 现场表现与
@@ -90,12 +97,14 @@ FORCE_REBUILD=0
 SKIP_BUILD=0
 FIX_NGINX_LEGACY=1
 ALLOW_DB_SWITCH=0
+REFRESH_CONFIG=0
 for arg in "$@"; do
   case "$arg" in
     --rebuild)        FORCE_REBUILD=1 ;;
     --skip-build)     SKIP_BUILD=1 ;;
     --no-fix-nginx)   FIX_NGINX_LEGACY=0 ;;
     --allow-db-switch) ALLOW_DB_SWITCH=1 ;;
+    --refresh-config) REFRESH_CONFIG=1 ;;
     -h|--help)        usage; exit 0 ;;
     *) echo "未知参数: $arg (用 -h 查看用法)" >&2; exit 2 ;;
   esac
@@ -145,6 +154,10 @@ log "模式: $MODE_TEXT  (安装目录: $INSTALL_DIR)"
 
 # ---------------------------- 管理端初始凭据 ----------------------------
 # 仅首次建库时读取(写入 tb_user);未设置时回退到默认值。
+# ADMIN_GIVEN: 调用方是否显式指定过。为 0 时不去改写模板里的 admin 段 —— 重写只会把
+# 注释换掉、标量加引号, 让部署出的 config.yaml 与 config.prod.yaml 出现无意义差异。
+ADMIN_GIVEN=0
+if [ -n "${ADMIN_USER:-}" ] || [ -n "${ADMIN_PASS:-}" ]; then ADMIN_GIVEN=1; fi
 ADMIN_USER="${ADMIN_USER:-admin}"
 if [ -z "${ADMIN_PASS:-}" ]; then
   if [ "$MODE" = "install" ]; then
@@ -156,8 +169,9 @@ if [ -z "${ADMIN_PASS:-}" ]; then
 fi
 
 # ---------------------------- 数据库配置(写入 config.yaml) ----------------------------
-# 默认 SQLite(与代码默认一致)。传 DB_DRIVER=mysql / DB_DSN 时改写 config.yaml 的
-# database 段; 不传则保持 SQLite 开箱即用。不再使用 /etc/dining-backend.env。
+# 传 DB_DRIVER=mysql / DB_DSN 时按本次参数重写 config.yaml 的 database 段;
+# **不传时沿用现有文件/模板里的 database 段** —— 新装的模板(config.prod.yaml)若已填 mysql
+# 就用 mysql, 否则维持 SQLite 开箱即用。不再使用 /etc/dining-backend.env。
 
 # db_switch_requested: 本次部署是否明确要求切换数据库(传了 DB_DRIVER=mysql 或 DB_DSN)。
 db_switch_requested() {
@@ -202,6 +216,12 @@ replace_yaml_section() {
 }
 
 # db_yaml_block: 生成 config.yaml 的 database 段(输出到 stdout)。
+# 只在这两种情况下被调用:
+#   ① 本次传了 DB_DRIVER/DB_DSN(按参数切库);
+#   ② 目标 config.yaml 里还没有可用的 database.driver(模板没提供 / 整段被注释掉)。
+# 所以这里「不传 DB_* 就写 sqlite」不会把模板(config.prod.yaml)里填好的 mysql 段顶掉。
+# 打印脚本生成的 mysql 段前必须走 db_switch_requested 判定, 不要无条件写 mysql —— 那会把
+# 「没传参」误判成「要切库」。
 db_yaml_block() {
   printf '# ---------------------------------------------------------------------------\n'
   printf '# 数据库后端(本段由 deploy/deploy.sh 维护: 部署时传 DB_* 会被整体重写)\n'
@@ -267,11 +287,14 @@ mask_dsn() {
   esac
 }
 
-# yaml_section_value: 取 config.yaml 中某顶层段内的键值(去掉引号与行尾注释)。
-# $1 = 段名(database) $2 = 键名(driver / dsn)。
-yaml_section_value() {
-  [ -f "$DEPLOY_CONFIG" ] || return 0
-  awk -v sec="$1" -v key="$2" '
+# yaml_value_in: 从**任意** YAML 文件里取某顶层段内的键值(去掉引号与行尾注释)。
+# $1 = 文件 $2 = 段名(database) $3 = 键名(driver / host / dsn)。
+# 需要「读模板」而不只是读线上配置, 所以把文件当作参数; 下面 yaml_section_value 只是
+# 固定成 $DEPLOY_CONFIG 的薄封装。
+yaml_value_in() {
+  local file="$1" sec="$2" key="$3"
+  [ -f "$file" ] || return 0
+  awk -v sec="$sec" -v key="$key" '
     $0 ~ ("^" sec ":")        { insec = 1; next }
     insec && /^[^[:space:]#]/ { insec = 0 }
     insec && $0 ~ ("^[[:space:]]+" key ":") {
@@ -279,7 +302,27 @@ yaml_section_value() {
       sub(/[[:space:]]+#.*$/, "")
       print; exit
     }
-  ' "$DEPLOY_CONFIG" | tr -d '"' | tr -d "'"
+  ' "$file" | tr -d '"' | tr -d "'"
+  return 0
+}
+
+# yaml_section_value: 取 <INSTALL_DIR>/config.yaml 中某顶层段内的键值。
+yaml_section_value() {
+  yaml_value_in "$DEPLOY_CONFIG" "$1" "$2"
+}
+
+# extract_yaml_section: 打印文件 $1 里顶层段 $2 的**原文**(含段头与段内注释)。
+# 段边界与 replace_yaml_section 一致: 第 0 列的 "<name>:" 起, 到下一个第 0 列的
+# 非空非注释行为止。用于把模板(config.prod.yaml)里填好的 database 段整段搬到
+# 线上配置, 而不是只搬 driver —— 否则 host/user/password 这些还是会漏。
+extract_yaml_section() {
+  local file="$1" name="$2"
+  [ -f "$file" ] || return 0
+  awk -v name="$name" '
+    $0 ~ ("^" name ":") { insec = 1 }
+    insec && /^[^[:space:]#]/ && $0 !~ ("^" name ":") { insec = 0 }
+    insec { print }
+  ' "$file"
   return 0
 }
 
@@ -339,20 +382,31 @@ set_yaml_scalar() {
 
 # db_summary 输出部署总结里的「数据库后端」一行:
 #   1. 本次命令传了 DB_DRIVER/DB_DSN → 用它;
-#   2. 否则读 config.yaml 的 database 段(更新模式下配置可能早已写在其中);
+#   2. 否则读 config.yaml 的 database 段(首装沿用模板 / 更新沿用线上配置, 都写在其中);
 #   3. 都没有 → SQLite。
 db_summary() {
   local drv="${DB_DRIVER:-}" dsn="${DB_DSN:-}"
+  local host="${DB_HOST:-}" port="${DB_PORT:-}" user="${DB_USER:-}" name="${DB_NAME:-}"
   if ! db_switch_requested && [ -f "$DEPLOY_CONFIG" ]; then
     drv="$(yaml_section_value database driver)"
-    [ "$drv" = "mysql" ] && dsn="$(yaml_section_value database dsn)"
+    if [ "$drv" = "mysql" ]; then
+      dsn="$(yaml_section_value database dsn)"
+      # 分项也要从 config.yaml 读: 首装沿用模板(如 config.prod.yaml 的 172.16.0.10)时,
+      # 只读 driver 会让总结打印出脚本默认的 127.0.0.1 —— 与实际连接的主机不符,
+      # 运维照这个结论排查会被直接带偏。
+      host="$(yaml_section_value database host)"
+      port="$(yaml_section_value database port)"
+      user="$(yaml_section_value database user)"
+      name="$(yaml_section_value database name)"
+    fi
   fi
   if [ "$drv" = "mysql" ] || [ -n "$dsn" ]; then
     if [ -n "$dsn" ]; then
       printf 'MySQL 连接串: %s' "$(mask_dsn "$dsn")"
     else
       printf 'MySQL: %s@%s:%s/%s' \
-        "${DB_USER:-root}" "${DB_HOST:-127.0.0.1}" "${DB_PORT:-3306}" "${DB_NAME:-dining}"
+        "${user:-root}" "${host:-127.0.0.1}" "${port:-3306}" "${name:-dining}"
+      [ -z "$user$host$port$name" ] && printf ' (分项未配置, 用程序默认值)'
     fi
     return 0
   fi
@@ -402,6 +456,8 @@ backup_current() {
   # 「二进制回滚了、VERSION 仍是新的」: 运维按脚本提示 `cat $INSTALL_DIR/VERSION`
   # 核对提交号时会读到与实际运行版本不符的内容, 排查方向直接被带偏。
   [ -f "$INSTALL_DIR/VERSION" ] && cp -a "$INSTALL_DIR/VERSION" "$BACKUP_DIR/VERSION"
+  # 运维脚本随包更新, 回滚必须一起还原(旧版本装在 bin/check-health.sh, 一并兼容)。
+  [ -d "$INSTALL_DIR/op" ] && cp -a "$INSTALL_DIR/op" "$BACKUP_DIR/op"
   [ -f "$BIN_DIR/check-health.sh" ] && cp -a "$BIN_DIR/check-health.sh" "$BACKUP_DIR/check-health.sh"
   [ -d "$INSTALL_DIR/print-agent/bin" ] && cp -a "$INSTALL_DIR/print-agent/bin" "$BACKUP_DIR/print-agent-bin"
   log "已备份当前版本 -> $BACKUP_DIR"
@@ -432,8 +488,17 @@ rollback() {
     cp -f "$BACKUP_DIR/VERSION" "$INSTALL_DIR/VERSION"
     warn "已还原 $INSTALL_DIR/VERSION"
   fi
-  if [ -f "$BACKUP_DIR/check-health.sh" ]; then
-    install -m 0755 "$BACKUP_DIR/check-health.sh" "$BIN_DIR/check-health.sh"
+  if [ -d "$BACKUP_DIR/op" ]; then
+    rm -rf "$INSTALL_DIR/op"
+    cp -a "$BACKUP_DIR/op" "$INSTALL_DIR/op"
+    chmod +x "$INSTALL_DIR/op"/*.sh 2>/dev/null || true
+    log "已还原 op/ 运维脚本"
+  elif [ -f "$BACKUP_DIR/check-health.sh" ]; then
+    # 旧备份格式: 只有 bin/check-health.sh —— 还原进 op/(统一位置), 并清掉 bin/ 里的旧位置
+    mkdir -p "$INSTALL_DIR/op"
+    install -m 0755 "$BACKUP_DIR/check-health.sh" "$INSTALL_DIR/op/check-health.sh"
+    rm -f "$BIN_DIR/check-health.sh"
+    log "已还原旧格式的 check-health.sh -> op/"
   fi
   if [ -d "$BACKUP_DIR/print-agent-bin" ]; then
     rm -rf "$INSTALL_DIR/print-agent/bin"
@@ -461,9 +526,18 @@ install_artifacts() {
     cp -r "$DIST_SRC/." "$FRONTEND_DIST/"
   fi
 
-  # 运维脚本(check-health.sh)随包更新, 便于服务器上直接跑
-  if [ -f "$PROJECT_DIR/deploy/check-health.sh" ]; then
-    install -m 0755 "$PROJECT_DIR/deploy/check-health.sh" "$BIN_DIR/check-health.sh"
+  # 运维脚本一整套装到 <INSTALL_DIR>/op/(状态/健康/备份/还原/回滚/卸载), 随包更新。
+  # 不再散在 bin/ 下 —— bin/ 只放「被服务执行」的东西, 运维入口集中一个地方好找。
+  if [ -d "$PROJECT_DIR/deploy/op" ]; then
+    mkdir -p "$INSTALL_DIR/op"
+    cp -a "$PROJECT_DIR/deploy/op/." "$INSTALL_DIR/op/"
+    chmod +x "$INSTALL_DIR/op"/*.sh 2>/dev/null || true
+    log "安装运维脚本 -> $INSTALL_DIR/op"
+    # 旧版本把 check-health.sh 装在 bin/: 统一迁到 op/, 避免两份并存改错地方
+    if [ -f "$BIN_DIR/check-health.sh" ]; then
+      rm -f "$BIN_DIR/check-health.sh"
+      log "已移除旧位置的 bin/check-health.sh(运维脚本统一到 op/)"
+    fi
   fi
 
   # 打印代理产物: 供门店侧 print-agent --upgrade 自助升级下载。
@@ -576,17 +650,37 @@ strip_env_file() {
   return 0
 }
 
-# ensure_deploy_config: 保证 <INSTALL_DIR>/config.yaml 存在, 并把本次的
-# database / admin / trusted_proxies 写进去。已存在时只重写被明确要求改动的段,
-# 用户手写的 server / security 等段落一字不动。
+# ensure_deploy_config: 保证 <INSTALL_DIR>/config.yaml 与发布包里的模板保持一致。
+#   · 首装: 照抄模板(config.prod.yaml, 缺失回退 config.example.yaml)生成;
+#   · --refresh-config: 更新模式也整份按模板重建(原文件先备份);
+#   · 默认更新: 只同步 database 段(模板写 mysql 就同步 mysql), 其余段落一字不动 ——
+#     整份覆盖会连运维手改的 trusted_proxies / log.level / server.port 一起冲掉。
 ensure_deploy_config() {
   local existed=0
   [ -f "$DEPLOY_CONFIG" ] && existed=1
 
+  # 线上文件在本次部署**之前**记的后端: 切库守卫必须用它判断, 不能用被模板覆盖之后
+  # 的值 —— 否则 --refresh-config 先把文件换成 mysql, 守卫再看到 mysql, 就自己放行了,
+  # sqlite -> mysql 会绕过拦截(正是这个守卫要防的事故)。
+  local prev_db_driver=""
+  [ "$existed" = "1" ] && prev_db_driver="$(yaml_section_value database driver)"
+
   local tpl="$CONFIG_TEMPLATE"
   [ -f "$tpl" ] || tpl="$CONFIG_TEMPLATE_FALLBACK"
 
-  if [ "$existed" = "0" ]; then
+  local refresh=0
+  if [ "$REFRESH_CONFIG" = "1" ] && [ -f "$tpl" ]; then
+    refresh=1
+  elif [ "$REFRESH_CONFIG" = "1" ]; then
+    warn "--refresh-config 未生效: 找不到模板 $tpl, 保留现有 $DEPLOY_CONFIG"
+  fi
+
+  if [ "$existed" = "0" ] || [ "$refresh" = "1" ]; then
+    if [ "$existed" = "1" ]; then
+      local bak="$DEPLOY_CONFIG.bak.$(date +%Y%m%d-%H%M%S)"
+      cp -a "$DEPLOY_CONFIG" "$bak" \
+        && warn "已按 --refresh-config 用模板重建配置, 原文件备份为 $bak"
+    fi
     if [ -f "$tpl" ]; then
       log "生成部署配置 $DEPLOY_CONFIG (来源: $tpl)"
       cp -f "$tpl" "$DEPLOY_CONFIG"
@@ -611,46 +705,83 @@ EOF
     fi
   fi
 
-  local block
+  # ---- 目标数据库后端 ----
+  # 取模板里的 database 段原文(含 host/user/password/params), 供下面整段搬到线上配置。
+  local block tpl_db tpl_driver=""
+  tpl_db="$(mktemp)"
+  [ -f "$tpl" ] && extract_yaml_section "$tpl" database > "$tpl_db"
+  tpl_driver="$(yaml_value_in "$tpl_db" database driver)"
+
+  # 期望的 driver: 传了 DB_* 以本次参数为准; 否则以模板为准(模板写 mysql 就是 mysql)。
+  local want_driver=""
+  if db_switch_requested; then
+    want_driver="mysql"
+  elif [ "$tpl_driver" = "mysql" ]; then
+    want_driver="mysql"
+  fi
+
   # ---- 切库守卫 ----
   # 把 driver 从 sqlite 改成 mysql 时, 数据**不会**自动搬过去: 后端启动会在空库上
   # 建好全套空表, 再因为 tb_category 为空而灌入出厂种子。现场表现就是「菜品变回
   # 出厂菜单、历史订单与会员全部消失」—— 从运维视角看与数据丢失无异, 且旧库还躺在
   # ./data/dining.db 里没人用。这种事故只能靠拦截, 不能靠文档提醒。
-  if [ "$existed" = "1" ] && db_switch_requested && [ "$ALLOW_DB_SWITCH" != "1" ]; then
-    local prev_driver
-    prev_driver="$(yaml_section_value database driver)"
-    if [ "${prev_driver:-sqlite}" != "mysql" ]; then
-      die "检测到本次要切换数据库后端: ${prev_driver:-sqlite} -> mysql, 但数据不会自动搬迁。
-     直接切库会让系统看到一台空库(菜品回到出厂种子、订单与会员全部为 0)。
-     请先在新库搬完数据, 再用 --allow-db-switch 重跑:
-       1) 建库与账号, 见 docs/mysql-migration.md
-       2) python3 <发布包>/backend/scripts/sqlite2mysql.py --sqlite ./data/dining.db --out ./data.sql
-       3) mysql -h <host> -u <user> -p <dbname> < ./data.sql
-       4) 把 data/master.key 一起带过去(否则已加密的支付密钥无法解密)
-     本次部署未改动任何文件。"
+  #
+  # 触发来源有两个(都要拦): ① 本次传了 DB_DRIVER/DB_DSN; ② 发布包里的 config.prod.yaml
+  # 写的是 mysql, 而线上配置还记着 sqlite。后者是「改了模板重新发版」的常见路径, 不加
+  # 拦截就会在没人察觉的情况下把线上库换走。
+  if [ "$existed" = "1" ] && [ "$want_driver" = "mysql" ] && [ "$ALLOW_DB_SWITCH" != "1" ]; then
+    if [ "${prev_db_driver:-sqlite}" != "mysql" ]; then
+      die "检测到本次要切换数据库后端: ${prev_db_driver:-sqlite} -> mysql, 但数据不会自动搬迁。
+    来源: $(db_switch_requested && printf '本次 DB_* 参数' || printf '发布包内 backend/config.prod.yaml')
+    直接切库会让系统看到一台空库(菜品回到出厂种子、订单与会员全部为 0)。
+    请先在新库搬完数据, 再用 --allow-db-switch 重跑:
+      1) 建库与账号, 见 docs/mysql-migration.md
+      2) python3 <发布包>/backend/scripts/sqlite2mysql.py --sqlite ./data/dining.db --out ./data.sql
+      3) mysql -h <host> -u <user> -p <dbname> < ./data.sql
+      4) 把 data/master.key 一起带过去(否则已加密的支付密钥无法解密)
+    本次部署未改动任何文件。"
     fi
   fi
 
-  # database 段: 新建的文件一定写; 已存在时只在本次传了 DB_* 才重写。
-  if [ "$existed" = "0" ] || db_switch_requested; then
+  # database 段: 传了 DB_* 按本次参数重写; 否则**整段同步模板**(模板写 mysql 就用模板的
+  # host/user/password); 模板没提供 database.driver 时才落到脚本生成的 sqlite 兜底。
+  #
+  # 为什么更新模式也要同步: 早先只在「首装」写这一段, 之后永远保留线上文件 ——
+  # 结果是改了 config.prod.yaml 重新发版, 服务器上的 config.yaml 一点没变, 现场表现
+  # 就是「包里的 prod 配置明明改了, /opt/dining-system/config.yaml 还是旧的 sqlite」。
+  #
+  # 只拦「sqlite -> mysql」这一个方向(上面守卫)。反向(模板是 sqlite、线上是 mysql)刻意
+  # 不同步: 那会把一个已经在跑的 MySQL 安装悄悄退回本地文件库, 危害比不同步更大。
+  if db_switch_requested; then
     block="$(mktemp)"
     db_yaml_block > "$block"
     replace_yaml_section "$DEPLOY_CONFIG" "database" "$block"
     rm -f "$block"
-    if db_switch_requested; then
-      log "已写入 database 段(MySQL) -> $DEPLOY_CONFIG"
-    fi
+    log "已按本次 DB_* 参数写入 database 段(MySQL) -> $DEPLOY_CONFIG"
+  elif [ "$tpl_driver" = "mysql" ]; then
+    replace_yaml_section "$DEPLOY_CONFIG" "database" "$tpl_db"
+    log "已按模板同步 database 段(MySQL, 来源: $tpl) -> $DEPLOY_CONFIG"
+  elif ! yaml_has_key database driver; then
+    block="$(mktemp)"
+    db_yaml_block > "$block"
+    replace_yaml_section "$DEPLOY_CONFIG" "database" "$block"
+    rm -f "$block"
+    log "已写入 database 段(SQLite 兜底; 模板未提供 database.driver)"
   else
-    log "保留 $DEPLOY_CONFIG 的 database 段(本次未传 DB_*)"
+    log "沿用配置里的 database 段: driver=$(yaml_section_value database driver)(模板未提供 MySQL 段, 本次未传 DB_*)"
   fi
+  rm -f "$tpl_db"
 
-  # admin 段: 只在新建文件时写(仅在首次建库时读取一次, 更新不该动已有账号)。
-  if [ "$existed" = "0" ]; then
+  # admin 段: 仅在首次安装、且「调用方显式传了 ADMIN_USER/ADMIN_PASS」或「模板里没有
+  # 可用的 admin.user」时才写。模板(config.prod.yaml)自带 admin 段时原样保留, 好处是
+  # 部署出来的 config.yaml 与 config.prod.yaml 完全一致, 运维对比时不会怀疑配置没生效。
+  # (该段只在首次建库时读一次, 更新模式不动它, 所以不涉及改已有账号。)
+  if [ "$existed" = "0" ] && { [ "$ADMIN_GIVEN" = "1" ] || ! yaml_has_key admin user; }; then
     block="$(mktemp)"
     admin_yaml_block > "$block"
     replace_yaml_section "$DEPLOY_CONFIG" "admin" "$block"
     rm -f "$block"
+    log "已写入 admin 段(初始账号 $ADMIN_USER)"
   fi
 
   # ---- 运维参数(静态目录 / 日志路径 / 端口) ----
@@ -869,6 +1000,7 @@ cat <<EOF
   版本信息   : $INSTALL_DIR/VERSION  (cat 可看 git_commit / build_time / arch)
   后端二进制 : $BIN_DIR/dining-backend
   前端产物   : $FRONTEND_DIST
+  运维脚本   : $INSTALL_DIR/op/  (p.sh 状态一览 / backup.sh 备份 / upgrade.sh 升级 / rollback.sh 回滚)
   配置文件   : $DEPLOY_CONFIG   ← 端口/静态目录/日志/数据库/凭据/可信代理全在这里
   图片存储   : 数据库 tb_image（旧目录 $INSTALL_DIR/uploads 仅作升级导入源）
   数据库后端 : $DB_SUMMARY
@@ -876,9 +1008,11 @@ cat <<EOF
   本次模式   : $MODE
 
 常用命令:
+  bash $INSTALL_DIR/op/p.sh                  # 状态一览(服务/端口/数据库/日志)
   systemctl status $SERVICE_NAME            # 服务状态
   journalctl -u $SERVICE_NAME -f            # 实时日志
-  bash $BIN_DIR/check-health.sh              # 健康检查(也可用于 cron 探测)
+  bash $INSTALL_DIR/op/check-health.sh       # 健康检查(也可用于 cron 探测)
+  bash $INSTALL_DIR/op/backup.sh             # 备份数据库 + 密钥 + 配置
   nginx -t && nginx -s reload               # 校验并重载 Nginx
 EOF
 if [ "$MODE" = "install" ]; then
@@ -890,7 +1024,8 @@ EOF
 fi
 cat <<EOF
 
-改配置: 编辑 $DEPLOY_CONFIG 的对应段后 systemctl restart $SERVICE_NAME
-        (下次执行本脚本时, 只有 database 段会因传入 DB_* 被重写, 其余内容保留)
+改配置: 推荐改发布包里的 backend/config.prod.yaml 后重新发版 —— database 段每次都会同步;
+        临时改动可直接编辑 $DEPLOY_CONFIG 的对应段后 systemctl restart $SERVICE_NAME,
+        但下次部署时 database 段会按模板/DB_* 覆盖, 其余段落保留。
 EOF
 exit 0

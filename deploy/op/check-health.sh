@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 扫码点餐管理系统 - 后端服务健康检查脚本
+# 点餐管理系统 - 后端服务健康检查脚本
+#
+# 位置: deploy/op/(部署后装到 <INSTALL_DIR>/op/), 与其它运维脚本同目录。
 #
 # 用途: 判断后端服务是否在线。适合部署后自检、cron 定时探测、监控系统调用。
 #
-# 用法:
-#   bash deploy/check-health.sh                     # 检查本机 8080
-#   bash deploy/check-health.sh -p 9000             # 指定端口
-#   bash deploy/check-health.sh -H 10.0.0.5         # 指定主机(默认 127.0.0.1)
-#   bash deploy/check-health.sh --json              # JSON 输出(便于监控解析)
-#   bash deploy/check-health.sh --quiet             # 静默, 仅以退出码表达结果
-#   bash deploy/check-health.sh -u http://IP:8080/api/customer/config
+# 用法(在安装目录下执行):
+#   bash op/check-health.sh                     # 检查本机端口(读 config.yaml 的 server.port)
+#   bash op/check-health.sh -p 9000             # 指定端口
+#   bash op/check-health.sh -H 10.0.0.5         # 指定主机(默认 127.0.0.1)
+#   bash op/check-health.sh --json              # JSON 输出(便于监控解析)
+#   bash op/check-health.sh --quiet             # 静默, 仅以退出码表达结果
+#   bash op/check-health.sh -u http://IP:8080/api/customer/config
 #
 # 退出码:
 #   0  服务在线(健康接口返回 HTTP 200)
@@ -37,7 +39,7 @@ die() { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 2; }
 
 usage() {
   cat <<'EOF'
-用法: bash check-health.sh [选项]
+用法: bash op/check-health.sh [选项]
 
 选项:
   -H, --host <host>   后端主机, 默认 127.0.0.1

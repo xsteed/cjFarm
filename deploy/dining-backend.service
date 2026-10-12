@@ -1,5 +1,5 @@
 # ============================================================================
-# 扫码点餐管理系统 - 后端 systemd 服务单元
+# 点餐管理系统 - 后端 systemd 服务单元
 #
 # 安装: 复制到 /etc/systemd/system/dining-backend.service
 #       systemctl daemon-reload && systemctl enable --now dining-backend
@@ -10,7 +10,7 @@
 # ============================================================================
 
 [Unit]
-Description=Dining System Backend (扫码点餐管理系统后端)
+Description=Dining System Backend (点餐管理系统后端)
 After=network.target
 
 [Service]
