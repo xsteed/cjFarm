@@ -164,12 +164,16 @@ func newAuthKey() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// processRandomAuthKey 生成进程内随机密钥;crypto/rand 失败时兜底固定字符串,
-// 仅保证进程能启动(该兜底不可跨重启复用,启动告警会提示运维配置持久化密钥)。
+// processRandomAuthKey 生成进程内随机密钥。
+//
+// crypto/rand 失败时**不再回退固定字符串**:那等于把签名密钥写死在公开可读的源码里,
+// 任何人可用它伪造任意 uid/username 的登录令牌,而日志只会显示「进程随机密钥」,
+// 恰好掩盖了「实际是公开常量」这一事实。签名密钥不可预测是鉴权的前提,拿不到随机源
+// 属不可恢复故障,与「密钥文件损坏」一致地 fail-fast,让运维显式处理。
 func processRandomAuthKey() string {
 	key, err := newAuthKey()
 	if err != nil {
-		return hex.EncodeToString([]byte("dining-fallback-secret"))
+		logger.Fatalf("[authkey] 生成进程随机登录令牌密钥失败(请检查 /dev/urandom 是否可用): %v", err)
 	}
 	return key
 }
