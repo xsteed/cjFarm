@@ -184,6 +184,31 @@ func PrinterTest(c *gin.Context) {
 	okMsg(c, "已向「"+p.PrinterName+"」("+printerTarget(p)+") 发送测试打印指令")
 }
 
+// PrinterPreviewTest 预览该打印机的测试页样式(不出纸)。
+//
+// 与「测试打印」互补:后者真吐一张纸。新装机器、想确认纸宽与通道参数时,
+// 先看预览再决定要不要出纸 —— 此前每核一次版式就得白扔一张。
+func PrinterPreviewTest(c *gin.Context) {
+	id, okid := idParam(c)
+	if !okid {
+		return
+	}
+	chunks, lineWidth, err := print.PreviewTestTicket(id)
+	if err != nil {
+		fail(c, err.Error())
+		return
+	}
+	previewChunks := make([][]previewLine, 0, len(chunks))
+	for _, ck := range chunks {
+		previewChunks = append(previewChunks, toPreviewLines(ck))
+	}
+	ok(c, gin.H{
+		"chunks":    previewChunks,
+		"lineWidth": lineWidth,
+		"docType":   "test",
+	})
+}
+
 // PrinterProbe 只测连通性,不吐纸。
 // 与「测试打印」的区别:想确认「网络/账号通不通」而不想白白浪费一张纸时用它。
 func PrinterProbe(c *gin.Context) {

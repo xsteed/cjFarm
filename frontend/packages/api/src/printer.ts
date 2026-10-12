@@ -53,17 +53,22 @@ export const reprintLog = (printId: Id): Promise<ApiResponse<unknown>> =>
 export const previewPrintLog = (printId: Id): Promise<TicketPreview> =>
   http.get<unknown, TicketPreview>('/admin/print/preview', { params: { printId } });
 
+// 测试页预览(不出纸):先看样式再决定要不要真打一张,省得白扔纸。
+export const previewPrinterTest = (id: Id): Promise<TicketPreview> =>
+  http.get<unknown, TicketPreview>(`/admin/printer/preview/${id}`);
+
 // 示例模板预览:不依赖真实订单,用示例数据 + 配置渲染「预计打印模板」;
 // 请求体可携带表单里未保存的值(footer/开关)即时覆盖,所见即所改。
 export interface SamplePreviewPayload {
   docType?: string;
   paperWidth?: number;
   footer?: string;
-  showSeatFee?: boolean;
   showDiscount?: boolean;
   /** 小票末尾二维码开关覆盖(未保存的表单值也能预览) */
   qr?: boolean;
   kitchenShowPrice?: boolean;
+  /** 厨房单打印粒度(whole/item/portion);配了拆单时预览会按「一段一张纸」返回多段 */
+  kitchenSplit?: string;
 }
 
 export const previewSample = (data: SamplePreviewPayload): Promise<TicketPreview> =>

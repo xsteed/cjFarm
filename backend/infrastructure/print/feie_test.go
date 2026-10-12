@@ -101,7 +101,7 @@ func TestRenderTicketPickupNo(t *testing.T) {
 		o.PickupNo = 12
 		for name, lines := range map[string][]string{
 			"食客小票": RenderGuestTicket(o, items, 48),
-			"厨房单":  RenderKitchenTicket(o, items, 48, false, "【厨房单】"),
+			"厨房单":  RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"}),
 		} {
 			if !strings.Contains(strings.Join(lines, "\n"), "取餐号: 12") {
 				t.Errorf("%s 应包含取餐号行, 实际:\n%s", name, strings.Join(lines, "\n"))
@@ -113,7 +113,7 @@ func TestRenderTicketPickupNo(t *testing.T) {
 		o.PickupNo = 0
 		for name, lines := range map[string][]string{
 			"食客小票": RenderGuestTicket(o, items, 48),
-			"厨房单":  RenderKitchenTicket(o, items, 48, false, "【厨房单】"),
+			"厨房单":  RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"}),
 		} {
 			if strings.Contains(strings.Join(lines, "\n"), "取餐号") {
 				t.Errorf("%s 不应出现取餐号行, 实际:\n%s", name, strings.Join(lines, "\n"))
@@ -136,12 +136,40 @@ func TestRenderKitchenTicket(t *testing.T) {
 	o, items := sampleOrder()
 
 	// 默认不带金额:后厨只看菜名与数量。
-	lines := RenderKitchenTicket(o, items, 48, false, "【厨房单】")
+	lines := RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"})
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"【厨房单】", "单号: D20260921120000abcdef", "大厅03桌", "凉拌青瓜 (份) x2", "加辣", "整单备注: 不要香菜"} {
+	for _, want := range []string{
+		"【厨房单】",
+		// 厨打单票头精简:短号(与后台订单列表/打印记录同源) + 时间省到分。
+		"单号: ABCDEF",
+		"下单: 09-21 12:00",
+		// 整单模式逐道编号,票尾给份数汇总。
+		"1. 凉拌青瓜 (份) x2",
+		"2. 海鲜炒饭 x1",
+		"共 2 道 3 份",
+		"加辣",
+		"整单备注: 不要香菜",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("厨房单缺少 %q\n实际内容:\n%s", want, joined)
 		}
+	}
+	// 台名「大厅03桌」已含桌号,放大桌号行之外不再重复打一行。
+	if strings.Contains(joined, "大厅03桌") {
+		t.Errorf("台名与桌号重复时不应另起一行,实际内容:\n%s", joined)
+	}
+	// 人数与下单时间并排一行(后厨单省纸),不该各占一行。
+	merged := false
+	for _, l := range lines {
+		if strings.Contains(l, "人数: 4") && strings.Contains(l, "下单: 09-21 12:00") {
+			merged = true
+		}
+	}
+	if !merged {
+		t.Errorf("人数与下单时间应并排同一行,实际内容:\n%s", joined)
+	}
+	if strings.Contains(joined, "D20260921120000abcdef") {
+		t.Errorf("厨打单不应打印完整订单号(后厨读不出来),实际内容:\n%s", joined)
 	}
 	if strings.Contains(joined, "56.00") {
 		t.Errorf("默认不应打印金额,实际内容:\n%s", joined)
@@ -154,13 +182,15 @@ func TestRenderKitchenTicket(t *testing.T) {
 	}
 
 	// 打开金额开关后必须带出小计。
-	withPrice := strings.Join(RenderKitchenTicket(o, items, 48, true, "【厨房单】"), "\n")
+	withPrice := strings.Join(RenderKitchenTicket(o, items, 48, KitchenTicketOptions{
+		Title: "【厨房单】", ShowPrice: true,
+	}), "\n")
 	if !strings.Contains(withPrice, "56.00") {
 		t.Errorf("开启金额后应带出小计,实际内容:\n%s", withPrice)
 	}
 
 	// 加菜单标题。
-	if !strings.Contains(strings.Join(RenderKitchenTicket(o, items, 48, false, "【加菜单】"), "\n"), "【加菜单】") {
+	if !strings.Contains(strings.Join(RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【加菜单】"}), "\n"), "【加菜单】") {
 		t.Error("加菜单标题未生效")
 	}
 }
@@ -169,7 +199,7 @@ func TestRenderGuestTicket(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 	joined := strings.Join(RenderGuestTicket(o, items, 48), "\n")
-	for _, want := range []string{"【食客小票】", "订单号: D20260921120000abcdef", "凉拌青瓜 (份) x2", "菜品金额", "茶位费", "优惠", "合计", "84.00", "谢谢惠顾"} {
+	for _, want := range []string{"【食客小票】", "订单号: D20260921120000abcdef", "凉拌青瓜 (份) x2", "茶位费(4人)", "优惠", "合计", "84.00", "谢谢惠顾"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("食客小票缺少 %q\n实际内容:\n%s", want, joined)
 		}

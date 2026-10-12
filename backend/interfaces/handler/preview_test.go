@@ -19,6 +19,7 @@ import (
 
 	"dining-system/application/service"
 	"dining-system/domain/po"
+	"dining-system/infrastructure/print"
 	"dining-system/infrastructure/store"
 )
 
@@ -173,13 +174,48 @@ func anyStartsWith(set map[string]bool, prefix string) bool {
 	return false
 }
 
+// TestToPreviewLinesControlRows 放大行(夹单桌号)是控制行,预览层必须消费并剥掉前缀:
+// 带 big 标记、文本干净;拆单序号标题仍保持 bold 标记。
+func TestToPreviewLinesControlRows(t *testing.T) {
+	initAgentTestDB(t)
+
+	o := po.Order{OrderNo: "D20260922PREVIEW01", TableNo: "03", TableName: "大厅03桌",
+		PersonCount: 2, CreateTime: "2026-09-22 12:00:00"}
+	kitchen := print.RenderKitchenTicket(o,
+		[]po.OrderItem{{DishName: "凉拌青瓜", Quantity: 1, Price: 2800, Amount: 2800}}, 48,
+		print.KitchenTicketOptions{Title: "【厨房单】"})
+	bigRaw := ""
+	for _, l := range kitchen {
+		if _, ok := print.SplitBigLine(l); ok {
+			bigRaw = l
+		}
+	}
+	if bigRaw == "" {
+		t.Fatalf("厨房单应含放大桌号控制行:\n%s", strings.Join(kitchen, "\n"))
+	}
+
+	lines := toPreviewLines([]string{bigRaw, "【厨房单】1/2"})
+	if len(lines) != 2 {
+		t.Fatalf("应产出 2 行, got %d", len(lines))
+	}
+	if !lines[0].Big || lines[0].Text != "桌号 03" {
+		t.Fatalf("放大行应带 big 标记且文本干净, got %+v", lines[0])
+	}
+	if strings.ContainsRune(lines[0].Text, '\x02') {
+		t.Fatalf("前端不应看到控制前缀, got %q", lines[0].Text)
+	}
+	if !lines[1].Bold {
+		t.Fatalf("带序号的标题行应仍标记 bold, got %+v", lines[1])
+	}
+}
+
 // TestPrintPreviewSampleHandler 示例模板预览:请求体的覆盖参数必须透传到渲染
 // (表单里未保存的值也能预览到)。
 func TestPrintPreviewSampleHandler(t *testing.T) {
 	initAgentTestDB(t)
 
 	// 用与 callAgent 相同的 POST 方式调用(该接口本身就是 POST + JSON body)。
-	code, resp := callAgent(t, PrintPreviewSample, "", `{"docType":"guest","paperWidth":48,"footer":"未保存的口号","showSeatFee":false}`)
+	code, resp := callAgent(t, PrintPreviewSample, "", `{"docType":"guest","paperWidth":48,"footer":"未保存的口号","showDiscount":false}`)
 	if code != http.StatusOK {
 		t.Fatalf("示例预览应返回 200, got %d(%v)", code, resp)
 	}
@@ -199,8 +235,15 @@ func TestPrintPreviewSampleHandler(t *testing.T) {
 	if !strings.Contains(joined, "未保存的口号") {
 		t.Fatalf("覆盖页脚应出现在示例预览中:\n%s", joined)
 	}
-	if strings.Contains(joined, "茶位费") {
-		t.Fatalf("showSeatFee=false 应隐藏茶位费行:\n%s", joined)
+	if strings.Contains(joined, "优惠") {
+		t.Fatalf("showDiscount=false 应隐藏优惠行:\n%s", joined)
+	}
+	// 金额区:菜品金额不单列,茶位费显示(示例订单有人头费)。
+	if strings.Contains(joined, "菜品金额") {
+		t.Fatalf("金额区不应单列菜品金额:\n%s", joined)
+	}
+	if !strings.Contains(joined, "茶位费") {
+		t.Fatalf("有茶位费时应显示该行:\n%s", joined)
 	}
 	if !strings.Contains(joined, "【食客小票】") {
 		t.Fatalf("示例小票缺少标题:\n%s", joined)

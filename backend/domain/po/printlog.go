@@ -2,14 +2,31 @@ package po
 
 // 打印单据类型(落 tb_print_log.doc_type)。
 //
-// guest_append(加菜小票)只在下单场景产生;补打与预览无法还原「当时新增了
-// 哪些菜」(订单只增不减、日志不存渲染快照),一律按 guest 重放当前整单,
-// Reprint/PreviewTicket/PreviewTicketSample 的归一化逻辑依赖这一点。
+// guest_append(加菜小票)只在加菜场景产生。它的独立形态被完整保留下来
+// (标题「【加菜小票】」、金额只有一行「当前合计」),补打与预览照样按它渲染,
+// 重出来的票才与原始纪录对得上;唯一还原不了的是「当时新增了哪些菜」
+// (订单只增不减、日志不存渲染快照),菜品区退化为当前整单,由管理端标注说明。
 const (
 	PrintDocKitchen     = "kitchen"
 	PrintDocGuest       = "guest"
 	PrintDocGuestAppend = "guest_append"
 )
+
+// 厨房单打印粒度(配置项 print_kitchen_split_mode):
+//   - KitchenSplitWhole   整单一张(默认,与历史行为一致);
+//   - KitchenSplitItem    一菜一单:同一道菜合并为一张(标 xN);
+//   - KitchenSplitPortion 一菜一单且按份数拆:点 3 份出 3 张、每张 x1,供分盘出菜。
+//
+// 无论哪一档,食客小票永远整单一张 —— 金额合计必须完整,拆了就对不上账。
+const (
+	KitchenSplitWhole   = "whole"
+	KitchenSplitItem    = "item"
+	KitchenSplitPortion = "portion"
+)
+
+// KitchenSplitModes 打印粒度的合法取值白名单:读配置与写配置都据此收敛,
+// 库里的值因此永远合法(前端 t-radio-group 拿到非法值会显示「一个都没选中」)。
+var KitchenSplitModes = []string{KitchenSplitWhole, KitchenSplitItem, KitchenSplitPortion}
 
 // 打印日志状态。
 const (

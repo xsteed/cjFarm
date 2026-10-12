@@ -43,20 +43,47 @@ func insertPreviewOrder(t *testing.T) int {
 	return orderID
 }
 
-// insertPreviewPrinter 插入一台打印机并返回 printerID。
+// insertPreviewPrinter 插入一台直连打印机并返回 printerID。
 func insertPreviewPrinter(t *testing.T, printerType int, categoryIDs string, paperWidth int) int {
+	return insertPreviewPrinterAs(t, printerType, categoryIDs, paperWidth, po.PrinterProviderTCP)
+}
+
+// insertPreviewPrinterAs 插入指定通道的打印机并返回 printerID。
+// provider 决定票据实际怎么送出去,进而决定预览该怎么分段(见 lineChunksFor)。
+func insertPreviewPrinterAs(t *testing.T, printerType int, categoryIDs string, paperWidth int, provider string) int {
 	t.Helper()
 	if _, err := store.DB.Exec(`INSERT INTO tb_printer(printer_name, printer_type, provider, ip, port,
 		feie_sn, paper_width, copies, category_ids, status, del_flag, create_time, update_time)
-		VALUES(?, ?, 'tcp', '192.168.1.100', 9100, '', ?, 1, ?, 1, '0', '2026-09-21 10:00:00', '2026-09-21 10:00:00')`,
-		"预览测试机", printerType, paperWidth, categoryIDs); err != nil {
+		VALUES(?, ?, ?, '192.168.1.100', 9100, 'SAMPLE001', ?, 1, ?, 1, '0', '2026-09-21 10:00:00', '2026-09-21 10:00:00')`,
+		"预览测试机", printerType, provider, paperWidth, categoryIDs); err != nil {
 		t.Fatalf("插入打印机失败: %v", err)
 	}
 	var id int
-	if err := store.DB.QueryRow(`SELECT printer_id FROM tb_printer WHERE printer_name='预览测试机'`).Scan(&id); err != nil {
+	if err := store.DB.QueryRow(`SELECT printer_id FROM tb_printer WHERE printer_name='预览测试机' ORDER BY printer_id DESC`).Scan(&id); err != nil {
 		t.Fatalf("查询打印机失败: %v", err)
 	}
 	return id
+}
+
+// appendDishes 往订单里追加 n 道菜(把票据撑过单段上限,用于验证分段)。
+func appendDishes(t *testing.T, orderID, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if _, err := store.DB.Exec(`INSERT INTO tb_order_item(order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark)
+			VALUES(?, 9002, '超长测试菜品加一个很长的菜名用于撑长票据', 0, '', 1000, 1, 1000, '')`, orderID); err != nil {
+			t.Fatalf("追加明细失败: %v", err)
+		}
+	}
+}
+
+// previewChunksOf 取一台打印机上某订单的食客小票预览分段。
+func previewChunksOf(t *testing.T, printerID, orderID int) [][]string {
+	t.Helper()
+	chunks, _, err := PreviewTicket(printerID, orderID, po.PrintDocGuest, po.PrintTriggerOrder)
+	if err != nil {
+		t.Fatalf("PreviewTicket 失败: %v", err)
+	}
+	return chunks
 }
 
 // previewOrderItems 按预览订单读回带分类的明细(与 PreviewTicket 内部同一条读取路径)。
@@ -91,7 +118,7 @@ func TestPreviewTicketMatchesGuestRender(t *testing.T) {
 	orderID := insertPreviewOrder(t)
 	printerID := insertPreviewPrinter(t, po.PrinterTypeGuest, "", 48) // 80mm
 
-	chunks, lineWidth, err := PreviewTicket(printerID, orderID, po.PrintDocGuest)
+	chunks, lineWidth, err := PreviewTicket(printerID, orderID, po.PrintDocGuest, po.PrintTriggerOrder)
 	if err != nil {
 		t.Fatalf("PreviewTicket 失败: %v", err)
 	}
@@ -118,36 +145,69 @@ func TestPreviewTicketMatchesGuestRender(t *testing.T) {
 	}
 }
 
-// TestPreviewTicketSplitsLongTicket 超长票据按实际入队规则拆段:
-// 预览的段数与每段内容必须与「打印时拆出的任务段」一一对应,否则长单预览失真。
-func TestPreviewTicketSplitsLongTicket(t *testing.T) {
+// TestPreviewTicketSplitByChannel 分段必须随通道而变 —— 「预览即所得」的核心。
+//
+// 直连一次连接把整张票写完 → 1 段;代理受单条任务字符上限约束 → 多段;
+// 飞鹅受单次推送字节上限约束 → 多段,且切点与代理不同(<BR> 与标签会把行撑大)。
+// 此前预览统一按代理规则切,三种机器的预览都失真。
+func TestPreviewTicketSplitByChannel(t *testing.T) {
 	setupTestDB(t)
 	orderID := insertPreviewOrder(t)
-	// 追加 120 道菜,把票据推过单段上限(约 75 行 / 3600 字符),触发拆段。
-	for i := 0; i < 120; i++ {
-		if _, err := store.DB.Exec(`INSERT INTO tb_order_item(order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark)
-			VALUES(?, 9002, '超长测试菜品加一个很长的菜名用于撑长票据', 0, '', 1000, 1, 1000, '')`, orderID); err != nil {
-			t.Fatalf("追加明细失败: %v", err)
-		}
-	}
-	printerID := insertPreviewPrinter(t, po.PrinterTypeGuest, "", 48)
+	// 追加 120 道菜,把票据推过各通道的单段上限。
+	appendDishes(t, orderID, 120)
 
-	chunks, _, err := PreviewTicket(printerID, orderID, po.PrintDocGuest)
-	if err != nil {
-		t.Fatalf("PreviewTicket 失败: %v", err)
+	tcp := insertPreviewPrinterAs(t, po.PrinterTypeGuest, "", 48, po.PrinterProviderTCP)
+	agent := insertPreviewPrinterAs(t, po.PrinterTypeGuest, "", 48, po.PrinterProviderAgent)
+	feie := insertPreviewPrinterAs(t, po.PrinterTypeGuest, "", 48, po.PrinterProviderFeie)
+
+	if got := len(previewChunksOf(t, tcp, orderID)); got != 1 {
+		t.Fatalf("直连通道一次写完,预览应只有 1 段, got %d", got)
 	}
-	if len(chunks) < 2 {
-		t.Fatalf("超长票据应拆成多段, got %d 段", len(chunks))
+	agentChunks := previewChunksOf(t, agent, orderID)
+	if len(agentChunks) < 2 {
+		t.Fatalf("代理通道应拆成多段, got %d", len(agentChunks))
 	}
-	// 每段(除末段)都应贴近上限:拆段规则与实际入队(splitJobPayload)同一条代码路径。
-	for i, c := range chunks {
-		joined := strings.Join(c, "\n")
-		if i < len(chunks)-1 && len(joined)+len(chunks[i+1][0]) <= jobPayloadMaxChars {
-			t.Fatalf("第 %d 段过早结束(%d 字符),拆段与入队规则不一致", i+1, len(joined))
+	feieChunks := previewChunksOf(t, feie, orderID)
+	if len(feieChunks) < 2 {
+		t.Fatalf("飞鹅通道应拆成多段, got %d", len(feieChunks))
+	}
+
+	// 段数与逐段内容都必须与实际发送所用函数一致:预览的每一段就是一张纸。
+	o, items := previewOrderItems(t, orderID)
+	lines := RenderGuestTicket(o, items, 48)
+	assertChunksEqualSent(t, "代理", agentChunks, splitJobPayload(lines), "\n")
+	assertChunksEqualSent(t, "飞鹅", feieChunks, splitFeieContent(lines), "<BR>")
+}
+
+// assertChunksEqualSent 断言预览分段与该通道「实际送出的段」完全相同。
+// 实际送出的每行可能带通道标签(飞鹅),故只比对段数与每段行数 ——
+// 标签形态本就不该出现在预览里。
+func assertChunksEqualSent(t *testing.T, channel string, preview [][]string, actual []string, sep string) {
+	t.Helper()
+	if len(preview) != len(actual) {
+		t.Fatalf("%s 通道预览段数 %d 与实际发送段数 %d 不一致", channel, len(preview), len(actual))
+	}
+	for i := range preview {
+		want := strings.Split(actual[i], sep)
+		if len(preview[i]) != len(want) {
+			t.Fatalf("%s 通道第 %d 段行数 %d 与实际 %d 不一致", channel, i+1, len(preview[i]), len(want))
 		}
-		if len(joined) > jobPayloadMaxChars+len(c[len(c)-1]) {
-			t.Fatalf("第 %d 段超长(%d)", i+1, len(joined))
-		}
+	}
+}
+
+// TestPreviewTicketAgentSplitKeepsEveryLine 分段不得丢行或重行:
+// 展平后的预览必须与直接渲染的结果逐行一致。
+func TestPreviewTicketAgentSplitKeepsEveryLine(t *testing.T) {
+	setupTestDB(t)
+	orderID := insertPreviewOrder(t)
+	appendDishes(t, orderID, 120)
+	printerID := insertPreviewPrinterAs(t, po.PrinterTypeGuest, "", 48, po.PrinterProviderAgent)
+
+	chunks := previewChunksOf(t, printerID, orderID)
+	o, items := previewOrderItems(t, orderID)
+	want := strings.Join(RenderGuestTicket(o, items, 48), "\n")
+	if got := flattenPreview(chunks); got != want {
+		t.Fatalf("分段后预览与整张渲染不一致:\n预览:\n%s\n渲染:\n%s", got, want)
 	}
 }
 
@@ -157,7 +217,7 @@ func TestPreviewTicketKitchenLineWidth58(t *testing.T) {
 	orderID := insertPreviewOrder(t)
 	printerID := insertPreviewPrinter(t, po.PrinterTypeKitchen, "", 32) // 58mm
 
-	chunks, lineWidth, err := PreviewTicket(printerID, orderID, po.PrintDocKitchen)
+	chunks, lineWidth, err := PreviewTicket(printerID, orderID, po.PrintDocKitchen, po.PrintTriggerOrder)
 	if err != nil {
 		t.Fatalf("PreviewTicket 失败: %v", err)
 	}
@@ -184,10 +244,34 @@ func TestPreviewTicketCategoryScopeError(t *testing.T) {
 	// 只授权分类 99(订单里没有):itemsForPrinter 过滤后为空。
 	printerID := insertPreviewPrinter(t, po.PrinterTypeKitchen, "99", 48)
 
-	if _, _, err := PreviewTicket(printerID, orderID, po.PrintDocKitchen); err == nil {
+	if _, _, err := PreviewTicket(printerID, orderID, po.PrintDocKitchen, po.PrintTriggerOrder); err == nil {
 		t.Fatal("授权分类外无菜可打时应报错")
 	} else if !strings.Contains(err.Error(), "分类") {
 		t.Fatalf("错误信息应指明分类原因, got %q", err.Error())
+	}
+}
+
+// TestPreviewTestTicket 测试页预览:不出纸就能看到票面上会写什么,
+// 此前只有「测试打印」一条路,每核一次版式就得白扔一张纸。
+func TestPreviewTestTicket(t *testing.T) {
+	setupTestDB(t)
+	printerID := insertPreviewPrinterAs(t, po.PrinterTypeKitchen, "", 48, po.PrinterProviderAgent)
+
+	chunks, lineWidth, err := PreviewTestTicket(printerID)
+	if err != nil {
+		t.Fatalf("PreviewTestTicket 失败: %v", err)
+	}
+	if lineWidth != 48 {
+		t.Fatalf("80mm 纸行宽应为 48, got %d", lineWidth)
+	}
+	joined := flattenPreview(chunks)
+	for _, want := range []string{"测试打印", "预览测试机", "192.168.1.100:9100", "厨房单", "80mm"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("测试页预览缺少 %q:\n%s", want, joined)
+		}
+	}
+	if _, _, err := PreviewTestTicket(99999); err == nil {
+		t.Fatal("打印机不存在时应报错")
 	}
 }
 
@@ -197,10 +281,10 @@ func TestPreviewTicketOrderNotFound(t *testing.T) {
 	orderID := insertPreviewOrder(t)
 	printerID := insertPreviewPrinter(t, po.PrinterTypeGuest, "", 48)
 
-	if _, _, err := PreviewTicket(printerID, 99999, po.PrintDocGuest); err == nil || !strings.Contains(err.Error(), "订单不存在") {
+	if _, _, err := PreviewTicket(printerID, 99999, po.PrintDocGuest, po.PrintTriggerOrder); err == nil || !strings.Contains(err.Error(), "订单不存在") {
 		t.Fatalf("订单不存在应报错, got %v", err)
 	}
-	if _, _, err := PreviewTicket(99999, orderID, po.PrintDocGuest); err == nil || !strings.Contains(err.Error(), "打印机不存在") {
+	if _, _, err := PreviewTicket(99999, orderID, po.PrintDocGuest, po.PrintTriggerOrder); err == nil || !strings.Contains(err.Error(), "打印机不存在") {
 		t.Fatalf("打印机不存在应报错, got %v", err)
 	}
 }

@@ -9,11 +9,19 @@
     />
 
     <div class="toolbar">
-      <span class="tip">
-        三条通道任选：<b>网络直连</b>要求后端与打印机在同一局域网（后端拼 ESC/POS 走 IP:9100，无需收银电脑开机）；
-        <b>飞鹅云</b>由打印机自己联网取单；<b>本地代理</b>由门店内网的代理程序取单后直发打印机，
-        后端部署在云服务器时想继续用已有的 9100 网络机，选它（<b>不需要装任何打印机驱动</b>）。
-      </span>
+      <!-- 三条通道拆成三行条目:原来是一整段长文案,三种通道混在一起,
+           要读到第二行才知道有几个选项;分行 + 悬挂缩进后一眼能扫到各自的要求。 -->
+      <div class="tip toolbar-tip">
+        <div>三条通道任选其一：</div>
+        <ul class="tip-list">
+          <li><b>网络直连</b>：要求后端与打印机在同一局域网（后端拼 ESC/POS 走 IP:9100，无需收银电脑开机）</li>
+          <li><b>飞鹅云</b>：由打印机自己联网取单</li>
+          <li>
+            <b>本地代理</b>：由门店内网的代理程序取单后直发打印机；后端部署在云服务器、想继续用已有的 9100
+            网络机时选它（<b>不需要装任何打印机驱动</b>）
+          </li>
+        </ul>
+      </div>
       <t-space v-if="canEdit && !isMobile">
         <t-button
           variant="outline"
@@ -55,7 +63,7 @@
     </MobileFab>
 
     <t-alert
-      v-if="!feie.configured && hasFeiePrinter"
+      v-if="feieLoaded && hasFeiePrinter && !feie.configured"
       theme="warning"
       class="mb"
     >
@@ -66,7 +74,7 @@
     </t-alert>
 
     <t-alert
-      v-if="hasAgentPrinter && !agent.configured"
+      v-if="agentStateReady && !agentConfigured"
       theme="warning"
       class="mb"
     >
@@ -76,7 +84,7 @@
       </template>
     </t-alert>
     <t-alert
-      v-else-if="hasAgentPrinter && !agent.online"
+      v-else-if="agentStateReady && !agent.online"
       theme="warning"
       class="mb"
     >
@@ -87,7 +95,7 @@
       </template>
     </t-alert>
     <t-alert
-      v-else-if="hasAgentPrinter && agent.dead"
+      v-else-if="agentStateReady && agent.dead"
       theme="error"
       class="mb"
     >
@@ -99,7 +107,7 @@
     <!-- 代理在线也可能积压:队列堆积或最老单据等太久时单独提示,不并入上面的 v-else-if 链,
          否则「在线但积压」这种最需要提醒的场景反而被隐藏。 -->
     <t-alert
-      v-if="hasAgentPrinter && (agent.pending > 20 || agent.oldestPendingSec > 300)"
+      v-if="agentStateReady && (agent.pending > 20 || agent.oldestPendingSec > 300)"
       theme="warning"
       class="mb"
     >
@@ -110,10 +118,13 @@
       </template>
     </t-alert>
 
-    <!-- 常驻状态总览:只要配置了代理令牌或存在 agent 通道打印机就始终可见,
-         在线/离线一眼即明(30s 自动刷新,与后端 agentOnlineWindow 90s 同口径)。 -->
+    <!-- 代理状态总览:只在确实配置过代理时出现。
+         没配过代理的门店(哪怕有打印机把通道选成了「本地代理」)看到一张恒「离线」
+         的卡片只会困惑 —— 那种「通道选了代理但没配令牌」的场景由上方那条告警负责指引,
+         状态卡片在这里没有可看的信号(心跳/队列都还是空的)。
+         30s 自动刷新,与后端 agentOnlineWindow 90s 同口径。 -->
     <div
-      v-if="agent.configured || hasAgentPrinter"
+      v-if="agentLoaded && agentConfigured"
       class="agent-section mb"
     >
       <div class="agent-section-title">本地打印代理</div>
@@ -280,11 +291,20 @@
           >
             状态
           </t-button>
+          <t-button
+            theme="default"
+            variant="text"
+            size="small"
+            @click="onPreview(row)"
+          >
+            票据预览
+          </t-button>
           <template v-if="canEdit">
             <t-button
               theme="primary"
               variant="text"
               size="small"
+              :disabled="testingIds.has(Number(row.printerId))"
               @click="onTest(row)"
             >
               测试打印
@@ -388,11 +408,20 @@
           >
             状态
           </t-button>
+          <t-button
+            theme="default"
+            variant="text"
+            size="small"
+            @click="onPreview(row)"
+          >
+            票据预览
+          </t-button>
           <template v-if="canEdit">
             <t-button
               theme="primary"
               variant="text"
               size="small"
+              :disabled="testingIds.has(Number(row.printerId))"
               @click="onTest(row)"
             >
               测试打印
@@ -427,16 +456,31 @@
       </template>
     </t-table>
 
+    <!-- 测试页预览:不出纸先看样式,确认无误再点「测试打印」 -->
+    <TicketPreviewDialog
+      v-model:visible="previewVisible"
+      :title="previewTitle"
+      :loading="previewLoading"
+      :chunks="previewData?.chunks"
+      :line-width="previewData?.lineWidth ?? 48"
+      :copies="previewRow?.copies"
+    >
+      <template #meta>
+        测试页由后端「出纸同一份渲染代码」生成；纸宽
+        {{ previewRow?.paperWidth === 32 ? '58mm' : '80mm' }}。确认无误后再点「测试打印」出纸。
+      </template>
+    </TicketPreviewDialog>
+
     <t-dialog
       v-model:visible="dialogVisible"
       :header="form.printerId ? '编辑打印机' : '新增打印机'"
-      :width="isMobile ? '94vw' : '560px'"
+      :width="isMobile ? '94vw' : '720px'"
       :confirm-btn="{ content: '保存', theme: 'primary', loading: saving }"
       @confirm="save"
     >
       <t-form
         :data="form"
-        :label-width="isMobile ? '90px' : '110px'"
+        :label-width="isMobile ? '84px' : '100px'"
       >
         <t-form-item
           label="打印机名称"
@@ -448,119 +492,137 @@
           />
         </t-form-item>
         <t-form-item
-          label="接入方式"
-          name="provider"
-        >
-          <t-radio-group v-model="form.provider">
-            <t-radio value="tcp"> 网络直连（同局域网） </t-radio>
-            <t-radio value="feie"> 飞鹅云打印 </t-radio>
-            <t-radio value="agent"> 本地打印代理（云端部署） </t-radio>
-          </t-radio-group>
-          <div class="tip mt">
-            后端部署在云服务器时选<b>本地代理</b>：后端只把票据排队，门店内网的 print-agent 取单后直发下面这个
-            IP:9100。仍然<b>不需要装打印机驱动</b>。
-          </div>
-        </t-form-item>
-        <t-form-item
           label="打印机类型"
           name="printerType"
         >
-          <t-radio-group v-model="form.printerType">
-            <t-radio :value="1"> 厨房单 </t-radio>
-            <t-radio :value="2"> 食客小票 </t-radio>
+          <t-radio-group
+            v-model="form.printerType"
+            variant="default-filled"
+          >
+            <t-radio-button :value="1">厨房单</t-radio-button>
+            <t-radio-button :value="2">食客小票</t-radio-button>
           </t-radio-group>
+        </t-form-item>
+
+        <t-form-item
+          label="接入方式"
+          name="provider"
+        >
+          <div class="field-block">
+            <t-radio-group
+              v-model="form.provider"
+              class="provider-cards"
+              :class="{ stacked: isMobile }"
+            >
+              <t-radio value="tcp">
+                <span class="pc-title">网络直连</span>
+                <span class="pc-desc">同网直发 9100</span>
+              </t-radio>
+              <t-radio value="feie">
+                <span class="pc-title">飞鹅云打印</span>
+                <span class="pc-desc">打印机联网取单</span>
+              </t-radio>
+              <t-radio value="agent">
+                <span class="pc-title">本地打印代理</span>
+                <span class="pc-desc">内网代理取单直发</span>
+              </t-radio>
+            </t-radio-group>
+            <div class="provider-hint">{{ providerHint }}</div>
+          </div>
         </t-form-item>
 
         <template v-if="form.provider !== 'feie'">
-          <t-form-item
-            label="IP 地址"
-            name="ip"
+          <div
+            class="conn-row"
+            :class="{ stacked: isMobile }"
           >
-            <t-input
-              v-model="form.ip"
-              placeholder="打印机网络 IP，如 192.168.1.8"
-            />
-            <div
-              v-if="form.provider === 'agent'"
-              class="tip mt"
+            <t-form-item
+              class="conn-ip"
+              label="IP 地址"
+              name="ip"
             >
-              填<b>打印机在门店内网的地址</b>：云后端不会去连它，由门店那台跑着 print-agent 的
-              电脑去连，所以这里必须是代理能访问到的地址（不要填 127.0.0.1，除非代理和打印机在同一台机器上）。
-            </div>
-          </t-form-item>
-          <t-form-item
-            label="端口"
-            name="port"
-          >
-            <t-input-number
-              v-model="form.port"
-              :min="1"
-              :max="65535"
-            />
-            <span class="tip ml">热敏打印机默认 9100</span>
-          </t-form-item>
+              <t-input
+                v-model="form.ip"
+                placeholder="打印机网络 IP，如 192.168.1.8"
+              />
+            </t-form-item>
+            <t-form-item
+              class="conn-port"
+              label="端口"
+              label-width="56px"
+              name="port"
+            >
+              <t-input-number
+                v-model="form.port"
+                :min="1"
+                :max="65535"
+                theme="normal"
+                placeholder="默认 9100"
+              />
+            </t-form-item>
+          </div>
         </template>
-        <template v-else>
-          <t-form-item
-            label="打印机编号"
-            name="feieSn"
-          >
-            <t-input
-              v-model="form.feieSn"
-              placeholder="飞鹅打印机机身标签上的 SN"
-            />
-          </t-form-item>
-          <t-form-item label=" ">
-            <span class="tip">若该 SN 还没绑定到账号，请先用右上角「绑定飞鹅打印机」录入 SN 与识别码。</span>
-          </t-form-item>
-        </template>
-
         <t-form-item
-          label="纸宽"
-          name="paperWidth"
+          v-else
+          label="打印机编号"
+          name="feieSn"
         >
-          <t-radio-group v-model="form.paperWidth">
-            <t-radio :value="32"> 58mm </t-radio>
-            <t-radio :value="48"> 80mm </t-radio>
-          </t-radio-group>
-        </t-form-item>
-        <t-form-item
-          label="打印份数"
-          name="copies"
-        >
-          <t-input-number
-            v-model="form.copies"
-            :min="1"
-            :max="5"
+          <t-input
+            v-model="form.feieSn"
+            placeholder="飞鹅打印机机身标签上的 SN"
           />
-          <span class="tip ml">同一张单据连续出几份（1-5）</span>
         </t-form-item>
+
+        <t-form-item label="打印参数">
+          <div class="print-opts">
+            <div class="opt">
+              <span class="opt-label">纸宽</span>
+              <t-radio-group
+                v-model="form.paperWidth"
+                variant="default-filled"
+              >
+                <t-radio-button :value="32">58mm</t-radio-button>
+                <t-radio-button :value="48">80mm</t-radio-button>
+              </t-radio-group>
+            </div>
+            <div class="opt">
+              <span class="opt-label">份数</span>
+              <t-input-number
+                v-model="form.copies"
+                :min="1"
+                :max="5"
+                style="width: 96px"
+              />
+            </div>
+            <div class="opt">
+              <span class="opt-label">状态</span>
+              <t-switch
+                v-model="form.status"
+                :custom-value="[1, 0]"
+              />
+              <span class="opt-value">{{ form.status === 1 ? '启用' : '停用' }}</span>
+            </div>
+          </div>
+        </t-form-item>
+
         <t-form-item
           v-if="form.printerType === 1"
           label="负责分类"
           name="categoryIdList"
         >
-          <t-select
-            v-model="form.categoryIdList"
-            :options="categoryOptions"
-            multiple
-            clearable
-            placeholder="不选 = 本机打印全部菜品"
-          />
-          <div class="tip mt">
-            用于多台厨房机分工：例如「凉菜机」只勾凉菜素菜、「热菜机」只勾荤菜与特色农家菜。
-            本单没有它负责的菜品时不会出空白单（食客小票始终含全部菜品）。
+          <div class="field-block">
+            <t-select
+              v-model="form.categoryIdList"
+              :options="categoryOptions"
+              multiple
+              clearable
+              placeholder="不选 = 本机打印全部菜品"
+            />
+            <div class="tip">
+              用于多台厨房机分工：例如「凉菜机」只勾凉菜素菜、「热菜机」只勾荤菜与特色农家菜。
+              本单没有它负责的菜品时不会出空白单。
+            </div>
           </div>
-        </t-form-item>
-        <t-form-item
-          label="状态"
-          name="status"
-        >
-          <t-switch
-            v-model="form.status"
-            :custom-value="[1, 0]"
-          />
-          <span class="ml tip">{{ form.status === 1 ? '启用（下单/结账会自动出纸）' : '停用' }}</span>
         </t-form-item>
       </t-form>
     </t-dialog>
@@ -621,6 +683,7 @@ import {
   getFeieInfo,
   getAgentInfo,
   listCategories,
+  previewPrinterTest,
   PRINTER_PROVIDER
 } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
@@ -628,7 +691,8 @@ import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
 import PullRefresh from '../components/PullRefresh.vue';
 import MobileFab from '../components/MobileFab.vue';
-import type { MenuCategory, PrintAgent, Printer, PrinterPayload } from '@dining/types';
+import TicketPreviewDialog from '../components/TicketPreviewDialog.vue';
+import type { MenuCategory, PrintAgent, Printer, PrinterPayload, TicketPreview } from '@dining/types';
 
 // 列表行在模板/操作函数里要把 printerId 传给各打印机接口(参数为 number | string),
 // 并拿 provider 当字典下标,Printer 字段全可选,这里收紧为必填。
@@ -648,6 +712,15 @@ interface FeieState {
 }
 
 const feie = reactive<FeieState>({ configured: false, user: '' });
+
+// 飞鹅 / 代理的状态字段在首次拉取前都是初始值(false)。页面加载时「打印机列表」与
+// 「状态接口」是两个并行的请求,一旦列表先回来,就会拿 configured=false 先渲染出一条
+// 「尚未配置账号/令牌」的假告警,等状态接口回来才消失 —— 慢网下能停留好几秒。
+// 这两个标记表示「首次拉取已结束」,用来把那段窗口遮住(成功失败都算结束,
+// 失败时行为与改动前一致:按未配置呈现,不会把告警永久藏起来)。
+const feieLoaded = ref(false);
+const agentLoaded = ref(false);
+
 // 本地打印代理:令牌是否已配、代理是否还在心跳、队列积压。
 // 云后端连不到门店内网,「代理心跳」是判断打印链路是否活着的唯一信号。
 interface AgentState {
@@ -709,10 +782,34 @@ const categoryOptions = computed(() => categories.value.map(c => ({ label: c.cat
 // 通道中文名统一从 api 的枚举取,避免这里再硬编码一遍导致两处漂移。
 const providerLabel = (p?: string): string => PRINTER_PROVIDER[p || '']?.label || '网络直连';
 
+// 接入方式卡片的随选说明:选中哪条通道就解释哪条,避免一整段大杂烩文案。
+const providerHint = computed((): string => {
+  switch (form.provider) {
+    case 'feie':
+      return '打印机自己联网到飞鹅云取单，后端无需与其同网。若 SN 尚未绑定，请先用右上角「绑定飞鹅打印机」录入 SN 与识别码。';
+    case 'agent':
+      return '后端部署在云服务器时选它：IP 必须是代理能访问到的门店内网地址（不要填 127.0.0.1，除非代理和打印机在同一台机器上）。不需要装任何打印机驱动。';
+    default:
+      return '要求后端与打印机在同一局域网，下单/结账时后端直发指令到 IP:9100，收银电脑无需开机。';
+  }
+});
+
 // 有没有用到某条通道的打印机 —— 决定要不要显示对应的「未配置/离线」告警。
 // 只在真正用得上时提示,否则没用飞鹅的门店会一直看到一条无关的黄色告警。
 const hasFeiePrinter = computed(() => list.value.some(r => r.provider === 'feie'));
 const hasAgentPrinter = computed(() => list.value.some(r => r.provider === 'agent'));
+
+// 「本地打印代理是否配置过」:legacy 全局令牌 或 任一 v2 per-agent 身份,满足其一即为已配置。
+//
+// 不能只看 agent.configured —— 后端 AgentConfigured() 验的是 legacy 的 agent_token,
+// 只逐台签发 v2 身份、没配全局令牌的门店会被误判成「未配置」,状态卡片随之消失。
+// 用途:决定要不要显示「代理状态总览」卡片(见模板);没有配置过时不展示,
+// 避免「通道选了本地代理但没配令牌」的门店看到一张永远离线的空卡片。
+const agentConfigured = computed(() => agent.configured || agent.agents.length > 0);
+
+// 代理告警(未配置令牌 / 离线 / 有放弃单 / 积压)统一的前提:
+// 门店确实有代理通道打印机,且状态接口已经答复过(见 agentLoaded 处说明,防假告警闪现)。
+const agentStateReady = computed(() => agentLoaded.value && hasAgentPrinter.value);
 
 // 最老待打印单已等分钟数(向上取整);老后端没有 oldestPendingSec 时为 0。
 const agentWaitMinutes = computed(() => Math.ceil((agent.oldestPendingSec || 0) / 60));
@@ -730,7 +827,7 @@ function isAgentOnline(row: PrintAgent): boolean {
 // 清空队列:仅飞鹅云与本地代理有「云端/队列」概念,直连是即发即走。
 const canClearQueue = (row: PrinterRow): boolean => row.provider === 'feie' || row.provider === 'agent';
 
-// 无 printer:edit 时只保留「状态」查询(GET printer/status/:id → printer:view),
+// 无 printer:edit 时只保留「状态」与「票据预览」(两者都是只读 GET),
 // 其余按钮(测试打印/编辑/清空队列/删除/新增/绑定)都会改打印机状态或真的出纸。
 const canEdit = computed(() => hasPerm('printer:edit'));
 
@@ -744,8 +841,8 @@ const columns = computed(() => {
     { colKey: 'categoryIds', title: '负责分类', width: 150 },
     { colKey: 'status', title: '状态', width: 90 }
   ];
-  // 只读时操作列只剩「状态」,宽度收窄,免得右侧留一大片空白。
-  cols.push({ colKey: 'op', title: '操作', width: canEdit.value ? 280 : 90 });
+  // 只读时操作列只剩「状态」与「票据预览」,宽度收窄,免得右侧留一大片空白。
+  cols.push({ colKey: 'op', title: '操作', width: canEdit.value ? 400 : 180 });
   return cols;
 });
 
@@ -770,6 +867,9 @@ async function loadFeie(): Promise<void> {
     feie.user = res.user || '';
   } catch {
     feie.configured = false;
+  } finally {
+    // 成功失败都算「答复过了」:失败时按未配置呈现(与改动前一致),不能把告警永久藏住。
+    feieLoaded.value = true;
   }
 }
 
@@ -797,6 +897,9 @@ async function loadAgent(): Promise<void> {
     agent.oldestPendingSec = 0;
     agent.agents = [];
     agent.latestAgentVersion = '';
+  } finally {
+    // 成功失败都算「答复过了」:失败时按未配置呈现(与改动前一致),不能把告警永久藏住。
+    agentLoaded.value = true;
   }
 }
 
@@ -904,12 +1007,45 @@ async function save(): Promise<void> {
   }
 }
 
+// 逐行在途标记:测试打印会真的吐纸,连点会连出多张;逐行去重避免误伤其它打印机。
+const testingIds = ref<Set<number>>(new Set());
 async function onTest(row: PrinterRow): Promise<void> {
+  const id = Number(row.printerId);
+  if (testingIds.value.has(id)) return;
+  testingIds.value.add(id);
   try {
     const res = await testPrinter(row.printerId);
     MessagePlugin.success(res?.msg || '测试指令已发送');
   } catch {
     // 失败原因（含飞鹅返回码释义）由请求拦截器统一弹出
+  } finally {
+    testingIds.value.delete(id);
+  }
+}
+
+// 票据预览:不出纸地看这台机器的测试页样式 —— 新装机器时先在这儿确认
+// 纸宽/通道名/份数写对了,再决定要不要真吐一张纸。
+const previewVisible = ref(false);
+const previewLoading = ref(false);
+const previewData = ref<TicketPreview | null>(null);
+const previewRow = ref<PrinterRow | null>(null);
+
+const previewTitle = computed(() =>
+  previewRow.value ? `票据预览 · ${previewRow.value.printerName} · 测试页` : '票据预览'
+);
+
+async function onPreview(row: PrinterRow): Promise<void> {
+  previewVisible.value = true;
+  previewLoading.value = true;
+  previewData.value = null;
+  previewRow.value = row;
+  try {
+    previewData.value = await previewPrinterTest(row.printerId);
+  } catch {
+    // 失败原因由请求拦截器统一弹出
+    previewVisible.value = false;
+  } finally {
+    previewLoading.value = false;
   }
 }
 
@@ -1038,6 +1174,60 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+/* 顶部工具栏:动作按钮（绑定飞鹅打印机 / 新增打印机）必须固定在右上角。
+   全局 .toolbar 是 flex-wrap:wrap,换行判定按各子项的 max-content 宽来算 ——
+   这里提示文案很长(max-content 远超容器),按钮会被当作「放不下」换到第二行,
+   而 space-between 对「独占一行」的单个元素等于左对齐,于是按钮跑到左下角。
+   这里:提示列 flex-basis 置 0(换行判定时不再占宽),按钮不参与收缩,并让按钮
+   对齐工具栏顶部,保证它始终贴右上角。 */
+.toolbar {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.toolbar > .tip {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.toolbar :deep(.t-space) {
+  flex: 0 0 auto;
+}
+
+/* 左侧提示:条目之间的行距比正文略放开,长时间盯配置页不挤。
+   (不设 max-width:每行宽度由内容决定,不会被拉成超宽行;窄屏时靠容器自然回行。) */
+.toolbar-tip {
+  line-height: 1.7;
+}
+
+/* 每条通道一行:前面用小圆点做标记,文字用悬挂缩进 —— 条目换行时左边缘
+   与首行文字对齐,不会跑到圆点下面,视觉上仍是「一条」。 */
+.tip-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tip-list li {
+  position: relative;
+  padding-left: 14px;
+}
+
+.tip-list li + li {
+  margin-top: 2px;
+}
+
+.tip-list li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #c8c8c8;
+}
+
 .ml {
   margin-left: 8px;
 }
@@ -1112,5 +1302,165 @@ onUnmounted(() => {
 
 .agent-cell .v {
   color: #555;
+}
+
+/* ===== 新增/编辑打印机弹窗排版 ===== */
+
+/* TDesign 的 .t-form__controls-content 是 nowrap 的 flex 行:控件之外再放说明文字,
+   必须自己包一层竖排容器,否则文字会和控件挤在同一行被压窄(仓库 Config.vue 同做法)。 */
+.field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* IP + 端口并排:用 flex 而不是 t-row/t-col —— TDesign 的 gutter 会以列内边距实现,
+   首尾列各内缩 8px,导致这一行的标签和输入框与上下控件错开 8px。
+   这里左列自适应、右列定宽,两端正好与控件列对齐。
+   margin-bottom 必须自己补:它是普通 div 而不是 t-form__item,不会自动带上
+   表单项的 24px 行距,少了它下一行(打印参数)会紧贴在这一行下面。 */
+.conn-row {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  margin-bottom: var(--td-comp-margin-xxl, 24px);
+}
+
+.conn-ip {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.conn-port {
+  flex: 0 0 200px;
+}
+
+.conn-row.stacked {
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 竖排时 flex-basis 作用在纵轴(高度)上:不复位会把「端口」项撑成 200px 高,
+   而「IP 地址」项的 flex-basis:0 会让它塌陷,两者都要复位。 */
+.conn-row.stacked .conn-ip,
+.conn-row.stacked .conn-port {
+  flex: 0 0 auto;
+}
+
+/* TDesign 默认给 .t-form__controls 里的表单项加了 24px 右边距(为内联排布准备) */
+.conn-row :deep(.t-form__item) {
+  margin-bottom: 0;
+  margin-right: 0;
+}
+
+/* 接入方式:三张可选卡片(标题 + 说明),选中态描边高亮。
+   注意:card 内容里必须 normal 掉 TDesign 默认的 nowrap,否则说明文字会撑出卡片。 */
+.provider-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.provider-cards.stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.provider-cards :deep(.t-radio) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  height: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--td-component-stroke, #e7e7e7);
+  border-radius: 9px;
+  background: var(--td-bg-color-container, #fff);
+  transition:
+    border-color 0.15s,
+    background-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.provider-cards :deep(.t-radio:hover) {
+  border-color: var(--td-brand-color, #0052d9);
+}
+
+.provider-cards :deep(.t-radio.t-is-checked) {
+  border-color: var(--td-brand-color, #0052d9);
+  background: var(--td-brand-color-light, #f2f7ff);
+}
+
+/* 圆点与两行文字视觉对齐(gap 已负责间距,取消默认 margin-left) */
+.provider-cards :deep(.t-radio__input) {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.provider-cards :deep(.t-radio__label) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  margin-left: 0;
+  white-space: normal;
+}
+
+.pc-title {
+  font: var(--td-font-body-medium);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--td-text-color-primary, #333);
+}
+
+.pc-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-placeholder, #999);
+}
+
+/* 随选说明:与控件列对齐的浅底色块,随通道切换只保留当前通道的注意事项。
+   box-sizing 必须写:width:100% + 左右内边距,content-box 下右侧会戳出容器 24px,
+   底色块比上面的卡片和下面的输入框都宽出一截。 */
+.provider-hint {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--td-bg-color-secondarycontainer, #f5f5f5);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--td-text-color-secondary, #666);
+}
+
+/* 打印参数:纸宽 / 份数 / 状态一行排布 */
+.print-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 32px;
+  width: 100%;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.opt-label {
+  font-size: 13px;
+  color: var(--td-text-color-secondary, #666);
+}
+
+.opt-value {
+  font-size: 13px;
+  color: var(--td-text-color-primary, #333);
 }
 </style>

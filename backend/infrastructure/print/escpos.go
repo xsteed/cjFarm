@@ -91,13 +91,17 @@ func EncodeTicket(lines []string) []byte { return encodeESCPOS(lines) }
 // encodeESCPOS 组装一份单据的 ESC/POS 字节流,入参为已对齐/折行后的文本行。
 //
 // 强调行(店名/标题/合计,见 BoldLine)用 ESC E 重打加粗:重打不占额外宽度,
-// 与渲染层的等宽对齐完全兼容。
+// 与渲染层的等宽对齐完全兼容。放大行(夹单桌号,见 SplitBigLine)单独走 GS !。
 func encodeESCPOS(lines []string) []byte {
 	var b []byte
 	b = append(b, 0x1B, 0x40) // ESC @ 初始化
 	for _, ln := range lines {
 		if qr, ok := SplitQRLine(ln); ok {
 			b = append(b, encodeQR(qr)...)
+			continue
+		}
+		if big, ok := SplitBigLine(ln); ok {
+			b = append(b, encodeBigLine(big)...)
 			continue
 		}
 		bold := BoldLine(ln)
@@ -111,6 +115,22 @@ func encodeESCPOS(lines []string) []byte {
 		}
 	}
 	b = append(b, 0x1D, 0x56, 0x42, 0x00) // GS V m n: 切纸(部分切)
+	return b
+}
+
+// encodeBigLine 输出一行「放大居中」文本:GS ! 0x11 让字符倍宽倍高,ESC a 1 居中。
+//
+// 每行打完立即还原字号与对齐 —— 不还原的话后面所有行都会变成双倍宽,
+// 渲染层辛苦算好的等宽对齐全废。GS ! 是 Epson 系通用指令,国产热敏机普遍兼容;
+// 万一某机型不支持,最坏结果是该行以正常字号左对齐打出,不会乱码。
+func encodeBigLine(text string) []byte {
+	b := make([]byte, 0, len(text)*2+16)
+	b = append(b, 0x1B, 0x61, 0x01) // ESC a 1:居中
+	b = append(b, 0x1D, 0x21, 0x11) // GS ! 0x11:倍宽 + 倍高
+	b = append(b, gbk(text)...)
+	b = append(b, '\n')
+	b = append(b, 0x1D, 0x21, 0x00) // GS ! 0x00:还原字号
+	b = append(b, 0x1B, 0x61, 0x00) // ESC a 0:还原左对齐
 	return b
 }
 

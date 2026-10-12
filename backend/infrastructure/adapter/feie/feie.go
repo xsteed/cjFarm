@@ -9,8 +9,7 @@
 // 只能走这条通道(直连 TCP 那种做法在云端根本够不到门店内网)。
 //
 // 接口规范(据官方开放平台文档):
-//   - 地址: http://api.de.feieyun.com/Api/Open/
-//     https://api.de.feieyun.com:443/Api/Open/
+//   - 地址: https://api.feieyun.cn/Api/Open/
 //   - 方式: POST,表单编码(Content-Type: application/x-www-form-urlencoded)
 //   - 公共参数:
 //     user    飞鹅云后台注册用户名
@@ -35,7 +34,7 @@ import (
 )
 
 // DefaultAPI 飞鹅开放平台默认接口地址(海外/私有云可在系统配置里改)。
-const DefaultAPI = "https://api.de.feieyun.com/Api/Open/"
+const DefaultAPI = "https://api.feieyun.cn/Api/Open/"
 
 // MaxBytes 单次推送内容上限。官方限制 5000 字节,这里留出余量,
 // 超长内容按行切分多次推送(官方建议也是「拆成两单发」)。

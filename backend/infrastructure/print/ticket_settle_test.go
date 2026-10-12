@@ -210,13 +210,13 @@ func TestGuestTicketQROverride(t *testing.T) {
 	off := false
 
 	// 库里是关的,但表单勾上了 → 预览里要出码。
-	chunks, _ := PreviewTicketSample(po.PrintDocGuest, 48, GuestTicketOverrides{QR: &on}, false)
+	chunks, _ := PreviewTicketSample(po.PrintDocGuest, 48, SampleOverrides{QR: &on})
 	if !hasQRLine(chunks[0]) {
 		t.Fatal("覆盖为开启时预览应含二维码行")
 	}
 	// 库里是开的,但表单取消了 → 预览里不该出码。
 	setPrintSetting(t, "print_guest_qr", "1")
-	chunks, _ = PreviewTicketSample(po.PrintDocGuest, 48, GuestTicketOverrides{QR: &off}, false)
+	chunks, _ = PreviewTicketSample(po.PrintDocGuest, 48, SampleOverrides{QR: &off})
 	if hasQRLine(chunks[0]) {
 		t.Fatal("覆盖为关闭时预览不应含二维码行")
 	}

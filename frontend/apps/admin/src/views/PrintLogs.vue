@@ -183,6 +183,7 @@
             theme="primary"
             variant="text"
             size="small"
+            :disabled="reprintingIds.has(Number(row.printId))"
             @click="onReprint(row)"
           >
             补打这张
@@ -297,6 +298,7 @@
             theme="primary"
             variant="text"
             size="small"
+            :disabled="reprintingIds.has(Number(row.printId))"
             @click="onReprint(row)"
           >
             补打
@@ -539,7 +541,13 @@ function resetQuery(): void {
   load();
 }
 
+// 逐行在途标记:补打会真的出纸,连点会打出多张重复小票。用 Set 逐行去重,
+// 不误伤其它行的补打按钮(模板据此 disabled)。
+const reprintingIds = ref<Set<number>>(new Set());
 async function onReprint(row: PrintLogRow): Promise<void> {
+  const id = Number(row.printId);
+  if (reprintingIds.value.has(id)) return;
+  reprintingIds.value.add(id);
   try {
     const res = await reprintLog(row.printId);
     MessagePlugin.success(res?.msg || '已重新发送');
@@ -547,6 +555,8 @@ async function onReprint(row: PrintLogRow): Promise<void> {
   } catch {
     // 失败原因由请求拦截器统一弹出
     load();
+  } finally {
+    reprintingIds.value.delete(id);
   }
 }
 

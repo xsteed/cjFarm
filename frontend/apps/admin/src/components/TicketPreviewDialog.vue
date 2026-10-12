@@ -25,7 +25,7 @@
             v-if="chunks.length > 1"
             class="preview-tip chunk-label"
           >
-            第 {{ i + 1 }} / {{ chunks.length }} 段(超长票据实际分段送出)
+            第 {{ i + 1 }} / {{ chunks.length }} 张纸 · 实际出纸时按此顺序逐张送出
           </div>
           <div
             class="ticket-paper"
@@ -53,6 +53,14 @@
                   >{{ line.text }}</span
                 >
               </div>
+              <!-- 放大行(夹单桌号):出纸时是倍宽倍高 + 居中,字符网格已失效,
+                   这里直接用大字居中渲染,不按格拆分 -->
+              <div
+                v-else-if="line.big"
+                class="ticket-line big"
+              >
+                {{ line.text }}
+              </div>
               <div
                 v-else
                 class="ticket-line"
@@ -70,6 +78,17 @@
           </div>
         </div>
       </div>
+      <!-- 份数与「形态还原」提示:这两件事只靠看纸面是看不出来的 -->
+      <div
+        v-if="copiesHint || approximate"
+        class="preview-note"
+      >
+        <div v-if="copiesHint">该打印机一次打印 {{ copiesHint }},预览只展示其中一张。</div>
+        <div v-if="approximate">
+          加菜小票只能还原票据形态:<b>当时新增了哪些菜</b>已无从追溯(订单只增不减、打印日志不存渲染快照),
+          此处菜品区按订单<b>当前全部菜品</b>渲染,金额是当前整单合计。
+        </div>
+      </div>
       <div class="preview-tip paper-meta">
         <slot name="meta">
           由后端「出纸同一份渲染代码」生成,与实际小票 1:1;纸宽
@@ -85,7 +104,7 @@
 // (全角字符占 2 格、半角占 1 格),浏览器字体宽度差异不会造成两列错位。
 // 加粗行(店名/标题/合计)与 ESC/POS 出纸的 ESC E 强调一致。
 // 打印记录页(重放某条记录)与系统配置页(示例模板预览)共用。
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { renderQrDataUrl } from '../utils/tableQr';
 import type { TicketLine } from '@dining/types';
 
@@ -93,13 +112,23 @@ const props = defineProps<{
   visible: boolean;
   title: string;
   loading?: boolean;
-  /** 分段后的文本行(每段一张纸带,与实际入队的任务段一一对应) */
+  /** 分段后的文本行:每段就是实际吐出的一张纸,按先后顺序排列 */
   chunks?: TicketLine[][] | null;
   /** 每行可容纳的半角字符数(58mm=32,80mm=48) */
   lineWidth?: number;
+  /** 打印机配置的打印份数;>1 时提示「预览只展示其中一张」 */
+  copies?: number;
+  /** 为 true 表示形态还原而非内容复现(加菜小票),需要显式说明 */
+  approximate?: boolean;
 }>();
 
 defineEmits<{ 'update:visible': [v: boolean] }>();
+
+// 份数提示只在真的会多打时才出现(配 1 份时说它是废话)。
+const copiesHint = computed(() => {
+  const n = props.copies ?? 1;
+  return n > 1 ? `${n} 张` : '';
+});
 
 interface CharCell {
   ch: string;
@@ -169,6 +198,18 @@ watch(
   font-size: 12px;
 }
 
+/* 「预览看不出来」的两件事:份数与内容近似。放在纸面下方,不干扰票据本身。 */
+.preview-note {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #fff8e6;
+  border: 1px solid #ffe0a3;
+  color: #8a5a00;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .preview-loading {
   padding: 24px 8px;
   color: #999;
@@ -228,6 +269,18 @@ watch(
 /* 加粗行:店名/标题/合计,与 ESC/POS 出纸的 ESC E 重打强调一致。 */
 .ticket-line.bold {
   font-weight: 700;
+}
+
+/* 放大行:夹单桌号。出纸走 GS ! 倍宽倍高 + 居中(飞鹅通道 <C><B>),
+   预览按同样观感放大居中,不再参与字符网格对齐。 */
+.ticket-line.big {
+  font-weight: 700;
+  font-size: 1.7em;
+  line-height: 1.3;
+  height: auto;
+  padding: 2px 0;
+  text-align: center;
+  white-space: normal;
 }
 
 /* 二维码行:热敏机在票尾居中出一枚二维码,预览里同样居中放图。 */

@@ -23,6 +23,7 @@ package print
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
@@ -108,10 +109,11 @@ func VerifyAgentToken(tok string) bool {
 		return false
 	}
 	got := strings.TrimSpace(tok)
-	if len(got) != len(want) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+	// 先各自 SHA-256 归一化长度再比较:直接比较原文时,长度不等会提前 return,
+	// 攻击者可用不同长度的令牌探测出真实令牌长度(与「恒定时间」的注释不符)。
+	sumGot := sha256.Sum256([]byte(got))
+	sumWant := sha256.Sum256([]byte(want))
+	return subtle.ConstantTimeCompare(sumGot[:], sumWant[:]) == 1
 }
 
 // 代理心跳:内存即时值 + 限流落库双轨。
@@ -371,25 +373,19 @@ func enqueueAgentTicket(log *zap.SugaredLogger, p po.Printer, lines []string, do
 	return nil
 }
 
+// agentLineChunks 本地代理通道的行分段区间:单条任务的字符上限(文本 + 换行符)。
+func agentLineChunks(lines []string) []chunkSpan {
+	return lineChunks(lines, jobPayloadMaxChars, len("\n"), func(l string) int { return len(l) })
+}
+
 // splitJobPayload 把文本行按长度上限切成多段(每段是一份可直接打印的连续票据)。
-// 单行本身超限时无法再切(票据宽度决定了它不会发生),按原样放行。
+//
+// 区间由 agentLineChunks 计算,与预览共用同一份切段逻辑 —— 预览与实际发送
+// 一旦各算各的,长单「预览几张纸 / 实际吐几张」就对不上了。
 func splitJobPayload(lines []string) []string {
-	out := []string{}
-	cur := ""
-	for _, l := range lines {
-		next := l
-		if cur != "" {
-			next = cur + "\n" + l
-		}
-		if len(next) > jobPayloadMaxChars && cur != "" {
-			out = append(out, cur)
-			cur = l
-			continue
-		}
-		cur = next
-	}
-	if cur != "" {
-		out = append(out, cur)
+	out := make([]string, 0, 1)
+	for _, sp := range agentLineChunks(lines) {
+		out = append(out, strings.Join(lines[sp.Start:sp.End], "\n"))
 	}
 	if len(out) == 0 {
 		out = []string{""}

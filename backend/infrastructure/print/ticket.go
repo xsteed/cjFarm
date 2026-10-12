@@ -121,6 +121,17 @@ func itemQtyLabel(it po.OrderItem) string {
 	return label + " x" + strconv.Itoa(it.Quantity)
 }
 
+// itemAmountText 菜品金额列文本:赠菜返回空串(不打金额)。
+//
+// 赠菜不计入菜品金额与合计(原价只累加进订单的赠送额),在菜品行上打 0.00 或原价
+// 都会让客人拿着它去和合计对账却永远对不上;是否赠送由左侧的「【赠】」标记表达。
+func itemAmountText(it po.OrderItem) string {
+	if it.IsGift == 1 {
+		return ""
+	}
+	return money(po.ToYuan(it.Amount))
+}
+
 // appendItemRemark 把单菜备注作为缩进子行追加(如「加辣」)。
 func appendItemRemark(lines []string, it po.OrderItem, width int) []string {
 	if strings.TrimSpace(it.Remark) == "" {
@@ -131,46 +142,164 @@ func appendItemRemark(lines []string, it po.OrderItem, width int) []string {
 
 // ticketHeader 单据公共抬头:店名 + 单据名 + 单号 + 桌台/人数/时间 + 分隔线。
 // noLabel 为单号前缀(食客小票用「订单号」、厨房单用「单号」),留空则不打印单号行。
-func ticketHeader(o po.Order, width int, title, noLabel string) []string {
+//
+// kitchen 为真时按「厨打单」惯例精简票头 —— 后厨单出纸量大,票头每省一行都是实打实的纸:
+//   - 桌号放大居中,且台名与桌号重复时不再另起一行(见 tableNoLines);
+//   - 单号用可口头报读的短号,并与取餐号并排一行;
+//   - 人数与下单时间并排一行,时间省到分。
+//
+// 食客小票(kitchen=false)保持完整订单号、完整时间、各自独立成行 —— 那是顾客留底与查单的凭证,
+// 不宜为省纸牺牲可读性。
+func ticketHeader(o po.Order, width int, title, noLabel string, kitchen bool) []string {
 	lines := []string{
 		pad(service.GetSetting("shop_name"), width),
 		pad(title, width),
 	}
-	if noLabel != "" && strings.TrimSpace(o.OrderNo) != "" {
-		lines = append(lines, pad(noLabel+": "+o.OrderNo, width))
-	}
 	// 取餐号是单据上唯一能口头传递的标识:顾客凭它向服务员报号、后厨据此叫号。
-	// 紧挨单号打印,两者互不替代 —— 单号用于事后追溯,取餐号用于当面交互。
-	// 未分配(历史订单/手工补录)时不打印这一行,避免露出无意义的 "0"。
-	if o.PickupNo > 0 {
-		lines = append(lines, pad("取餐号: "+strconv.Itoa(o.PickupNo), width))
+	// 与单号互不替代 —— 单号用于事后追溯,取餐号用于当面交互;
+	// 未分配(历史订单/手工补录)时不打印,避免露出无意义的 "0"。
+	noLine := ""
+	if noLabel != "" && strings.TrimSpace(o.OrderNo) != "" {
+		noLine = noLabel + ": " + orderNoFor(o.OrderNo, kitchen)
 	}
-	return append(lines,
-		pad("桌号: "+o.TableNo+"  "+o.TableName, width),
-		pad("人数: "+strconv.Itoa(o.PersonCount), width),
-		pad("下单: "+o.CreateTime, width),
-		hr(width),
-	)
+	pickup := ""
+	if o.PickupNo > 0 {
+		pickup = "取餐号: " + strconv.Itoa(o.PickupNo)
+	}
+	people := "人数: " + strconv.Itoa(o.PersonCount)
+	createTime := "下单: " + createTimeFor(o.CreateTime, kitchen)
+
+	if kitchen {
+		// 两个短标识并排一行(58mm 上 13 + 2 + 9 = 24 格,留有余量);
+		// 超宽时交给 splitLines 折行,不会溢出纸宽。
+		if merged := strings.TrimSpace(joinFields(noLine, pickup)); merged != "" {
+			lines = append(lines, splitLines(merged, width)...)
+		}
+		lines = append(lines, tableNoLines(o, width, true)...)
+		// 人数在左、下单时间右对齐:同类信息(几个人、几点下的)并一行,右边时间好找。
+		lines = append(lines, twoCol(people, createTime, width)...)
+		return append(lines, hr(width))
+	}
+
+	if noLine != "" {
+		lines = append(lines, pad(noLine, width))
+	}
+	if pickup != "" {
+		lines = append(lines, pad(pickup, width))
+	}
+	lines = append(lines, tableNoLines(o, width, false)...)
+	return append(lines, pad(people, width), pad(createTime, width), hr(width))
 }
 
-// RenderKitchenTicket 渲染厨房单。
+// joinFields 把非空字段用两个空格并成一行(空字段直接跳过)。
+func joinFields(fields ...string) string {
+	kept := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if strings.TrimSpace(f) != "" {
+			kept = append(kept, f)
+		}
+	}
+	return strings.Join(kept, "  ")
+}
+
+// orderNoFor 单据上的单号:厨打单用短号,其余用完整单号。
 //
-// title 用于区分「厨房单」与加菜时的「加菜单」——后厨看到加菜单就知道
-// 只需要补做这几道,不必重新核对整桌。
-// showPrice 打开时带出单价小计,便于后厨或传菜核对(默认关闭,后厨只看菜名数量)。
-func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, showPrice bool, title string) []string {
+// 后厨不需要 20 位流水号:短号正是管理端订单列表/打印记录里始终展示的那个标识
+// (po.ShortOrderNo),后厨口头报读、商家在后台核对都用同一串字符,少一个翻译环节。
+// 完整单号仍可由后台「打印记录」按短号反查,追溯能力不受影响。
+func orderNoFor(orderNo string, kitchen bool) string {
+	if !kitchen {
+		return orderNo
+	}
+	return po.ShortOrderNo(orderNo)
+}
+
+// createTimeFor 单据上的下单时间:厨打单省到分(「09-21 12:00」),其余保持完整时间。
+//
+// 后厨看时间只为判断「这单压了多久、要不要催」,秒与年份没有信息量;
+// 保留 MM-DD 是为了跨零点以后仍能分清是哪天的单。格式非预期时原样返回,
+// 绝不因一个格式异常让票面上缺时间。
+func createTimeFor(createTime string, kitchen bool) string {
+	if !kitchen {
+		return createTime
+	}
+	s := strings.TrimSpace(createTime)
+	// 期望 "YYYY-MM-DD HH:MM[:SS]" 形态。
+	if len(s) < 16 || s[4] != '-' || s[7] != '-' || s[10] != ' ' {
+		return createTime
+	}
+	return s[5:10] + " " + s[11:16]
+}
+
+// tableNoLines 桌号区渲染。
+//
+// 常规单据一行等宽文本「桌号: 08  大厅08桌」;厨房单(kitchen)把桌号单独放大居中
+// 打一行 —— 后厨出纸多、桌台靠翻纸找,桌号是唯一需要远远认出的字段,
+// 与成熟产品的「厨打单桌号加大」一致。
+//
+// 为什么不连台名一起放大:58mm 纸双倍宽只剩 16 个半角位,「桌号: 08  大厅08桌」
+// 有 18 位,一并放大必然折行、反而看不全;故只放大「桌号 + 编号」这截短文本。
+// 台名里已含桌号(「大厅03桌」)时不再另起一行,避免同一个桌号在票上出现两次。
+func tableNoLines(o po.Order, width int, kitchen bool) []string {
+	no := strings.TrimSpace(o.TableNo)
+	name := strings.TrimSpace(o.TableName)
+	// 无桌号(打包外带/手工补录)时保持原样等宽行,放大一行「桌号 」没有意义。
+	if !kitchen || no == "" {
+		return []string{pad("桌号: "+o.TableNo+"  "+o.TableName, width)}
+	}
+	out := []string{bigMarkLine("桌号 " + no)}
+	// 台名多数就是「区域 + 桌号」(大厅03桌):放大桌号行已经写明桌号,再补一行台名
+	// 等于同一个桌号出现两次,后厨看着乱、票面还长一行。只在台名不含桌号
+	// (包间名、特殊位置)时才补一行 —— 信息不丢,重复不显。
+	if name != "" && !strings.Contains(name, no) {
+		out = append(out, pad(name, width))
+	}
+	return out
+}
+
+// KitchenTicketOptions 厨房单渲染选项。
+type KitchenTicketOptions struct {
+	// Title 单据名:区分「厨房单」与加菜时的「加菜单」——后厨看到加菜单就知道
+	// 只需补做这几道,不必重新核对整桌。拆单时调用方已在标题后拼出序号(如「【厨房单】2/5」)。
+	Title string
+	// ShowPrice 带出每道菜的小计,便于后厨或传菜核对(默认关,后厨只看菜名与数量)。
+	ShowPrice bool
+	// SingleDish 这张票只含一道菜(拆单/按份拆出来的夹单):
+	//   - 菜名放大(放得下时),夹在菜上、传菜口远远可认;
+	//   - 不编菜品序号、不出「共 N 道 M 份」汇总 —— 恒为 1 道 1 份,纯属浪费纸面。
+	SingleDish bool
+}
+
+// RenderKitchenTicket 渲染厨房单(厨打单/夹单),版式对齐成熟 POS 的通行做法:
+//
+//   - 票头:桌号放大居中、单号用可口头报读的短号、时间省到分(见 ticketHeader);
+//   - 菜品区:整单逐道编号(便于划单报数),拆单则单道菜放大;赠菜带【赠】;
+//   - 做法/忌口:单菜备注缩进成子行,与整单备注一并加粗 —— 后厨最容易做错的地方;
+//   - 票尾:整单给一行「共 N 道 M 份」,出纸是否齐全一眼可比对。
+func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts KitchenTicketOptions) []string {
 	w := LineWidth(paperWidth)
-	if strings.TrimSpace(title) == "" {
+	title := strings.TrimSpace(opts.Title)
+	if title == "" {
 		title = "【厨房单】"
 	}
-	lines := ticketHeader(o, w, title, "单号")
-	for _, it := range items {
-		if showPrice {
-			lines = append(lines, twoCol(itemQtyLabel(it), money(po.ToYuan(it.Amount)), w)...)
-		} else {
-			lines = append(lines, splitLines(itemQtyLabel(it), w)...)
+	lines := ticketHeader(o, w, title, "单号", true)
+	for i, it := range items {
+		label := itemQtyLabel(it)
+		switch {
+		case opts.SingleDish && !opts.ShowPrice && displayWidth(label) <= w/2:
+			// 双倍宽后仍放得下才放大:放不下会折行,反而比正常字号更难读。
+			lines = append(lines, bigMarkLine(label))
+		case opts.ShowPrice:
+			lines = append(lines, twoCol(itemNo(i, label, opts.SingleDish), itemAmountText(it), w)...)
+		default:
+			lines = append(lines, splitLines(itemNo(i, label, opts.SingleDish), w)...)
 		}
 		lines = appendItemRemark(lines, it, w)
+	}
+	if !opts.SingleDish && len(items) > 0 {
+		// 汇总紧跟菜品区收尾,不再插分隔线:两者是同一块内容(菜品清单及其总数),
+		// 中间加线只会让票面多一行空白。
+		lines = append(lines, splitLines(itemSummary(items), w)...)
 	}
 	if strings.TrimSpace(o.OrderRemark) != "" {
 		lines = append(lines, hr(w))
@@ -180,12 +309,32 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, showP
 	return lines
 }
 
+// itemNo 菜品行文案:整单逐道编号(「1. 凉拌青瓜 (份) x2」),拆单不编号。
+//
+// 编号是后厨划单的最低成本手段:报数、清点、催菜时都能只报序号;
+// 拆单时每张票只有一道菜,编号恒为 1,加了只会占行宽。
+func itemNo(idx int, label string, singleDish bool) string {
+	if singleDish {
+		return label
+	}
+	return strconv.Itoa(idx+1) + ". " + label
+}
+
+// itemSummary 菜品汇总行(「共 2 道 3 份」):道数用于核对有没有漏打,
+// 份数用于备料与出餐分量核对(同一道菜点 3 份就是 3 份的量)。
+func itemSummary(items []po.OrderItem) string {
+	qty := 0
+	for _, it := range items {
+		qty += it.Quantity
+	}
+	return fmt.Sprintf("共 %d 道 %d 份", len(items), qty)
+}
+
 // guestTicketConfig 食客小票的模板配置快照。
 // 渲染只消费快照,不直接读库——既保证一张票内配置一致,也让「示例预览」
 // 能注入未保存的表单值(所见即所改)。
 type guestTicketConfig struct {
 	footer       string // 页脚文案,空 = 不打印
-	showSeatFee  bool
 	showDiscount bool
 	qr           bool // 页脚后是否打印二维码
 }
@@ -194,7 +343,6 @@ type guestTicketConfig struct {
 func currentGuestTicketConfig() guestTicketConfig {
 	return guestTicketConfig{
 		footer:       guestFooter(),
-		showSeatFee:  guestShowSeatFee(),
 		showDiscount: guestShowDiscount(),
 		qr:           guestQR(),
 	}
@@ -208,23 +356,23 @@ func RenderGuestTicket(o po.Order, items []po.OrderItem, paperWidth int) []strin
 // renderGuestTicketWith 按给定模板配置渲染食客小票(配置可由预览注入)。
 func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg guestTicketConfig) []string {
 	w := LineWidth(paperWidth)
-	lines := ticketHeader(o, w, "【食客小票】", "订单号")
+	lines := ticketHeader(o, w, "【食客小票】", "订单号", false)
 	for _, it := range items {
-		lines = append(lines, twoCol(itemQtyLabel(it), money(po.ToYuan(it.Amount)), w)...)
+		lines = append(lines, twoCol(itemQtyLabel(it), itemAmountText(it), w)...)
 		lines = appendItemRemark(lines, it, w)
 	}
-	lines = append(lines, hr(w))
-	lines = append(lines, twoCol("菜品金额", money(po.ToYuan(o.DishAmount)), w)...)
-	if cfg.showSeatFee {
-		// 标签带上人数(如「茶位费(3人)」):客人看到的总额是 人数×单价,
-		// 不标人数容易被误读成单价或漏乘。
+	// 茶位费跟菜品同区(分隔线之上):它和菜品一样是「按行计费」的收费项(人数×单价),
+	// 与菜名挨在一起读起来才连贯;分隔线以下只留优惠与合计这类整单口径的收尾项。
+	// 金额为 0(本单不收 / 门店未开启)时不打,避免出现「茶位费(4人) 0.00」这种像收错了的行。
+	if o.SeatFee > 0 {
 		lines = append(lines, twoCol(fmt.Sprintf("茶位费(%d人)", o.PersonCount), money(po.ToYuan(o.SeatFee)), w)...)
 	}
+	lines = append(lines, hr(w))
+	// 金额区只剩优惠与合计,两项都按「有才打」:
+	//   - 优惠是真正从总额里减掉的钱,必须显示;
+	//   - 赠送不再单列 —— 赠菜已在菜品区用【赠】逐道标注,下面再写一遍是重复。
 	if o.DiscountAmount > 0 && cfg.showDiscount {
 		lines = append(lines, twoCol("优惠", "-"+money(po.ToYuan(o.DiscountAmount)), w)...)
-	}
-	if o.GiftAmount > 0 {
-		lines = append(lines, twoCol("赠送", "-"+money(po.ToYuan(o.GiftAmount)), w)...)
 	}
 	lines = append(lines, twoCol("合计", money(po.ToYuan(o.TotalAmount)), w)...)
 	lines = append(lines, hr(w))
@@ -260,7 +408,10 @@ func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg
 func appendGuestTicketTail(lines []string, o po.Order, w int, cfg guestTicketConfig) []string {
 	// 页脚文案可配置(管理端「系统配置 → 小票打印」),清空则整段省略(含分隔线)。
 	if cfg.footer != "" {
-		lines = append(lines, hr(w))
+		// 有整单备注时,备注块自己已收过一条分隔线;这里再补一条会连出两条横线。
+		if len(lines) == 0 || lines[len(lines)-1] != hr(w) {
+			lines = append(lines, hr(w))
+		}
 		lines = append(lines, splitLines(cfg.footer, w)...)
 	} else {
 		// 页脚省略时,裁掉尾部残留的分隔线(备注/金额区后的 hr 会成为孤行收尾)。
@@ -283,13 +434,13 @@ func appendGuestTicketTail(lines []string, o po.Order, w int, cfg guestTicketCon
 // 客人刚加完菜,关心的是「这次加了什么、现在一共多少钱」,而不是再核对一遍
 // 此前已经点过的菜。因此菜品区只出新增明细,金额只给一行「当前合计」
 // (整单最新,含此前已点的全部菜品)—— 措辞刻意不用「合计」,避免被误读为
-// 所列菜品的金额小计。茶位费/优惠等整单口径的分项留给结账小票。
+// 所列菜品的金额小计。优惠等整单口径的信息留在结账小票上。
 func RenderGuestAppendTicket(o po.Order, items []po.OrderItem, paperWidth int) []string {
 	w := LineWidth(paperWidth)
 	cfg := currentGuestTicketConfig()
-	lines := ticketHeader(o, w, "【加菜小票】", "订单号")
+	lines := ticketHeader(o, w, "【加菜小票】", "订单号", false)
 	for _, it := range items {
-		lines = append(lines, twoCol(itemQtyLabel(it), money(po.ToYuan(it.Amount)), w)...)
+		lines = append(lines, twoCol(itemQtyLabel(it), itemAmountText(it), w)...)
 		lines = appendItemRemark(lines, it, w)
 	}
 	lines = append(lines, hr(w))
@@ -382,16 +533,48 @@ func guestTicketQRContent(o po.Order) string {
 	return base + "/printTicket?orderNo=" + url.QueryEscape(orderNo)
 }
 
+// ============================================================================
+// 放大行
+// ============================================================================
+
+// bigMarkPrefix 放大行标记前缀。
+//
+// 与二维码同一套「控制行」思路:渲染层只有 []string 表达不了字号,就用一行控制行
+// 把「这一行要放大居中」的意图传给发送层(ESC/POS 用 GS ! 倍宽倍高 + ESC a 居中,
+// 飞鹅云用 <C><B> 标签,预览按大字渲染)。发送层与预览层都必须消费并剥掉该前缀,
+// 否则控制字符会被当正文打到纸上。
+const bigMarkPrefix = "\x02big:"
+
+// bigMarkLine 生成放大行。
+func bigMarkLine(text string) string { return bigMarkPrefix + text }
+
+// SplitBigLine 若该行是放大标记行,返回待放大文本与 true;否则返回 false。
+// 导出给 handler(预览)使用。
+func SplitBigLine(line string) (string, bool) {
+	if !strings.HasPrefix(line, bigMarkPrefix) {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(line, bigMarkPrefix)), true
+}
+
+// ============================================================================
+// 强调
+// ============================================================================
+
 // BoldLine 报告一行是否按「票据排版惯例」加粗强调。
 //
 // 规则基于模板生成行的固定形态(而非渲染结构),因此可被所有消费方共用:
 //   - 店名行:整行等于系统配置里的店铺名(票头第一行);
-//   - 单据标题行:整行恰为「【…】」形态(【厨房单】/【加菜单】/【食客小票】/【加菜小票】等);
-//   - 合计行:以「合计」或「当前合计」开头的两列行(后者是加菜小票的金额行)。
+//   - 单据标题行:整行恰为「【…】」形态(【厨房单】/【加菜单】/【食客小票】/【加菜小票】等),
+//     以及拆单后带序号的同款标题(【厨房单】2/5 —— 序号与原标题同行,省纸且一眼看得出第几张);
+//   - 合计行:以「合计」或「当前合计」开头的两列行(后者是加菜小票的金额行);
+//   - 备注行:「整单备注: …」「备注: …」与单菜备注子行(「* 加辣」)。
+//     备注是后厨最容易看漏、也最容易做错菜的地方,与成熟厨打单一样统一加粗。
 //
 // 各通道的落地:
 //   - ESC/POS(直连 + 本地代理):ESC E 重打加粗,不占额外宽度,列对齐不受影响;
-//   - 飞鹅云:<B> 标签实为放大(倍宽)会破坏等宽对齐,故保持纯文本;
+//   - 飞鹅云:<BOLD> 标签(官方语义「字体加粗」,同样不改变字符宽度);
+//     不可用 <B> —— 它的官方语义是「放大一倍」,会把等宽列对齐打乱;
 //   - 预览:按行标记渲染 font-weight。
 //
 // 菜名/备注里偶现的【】都会带前后缀(数量/备注前缀),不会整行恰为标题形态。
@@ -403,10 +586,31 @@ func BoldLine(text string) bool {
 	if strings.HasPrefix(t, "【") && strings.HasSuffix(t, "】") {
 		return true
 	}
+	// 拆单序号标题「【厨房单】2/5」:标题后紧跟 n/m 序号,仍按标题加粗。
+	if i := strings.Index(t, "】"); i > 0 && isSeqSuffix(t[i+len("】"):]) {
+		return true
+	}
 	if strings.HasPrefix(t, "合计") || strings.HasPrefix(t, "当前合计") {
 		return true
 	}
+	// 备注行:整单备注 / 食客小票备注 / 单菜备注子行(「* 加辣」)。
+	// 前缀由模板固定生成,菜名或备注内容本身不会整行撞上这三个前缀。
+	if strings.HasPrefix(t, "整单备注:") || strings.HasPrefix(t, "备注:") || strings.HasPrefix(t, "* ") {
+		return true
+	}
 	return t != "" && t == strings.TrimSpace(service.GetSetting("shop_name"))
+}
+
+// isSeqSuffix 判断标题后的拆单序号后缀(如 "2/5")。
+// 必须严格是 n/m 形态(正整数、前不超过后),避免把「【A】说明」这类正文误判为标题。
+func isSeqSuffix(s string) bool {
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	idx, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	total, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	return err1 == nil && err2 == nil && idx > 0 && total > 0 && idx <= total
 }
 
 // RenderTestTicket 渲染测试页:一眼能看出「这台机器是谁、走哪条通道」。

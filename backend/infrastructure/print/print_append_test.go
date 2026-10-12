@@ -70,23 +70,63 @@ func TestGuestAppendJobRendersAppendOnly(t *testing.T) {
 		}
 	}
 	// 整单口径的内容不应出现在加菜小票上:标题、金额分项与「合计」措辞。
-	for _, bad := range []string{"【食客小票】", "【加菜单】", "菜品金额", "茶位费", "优惠", "赠送"} {
+	for _, bad := range []string{"【食客小票】", "【加菜单】", "优惠", "赠送", " 合计"} {
 		if strings.Contains(got, bad) {
 			t.Fatalf("加菜小票不应包含整单要素 %q:\n%s", bad, got)
 		}
 	}
 }
 
-// TestGuestAppendReprintFallsBackToGuest 补打/预览按 docType=guest 重放当前整单:
-// 无法还原「当时新增了哪些菜」(订单只增不减、日志不存渲染快照),整单最稳妥。
-func TestGuestAppendReprintFallsBackToGuest(t *testing.T) {
-	if got := normalizeDocType(po.PrintDocGuestAppend); got != po.PrintDocGuest {
-		t.Fatalf("guest_append 补打/预览应归一化为 guest, got %q", got)
+// TestDocTypeNormalizeKeepsAppendForm 补打/预览必须保留 guest_append 形态:
+// 抹成 guest 会让重出来的票变成另一张(标题「【食客小票】」、金额区整单口径),
+// 与打印记录里的「加菜小票」对不上。
+func TestDocTypeNormalizeKeepsAppendForm(t *testing.T) {
+	if got := normalizeDocType(po.PrintDocGuestAppend); got != po.PrintDocGuestAppend {
+		t.Fatalf("guest_append 应保留原形态, got %q", got)
 	}
 	if got := normalizeDocType(po.PrintDocKitchen); got != po.PrintDocKitchen {
 		t.Fatalf("kitchen 补打/预览应保持 kitchen, got %q", got)
 	}
 	if got := normalizeDocType("whatever"); got != po.PrintDocGuest {
 		t.Fatalf("未知类型应回落为 guest, got %q", got)
+	}
+}
+
+// TestGuestAppendPreviewKeepsAppendForm 加菜小票的预览必须仍是加菜小票形态
+// (标题 + 一行「当前合计」),而不是整单食客小票。
+func TestGuestAppendPreviewKeepsAppendForm(t *testing.T) {
+	setupTestDB(t)
+	orderID := insertPreviewOrder(t)
+	printerID := insertPreviewPrinter(t, po.PrinterTypeGuest, "", 48)
+
+	chunks, _, err := PreviewTicket(printerID, orderID, po.PrintDocGuestAppend, po.PrintTriggerAppend)
+	if err != nil {
+		t.Fatalf("PreviewTicket 失败: %v", err)
+	}
+	got := flattenPreview(chunks)
+	for _, want := range []string{"【加菜小票】", "当前合计"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("加菜小票预览缺少 %q:\n%s", want, got)
+		}
+	}
+	// 整单口径的要素不该出现:那是另一张票。
+	for _, bad := range []string{"【食客小票】", "茶位费"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("加菜小票预览不应包含整单要素 %q:\n%s", bad, got)
+		}
+	}
+}
+
+// TestReprintKitchenTitleFollowsTrigger 厨房单抬头随触发场景变:
+// 加菜那张出的是「【加菜单】」,补打必须沿用 —— 否则后厨会把重打的票
+// 当成一张全新整单,已经上过的菜可能被重做一遍。
+func TestReprintKitchenTitleFollowsTrigger(t *testing.T) {
+	if got := kitchenTitleFor(po.PrintTriggerAppend); got != "【加菜单】" {
+		t.Fatalf("加菜场景的厨房单抬头应为【加菜单】, got %q", got)
+	}
+	for _, tr := range []string{po.PrintTriggerOrder, po.PrintTriggerSettle, po.PrintTriggerReprint, po.PrintTriggerTest} {
+		if got := kitchenTitleFor(tr); got != "【厨房单】" {
+			t.Fatalf("触发场景 %s 的厨房单抬头应为【厨房单】, got %q", tr, got)
+		}
 	}
 }

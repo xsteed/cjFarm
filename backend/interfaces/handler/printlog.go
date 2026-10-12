@@ -68,21 +68,24 @@ func PrintLogReprint(c *gin.Context) {
 		fail(c, "该记录不是订单单据(如测试打印),无法重打")
 		return
 	}
-	if err := print.Reprint(entry.PrinterID, entry.OrderID, entry.DocType, adminName(c)); err != nil {
+	if err := print.Reprint(entry.PrinterID, entry.OrderID, entry.DocType, entry.TriggerBy, adminName(c)); err != nil {
 		fail(c, "补打失败:"+err.Error())
 		return
 	}
 	okMsg(c, "已重新发送到「"+entry.PrinterName+"」")
 }
 
-// previewLine 预览响应里的单行:文本 + 是否加粗强调(与 ESC/POS 出纸的 ESC E 强调
-// 行一致,前端按 font-weight 渲染;飞鹅通道保持纯文本,但预览统一展示强调效果)。
+// previewLine 预览响应里的单行:文本 + 是否加粗强调(与 ESC/POS 出纸的 ESC E 重打、
+// 飞鹅云出纸的 <BOLD> 标签一致,前端按 font-weight 渲染)。
 type previewLine struct {
 	Text string `json:"text"`
 	Bold bool   `json:"bold,omitempty"`
 	// QR 非空表示这一行实际出的是二维码:前端按该内容渲染真实二维码图形,
 	// Text 只是占位提示。等宽文本网格画不出二维码,只能这样保住「预览即所得」。
 	QR string `json:"qr,omitempty"`
+	// Big 为真表示这一行按「放大居中」出纸(夹单桌号,见 print.SplitBigLine):
+	// 前端用大字居中渲染,与 ESC/POS 的 GS ! 倍宽倍高、飞鹅的 <C><B> 一致。
+	Big bool `json:"big,omitempty"`
 }
 
 // qrPlaceholder 预览里二维码行的占位文本。
@@ -96,6 +99,11 @@ func toPreviewLines(lines []string) []previewLine {
 			out = append(out, previewLine{Text: qrPlaceholder, QR: qr})
 			continue
 		}
+		// 放大行必须先剥掉控制前缀再下发:留着前缀前端会连控制字符一起显示。
+		if big, ok := print.SplitBigLine(l); ok {
+			out = append(out, previewLine{Text: big, Big: true})
+			continue
+		}
 		out = append(out, previewLine{Text: l, Bold: print.BoldLine(l)})
 	}
 	return out
@@ -107,21 +115,22 @@ func toPreviewLines(lines []string) []previewLine {
 // (未保存)可通过请求体覆盖,所见即所改。不出纸、不记日志。
 func PrintPreviewSample(c *gin.Context) {
 	var p struct {
-		DocType          string  `json:"docType"`          // guest(默认)/kitchen
+		DocType          string  `json:"docType"`          // guest(默认)/kitchen/guest_append
 		PaperWidth       int     `json:"paperWidth"`       // 32(58mm)/48(80mm,默认)
 		Footer           *string `json:"footer"`           // 页脚文案覆盖
-		ShowSeatFee      *bool   `json:"showSeatFee"`      // 茶位费行开关覆盖
 		ShowDiscount     *bool   `json:"showDiscount"`     // 优惠行开关覆盖
 		QR               *bool   `json:"qr"`               // 小票二维码开关覆盖
 		KitchenShowPrice *bool   `json:"kitchenShowPrice"` // 厨房单带金额覆盖
+		KitchenSplit     *string `json:"kitchenSplit"`     // 厨房单打印粒度覆盖(whole/item/portion)
 	}
 	_ = c.ShouldBindJSON(&p)
-	chunks, lineWidth := print.PreviewTicketSample(p.DocType, p.PaperWidth, print.GuestTicketOverrides{
-		Footer:       p.Footer,
-		ShowSeatFee:  p.ShowSeatFee,
-		ShowDiscount: p.ShowDiscount,
-		QR:           p.QR,
-	}, p.KitchenShowPrice != nil && *p.KitchenShowPrice)
+	chunks, lineWidth := print.PreviewTicketSample(p.DocType, p.PaperWidth, print.SampleOverrides{
+		Footer:           p.Footer,
+		ShowDiscount:     p.ShowDiscount,
+		QR:               p.QR,
+		KitchenShowPrice: p.KitchenShowPrice,
+		KitchenSplit:     p.KitchenSplit,
+	})
 	previewChunks := make([][]previewLine, 0, len(chunks))
 	for _, ck := range chunks {
 		previewChunks = append(previewChunks, toPreviewLines(ck))
@@ -152,10 +161,10 @@ func PrintPreview(c *gin.Context) {
 		return
 	}
 	if entry.OrderID == 0 {
-		fail(c, "该记录不是订单单据(如测试打印),无法预览")
+		fail(c, "该记录不是订单单据(如测试打印);测试页样式可到「打印机管理」的「票据预览」查看")
 		return
 	}
-	chunks, lineWidth, err := print.PreviewTicket(entry.PrinterID, entry.OrderID, entry.DocType)
+	chunks, lineWidth, err := print.PreviewTicket(entry.PrinterID, entry.OrderID, entry.DocType, entry.TriggerBy)
 	if err != nil {
 		fail(c, "生成预览失败:"+err.Error())
 		return
@@ -165,14 +174,19 @@ func PrintPreview(c *gin.Context) {
 		previewChunks = append(previewChunks, toPreviewLines(ck))
 	}
 	ok(c, gin.H{
-		// chunks 与实际入队的任务段一一对应:超长票据会拆成多段依次送出,
-		// 前端逐段渲染即与出纸 1:1;每行带 bold 标记(与 ESC/POS 出纸的强调一致)。
+		// chunks 与该打印机实际出纸的分段一一对应:受单条上限约束的通道
+		// (代理/飞鹅)会把超长票据拆成多段依次送出,直连则是整张一次写完。
+		// 每行带 bold 标记(与 ESC/POS 出纸的强调一致)。
 		"chunks":      previewChunks,
 		"lineWidth":   lineWidth,
 		"docType":     entry.DocType,
 		"orderNo":     entry.OrderNo,
 		"printerName": entry.PrinterName,
 		"copies":      entry.Copies,
+		// 加菜小票的票据形态可以还原,但「当时新增了哪些菜」无从还原
+		// (订单只增不减、日志不存渲染快照),菜品区退化为订单当前整单 ——
+		// 由前端显式标注,避免商家把它当成原始加菜内容的复现。
+		"approximate": entry.DocType == po.PrintDocGuestAppend,
 	})
 }
 
@@ -204,7 +218,7 @@ func OrderReprint(c *gin.Context) {
 			return
 		}
 	}
-	if err := print.Reprint(printerID, p.OrderID, p.DocType, adminName(c)); err != nil {
+	if err := print.Reprint(printerID, p.OrderID, p.DocType, po.PrintTriggerReprint, adminName(c)); err != nil {
 		fail(c, "补打失败:"+err.Error())
 		return
 	}
