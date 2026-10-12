@@ -53,6 +53,9 @@
         theme="primary"
         @click="reload"
       >
+        <template #icon>
+          <search-icon />
+        </template>
         查询
       </t-button>
       <t-button
@@ -196,7 +199,7 @@
           <span
             v-if="(row.orderId ?? 0) <= 0"
             class="tip"
-            >测试记录不可补打</span
+            >测试页请到「打印机管理 → 票据预览」查看样式</span
           >
         </div>
       </div>
@@ -334,6 +337,8 @@
       :loading="previewLoading"
       :chunks="previewData?.chunks"
       :line-width="previewData?.lineWidth ?? 48"
+      :copies="previewData?.copies"
+      :approximate="previewData?.approximate"
     />
 
     <!-- 移动端筛选弹层 -->
@@ -381,6 +386,9 @@
           theme="primary"
           @click="applyFilters"
         >
+          <template #icon>
+            <search-icon />
+          </template>
           查询
         </t-button>
       </template>

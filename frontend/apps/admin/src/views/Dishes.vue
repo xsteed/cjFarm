@@ -34,6 +34,9 @@
           theme="primary"
           @click="load"
         >
+          <template #icon>
+            <search-icon />
+          </template>
           查询
         </t-button>
       </div>
@@ -527,25 +530,25 @@
             >
               <t-input
                 v-model="s.specName"
+                class="spec-name"
                 placeholder="规格名，如 份/小份"
-                style="width: 160px"
               />
               <t-input-number
                 v-model="s.price"
+                class="spec-price"
                 :min="0"
                 :decimal-places="2"
                 placeholder="价格"
-                style="width: 130px"
               />
               <t-input-number
                 v-model="s.stock"
+                class="spec-stock"
                 :min="-1"
                 :decimal-places="0"
-                placeholder="-1 不限量"
-                style="width: 130px"
+                placeholder="库存"
               />
-              <span class="spec-stock-hint">库存，-1 = 不限量</span>
               <t-button
+                class="spec-del"
                 theme="danger"
                 variant="text"
                 @click="removeSpec(i)"
@@ -553,6 +556,7 @@
                 删除
               </t-button>
             </div>
+            <div class="spec-hint">价格单位「元」；库存填 -1 表示不限量</div>
             <t-button
               variant="dashed"
               block
@@ -946,11 +950,14 @@ onMounted(() => {
   min-width: 860px;
 }
 
-/* 列表里的缩略图:固定 44px 方形,与「无图」占位同尺寸,行高才整齐 */
+/* 列表里的缩略图:固定 44px 方形,与「无图」占位同尺寸,行高才整齐。
+   overflow:hidden + 圆角让内部招牌角标的外角自动跟随缩略图圆角裁切,不会「方角出框」 */
 .thumb-box {
   position: relative;
   width: 44px;
   height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
 }
 
 .thumb {
@@ -970,21 +977,41 @@ onMounted(() => {
   color: var(--ink-4);
 }
 
-/* 招牌角标:贴图片左上角,品牌色渐变底 + 白字,三处图片(移动端行卡/表格缩略图/卡片视图)共用 */
+/* 招牌角标:贴图片左上角,品牌色渐变底 + 白字,三处图片(移动端行卡/表格缩略图/卡片视图)共用。
+   尺寸基准按最小场景(列表 44px 缩略图)定 —— 原 10px 字号 + 1px 字距在这种小图上会占掉
+   近 8 成宽度,像糊了一块色板;收到 9px + 0.5px 字距后只剩内角(BR)做「缎带」缺口,外角(TL)
+   交给容器 overflow 裁切,恒等于缩略图圆角。移动端行卡(68px)与卡片视图(130px 高图片)
+   篇幅更大,在下面各自放大一档,避免同一个小角标在大图上显得寒酸。 */
 .sig-tag {
   position: absolute;
   top: 0;
   left: 0;
   z-index: 1;
-  padding: 2px 7px;
-  border-radius: 6px 0 6px 0;
+  padding: 1px 4px;
+  border-radius: 0 0 5px;
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
   color: #fff;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  line-height: 1.3;
-  letter-spacing: 1px;
+  line-height: 1.5;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
   pointer-events: none;
+}
+
+/* 移动端行卡缩略图 68px:比列表大一档,角标同步放大,读起来才不局促 */
+.m-row-pic .sig-tag {
+  padding: 2px 6px;
+  font-size: 10px;
+  border-bottom-right-radius: 6px;
+}
+
+/* 卡片视图图片 130px 高:角标按图放大并加宽内角,与顾客端大图上的观感一致 */
+.dish-card .sig-tag {
+  padding: 3px 9px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  border-bottom-right-radius: 10px;
 }
 
 /* 售罄蒙版(列表缩略图):44px 里放不下带描边的胶囊标签,
@@ -1233,11 +1260,30 @@ onMounted(() => {
   margin-bottom: 8px;
 }
 
-.spec-stock-hint {
-  flex-shrink: 0;
+/* 规格名自适应剩余空间(可收缩),价格/库存固定宽度:各控件宽度之和不会
+   超过弹窗表单区,避免出现 x 轴滚动条 */
+.spec-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.spec-price,
+.spec-stock,
+.spec-del {
+  flex: 0 0 auto;
+}
+
+.spec-price,
+.spec-stock {
+  width: 130px;
+}
+
+/* 原来跟在每个规格行后的长提示会撑宽整行,改为编辑区下方单行说明 */
+.spec-hint {
+  margin-bottom: 8px;
   color: var(--ink-4);
-  font-size: 11px;
-  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 @media (width <= 1200px) {
@@ -1286,21 +1332,19 @@ onMounted(() => {
     margin-left: 0 !important;
   }
 
-  /* 规格编辑行:名称/价格/库存三栏(内联 160/130/130px)+长提示在窄屏会溢出,
-     改为纵向堆叠、各控件占满整行,提示文字允许换行 */
+  /* 规格编辑行:改为纵向堆叠、各控件占满整行(需重置 flex,否则 basis
+     在纵向排列时会变成高度) */
   .spec-row {
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
   }
 
-  .spec-row :deep(.t-input),
-  .spec-row :deep(.t-input-number) {
+  .spec-name,
+  .spec-price,
+  .spec-stock {
+    flex: none;
     width: 100% !important;
-  }
-
-  .spec-stock-hint {
-    white-space: normal;
   }
 }
 
@@ -1364,12 +1408,15 @@ onMounted(() => {
 }
 
 /* 移动端行卡缩略图容器:只为承载售罄蒙版(原先是裸 img,没有可定位的祖先)。
-   尺寸与全局 .m-row-img / .m-row-ph 的 68px 保持一致,不改变行卡排版。 */
+   尺寸与全局 .m-row-img / .m-row-ph 的 68px 保持一致,不改变行卡排版。
+   圆角取 10px(与 .m-row-img 相同)并裁切,招牌角标的外角才会贴合图片圆角。 */
 .m-row-pic {
   position: relative;
   flex-shrink: 0;
   width: 68px;
   height: 68px;
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 /* 售罄蒙版(移动端行卡):压暗缩略图 + 居中「售罄」,与桌面卡片 .pic-mask 同一套视觉 */

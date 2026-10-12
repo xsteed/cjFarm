@@ -52,6 +52,9 @@
             theme="primary"
             @click="onSearch"
           >
+            <template #icon>
+              <search-icon />
+            </template>
             查询
           </t-button>
         </div>

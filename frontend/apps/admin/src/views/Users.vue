@@ -28,7 +28,7 @@
           style="width: 130px"
         />
         <t-button
-          theme="default"
+          theme="primary"
           variant="outline"
           @click="load"
         >
@@ -470,6 +470,9 @@
           theme="primary"
           @click="applyFilters"
         >
+          <template #icon>
+            <search-icon />
+          </template>
           查询
         </t-button>
       </template>

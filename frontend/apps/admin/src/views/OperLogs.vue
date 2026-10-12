@@ -9,16 +9,27 @@
     />
 
     <div class="toolbar">
-      <span class="tip">
-        管理端的每次写操作都会记一条：谁、在什么时间、从哪个 IP、对哪个对象做了什么。
-        免单、挂账核销、退款、改单与权限变更还额外记了金额与原因，供事后对账追责。 密码与支付密钥等敏感字段一律不入库。
-      </span>
+      <!-- 说明收成一句话 + 问号浮层:原文三行会把右上角按钮挤到换行/压扁。 -->
+      <div class="toolbar-tip">
+        <span class="tip">管理端每次写操作都会留痕，敏感字段不入库。</span>
+        <t-tooltip
+          :content="AUDIT_TIP"
+          placement="bottom-left"
+          :overlay-inner-style="tipOverlayStyle"
+        >
+          <info-circle-icon class="tip-icon" />
+        </t-tooltip>
+      </div>
       <t-button
         v-if="canManage"
         theme="danger"
         variant="outline"
+        class="clean-btn"
         @click="onClean"
       >
+        <template #icon>
+          <delete-icon />
+        </template>
         清理过期日志
       </t-button>
     </div>
@@ -75,6 +86,9 @@
         theme="primary"
         @click="reload"
       >
+        <template #icon>
+          <search-icon />
+        </template>
         查询
       </t-button>
       <t-button
@@ -171,7 +185,7 @@
           </div>
           <div class="mcard-cell">
             <div class="k">IP / 耗时</div>
-            <div class="v">{{ row.operIp || '—' }} · {{ row.costMs }}ms</div>
+            <div class="v">{{ row.operIp || '—' }} · {{ costText(row.costMs) }}</div>
           </div>
         </div>
 
@@ -232,18 +246,22 @@
           <span class="tip mono">{{ row.targetType || '—' }}{{ row.targetId ? ' #' + row.targetId : '' }}</span>
         </template>
         <template #detail="{ row }">
-          <span
-            class="tip ell"
-            :title="row.detail || row.errorMsg"
-            >{{ row.detail || '—' }}</span
+          <t-tooltip
+            :content="detailTip(row)"
+            :disabled="!detailTip(row)"
+            :overlay-inner-style="tipOverlayStyle"
+            placement="top-left"
           >
-          <div
-            v-if="row.status === 0 && row.errorMsg"
-            class="err ell"
-            :title="row.errorMsg"
-          >
-            {{ row.errorMsg }}
-          </div>
+            <div class="detail-cell">
+              <span class="tip ell">{{ row.detail || '—' }}</span>
+              <div
+                v-if="row.status === 0 && row.errorMsg"
+                class="err ell"
+              >
+                {{ row.errorMsg }}
+              </div>
+            </div>
+          </t-tooltip>
         </template>
         <template #status="{ row }">
           <t-tag
@@ -252,6 +270,9 @@
           >
             {{ OPER_STATUS[row.status]?.label }}
           </t-tag>
+        </template>
+        <template #costMs="{ row }">
+          <span class="mono">{{ costText(row.costMs) }}</span>
         </template>
         <template #param="{ row }">
           <t-button
@@ -346,6 +367,9 @@
           theme="primary"
           @click="applyFilters"
         >
+          <template #icon>
+            <search-icon />
+          </template>
           查询
         </t-button>
       </template>
@@ -367,6 +391,7 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import type { DateRangeValue } from 'tdesign-vue-next';
+import { DeleteIcon, InfoCircleIcon } from 'tdesign-icons-vue-next';
 import { listOperLogs, cleanOperLogs, OPER_TYPE, OPER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
@@ -403,6 +428,13 @@ function resetFilters(): void {
 
 // 清理会真的删数据，单独收口到 log:manage（只读的 log:view 看不到这个按钮）。
 const canManage = computed(() => hasPerm('log:manage'));
+
+// 顶部说明的完整版：工具栏里只留一句话，其余挂在问号浮层上。
+const AUDIT_TIP = [
+  '管理端的每次写操作都会记一条：谁、在什么时间、从哪个 IP、对哪个对象做了什么。',
+  '免单、挂账核销、退款、改单与权限变更还额外记了金额与原因，供事后对账追责。',
+  '密码与支付密钥等敏感字段一律不入库。'
+].join('\n');
 
 // 模块取值与后端 handler/audit.go 的 routeAudit 保持一致 —— 改了后端记得同步这里。
 const MODULES: string[] = [
@@ -460,20 +492,45 @@ const paramVisible = ref(false);
 const paramText = ref('');
 
 const columns = computed(() => {
+  // 列宽按「1440 屏内容区约 1107px」标定:固定列合计约 1043px,剩余宽度全给
+  // 「摘要 / 失败原因」(minWidth),不够时表格自身横向滚动 —— 这列内容最长且要读全文,
+  // 压窄了等于把关键信息藏起来。
+  // 时间列 185px:后端 conf.TimeLayout = "2006-01-02 15:04:05" 共 19 个半角字符,
+  // 14px 字号下文字约 145px,加单元格左右各 16px 内边距约 177px —— 原 152px 会折成两行。
+  // 耗时列 92px:要放得下「1234 ms」这种带单位的文本。
   const cols = [
-    { colKey: 'createTime', title: '时间', width: 152 },
-    { colKey: 'operator', title: '操作人 / 角色', width: 130 },
-    { colKey: 'action', title: '动作', width: 148 },
-    { colKey: 'businessType', title: '类型', width: 84 },
+    { colKey: 'createTime', title: '时间', width: 185 },
+    { colKey: 'operator', title: '操作人 / 角色', width: 148 },
+    { colKey: 'action', title: '动作', width: 138 },
+    { colKey: 'businessType', title: '类型', width: 78 },
     { colKey: 'target', title: '操作对象', width: 128 },
-    { colKey: 'detail', title: '摘要 / 失败原因', minWidth: 200 },
-    { colKey: 'status', title: '结果', width: 80 },
-    { colKey: 'operIp', title: 'IP', width: 124 },
-    { colKey: 'costMs', title: '耗时', width: 78 },
-    { colKey: 'param', title: '参数', width: 72 }
+    { colKey: 'detail', title: '摘要 / 失败原因', minWidth: 260 },
+    { colKey: 'status', title: '结果', width: 76 },
+    { colKey: 'operIp', title: 'IP', width: 130 },
+    { colKey: 'costMs', title: '耗时', width: 92 },
+    { colKey: 'param', title: '参数', width: 68 }
   ];
   return cols;
 });
+
+// 耗时统一带单位:不足 1 秒按毫秒,超过按秒(保留 1 位),避免「1234」这种裸数字看不出量级。
+function costText(ms?: number): string {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n < 1000) return `${Math.round(n)} ms`;
+  return `${(n / 1000).toFixed(1)} s`;
+}
+
+// 摘要 + 失败原因一起作为悬浮提示正文:列里只放得下一行,全文靠 hover 看。
+function detailTip(row: OperLogRow): string {
+  const parts: string[] = [];
+  if (row.detail) parts.push(row.detail);
+  if (row.status === 0 && row.errorMsg) parts.push(`失败原因:${row.errorMsg}`);
+  return parts.join('\n');
+}
+
+// 提示浮层限宽并允许换行,长摘要不会被截断成一行。
+const tipOverlayStyle = { maxWidth: '420px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' };
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -546,12 +603,45 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* 说明只留一行,按钮 flex-start 贴到卡片右上角、不参与收缩,排版不再随文字长短漂。 */
 .toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.toolbar-tip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tip-icon {
+  flex: 0 0 auto;
+  color: #bbb;
+  font-size: 14px;
+  cursor: help;
+}
+
+.clean-btn {
+  flex-shrink: 0;
+}
+
+/* 窄屏(<=1024px)说明文字会占满整行,按钮换行独占一行更好点 —— 通用规则里
+   .toolbar > .t-button 已是 width:100%,这里补上换行即可。 */
+@media (width <= 1024px) {
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .clean-btn {
+    flex-shrink: 1;
+    width: 100%;
+  }
 }
 
 .tip {
@@ -576,13 +666,18 @@ onMounted(load);
   color: #333;
 }
 
+/* 摘要 / 失败原因:撑满整列后单行截断,不再写死 320px —— 写死会在宽屏下留白、
+   窄屏下溢出。全文由 t-tooltip 在 hover 时给出。 */
+.detail-cell {
+  min-width: 0;
+}
+
 .ell {
-  display: inline-block;
-  max-width: 320px;
+  display: block;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: bottom;
 }
 
 .err {

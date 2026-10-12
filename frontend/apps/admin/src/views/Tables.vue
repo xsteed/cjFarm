@@ -17,6 +17,9 @@
           theme="primary"
           @click="load"
         >
+          <template #icon>
+            <search-icon />
+          </template>
           查询
         </t-button>
       </div>
@@ -105,13 +108,20 @@
       <b>二维码地址提示：</b>{{ h5BaseWarn }}
     </div>
 
-    <div class="tip-bar" :class="{ collapsed: !tipExpanded }" @click="tipExpanded = !tipExpanded">
+    <div
+      class="tip-bar"
+      :class="{ collapsed: !tipExpanded }"
+      @click="tipExpanded = !tipExpanded"
+    >
       <div class="tip-body">
         桌台二维码由「H5 访问地址 + 点餐码」生成，点餐码在桌台创建时即固定、永不变更，可放心印制成桌牌。
         <br />
         点击「占用」中的桌台行（或窄屏卡片）可直接查看该桌当前订单详情，并在弹窗内改单、制作、收款、补打。
         <br />
         可用「状态」把桌台设为「停用（不可用）」或「预约」：此时顾客扫码无法下单，避免被其他客人占用；客人到店后再改回「正常」即可。
+        <br />
+        忘了点「收款」导致桌台一直占用时，用「更多 →
+        强制清台」收走本桌订单并恢复空闲（会记入操作日志，需选择补结账或作废）。
       </div>
       <span class="tip-toggle">{{ tipExpanded ? '收起 ▲' : '展开 ▼' }}</span>
     </div>
@@ -127,6 +137,7 @@
       @open-order="openTableOrder"
       @edit="openEdit"
       @lock="openLock"
+      @release="openRelease"
       @delete="onDelete"
       @qr="openQr"
     />
@@ -217,6 +228,38 @@
       </t-form>
     </t-dialog>
 
+    <t-dialog
+      v-model:visible="releaseVisible"
+      header="强制清台"
+      width="480px"
+      :confirm-btn="releaseConfirmBtn"
+      @confirm="saveRelease"
+    >
+      <t-form
+        :data="releaseForm"
+        label-width="90px"
+      >
+        <t-form-item label="桌台">
+          <span>{{ releaseForm.tableName }}（{{ releaseForm.tableNo }} 号桌）</span>
+        </t-form-item>
+        <t-form-item label="处理方式">
+          <t-radio-group v-model="releaseForm.action">
+            <t-radio value="settle"> 补结账（钱已收过） </t-radio>
+            <t-radio value="cancel"> 作废订单（不计收入） </t-radio>
+          </t-radio-group>
+        </t-form-item>
+      </t-form>
+      <div class="release-hint">
+        本桌进行中的订单会被按所选方式全部结束，桌台随即恢复空闲。<br />
+        <template v-if="releaseForm.action === 'settle'">
+          选「补结账」：订单按正常收款入账（实收 = 应收），适用于钱已在店里收过、只是系统漏点了收款。
+        </template>
+        <template v-else> 选「作废订单」：订单直接取消、不计收入，适用于客人跑单或误开单。 </template>
+        <br />
+        操作会记入操作日志，且不可撤销。若本桌其实还在用餐，请先走正常的「收款 / 结账」流程。
+      </div>
+    </t-dialog>
+
     <SingleQrDialog
       v-model:visible="qrVisible"
       :row="qrRow"
@@ -250,7 +293,16 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { AddIcon, QrcodeIcon } from 'tdesign-icons-vue-next';
-import { listTables, saveTable, updateTable, deleteTable, lockTable, getConfig, listOrders } from '@dining/api';
+import {
+  listTables,
+  saveTable,
+  updateTable,
+  deleteTable,
+  lockTable,
+  releaseTable,
+  getConfig,
+  listOrders
+} from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { isActiveStatus, LOOPBACK_RE, PAGE_ON_LOOPBACK, normalizeBaseUrl } from '@dining/shared';
 import { shopBrandName } from '../utils/tableQr';
@@ -516,6 +568,58 @@ async function saveLock(): Promise<void> {
   }
 }
 
+// ---- 强制清台 ----
+// 店家漏点「收款」时桌台会一直占用,下一桌扫码会被直接带进上一桌的账单;
+// 而常规编辑接口不改占用状态,所以这里提供唯一的人工补救入口。
+// 因为会动钱,处理方式必须由店家显式选择(补结账 / 作废),不做默认。
+const releaseVisible = ref(false);
+const releaseSaving = ref(false);
+const releaseConfirmBtn = computed(() => ({
+  content: '确认清台',
+  theme: 'danger' as const,
+  loading: releaseSaving.value
+}));
+const releaseForm = reactive<{
+  tableId: number;
+  tableNo: string;
+  tableName: string;
+  action: string;
+}>({
+  tableId: 0,
+  tableNo: '',
+  tableName: '',
+  action: 'settle'
+});
+
+function openRelease(row: TableInfo): void {
+  Object.assign(releaseForm, {
+    tableId: row.tableId ?? 0,
+    tableNo: row.tableNo ?? '',
+    tableName: row.tableName ?? '',
+    action: 'settle'
+  });
+  releaseVisible.value = true;
+}
+
+async function saveRelease(): Promise<void> {
+  if (!releaseForm.tableId || releaseSaving.value) return;
+  releaseSaving.value = true;
+  try {
+    await releaseTable({
+      tableId: releaseForm.tableId,
+      action: releaseForm.action
+    });
+    MessagePlugin.success('已清台，桌台恢复空闲');
+    releaseVisible.value = false;
+    void loadAll(true);
+    load();
+  } catch {
+    /* 失败已由拦截器统一 toast,弹窗保留供重试 */
+  } finally {
+    releaseSaving.value = false;
+  }
+}
+
 function onDelete(row: TableInfo): void {
   const dlg = DialogPlugin.confirm({
     header: '确认删除',
@@ -656,6 +760,18 @@ onMounted(async () => {
   border-radius: 8px;
   padding: 6px 10px;
   margin-top: 4px;
+}
+
+/* 强制清台:会动钱且不可撤销,用告警色把后果讲清楚 */
+.release-hint {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #a0401c;
+  background: #fff3ef;
+  border: 1px solid #ffd5c4;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 10px;
 }
 
 /* 移动端搜索栏右侧的图标按钮:正方形 */
