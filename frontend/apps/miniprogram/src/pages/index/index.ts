@@ -15,6 +15,8 @@ import {
   applyOrder,
   applyTable,
   clearCurrentOrder,
+  markOwnOrder,
+  ownOrderMark,
   readPersisted,
   sessionState
 } from '../../store/session';
@@ -297,12 +299,19 @@ Page({
           return;
         }
         // 本桌有未结账订单（后端 currentOrder 只含 pay_status=0 的进行中订单）：
-        // 交给订单页（加菜 / 催菜 / 支付都在那边）。
-        wx.redirectTo({
-          url: '/pages/order/index',
-          // 跳转失败（页面被删/路径写错）时不能让本页卡在 loading，退化为正常渲染菜单
-          fail: () => this.renderMenu(info)
-        });
+        // 先认领，认领过就直接交给订单页（加菜 / 催菜 / 支付都在那边）。
+        const tableCode = String(info.tableCode || '');
+        const orderNo = String(current.orderNo || '');
+        const mark = ownOrderMark(tableCode, orderNo);
+        if (mark === '1') {
+          this.gotoOrder(info);
+          return;
+        }
+        if (mark === 'no') {
+          this.waitForClear();
+          return;
+        }
+        this.confirmOwnOrder(current, info, tableCode, orderNo);
         return;
       }
 
@@ -327,6 +336,48 @@ Page({
     } catch (e) {
       this.setData({ loading: false, error: this.friendlyError(e) });
     }
+  },
+
+  /** 本桌已有未结账订单：先问一句是不是眼前这位客人的单，再决定去哪。 */
+  confirmOwnOrder(order: OrderDetail, info: TableInfo, tableCode: string, orderNo: string) {
+    // 只给「时间 + 菜数 + 金额」三行：够本人认出自己的单，
+    // 又不至于把上一桌具体点了什么菜摊给陌生人看。
+    // 时间口径与其它处一致：把 ISO 的 T 归一为空格再截取，避免出现 "10-09T12:03"。
+    const time = String(order.createTime || '').replace('T', ' ').slice(5, 16) || '--:--';
+    const count = (order.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+    const amount = money(Number(order.totalAmount) || 0);
+    wx.showModal({
+      title: '本桌已有一笔未结账的订单',
+      content: `下单时间 ${time}，共 ${count} 道菜，合计 ${amount}。是您这桌刚点的单吗？`,
+      confirmText: '是我的',
+      cancelText: '不是我的',
+      success: res => {
+        if (res.confirm) {
+          markOwnOrder(tableCode, orderNo, true);
+          this.gotoOrder(info);
+          return;
+        }
+        markOwnOrder(tableCode, orderNo, false);
+        this.waitForClear();
+      }
+    });
+  },
+
+  /** 跳订单页。跳转失败（页面被删 / 路径写错）时不能让本页卡在 loading，退化成菜单。 */
+  gotoOrder(info: TableInfo) {
+    wx.redirectTo({
+      url: '/pages/order/index',
+      fail: () => this.renderMenu(info)
+    });
+  },
+
+  /** 不是本人的单：清掉会话里的订单线索，停在提示页等服务员清台。 */
+  waitForClear() {
+    applyOrder(null);
+    this.setData({
+      loading: false,
+      error: '这张桌台的上一笔订单还未结账，请稍候服务员清台后再扫码点餐'
+    });
   },
 
   /** 渲染点餐界面（首次进入 / 无未结账订单 / 跳订单页失败时都会走这里）。 */

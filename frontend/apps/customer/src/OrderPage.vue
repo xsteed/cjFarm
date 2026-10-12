@@ -124,6 +124,59 @@
         </button>
       </div>
 
+      <!-- 本桌已有一笔未结账订单:先问清楚是不是眼前这位客人的单。
+           店家忘了点「收款」时,不问就直接进订单页,等于把上一桌的账单摊给下一桌。 -->
+      <div
+        v-else-if="view === 'resume'"
+        class="resume-box"
+      >
+        <template v-if="!foreign">
+          <div class="resume-title">本桌已有一笔未结账的订单</div>
+          <div class="resume-card">
+            <div class="resume-row">
+              <span>下单时间</span>
+              <b>{{ resumeTime }}</b>
+            </div>
+            <div class="resume-row">
+              <span>菜品数量</span>
+              <b>{{ resumeCount }} 道</b>
+            </div>
+            <div class="resume-row">
+              <span>合计金额</span>
+              <b>￥{{ resumeAmount }}</b>
+            </div>
+          </div>
+          <p class="resume-hint">
+            如果这是您这桌刚点的单，点「是我的」查看出餐进度或继续加菜；不是的话请点下面的按钮，我们会请服务员来处理。
+          </p>
+          <button
+            class="resume-btn primary"
+            @click="confirmMine"
+          >
+            是我的，继续
+          </button>
+          <button
+            class="resume-btn"
+            @click="notMine"
+          >
+            不是我的订单
+          </button>
+        </template>
+
+        <!-- 不是本人的单:后端不允许该桌再开一单(一桌只留一笔未结账订单),
+             这里只能给「等服务员清台 + 刷新」的出口 -->
+        <template v-else>
+          <div class="err-icon">!</div>
+          <div class="state-text">这张桌台的上一笔订单还未结账，请稍候服务员清台后再扫码点餐。</div>
+          <button
+            class="retry-btn"
+            @click="load"
+          >
+            刷新状态
+          </button>
+        </template>
+      </div>
+
       <OrderTrackView
         v-else-if="currentOrder && (view === 'order' || view === 'settled' || view === 'done' || view === 'canceled')"
         :view="view"
@@ -289,7 +342,7 @@ import {
 } from '@dining/api';
 import QRCode from 'qrcode';
 import type { MenuCategory, OrderDetail, OrderSummary, PublicConfig, RemarkOption, TableInfo } from '@dining/types';
-import { isActiveStatus, ui } from '@dining/shared';
+import { isActiveStatus, safeSession, ui } from '@dining/shared';
 import { useCart, useOrderPolling, useUrge } from '@dining/customer-core';
 import type { ViewState } from '@dining/customer-core';
 import { useCartPersist } from './composables/useCartPersist';
@@ -410,8 +463,13 @@ const { startPolling, stopPolling } = useOrderPolling({
   onPaid: showPayDone
 });
 const { activeCat, setListRef, setGroupRef, jumpTo, handleScroll } = useScrollSpy(menu);
-// 刷新/重进不丢购物车:菜单到位后再按当前菜单复核恢复
-const { restore: restoreCart } = useCartPersist(cart, tableId);
+// 刷新/重进不丢购物车:菜单到位后再按当前菜单复核恢复。
+// key 带本桌订单号 —— 换单/清台后订单号变了,上一批客人没提交的车不会被带出来。
+const { restore: restoreCart } = useCartPersist(
+  cart,
+  tableId,
+  computed(() => String(currentOrder.value?.orderNo || ''))
+);
 
 const seatFeeEnabled = computed(() => config.value.seat_fee_enabled === '1' && Number(config.value.seat_fee) > 0);
 const seatFeePer = computed(() => Number(config.value.seat_fee) || 0);
@@ -622,6 +680,7 @@ async function submit(): Promise<void> {
       pendingFingerprint = fingerprint;
     }
     const clientRequestId = pendingRequestId;
+    let orderNo: string;
     if (canAppend.value) {
       const res = await appendOrder({
         tableId: tableId.value,
@@ -631,7 +690,7 @@ async function submit(): Promise<void> {
         clientRequestId
       });
       MessagePlugin.success('加菜成功～新菜已进后厨，马上安排');
-      currentOrder.value = await getOrderByNo(res.orderNo);
+      orderNo = res.orderNo;
     } else {
       const res = await createOrder({
         tableId: tableId.value,
@@ -641,12 +700,20 @@ async function submit(): Promise<void> {
         clientRequestId
       });
       MessagePlugin.success('下单成功～大厨已收到，火力全开中');
-      currentOrder.value = await getOrderByNo(res.orderNo);
+      orderNo = res.orderNo;
     }
+    // 订单已在后端创建成功:先落定前端状态(清幂等键与购物车、切订单视图),再回拉完整详情。
+    // 回拉失败绝不能连累这些状态 —— 否则会停留菜单、购物车仍在,顾客以为没下单而重复操作。
+    // 这里用订单号占一个最小订单,让轮询能按单号继续拉取,下一拍(≤3s)即补全。
     pendingRequestId = '';
     pendingFingerprint = '';
     cart.value = [];
     cartVisible.value = false;
+    try {
+      currentOrder.value = await getOrderByNo(orderNo);
+    } catch {
+      currentOrder.value = { orderNo } as OrderDetail;
+    }
     view.value = 'order';
     startPolling();
   } catch {
@@ -690,6 +757,43 @@ const lockText = computed(() =>
   lockStatus.value === 2 ? '该桌台已被预订，如需用餐请联系店员' : '该桌台暂不可用，如需用餐请联系店员'
 );
 
+// ---- 未结账订单的归属确认 ----
+// 扫码进来时本桌已有一笔未结账订单:店家漏点「收款」的话,它很可能就是上一桌留下的。
+// 直接进订单页等于把上一桌的账单摊给下一桌,所以先让顾客自己认领一次。
+// 认领结果记在 sessionStorage —— 同一位顾客刷新/切页回来不再重复打扰,
+// 换一部手机重新扫码(新会话)则必然重新问一次。
+const foreign = ref(false);
+
+function ownKey(): string {
+  return `dining:mine:${tableId.value}:${String(currentOrder.value?.orderNo || '')}`;
+}
+
+function confirmMine(): void {
+  safeSession.set(ownKey(), '1');
+  view.value = 'order';
+  startPolling();
+}
+
+function notMine(): void {
+  safeSession.set(ownKey(), 'no');
+  // 已经不是自己的单:本地残留的购物车一并丢掉,免得菜单里还挂着上一桌点的菜
+  cart.value = [];
+  foreign.value = true;
+}
+
+// 确认页只给「下单时间 + 菜数 + 金额」三行:够本人认出自己的单,
+// 又不至于把上一桌具体点了什么菜完整摊给陌生人看。
+const resumeTime = computed(() => {
+  // 统一时间口径:后端可能返回 "YYYY-MM-DD HH:MM:SS" 或 ISO "YYYY-MM-DDTHH:MM:SSZ",
+  // 先把 T 归一为空格再截取,避免切出 "10-09T12:03" 这种带 T 的丑值(与 paidAt 展示一致)。
+  const t = String(currentOrder.value?.createTime || currentOrder.value?.beginTime || '').replace('T', ' ');
+  return t.length >= 16 ? t.slice(5, 16) : '--:--';
+});
+const resumeCount = computed(() =>
+  (currentOrder.value?.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0)
+);
+const resumeAmount = computed(() => Number(currentOrder.value?.totalAmount || 0).toFixed(2));
+
 async function load(): Promise<void> {
   view.value = 'loading';
   loadError.value = '';
@@ -712,19 +816,29 @@ async function load(): Promise<void> {
       })
     );
     if (m.length) activeCat.value = m[0].categoryId ?? null;
-    // 菜单到位后再恢复上次没提交的车:要拿当前菜单复核菜还在不在、有没有售罄
-    restoreCart(m);
-    // 桌台已有未结账订单 → 进入订单状态;已付款但出餐未完成则进入已结账视图。
+    // 桌台已有未结账订单 → 先确认归属再进订单页;已付款但出餐未完成则进已结账视图。
     // 没有本桌订单时,被停用/预约的桌台进「锁定」页,不进菜单。
     if (tb && tb.currentOrder) {
       currentOrder.value = tb.currentOrder;
-      view.value = Number(tb.currentOrder.payStatus) === 1 ? 'settled' : 'order';
-      startPolling();
+      const paid = Number(tb.currentOrder.payStatus) === 1;
+      // 已付款的单只看出餐进度,不涉及归属;同一会话内认领过(1)的不再重复问,
+      // 明确说过不是自己单的(no)直接停在「等服务员清台」。
+      const mine = safeSession.get(ownKey()) || '';
+      if (paid) view.value = 'settled';
+      else if (mine === '1') view.value = 'order';
+      else {
+        view.value = 'resume';
+        foreign.value = mine === 'no';
+      }
+      // 待确认期间不轮询:后厨一改状态就把确认页顶掉的话,顾客还没选就被跳走了。
+      if (view.value !== 'resume') startPolling();
     } else if (lockStatus.value) {
       view.value = 'locked';
     } else {
       view.value = 'menu';
     }
+    // 购物车要等订单归属定下来再恢复:它的 key 与恢复口径都依赖 currentOrder
+    restoreCart(m);
   } catch (e) {
     view.value = 'error';
     loadError.value = friendlyLoadError(e);
@@ -1020,6 +1134,77 @@ onUnmounted(() => {
   color: var(--brand-deep);
   font-size: 11px;
 }
+
+/* ---- 未结账订单归属确认 ---- */
+.resume-box {
+  flex: 1;
+  padding: 24px 20px 32px;
+  overflow-y: auto;
+}
+
+.resume-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink-1);
+  margin-bottom: 14px;
+}
+
+.resume-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card, 12px);
+  padding: 4px 14px;
+  margin-bottom: 14px;
+}
+
+.resume-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 0;
+  font-size: 14px;
+  color: var(--ink-3);
+}
+
+.resume-row + .resume-row {
+  border-top: 1px solid var(--line);
+}
+
+.resume-row b {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+.resume-hint {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.resume-btn {
+  display: block;
+  width: 100%;
+  padding: 13px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.resume-btn.primary {
+  margin-bottom: 12px;
+  border-color: var(--brand, #ff6b35);
+  background: var(--brand, #ff6b35);
+  color: #fff;
+  font-weight: 600;
+}
+
+.resume-btn:active {
+  opacity: 0.85;
+}
 </style>
 
 <!-- 飞球动画:由 JS 动态插入 body,不在组件树里,必须用全局样式 -->
@@ -1045,7 +1230,12 @@ onUnmounted(() => {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: radial-gradient(circle at 30% 28%, #ffb27d 0%, var(--brand, #ff6b35) 55%, var(--brand-deep, #f0481f) 100%);
+  background: radial-gradient(
+    circle at 30% 28%,
+    #ffb27d 0%,
+    var(--brand, #ff6b35) 55%,
+    var(--brand-deep, #f0481f) 100%
+  );
   box-shadow: 0 2px 6px rgb(240 72 31 / 35%);
   animation: fly-ball-shrink 0.4s ease-in forwards;
 }

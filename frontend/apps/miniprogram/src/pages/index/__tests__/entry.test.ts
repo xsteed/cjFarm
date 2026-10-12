@@ -57,6 +57,8 @@ describe('菜单页 · 进入与重试', () => {
     app.session.tableId = 0;
     app.session.config = null;
     wxMock.reset();
+    // 归属认领结果存在 storage 里：不清的话上一用例认领过的单会漏到下一用例
+    wxMock.storage.clear();
   });
 
   it('首屏失败后「重新加载」用的是本次解析出的桌台码，而不是空会话', async () => {
@@ -97,7 +99,7 @@ describe('菜单页 · 进入与重试', () => {
     expect(sessionState().currentOrder?.orderNo).toBe('D001');
   });
 
-  it('平时进入：本桌有进行中订单直接进订单页，不渲染菜单', async () => {
+  it('平时进入：本桌未结账订单先认领，确认是自己的才进订单页', async () => {
     const page = await mount();
     replyMenuLoad({
       ...TABLE_OK,
@@ -108,8 +110,30 @@ describe('菜单页 · 进入与重试', () => {
     page.onLoad({ table: 'A1' });
     await flush();
 
+    // 店家忘了点「收款」时，这笔单可能就是上一桌留下的 —— 必须先问一句
+    expect(wxMock.modals).toHaveLength(1);
+    expect(wxMock.modals[0].title).toContain('未结账');
     expect(wxMock.navigations).toContainEqual({ type: 'redirectTo', url: '/pages/order/index' });
     expect(page.data.appendNotice).toBe('');
+  });
+
+  // 选「不是我的」：不能把上一桌的账单摊给新客人，也不该把他推进订单页
+  it('未结账订单被认作「不是我的」时，停在提示页等服务员清台', async () => {
+    wxMock.modalConfirm = false;
+    const page = await mount();
+    replyMenuLoad({
+      ...TABLE_OK,
+      tableId: 1,
+      tableName: '大厅01桌',
+      currentOrder: { orderNo: 'D001', orderStatus: 1, payStatus: 0, personCount: 2, items: [] }
+    });
+    page.onLoad({ table: 'A1' });
+    await flush();
+
+    expect(wxMock.navigations).toHaveLength(0);
+    expect(page.data.error).toContain('服务员清台');
+    // 会话里的订单线索也要清掉，否则购物车页会误判成加菜
+    expect(sessionState().currentOrder).toBeNull();
   });
 });
 

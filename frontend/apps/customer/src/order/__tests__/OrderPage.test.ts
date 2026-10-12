@@ -155,6 +155,10 @@ async function drainMicrotasks() {
 }
 
 beforeEach(() => {
+  // 默认把本桌那笔未结账订单当作「顾客自己刚点的」:本文件既有用例测的都是本人订单页。
+  // 归属确认另有一组用例专门覆盖(见文末「未结账订单归属确认」)。
+  sessionStorage.clear();
+  sessionStorage.setItem('dining:mine:1:NO001', '1');
   getTableMock.mockResolvedValue(tableNoOrder);
   getMenuMock.mockResolvedValue(menuFixture);
   getRemarksMock.mockResolvedValue(remarksFixture);
@@ -570,6 +574,77 @@ describe('OrderPage', () => {
 
     expect(createPayMock).toHaveBeenCalledWith({ orderNo: 'NO001', channel: 'wxpay' });
     expect(wrapper.find('.pay-qr img').attributes('src')).toBe('data:image/png;base64,mock');
+    wrapper.unmount();
+  });
+});
+
+// 店家忘了点「收款」时，桌台会一直挂着一笔下过单未结账的订单。下一桌扫码如果不问
+// 一句就进订单页，等于把上一桌的账单直接摊给新客人 —— 这组用例守住这道确认。
+describe('未结账订单归属确认', () => {
+  const tableWithOrder: TableInfo = { ...tableNoOrder, currentOrder: makeOrder({ orderStatus: 3 }) };
+
+  /** 新客人场景：没认领过任何订单（beforeEach 里的认领标记在用例内清掉）。 */
+  function asNewGuest(): void {
+    sessionStorage.clear();
+  }
+
+  it('本桌有未结账订单时，先让顾客认领，不直接进订单页', async () => {
+    asNewGuest();
+    getTableMock.mockResolvedValue(tableWithOrder);
+
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('本桌已有一笔未结账的订单');
+    expect(wrapper.text()).toContain('是我的，继续');
+    // 没认领前不该看到订单的操作入口（去支付 / 加菜）
+    expect(wrapper.find('.st-paybtn').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('点「是我的」后进订单页，且同一会话内重进不再重复问', async () => {
+    asNewGuest();
+    const order = makeOrder({ orderStatus: 3 });
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: order });
+    getOrderByNoMock.mockResolvedValue(order);
+
+    const wrapper = mountPage();
+    await flushPromises();
+    await wrapper.findAll('.resume-btn')[0].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.st-paybtn').exists()).toBe(true);
+    wrapper.unmount();
+
+    // 认领结果记在会话里：重新进入不应再回到确认页
+    const again = mountPage();
+    await flushPromises();
+    expect(again.text()).not.toContain('本桌已有一笔未结账的订单');
+    expect(again.find('.st-paybtn').exists()).toBe(true);
+    again.unmount();
+  });
+
+  it('点「不是我的订单」后给出等服务员清台的出口', async () => {
+    asNewGuest();
+    getTableMock.mockResolvedValue(tableWithOrder);
+
+    const wrapper = mountPage();
+    await flushPromises();
+    await wrapper.findAll('.resume-btn')[1].trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('请稍候服务员清台后再扫码点餐');
+    expect(wrapper.text()).not.toContain('去支付');
+    wrapper.unmount();
+  });
+
+  it('已付款的订单只看出餐进度，不需要认领', async () => {
+    asNewGuest();
+    const paid = makeOrder({ orderStatus: 3, payStatus: 1 });
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: paid });
+
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('本桌已有一笔未结账的订单');
     wrapper.unmount();
   });
 });

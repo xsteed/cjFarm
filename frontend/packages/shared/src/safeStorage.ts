@@ -30,3 +30,24 @@ export const safeStorage = {
     }
   }
 };
+
+// sessionStorage 同样包装一层:禁用站点数据的浏览器里它也会抛 SecurityError。
+//
+// 与 localStorage 的分工:sessionStorage 随标签页生命周期走 —— 关掉重开就是一次新
+// 会话。顾客端靠这个区分「同一位顾客刷新页面」与「换了一批客人重新扫码」。
+export const safeSession = {
+  get(key: string): string | null {
+    try {
+      return window.sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key: string, value: string): void {
+    try {
+      window.sessionStorage.setItem(key, value);
+    } catch {
+      /* 存储被禁用:退化为「每次进入都是新会话」,不会误恢复他人数据 */
+    }
+  }
+};

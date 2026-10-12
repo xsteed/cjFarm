@@ -53,6 +53,8 @@ Page({
 
   /** 本次提交的幂等键：成功后清空，失败保留以便重试去重。 */
   pendingRequestId: '',
+  /** 幂等键对应的「提交内容指纹」：内容变了就换新键（见 submit 内说明）。 */
+  pendingFingerprint: '',
 
   onShow() {
     const s = sessionState();
@@ -198,11 +200,24 @@ Page({
     }
 
     this.setData({ submitting: true });
-    const clientRequestId = this.pendingRequestId || this.genRequestId();
-    this.pendingRequestId = clientRequestId;
 
     try {
       const items = cartToItems();
+      // 幂等键绑定「提交内容指纹」：与 H5 同策略，只有「内容完全一致」的失败重试才复用旧键。
+      // 若只按失败与否复用（旧实现），在「订单其实已创建、前端没收到成功响应、顾客又改了菜」
+      // 的弱网时序下，重发会命中幂等返回首次结果，本次新增的菜被静默丢弃（漏单）。
+      const fingerprint = JSON.stringify({
+        append: this.data.appendMode,
+        orderNo: s.currentOrder?.orderNo || '',
+        personCount: this.data.personCount,
+        orderRemark: this.data.orderRemark,
+        items
+      });
+      if (!this.pendingRequestId || this.pendingFingerprint !== fingerprint) {
+        this.pendingRequestId = this.genRequestId();
+        this.pendingFingerprint = fingerprint;
+      }
+      const clientRequestId = this.pendingRequestId;
       let orderNo = '';
       if (this.data.appendMode && s.currentOrder?.orderNo) {
         const res = await appendOrder({
@@ -229,6 +244,7 @@ Page({
       }
 
       this.pendingRequestId = '';
+      this.pendingFingerprint = '';
       cartClear();
       // 用订单号回拉一次完整详情（含后厨状态），比用提交响应更完整。
       // 但回拉失败绝不能挡住跳转：订单已经生成，把顾客留在空的购物车页会诱使他重复下单。

@@ -88,3 +88,31 @@ export function resetOrder(): void {
   sessionState().currentOrder = null;
   persistSession(sessionState().tableCode, '');
 }
+
+// ---- 未结账订单的归属认领 ----
+//
+// 扫码进来时本桌那笔「未结账订单」很可能是上一桌留下的（店家忘了点收款,订单就一直
+// 挂在桌上）。不问一句直接跳订单页，等于把上一桌的账单摊给新客人。认领一次后记在本
+// 地，本次使用不再重复打扰。
+const MINE_KEY = 'dining_mp_mine';
+
+function mineKey(tableCode: string, orderNo: string): string {
+  return `${MINE_KEY}:${tableCode}:${orderNo}`;
+}
+
+/** 取认领结果：'1' 是我的 / 'no' 不是我的 / '' 还没问过。 */
+export function ownOrderMark(tableCode: string, orderNo: string): string {
+  try {
+    return String(wx.getStorageSync(mineKey(tableCode, orderNo)) || '');
+  } catch {
+    return '';
+  }
+}
+
+export function markOwnOrder(tableCode: string, orderNo: string, mine: boolean): void {
+  try {
+    wx.setStorageSync(mineKey(tableCode, orderNo), mine ? '1' : 'no');
+  } catch {
+    /* 存储不可用：退化为每次进入都问一次，不会误认他人的单 */
+  }
+}

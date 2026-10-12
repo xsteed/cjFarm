@@ -10,6 +10,7 @@ import type {
   Refund,
   RefundPayload,
   RefundQueryResult,
+  StaleOrderAlerts,
   TableInfo,
   Urge
 } from '@dining/types';
@@ -20,6 +21,9 @@ export const listOrders = (params?: PageQuery): Promise<PageResult<OrderSummary>
 export const getOrder = (id: Id): Promise<OrderDetail> => http.get<unknown, OrderDetail>(`/admin/order/${id}`);
 // 看板:所有桌台 + 每桌当前进行中订单(后端返回桌台数组,含 order 字段)
 export const getOrderBoard = (): Promise<TableInfo[]> => http.get<unknown, TableInfo[]>('/admin/order/board');
+// 未结账超时告警:当天开台超过配置阈值仍未收款的订单。enabled/hours 随响应下发。
+export const getStaleOrders = (): Promise<StaleOrderAlerts> =>
+  http.get<unknown, StaleOrderAlerts>('/admin/order/stale');
 // 催菜(商家端):催菜列表与处理,用于接单/上菜前查看哪些桌在催
 export const listUrges = (params?: PageQuery): Promise<PageResult<Urge>> =>
   http.get<unknown, PageResult<Urge>>('/admin/order/urge/list', { params });

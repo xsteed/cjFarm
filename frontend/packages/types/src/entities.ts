@@ -212,6 +212,11 @@ export interface TicketLine {
    * 等宽字符网格画不出二维码图形,前端按 qr 内容渲染真实二维码。
    */
   qr?: string;
+  /**
+   * 为真表示这一行按「放大居中」出纸(夹单的桌号:打印机 GS ! 倍宽倍高 / 飞鹅 <C><B>)。
+   * 放大行的字符网格已失效,前端不再按格渲染,直接用大字居中显示。
+   */
+  big?: boolean;
 }
 
 // 票据预览(后端重放渲染返回的等宽文本行;按等宽字体展示即与出纸 1:1)。
@@ -224,6 +229,12 @@ export interface TicketPreview {
   orderNo?: string;
   printerName?: string;
   copies?: number;
+  /**
+   * 为 true 表示这张预览只是「形态一致」而非内容复现:
+   * 加菜小票无法还原当时新增了哪些菜(订单只增不减、日志不存渲染快照),
+   * 菜品区退化为订单当前整单,UI 需要显式说明。
+   */
+  approximate?: boolean;
 }
 
 export interface UserInfo extends Extensible {
@@ -473,6 +484,8 @@ export interface TablePayload extends ApiPayload {
   lockStatus?: number;
   lockRemark?: string;
   sortOrder?: number;
+  /** 强制清台时对未结账订单的处理方式：settle 补结账 / cancel 作废 */
+  action?: string;
 }
 
 export interface CategoryPayload extends ApiPayload {
@@ -504,6 +517,38 @@ export interface ConfigData extends PublicConfig {
   shop_logo?: string;
   h5_base_url?: string;
   version?: string;
+}
+
+/** 一条「开台超时仍未结账」的告警（管理端看板用）。 */
+export interface StaleOrderAlert {
+  orderId?: number;
+  orderNo?: string;
+  shortNo?: string;
+  tableId?: number;
+  tableNo?: string;
+  tableName?: string;
+  orderStatus?: number;
+  personCount?: number;
+  createTime?: string;
+  /** 已开台分钟数：由后端算好，避免各端各算一套时长 */
+  minutes?: number;
+  totalAmount?: number;
+  /**
+   * 是否跨日遗留单：上一营业日及更早、至今仍未结账。
+   * 这类单的桌台已被自动清空，看板上看不到，只在提醒列表里能找到。
+   */
+  legacy?: boolean;
+}
+
+/**
+ * 未结账超时告警的出参。
+ * enabled/hours 由后端随响应下发，而不是让前端去读系统配置 ——
+ * 告警开关属 config:edit 侧的管理项，看板只要 order:view 就能进。
+ */
+export interface StaleOrderAlerts {
+  enabled?: boolean;
+  hours?: number;
+  items?: StaleOrderAlert[];
 }
 
 export type ConfigPayload = ConfigData;

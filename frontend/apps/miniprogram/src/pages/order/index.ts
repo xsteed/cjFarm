@@ -358,7 +358,10 @@ Page({
   onNewOrder() {
     cartClear();
     resetOrder();
-    wx.redirectTo({ url: '/pages/index/index' });
+    // 用 reLaunch 而非 redirectTo：提交时是 cart→order 的 redirectTo，当前栈为 [index, order]；
+    // 再 redirectTo 回 index 会在栈里塞进第二个 index（出现重复首页，返回两次才退出）。
+    // reLaunch 关闭所有页面后重开，栈回到干净的 [index]。
+    wx.reLaunch({ url: '/pages/index/index' });
   },
 
   onRefresh() {

@@ -30,6 +30,11 @@ export const deleteTable = (id: Id): Promise<ApiResponse<unknown>> =>
 // 设置桌台人工可用性状态:lockStatus 0 正常 / 1 停用 / 2 预约(与订单占用正交)。
 export const lockTable = (data: TablePayload): Promise<ApiResponse<unknown>> =>
   http.post<unknown, ApiResponse<unknown>>('/admin/table/lock', data);
+// 强制清台:店家漏点「收款」时桌台会一直挂在占用态,下一桌扫码会被带进上一桌的账单。
+// 这个接口把该桌进行中的订单一次性收走并置空闲,action 决定未结账订单的落点
+// (settle 补结账 = 钱已在店里收过 / cancel 作废 = 不计收入),两者对账含义相反。
+export const releaseTable = (data: TablePayload): Promise<ApiResponse<unknown>> =>
+  http.post<unknown, ApiResponse<unknown>>('/admin/table/release', data);
 // 桌台小程序码:后端拿 access_token 向微信换取,并按参数指纹落盘缓存
 // (同一桌台第二次出码不会再打微信接口)。未配置 AppSecret 时返回可读的中文错误。
 export const getTableWeappCode = (tableCode: string, width?: number): Promise<WeappCodeResult> =>

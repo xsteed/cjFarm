@@ -4,7 +4,10 @@ import { ORDER_STATUS_CODE } from '@dining/shared';
 import type { OrderDetail } from '@dining/types';
 import { subscribeVisibility } from './visibility';
 
-export type ViewState = 'loading' | 'error' | 'locked' | 'menu' | 'order' | 'settled' | 'done' | 'canceled' | 'pay';
+// resume:扫码进来发现本桌已有一笔未结账订单,先让顾客确认「是不是你的单」,
+// 再决定进订单页 —— 店家忘结单时,不确认就会把上一桌的账单直接摊给下一桌。
+export type ViewState =
+  'loading' | 'error' | 'locked' | 'menu' | 'order' | 'settled' | 'done' | 'canceled' | 'pay' | 'resume';
 
 interface PollOptions {
   view: Ref<ViewState>;
