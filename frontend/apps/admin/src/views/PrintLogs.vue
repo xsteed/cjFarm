@@ -514,6 +514,8 @@ async function load(): Promise<void> {
     const res = await listPrintLogs(params);
     list.value = (res.items || []) as PrintLogRow[];
     total.value = res.total || 0;
+  } catch {
+    // 拦截器已统一 toast;这里吞掉异常避免 onMounted/分页回调抛 unhandled rejection。
   } finally {
     loading.value = false;
   }

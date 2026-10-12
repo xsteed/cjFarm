@@ -22,7 +22,23 @@ const (
 	// 仍在冷却中,又会被挂起一整个租约 —— 空转一轮,出票被白白推迟一分钟。
 	// 30s 留出足够余量:即使算上拨号超时(5s),租约到期时冷却早已结束。
 	dialCooldownTTL = 30 * time.Second
+
+	// maxJobCopies 单条任务的份数上限(云端保存时钳到 1..5,这里是防篡改兜底)。
+	maxJobCopies = 20
 )
+
+// jobCopies 返回一条任务实际要打印的份数(已钳到 [1, maxJobCopies])。
+// 与 printJob 内的口径保持一致,供日志复用,避免两处各算一遍。
+func jobCopies(j agentJob) int {
+	c := j.Copies
+	if c < 1 {
+		return 1
+	}
+	if c > maxJobCopies {
+		return maxJobCopies
+	}
+	return c
+}
 
 // statusQueries 三条 DLE EOT 实时状态查询(打印机状态 n=2/3/4)。
 var statusQueries = [3][]byte{
@@ -98,9 +114,13 @@ func printJob(j agentJob) (error, *statusReply) {
 	if len(data) == 0 {
 		return errors.New("打印内容为空"), nil
 	}
-	copies := j.Copies
-	if copies < 1 {
-		copies = 1
+	copies := jobCopies(j)
+	if copies != j.Copies {
+		// copies 来自云端下发的任务体,与下面 validatePrinterAddr 属于同一威胁模型
+		// (任务可能在云端被篡改)。管理端保存时已把份数钳到 1..5(见 backend 的
+		// handler/printer.go),这里再兜一层 —— 否则一个被改成 1000000 的份数会把代理
+		// 拖去串行建立上百万次连接,等于对门店内网持续重复写。
+		logf("[警告] %s 的份数 %d 超出上限,按 %d 份处理", j.DeliveryID, j.Copies, copies)
 	}
 
 	addr := net.JoinHostPort(j.IP, strconv.Itoa(port))
@@ -147,10 +167,20 @@ func printJob(j agentJob) (error, *statusReply) {
 // (见 printJob)。否则 auto 模式下「直连失败、CUPS 成功」也会记上一次故障,下一条任务
 // 被冷却挡住,永远走不到那个明明能成功的通道。
 func writeViaTCP(addr string, data []byte, copies int) (error, *statusReply) {
+	sent := 0
 	for i := 0; i < copies; i++ {
 		conn, err := dialTCP("tcp", addr, dialTimeout)
 		if err != nil {
 			// 打印机没开机 / IP 填错 / 与代理不在同一网段,都会走到这里。
+			if sent > 0 {
+				// 已经完整送出 sent 份(纸已出),此时绝不能按整单失败返回:
+				// 失败回执会让云端把同一 deliveryId 重新下发,代理再跑一遍完整循环,
+				// 门店就会多出 sent 张重复小票(厨房多做一份菜)。
+				// 宁可「少一份并告警」,也不要「多一份」。
+				logf("[警告] %s 第 %d/%d 份未送出(%v);已送出的 %d 份不重打,请手动补打",
+					addr, i+1, copies, err, sent)
+				return nil, nil
+			}
 			return fmt.Errorf("无法连接打印机 %s: %w", addr, err), nil
 		}
 		_ = conn.SetDeadline(time.Now().Add(dialTimeout))
@@ -158,8 +188,14 @@ func writeViaTCP(addr string, data []byte, copies int) (error, *statusReply) {
 		if werr != nil {
 			_ = conn.Close()
 			// 写入失败同样是这条链路的问题(打印机假连、缓冲写满后撞上 deadline)。
+			if sent > 0 {
+				logf("[警告] %s 第 %d/%d 份写入失败(%v);已送出的 %d 份不重打,请手动补打",
+					addr, i+1, copies, werr, sent)
+				return nil, nil
+			}
 			return fmt.Errorf("向 %s 写入打印数据失败: %w", addr, werr), nil
 		}
+		sent++
 		if i == copies-1 {
 			var st *statusReply
 			if !isStatusBlacklisted(addr) {
@@ -222,10 +258,17 @@ func queryPrinterStatus(conn net.Conn) *statusReply {
 	time.Sleep(statusSettleDelay)
 
 	var replies [3][]byte
+	wrote := 0
 	for i, q := range statusQueries {
+		// 每次查询都必须重设写 deadline:外层那个 conn.SetDeadline 是**绝对时刻**,
+		// 写完一整张票(可能还有 statusSettleDelay 的停顿)之后往往已经过期,
+		// 于是三条 DLE EOT 全部立刻 i/o timeout —— 打印机明明正常,却被判定
+		// 「不应答状态查询」并拉黑 30 分钟,缺纸/开盖这类真实异常反而被掩盖。
+		_ = conn.SetWriteDeadline(time.Now().Add(statusReadTimeout))
 		if _, err := conn.Write(q); err != nil {
 			continue
 		}
+		wrote++
 		_ = conn.SetReadDeadline(time.Now().Add(statusReadTimeout))
 		var buf [4]byte
 		if _, err := io.ReadFull(conn, buf[:]); err != nil {
@@ -234,7 +277,9 @@ func queryPrinterStatus(conn net.Conn) *statusReply {
 		replies[i] = append([]byte(nil), buf[:]...)
 	}
 	st := buildStatusReply(replies)
-	if !st.queried {
+	// 只有「请求确实发出去了、却收不到应答」才算打印机不支持状态查询。
+	// 一条都没写出去说明是本机的 deadline/链路问题,不该把打印机拉黑。
+	if !st.queried && wrote > 0 {
 		if addr := conn.RemoteAddr().String(); addr != "" && markStatusBlacklisted(addr) {
 			logf("[状态] 打印机 %s 不应答状态查询,30分钟内跳过查询", addr)
 		}

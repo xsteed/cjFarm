@@ -2,10 +2,10 @@
 -- 扫码点餐管理系统 — 种子/存量数据(SQLite)
 -- 文件名:seed.sql —— 种子/存量数据(通用命名)
 -- ----------------------------------------------------------------------------
--- 本文件由 `go run ./cmd/gensql` 从 backend/internal/store 的种子数据生成,
+-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 39 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 内容:系统配置 40 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
 -- 执行方式:sqlite3 data/dining.db < seed.sql
 -- 幂等性  :全部使用 INSERT OR IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
@@ -34,6 +34,7 @@ INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_qr', '0'
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_discount', '1');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_seat_fee', '1');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_show_price', '0');
+INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_split_by_item', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_discount', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_enabled', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_threshold', '100');
@@ -141,7 +142,7 @@ INSERT OR IGNORE INTO tb_remark(remark_id, option_name, sort_order, del_flag, cr
 INSERT OR IGNORE INTO tb_printer(printer_id, printer_name, printer_type, ip, port, paper_width, status, del_flag, create_time, update_time) VALUES(1, '后厨厨房单打印机', 1, '192.168.1.8', 9100, 48, 0, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
 INSERT OR IGNORE INTO tb_printer(printer_id, printer_name, printer_type, ip, port, paper_width, status, del_flag, create_time, update_time) VALUES(2, '前台食客小票打印机', 2, '192.168.1.201', 9100, 48, 0, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
 
--- 内置角色(4 个):admin 为全量权限,权限矩阵见 internal/store/permission.go
+-- 内置角色(4 个):admin 为全量权限,权限矩阵见 infrastructure/store/permission.go
 -- 员工账号(tb_user)由后端启动引导自动创建,不在此脚本中预置。
 INSERT OR IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(1, 'admin', '超级管理员', 'table:view,table:edit,category:view,category:edit,dish:view,dish:edit,remark:view,remark:edit,printer:view,printer:edit,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view,refund:operate,report:view,config:view,config:edit,user:view,user:edit,role:view,role:edit,log:view,log:manage', 'all', 1, 1, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '拥有全部权限。权限不可修改,每次启动强制恢复为全量,防止锁死系统。');
 INSERT OR IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(2, 'manager', '店长', 'table:view,table:edit,category:view,category:edit,dish:view,dish:edit,remark:view,remark:edit,printer:view,printer:edit,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view,report:view,config:view,config:edit,log:view', 'all', 1, 2, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '日常最高权限:可改配置、看报表、查操作日志,但不能管理员工与权限,也不能发起退款。');

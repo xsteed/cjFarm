@@ -348,24 +348,61 @@ func loadEnvFile(path string) {
 	if err != nil {
 		return // 文件不存在属正常情况,静默跳过
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
-		// 去掉可能的引号(路径/令牌里带空格时用得上)
-		v = strings.Trim(v, `"'`)
-		if k == "" || os.Getenv(k) != "" {
+	for _, raw := range strings.Split(string(data), "\n") {
+		k, v, ok := parseEnvLine(raw)
+		if !ok || os.Getenv(k) != "" {
 			continue
 		}
 		_ = os.Setenv(k, v)
 	}
+}
+
+// parseEnvLine 解析 agent.env 的一行,规则与后端 infra/parseDotEnvLine **完全一致**
+// (main.go 顶部注释承诺「与后端 .env 同格式」,而两处规则不一致本身就是坑)。
+//
+// 支持:
+//
+//	KEY=VALUE
+//	KEY = VALUE          (等号两侧空白忽略)
+//	export KEY=VALUE
+//	KEY="含 空格 的值"    (单/双引号**成对**包裹,内部保留空白)
+//	KEY=value   # 说明    (行尾注释,需 # 前有空白)
+//	# 整行注释           (忽略)
+//
+// 早先的实现有三个偏差,门店照着后端 .env 的写法就必然踩坑:
+//   - 不支持 `export ` 前缀 → 变量名变成「export PRINT_AGENT_SERVER」,报「缺少 --server」;
+//   - 不去行尾注释 → `TOKEN=abc123 # 代理令牌` 会把注释一起当令牌,云端回「令牌不正确」;
+//   - strings.Trim(v, "\"'") 是无条件剥两端(会把 `abc"` 也改成 `abc`),而不是成对引号。
+func parseEnvLine(raw string) (key, val string, ok bool) {
+	line := strings.TrimSpace(raw)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+
+	eq := strings.Index(line, "=")
+	if eq <= 0 {
+		return "", "", false
+	}
+	key = strings.TrimSpace(line[:eq])
+	if key == "" || strings.ContainsAny(key, " \t\"'") {
+		return "", "", false // 非法键名,跳过
+	}
+	val = strings.TrimSpace(line[eq+1:])
+
+	// 引号包裹:取引号内的原文(允许包含 # 与空白)。
+	if len(val) >= 2 {
+		if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+			return key, val[1 : len(val)-1], true
+		}
+	}
+	// 未加引号:去掉行尾注释(要求 # 之前是空白,避免把令牌里的 # 截断)。
+	if i := strings.Index(val, " #"); i >= 0 {
+		val = strings.TrimSpace(val[:i])
+	} else if i := strings.Index(val, "\t#"); i >= 0 {
+		val = strings.TrimSpace(val[:i])
+	}
+	return key, val, true
 }
 
 // normalizeLogPath 把「off/none/false/0/-」等关闭标志统一为空串(不落盘),
@@ -403,11 +440,21 @@ func envOr(key, def string) string {
 }
 
 // envInt 取整型环境变量,非法或缺失时返回默认值。
+//
+// 非法值必须告警:门店把 `PRINT_AGENT_INTERVAL=3s`(多写了单位)或
+// `PRINT_AGENT_LIMIT=abc` 写进 agent.env 是常见笔误,静默回退默认值会让人以为
+// 配置生效了,只能靠猜。值缺失(空串)不算错,不告警。
 func envInt(key string, def int) int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil {
-		return v
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return def
 	}
-	return def
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		logf("[警告] %s=%q 不是整数,已按默认值 %d 处理", key, raw, def)
+		return def
+	}
+	return v
 }
 
 func printVersion() {

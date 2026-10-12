@@ -11,17 +11,15 @@
 
 ```
 dining-system/
-├── backend/                # Go + Gin 后端（按职责分层到 internal/ 子包）
+├── backend/                # Go + Gin 后端（DDD 分层：interfaces / application / domain / infrastructure）
 │   ├── main.go             # 入口：装配 + 路由 + 静态托管 + CORS + 优雅退出
 │   ├── config.prod.yaml    # 生产配置（本机私有，不入库）：make build 复制为 bin/config.yaml；部署时作为生成 config.yaml 的首选模板
 │   ├── config.example.yaml # 全量注释模板（全部可配项 + 逐项说明，供查阅）
 │   ├── .env.example        # 环境变量模板（复制为 .env，同样自动读取，二选一）
-│   ├── internal/
-│   │   ├── model/          # 数据模型 + 金额换算（纯函数，最底层无依赖）
-│   │   ├── store/          # 数据库访问：连接/方言适配/建表/种子/各表查询
-│   │   ├── service/        # 业务逻辑：价格重算/订单明细校验/订单号
-│   │   ├── print/          # ESC/POS 网络打印（异步，失败不影响下单）
-│   │   └── handler/        # HTTP 层：响应封装/鉴权/各资源处理器/上传
+│   ├── interfaces/         # 接口层：handler（HTTP 处理器）、dto、middleware
+│   ├── application/        # 应用层：service（用例编排：价格重算/订单明细校验/订单号）
+│   ├── domain/             # 领域层：po（数据模型 + 金额换算，纯函数，最底层无依赖）
+│   ├── infrastructure/     # 基础设施层：store（数据库访问）、print（ESC/POS 网络打印）、pay、weapp、conf、日志/雪花ID/加解密
 │   ├── cmd/gensql/         # SQL 脚本生成器（改表结构后重新生成两库脚本）
 │   ├── scripts/            # 运维脚本（sqlite2mysql.py：SQLite→MySQL 数据搬运）
 │   ├── migrations/         # 数据库迁移脚本（SQLite / MySQL 各一套）
@@ -106,7 +104,7 @@ cp .env.example .env                 # 两者可只用一个
 | `admin.user` / `admin.pass` | `ADMIN_USER` / `ADMIN_PASS` | 管理端账号（仅首次建库生效） | `admin` / `admin123` |
 | `security.token_ttl_hours` | `TOKEN_TTL_HOURS` | 登录令牌有效期（小时） | `24` |
 | `database.driver` | `DB_DRIVER` | 数据库后端：`sqlite` / `mysql` | `sqlite` |
-| `database.sqlite.path` | `DB_PATH` | SQLite 数据库路径 | `./dining.db` |
+| `database.sqlite.path` | `DB_PATH` | SQLite 数据库路径 | `./data/dining.db` |
 | `database.mysql.host` 等 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | MySQL 连接信息 | `127.0.0.1` / `3306` / `root` / 空 / `dining` |
 | `database.mysql.dsn` | `DB_DSN` | MySQL 完整连接串（非空时优先于上面 5 项） | 空 |
 | `security.master_key` | `CONFIG_MASTER_KEY` | 敏感配置加密主密钥（优先级高于 `data/master.key`） | 空 |
@@ -133,7 +131,7 @@ cp config.example.yaml config.yaml   # 编辑 database.driver=mysql 及下面的
 
 - 建库建账号、建表、**把现有 SQLite 数据搬过去**、回滚、常见问题，
   全部写在 **[`docs/mysql-migration.md`](docs/mysql-migration.md)**；
-- 数据搬运脚本：`python scripts/sqlite2mysql.py --sqlite dining.db --out data.sql`；
+- 数据搬运脚本：`python scripts/sqlite2mysql.py --sqlite data/dining.db --out data.sql`（脚本按表流式导出，`tb_image` 这类大表不会一次性读进内存）；
 - 迁移脚本目录（SQLite / MySQL 两套）：`backend/migrations/`，说明见其中的 `README.md`。
 - ⚠️ 搬迁时**务必把 `backend/data/master.key` 一起带走**，否则已加密的支付密钥无法解密。
 
@@ -295,13 +293,17 @@ sudo bash deploy/deploy.sh --skip-build      # 覆盖更新：备份 → 覆盖 
 | 场景 | 现在的行为 |
 |---|---|
 | 线上 Nginx 仍反代旧前缀 `/prod-api/`（从旧版本升级上来的常见问题，会让前端所有接口 404） | 自动改为 `/api/`：先备份 → `nginx -t` 校验 → 失败自动回滚 → reload。不需要时加 `--no-fix-nginx` 退回只告警 |
-| 想顺带切到 MySQL | 带上 `DB_*` 即可（见下），脚本会重写 `config.yaml` 的 `database` 段，其余内容原样保留 |
+| 想顺带切到 MySQL | 带上 `DB_*` **并加 `--allow-db-switch`**（见下），脚本会重写 `config.yaml` 的 `database` 段，其余内容原样保留 |
 
 ```bash
 # 更新 + 一键切库（同一条命令搞定）
 cd /tmp/dining-xxx && sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_USER=dining \
-  DB_PASSWORD='强密码' DB_NAME=dining bash deploy/deploy.sh --skip-build
+  DB_PASSWORD='强密码' DB_NAME=dining bash deploy/deploy.sh --skip-build --allow-db-switch
 ```
+
+> ⚠️ 为什么必须显式加 `--allow-db-switch`：**切库不会自动搬数据**。直接切到一台空库时，
+> 后端启动会建好全套空表并灌入出厂种子 —— 现场表现是「菜品变回出厂菜单、历史订单与会员
+> 全部为 0」，与数据丢失无异。脚本默认拦住这个操作，确认新库已搬完数据后再加该参数重跑。
 
 `config.yaml` 已随本次更新一起备份，健康检查失败时会**连它一起回滚**，不会留下「二进制回滚了、配置还指着新库」的半吊子状态。
 
@@ -492,4 +494,4 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 
 ## 说明
 
-本复刻仅基于目标站公开可访问的前端资源与只读接口探测实现，未进行任何写操作或越权利用。种子数据沿用目标站店铺「长健农场 柴火农家土菜」的菜单、桌台、备注与打印机，菜品图片及收款码已从目标站公开资源下载并内嵌于后端二进制（`backend/internal/store/seedimg/`）。
+本复刻仅基于目标站公开可访问的前端资源与只读接口探测实现，未进行任何写操作或越权利用。种子数据沿用目标站店铺「长健农场 柴火农家土菜」的菜单、桌台、备注与打印机，菜品图片及收款码已从目标站公开资源下载并内嵌于后端二进制（`backend/infrastructure/store/seedimg/`）。

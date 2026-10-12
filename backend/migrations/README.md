@@ -11,25 +11,42 @@ backend/migrations/
 ├── README.md                                              # 本说明
 ├── full/                                                  # 全量脚本：全新部署，一次建好最终结构 + 存量数据
 │   ├── sqlite/
-│   │   ├── schema.sql                                     #   建表 DDL（20 表 + 30 索引）
-│   │   └── seed.sql                                #   种子 / 存量数据
+│   │   ├── schema.sql                                     #   建表 DDL（22 表 + 34 索引）
+│   │   └── seed.sql                                       #   种子 / 存量数据
 │   └── mysql/
 │       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
 │       └── seed.sql
-└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级
+└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 24 个，文件名一致）
     ├── sqlite/
-    │   ├── 20260920020000_tb_order_urge_create.sql
-    │   ├── 20260920021000_tb_payment_refund_create.sql
-    │   ├── 20260920022000_tb_order_add_pay_columns.sql
-    │   ├── 20260920023000_tb_order_add_settle_credit_columns.sql
-    │   ├── 20260921000000_tb_user_role_create.sql      #   员工与角色表（多员工 + 权限）
-    │   ├── 20260922000000_tb_oper_log_create.sql       #   操作日志表（审计留痕）
-    │   ├── 20260923000000_tb_print_job_create.sql      #   本地打印代理任务队列（云部署 + 门店 9100 网络机）
-    │   ├── 20260924000000_tb_order_tb_refund_add_columns.sql  # 结账前状态快照 + 重复支付退回标记
-    │   └── 20260924010000_tb_table_add_table_code.sql  #   桌台点餐稳定码列（补与运行时迁移同义的历史脚本）
+    │   ├── 20260920020000_tb_order_urge_create.sql                    # 01 催菜/加菜记录表
+    │   ├── 20260920021000_tb_payment_refund_create.sql                # 02 支付/退款流水表
+    │   ├── 20260920022000_tb_order_add_pay_columns.sql                # 03 订单支付列
+    │   ├── 20260920023000_tb_order_add_settle_credit_columns.sql      # 04 结算/挂账列
+    │   ├── 20260921000000_tb_user_role_create.sql                     # 05 员工与角色表（多员工 + 权限）
+    │   ├── 20260922000000_tb_oper_log_create.sql                      # 06 操作日志表（审计留痕）
+    │   ├── 20260922010000_tb_remember_token_create.sql                # 07 记住我令牌表（7/30 天免登录）
+    │   ├── 20260922020000_tb_remember_token_add_ua.sql                # 08 令牌补环境指纹列 ua
+    │   ├── 20260923000000_tb_print_job_create.sql                     # 09 本地打印代理任务队列（云部署 + 门店 9100 网络机）
+    │   ├── 20260924000000_tb_order_tb_refund_add_columns.sql          # 10 结账前状态快照 + 重复支付退回标记
+    │   ├── 20260924000000_tb_print_agent_create.sql                   # 11 本地打印代理身份表
+    │   ├── 20260924010000_tb_table_add_table_code.sql                 # 12 桌台点餐稳定码列（补与运行时迁移同义的历史脚本）
+    │   ├── 20260925000000_tb_remember_token_add_token_prefix.sql      # 13 令牌补设备识别前缀列 token_prefix
+    │   ├── 20260926000000_tb_order_tb_refund_add_report_indexes.sql   # 14 报表查询索引补齐（订单/退款按时间）
+    │   ├── 20261007010000_tb_order_item_add_batch_no_client_request_id.sql # 15 明细补「加菜批次」与「幂等键」列
+    │   ├── 20261007020000_tb_order_add_unpaid_index.sql               # 16 订单补「未结账单判定」组合索引
+    │   ├── 20261008000000_tb_dish_add_sold_out.sql                    # 17 菜品补「售罄」标记
+    │   ├── 20261008001000_tb_spec_add_stock.sql                       # 18 规格补「库存」列
+    │   ├── 20261008120000_tb_order_item_add_gift_columns.sql          # 19 订单明细赠送（送菜）标记列
+    │   ├── 20261008150000_tb_customer_create.sql                      # 20 小程序顾客会员档案表
+    │   ├── 20261008151000_tb_order_add_customer_id.sql                # 21 订单补会员归属列
+    │   ├── 20261009000000_tb_order_add_pickup_no.sql                  # 22 订单营业日与当日取餐号
+    │   ├── 20261009010000_tb_table_add_lock_status.sql                # 23 桌台补「人工可用性状态」列
+    │   └── 20261010000000_tb_dish_add_signature.sql                   # 24 菜品补「招牌菜」标记
     └── mysql/                                             # 与 sqlite/ 同名同序，内容按 MySQL 语法适配
-        └──（同上 9 个文件）
+        └──（同上 24 个文件）
 ```
+
+> 下文「归属脚本」中的 incr 编号即上表 01~24 的序号。
 
 > 另有 `tb_print_log`（打印日志）与 `tb_printer` 的飞鹅云字段，因早于 `incr/` 机制建立，
 > 老库升级由 `store.alterCols` 在启动时自动补列/建表，`full/` 脚本已包含最终结构。
@@ -109,31 +126,32 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 >
 > `create` 系列为纯建表（`IF NOT EXISTS`），可安全重复执行。
 
-## 四、表清单（共 21 张）
+## 四、表清单（共 22 张）
 
 | # | 表名 | 说明 | 种子数据 | 归属脚本 |
 |---|---|---|---|---|
 | 1 | `tb_table` | 桌台 | 8 桌 | full |
 | 2 | `tb_category` | 菜品分类 | 6 类 | full |
-| 3 | `tb_dish` | 菜品 | 21 道 | full |
-| 4 | `tb_spec` | 菜品规格 | 32 条 | full |
+| 3 | `tb_dish` | 菜品 | 21 道 | full + incr 17/24 |
+| 4 | `tb_spec` | 菜品规格 | 32 条 | full + incr 18 |
 | 5 | `tb_remark` | 备注选项 | 6 项 | full |
 | 6 | `tb_printer` | 打印机（ESC/POS 网络 + 飞鹅云） | 2 台（停用） | full |
-| 7 | `tb_config` | 系统配置（键值对） | 31 项 | full |
-| 8 | `tb_order` | 订单主表（38 列） | 运行时产生 | full + incr 03/04/08 |
-| 9 | `tb_order_item` | 订单明细 | 运行时产生 | full |
+| 7 | `tb_config` | 系统配置（键值对） | 39 项 | full |
+| 8 | `tb_order` | 订单主表（42 列） | 运行时产生 | full + incr 03/04/10/14/16/21/22 |
+| 9 | `tb_order_item` | 订单明细 | 运行时产生 | full + incr 15/19 |
 | 10 | `tb_order_urge` | 催菜/加菜记录 | 运行时产生 | incr 01 |
-| 11 | `tb_payment` | 支付流水（在线支付） | 运行时产生 | incr 02 |
-| 12 | `tb_refund` | 退款流水 | 运行时产生 | incr 02 |
+| 11 | `tb_payment` | 支付流水（在线支付） | 运行时产生 | incr 02/10/14 |
+| 12 | `tb_refund` | 退款流水 | 运行时产生 | incr 02/10/14 |
 | 13 | `tb_print_log` | 打印日志（成功/失败留痕、支持补打） | 运行时产生 | full |
 | 14 | `tb_role` | 角色（权限点集合） | 4 个内置角色 | incr 05 |
 | 15 | `tb_user` | 员工账号 | 首次启动引导超管 | incr 05 |
 | 16 | `tb_oper_log` | 操作日志（审计留痕：谁在何时改了什么） | 运行时产生 | incr 06 |
-| 17 | `tb_remember_token` | 记住我令牌（7/30 天免登录，过期由后端查库裁决） | 运行时产生 | full + incr |
-| 18 | `tb_print_job` | 本地打印代理任务队列（云后端入队，门店代理取单后直发 9100） | 运行时产生 | incr 07 |
-| 19 | `tb_print_agent` | 本地打印代理注册与令牌状态 | 运行时产生 | full |
+| 17 | `tb_remember_token` | 记住我令牌（7/30 天免登录，过期由后端查库裁决） | 运行时产生 | full + incr 07/08/13 |
+| 18 | `tb_print_job` | 本地打印代理任务队列（云后端入队，门店代理取单后直发 9100） | 运行时产生 | incr 09 |
+| 19 | `tb_print_agent` | 本地打印代理注册与令牌状态 | 运行时产生 | full + incr 11 |
 | 20 | `tb_image` | 图片内容表（菜品图 / 收款码 / 上传图二进制） | 启动时写入出厂图 | full |
-| 21 | `tb_day_seq` | 按营业日维护「当日取餐号」的计数器 | 运行时产生 | full + incr 20261009000000 |
+| 21 | `tb_day_seq` | 按营业日维护「当日取餐号」的计数器 | 运行时产生 | full + incr 22 |
+| 22 | `tb_customer` | 小程序会员（openid 建档，用于「我的订单」与会员归属） | 运行时产生 | full + incr 20/21 |
 
 > `tb_print_job` 与 `tb_print_log` 的分工：前者是「待办」（送达即结案，可定期清理），
 > 后者是「台账」（给商家查「这单打了没」，长期保留），两者由 `print_log_id` 关联。
@@ -145,7 +163,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `tb_role` 的 4 个内置角色（admin / manager / cashier / staff）每次启动由
 > `store.SyncBuiltinRoles()` 幂等校准；其中 `admin` 的权限**强制恢复为全量**，防止误改锁死。
 
-## 五、索引清单（共 32 个）
+## 五、索引清单（共 34 个）
 
 | 索引名 | 表 | 类型 | 用途 |
 |---|---|---|---|
@@ -157,6 +175,8 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_order_create_time` | tb_order | 普通 | 报表按时间 |
 | `idx_order_pay_time` | tb_order | 普通 | 报表按收款到账时间 |
 | `idx_order_credit_settle_time` | tb_order | 普通 | 报表按挂账核销时间 |
+| `idx_order_customer` | tb_order | 普通（2 列） | 会员「我的订单」按时间倒序分页 |
+| `idx_customer_openid` | tb_customer | UNIQUE | 会员按 openid 精确查档；同时兜底「并发首登建档」的幂等性（MySQL 下降级为普通索引，唯一性由应用层保证） |
 | `idx_order_item_order` | tb_order_item | 普通 | 明细按订单 |
 | `idx_payment_order` | tb_payment | 普通 | 流水按订单号 |
 | `idx_payment_channel_trade` | tb_payment | UNIQUE（2 列） | 渠道交易号防重 |
@@ -250,15 +270,16 @@ SET GLOBAL max_allowed_packet=64M;
 
 **SQLite（3.53）**
 
-- `full/`：建库结果为 **20 表 / 31 索引**；种子数据 config 36、role 4、table 8、
-  category 6、dish 21、spec 32、remark 6、printer 2（合计 115 行，`seed.sql` 不含图片数据）；
-  `tb_order` 37 列齐全；重复执行数量不变（建表 `IF NOT EXISTS`、种子 `INSERT OR IGNORE`）。
-- `incr/`：在 24 列的旧结构 `tb_order` 上依次执行 01~04 后补齐至 37 列；历史回填正确
+- `full/`：建库结果为 **22 表 / 34 索引**；种子数据 config 39、role 4、table 8、
+  category 6、dish 21、spec 32、remark 6、printer 2（合计 118 行，`seed.sql` 不含图片数据）；
+  `tb_order` 42 列齐全；重复执行数量不变（建表 `IF NOT EXISTS`、种子 `INSERT OR IGNORE`）。
+- `incr/`：在 24 列的旧结构 `tb_order` 上依次执行 01~04 后补齐至 42 列；历史回填正确
   （已支付订单 `settle_type='normal'`、`paid_amount=total_amount-refund_amount`）；
   05（`tb_user_role_create`）在旧库上建出员工/角色两表与 3 个索引。
-- **2026-09-21 复核**：`go run ./cmd/gensql -check` 通过（磁盘脚本与 Go 定义一致）；
-  20 表 / 31 索引 / 115 行种子由 `schemaTemplate` 与 `SeedCounts()` 自动核对，
+- **复核方式**：`go run ./cmd/gensql -check` 通过（磁盘脚本与 Go 定义一致）；
+  22 表 / 34 索引 / 118 行种子由 `schemaTemplate` 与 `SeedCounts()` 自动核对，
   `go test ./...` 中 `sqlgen_test.go` 会同步做这项一致性校验。
+  > 计数以 `gensql -check` 的输出为准；上面的数字只是复核时的快照，加表加列后不必回来改这里。
 
 **MySQL（在 MySQL 协议兼容服务端上实跑）**
 
@@ -269,6 +290,6 @@ SET GLOBAL max_allowed_packet=64M;
 - 后端以 `DB_DRIVER=mysql` 启动，完成「登录 → 菜单 → 下单 → 加菜 → 催菜 →
   改单重算 → 状态流转 → 结账 → 报表」全链路。
 - `scripts/sqlite2mysql.py` 搬运实测：与源库逐表一致，中文无乱码。
-- ⚠️ **待补测**：员工/角色两表、打印日志/代理表与图片表加入后（20 表 / 30 索引），尚未在 MySQL 上
+- ⚠️ **待补测**：员工/角色两表、打印日志/代理表与图片表加入后（现为 22 表 / 34 索引），尚未在 MySQL 上
   重跑一次全量建库。注意 `tb_user` / `tb_role` 的部分唯一索引在 MySQL 下会
   降级为普通索引，唯一性改由应用层保证（见第五节说明）。

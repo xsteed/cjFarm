@@ -147,19 +147,12 @@
                   <!-- 规格多到行内放不下:先给最低价,具体选哪个进弹层(与小程序同口径) -->
                   <small v-else-if="isManySpecs(d)">起</small>
                 </div>
-                <!-- 售罄/暂不可点：价格照常展示（顾客知道多少钱），但加减号换成状态占位 -->
-                <span
-                  v-if="isSoldOut(d)"
-                  class="op-soldout"
-                  >售罄</span
-                >
-                <span
-                  v-else-if="!isOrderable(d)"
-                  class="op-soldout"
-                  >暂不可点</span
-                >
+                <!-- 已在购物车里的菜：即使随后沽清也要显示步进器 ——
+                     「−」在购物车层面本来就是允许的（见 useCart.changeQty，减号不受沽清影响），
+                     把加减号整体换成「售罄」会让顾客在卡片上减不掉，只能进购物车抽屉删。
+                     此时「+」置灰且不可点（不能再加），价格仍照常展示。 -->
                 <div
-                  v-else-if="dishQty(d.dishId) > 0"
+                  v-if="dishQty(d.dishId, d) > 0"
                   class="op-stepper"
                 >
                   <span
@@ -177,10 +170,11 @@
                       <path d="M5 12h14" /></svg
                   ></span>
                   <span class="n"
-                    >{{ dishQty(d.dishId) }}</span
+                    >{{ dishQty(d.dishId, d) }}</span
                   >
                   <span
                     class="p"
+                    :class="{ off: !canAddMore(d) }"
                     @click.stop="onAdd(d, $event)"
                     ><svg
                       viewBox="0 0 24 24"
@@ -194,6 +188,16 @@
                       <path d="M12 5v14M5 12h14" /></svg
                   ></span>
                 </div>
+                <span
+                  v-else-if="isSoldOut(d)"
+                  class="op-soldout"
+                  >售罄</span
+                >
+                <span
+                  v-else-if="!isOrderable(d)"
+                  class="op-soldout"
+                  >暂不可点</span
+                >
                 <span
                   v-else
                   class="op-add"
@@ -238,7 +242,8 @@ const props = defineProps<{
   activeCat: number | null;
   orderedQty: (dishId: number | undefined) => number;
   currentSpec: (d: Dish) => DishSpec;
-  dishQty: (dishId: number | undefined) => number;
+  /** 第二参传 dish 时按「当前生效规格」计数,与 +/- 改动的条目保持一致(见 useCart.dishQty) */
+  dishQty: (dishId: number | undefined, dish?: Dish) => number;
   selectSpec: (d: Dish, s: DishSpec) => void;
   changeQty: (d: Dish, delta: number) => void;
   onImgErr: (id: number | undefined) => void;
@@ -342,9 +347,16 @@ function priceText(d: Dish): string {
   return money(props.currentSpec(d).price);
 }
 
+/** 还能不能再加一份:沽清、暂不可点(无规格/下架)时为否。
+ *  已在购物车里的菜会保留步进器,但「+」要置灰,避免点了没反应的假死感。 */
+function canAddMore(d: Dish): boolean {
+  return isOrderable(d) && !isSoldOut(d);
+}
+
 /** 「+」:规格多到行内放不下时进弹层,否则按当前选中规格直接加一份(与小程序 onAdd 同规则)。
  *  直接加菜时把点击坐标抛给页面层,驱动「小球抛物线飞入购物车」动画(美团外卖同款)。 */
 function onAdd(d: Dish, e?: MouseEvent): void {
+  if (!canAddMore(d)) return; // 置灰的「+」不响应,与样式保持一致
   if (isManySpecs(d)) {
     props.openSheet(d);
     return;
@@ -722,6 +734,13 @@ function onAdd(d: Dish, e?: MouseEvent): void {
 .op-stepper .p {
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
   color: #fff;
+}
+
+/* 沽清后「+」置灰:顾客能继续减,但不能再加 */
+.op-stepper .p.off {
+  background: #e5e6eb;
+  color: #b8bcc4;
+  cursor: not-allowed;
 }
 
 .op-stepper .n {

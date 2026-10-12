@@ -24,9 +24,11 @@
 | 连接池 | 小池（16） | 大池（64）+ 生命周期控制 | `applyPool` |
 | 连接串 | 文件路径 | `user:pass@tcp(host:port)/db?params` | `resolveDBConfig` |
 
-> 已经在 MySQL 协议兼容服务端上做过实测：建表 20 张、27 个索引、
+> 已经在 MySQL 协议兼容服务端上做过实测：建表 22 张、34 个索引、
 > 下单 / 加菜 / 催菜 / 改单 / 状态流转 / 结账 / 报表全链路跑通，
 > 迁移脚本与数据搬运逐表核对一致。详见 `backend/migrations/README.md` 第八节。
+>
+> 计数以 `cd backend && go run ./cmd/gensql -check` 的输出为准（本文的数字是该脚本的快照）。
 
 ---
 
@@ -103,7 +105,7 @@ Windows 下写路径请用 `C:/path/config.yaml` 形式。
 | `server.cors_origins[]` | `CORS_ORIGINS` | 空 | 跨域白名单（列表自动拼成逗号分隔） |
 | `server.trusted_proxies[]` | `TRUSTED_PROXIES` | 空 | 可信代理，**经 Nginx 反代时必须配置** |
 | `database.driver` | `DB_DRIVER` | `sqlite` | `sqlite` / `mysql`；不填时若设置了 DSN 则按 mysql 处理 |
-| `database.sqlite.path` | `DB_PATH` | `./dining.db` | SQLite 数据文件（仅 sqlite 生效） |
+| `database.sqlite.path` | `DB_PATH` | `./data/dining.db` | SQLite 数据文件（仅 sqlite 生效；相对**当前工作目录**解析） |
 | `database.mysql.dsn` | `DB_DSN` | 空 | 完整连接串，**非空时优先于下面所有分项** |
 | `database.mysql.host` | `DB_HOST` | `127.0.0.1` | MySQL 主机 |
 | `database.mysql.port` | `DB_PORT` | `3306` | MySQL 端口 |
@@ -136,11 +138,17 @@ Windows 下写路径请用 `C:/path/config.yaml` 形式。
 
 ```bash
 # 在服务器上（发布包解压后的根目录），首次安装与覆盖更新是同一条命令
+# 从 sqlite 切到 mysql 必须显式加 --allow-db-switch（理由见下方「切库守卫」）
 sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_PORT=3306 DB_USER=dining \
-  DB_PASSWORD='强密码' DB_NAME=dining bash deploy/deploy.sh --skip-build
+  DB_PASSWORD='强密码' DB_NAME=dining bash deploy/deploy.sh --skip-build --allow-db-switch
 # 也可只给一行连接串（非空时优先于上面的分项）：
-#   sudo DB_DSN='dining:密码@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh --skip-build
+#   sudo DB_DSN='dining:密码@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh --skip-build --allow-db-switch
 ```
+
+> **切库守卫**：`deploy.sh` 在检测到 `driver` 由 `sqlite` 变为 `mysql` 时会**直接拒绝**
+> （除非传了 `--allow-db-switch`）。原因：数据不会自动搬迁，切到空库后后端会建表并灌入
+> 出厂种子，菜品变成出厂菜单、订单与会员全部为 0 —— 运维视角与「数据丢了」无异。
+> 所以正确顺序永远是：**先按本文第三、四节把数据搬完，再用 `--allow-db-switch` 重跑部署**。
 
 脚本的行为（幂等，可反复执行）：
 
@@ -233,7 +241,7 @@ DB_NAME=dining
 
 ```bash
 cd backend
-cp dining.db dining.db.bak-$(date +%Y%m%d)
+cp data/dining.db data/dining.db.bak-$(date +%Y%m%d)
 cp -r data data.bak-$(date +%Y%m%d)      # 主密钥目录，务必一起备份
 ```
 
@@ -254,7 +262,7 @@ mysql -u dining -p dining < migrations/full/mysql/schema.sql
 
 ```bash
 cd backend
-python scripts/sqlite2mysql.py --sqlite dining.db --out /tmp/tb_data.sql
+python scripts/sqlite2mysql.py --sqlite data/dining.db --out /tmp/tb_data.sql
 ```
 
 输出示例：
@@ -303,7 +311,7 @@ vi backend/.env                 # 见第四节第 3 步
 | # | 检查项 | 方法 | 期望 |
 |---|---|---|---|
 | 1 | 连的是 MySQL | 看启动日志 `[db] 已连接 mysql 后端` | ✅ |
-| 2 | 表建全了 | `mysql -e "SHOW TABLES FROM dining"` | 20 张表 |
+| 2 | 表建全了 | `mysql -e "SHOW TABLES FROM dining"` | 22 张表（以 `go run ./cmd/gensql -check` 输出为准） |
 | 3 | 关键数据行数 | `SELECT COUNT(*) FROM tb_table;` | 与源库一致（种子 8） |
 | 4 | 图片表有数据 | `SELECT COUNT(*) FROM tb_image;` | 首次启动后应 ≥23（21 菜品图 + 2 收款码） |
 | 5 | 中文无乱码 | 管理端看菜品名 | 正常中文 |
@@ -341,7 +349,7 @@ curl -s -X POST http://localhost:8080/api/auth/login \
 
 1. 停服；
 2. 把 `backend/.env` 里的 `DB_DRIVER` 改回 `sqlite`（或直接删掉 `.env`）；
-3. 确认 `backend/dining.db` 与 `backend/data/master.key` 还在；
+3. 确认 `backend/data/dining.db` 与 `backend/data/master.key` 还在；
 4. 重启。
 
 > **deploy.sh 部署的服务器**：配置在 `<INSTALL_DIR>/config.yaml`。把 `database` 段的

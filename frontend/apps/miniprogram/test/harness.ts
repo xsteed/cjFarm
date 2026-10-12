@@ -101,6 +101,52 @@ export interface PageInstance {
   setData(patch: Plain, cb?: () => void): void;
 }
 
+/**
+ * 把 setData 的「路径键」写进 data,支持点分隔与 [n] 下标两种形态:
+ *   `cartTotal`、`rows[3]`、`rows[3].image`
+ *
+ * 只在「下一层容器不存在」时创建(数字下标建数组、其余建对象),已有对象/数组一律沿用,
+ * 所以行为与真机的 setData 一致;`__proto__` / `constructor` / `prototype` 直接丢弃,
+ * 避免测试数据把原型链改了。
+ */
+function assignPath(target: Plain, key: string, value: unknown): void {
+  const tokens: (string | number)[] = [];
+  const re = /([^.[\]]+)|\[(-?\d+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(key)) !== null) {
+    tokens.push(m[2] !== undefined ? Number(m[2]) : m[1]);
+  }
+  if (tokens.length === 0) {
+    target[key] = value;
+    return;
+  }
+
+  let cur: unknown = target;
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const k = tokens[i];
+    if (typeof k === 'string' && (k === '__proto__' || k === 'constructor' || k === 'prototype')) {
+      return;
+    }
+    let nxt: unknown;
+    if (cur === null || typeof cur !== 'object') return;
+    nxt = (cur as Plain)[k as string];
+    if (nxt === null || typeof nxt !== 'object') {
+      nxt = typeof tokens[i + 1] === 'number' ? [] : {};
+      (cur as Plain)[k as string] = nxt;
+    }
+    cur = nxt;
+  }
+  const last = tokens[tokens.length - 1];
+  if (typeof last === 'number' && Array.isArray(cur)) {
+    cur[last] = value;
+    return;
+  }
+  if (typeof last === 'string' && (last === '__proto__' || last === 'constructor' || last === 'prototype')) {
+    return;
+  }
+  (cur as Plain)[last] = value;
+}
+
 export function makeInstance(options: Plain): PageInstance {
   // createSelectorQuery 的链式桩：select/selectAll 返回同一个 chain，怎么点都不会抛
   const chain: Record<string, unknown> = {};
@@ -122,7 +168,10 @@ export function makeInstance(options: Plain): PageInstance {
     createSelectorQuery: () => query,
     setData(patch: Plain, cb?: () => void): void {
       inst.setDataCalls.push(patch);
-      Object.assign(inst.data, patch);
+      // 必须支持「路径键」:真机的 setData 接受 rows[3] / rows[3].image 这类写法并只更新该处,
+      // 早先用 Object.assign 会把 `rows[3]` 当成一个字面量键挂到 data 上 —— 页面里用了
+      // 路径写法(如 syncRow / onImgError 的增量回写)时,测试读到的 data 就与真机不一致。
+      for (const k of Object.keys(patch)) assignPath(inst.data, k, patch[k]);
       cb?.();
     }
   };

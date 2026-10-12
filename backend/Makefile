@@ -182,7 +182,7 @@ test-race:
 vet:
 	go vet ./...
 
-## fmt: 格式化代码(递归 internal/ 子包)
+## fmt: 格式化代码(递归各层子包)
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './bin/*')
 

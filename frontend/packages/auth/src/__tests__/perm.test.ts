@@ -18,7 +18,9 @@ import {
 import { LS_TOKEN, LS_PERMS } from '@dining/shared';
 
 vi.mock('@dining/api', () => ({
-  getProfile: vi.fn()
+  getProfile: vi.fn(),
+  // perm.ts 在模块加载时注册该回调(401 清登录态时复位内存权限集合)
+  onAuthCleared: vi.fn()
 }));
 
 describe('perm 登录态与权限', () => {
@@ -119,5 +121,15 @@ describe('perm 登录态与权限', () => {
 
   it('tokenExpired 无令牌返回 true', () => {
     expect(tokenExpired()).toBe(true);
+  });
+
+  it('tokenExpired 解析不出 exp 时返回 false（交后端兜底，不能把用户锁在登录页外）', () => {
+    // 令牌格式变化（段数/顺序改了）时这里解不出 exp：判「已过期」会让所有正常
+    // 登录的用户被无限踢回登录页，而登录页又会静默换发再跳回来，来回弹跳。
+    localStorage.setItem(LS_TOKEN, 'not-a-token-with-4-fields');
+    expect(tokenExpired()).toBe(false);
+
+    localStorage.setItem(LS_TOKEN, 'user|1|1'); // 只有 3 段
+    expect(tokenExpired()).toBe(false);
   });
 });

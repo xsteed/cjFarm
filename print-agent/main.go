@@ -223,11 +223,25 @@ func main() {
 //   - 残留实例与自启动的实例抢同一批云端任务,**同一张小票被打两遍**。
 //
 // 用 close 广播后,「谁先看到信号」不再有歧义。
+// forceExit 收到第二个退出信号时的处置(默认立即退出进程)。
+//
+// 抽成变量是为了让测试能验证「第二个信号确实会强制退出」,而不必真的杀掉测试进程。
+var forceExit = func() { os.Exit(1) }
+
 func broadcastSignals(sig <-chan os.Signal) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		<-sig
 		close(done)
+		// 第一个信号走「本轮结束后优雅退出」:在途的长轮询(pull 最多 hold 25~35s)
+		// 与正在打印的任务不会被立即打断,以免任务没回执、租约到期后重发重打。
+		//
+		// 但运维不能因此被卡住:门店连按两次 Ctrl-C、或 op/*/stop.sh 第二次发信号时
+		// 应当立即退出。少了这条路径,外部只能升级为 pkill -KILL 硬杀 —— 正好杀在
+		// 打印中途,反而制造重复出纸。
+		<-sig
+		logf("[提示] 收到第二个退出信号,立即退出(在途任务可能未回执,云端会在租约到期后重发)")
+		forceExit()
 	}()
 	return done
 }
@@ -243,6 +257,8 @@ func broadcastSignals(sig <-chan os.Signal) <-chan struct{} {
 func runCycle(client *http.Client, base string, cfg config, st *jobState) (int, error) {
 	start := time.Now()
 	jobs, err := pull(client, base, cfg)
+	// 长轮询 hold 期间进程是「正常等待」而非卡死:取单返回就打一次活动戳。
+	markActive()
 	if err != nil {
 		return 0, err
 	}
@@ -330,9 +346,14 @@ func runCycle(client *http.Client, base string, cfg config, st *jobState) (int, 
 			}
 			// 先落盘再回执:把「重复打印」的窗口压到「打印成功 → 落盘」之间的毫秒级。
 			st.markDone(j.DeliveryID)
-			logf("[成功] %s 已送出 ×%d", jobBrief(j), j.Copies)
+			// 用实际生效份数(可能被 jobCopies 钳制),日志与实际出纸一致。
+			logf("[成功] %s 已送出 ×%d", jobBrief(j), jobCopies(j))
 		}
 		results = append(results, r)
+		// 每处理完一条就打活动戳:看门狗判的是「有没有在干活」,而不是「有没有走完一轮」。
+		// 一轮可能包含 limit(≤50) 条任务、每条 copies 份、CUPS 下每次提交最坏 30s,
+		// 只在轮次边界打点会把正常干活的进程判成假死(详见 watchdog.go 的阈值说明)。
+		markActive()
 	}
 
 	// results 为空只可能是「全部任务都在熔断冷却中且云端不支持 skipped」:

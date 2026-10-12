@@ -6,6 +6,8 @@ import { clearAllStorage } from '@shell/test/mocks.ts';
 
 // @dining/api 被 @dining/auth 依赖(refreshProfile),这里不需要真实 http,统一 mock 掉。
 vi.mock('@dining/api', () => ({
+  // @dining/auth 在模块加载时会注册它(见 perm.ts 末尾),漏了会让整个套件加载失败
+  onAuthCleared: vi.fn(),
   getProfile: vi.fn(),
   logoutRemember: vi.fn()
 }));

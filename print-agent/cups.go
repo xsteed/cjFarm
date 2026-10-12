@@ -496,15 +496,25 @@ func cupsQueueHint(addr string) string {
 // 为什么重复提交而不是 lp -n:lp 的 -n 在走 raw 时会交给 CUPS 的 job 复制机制,
 // 部分机型/后端下不生效。与直连通道「重复发送同一份指令」保持同一策略,行为可预期。
 func printViaCUPS(queue string, data []byte, copies int, addr string) error {
+	submitted := 0
 	for i := 0; i < copies; i++ {
 		out, err := cupsSubmit(cupsSubmitArgs(queue), data)
 		msg := strings.TrimSpace(string(out))
 		if err != nil {
+			// 与直连通道同一口径:前面几份已被 CUPS 受理(会真的出纸),此时按整单失败
+			// 返回会让云端重发同一 deliveryId,代理再走一遍完整份数循环 → 重复出票。
+			// 「少一份 + 告警」优于「多一份」。
+			if submitted > 0 {
+				logf("[警告] CUPS 队列[%s] 第 %d/%d 份提交失败(%v);已受理的 %d 份不重打,请手动补打",
+					queue, i+1, copies, err, submitted)
+				return nil
+			}
 			if msg != "" {
 				return fmt.Errorf("CUPS 队列[%s] 提交失败: %v(%s)", queue, err, msg)
 			}
 			return fmt.Errorf("CUPS 队列[%s] 提交失败: %w", queue, err)
 		}
+		submitted++
 		logvf("CUPS 队列[%s] 已受理 %s 的第 %d/%d 份(%.60s)", queue, addr, i+1, copies, msg)
 	}
 	return nil

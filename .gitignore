@@ -21,6 +21,7 @@ logs/
 *.bak
 *.orig
 *.rej
+__pycache__/
 
 # ---------------- 后端 (Go) ----------------
 # 编译产物
@@ -99,15 +100,10 @@ backend/config.prod.yaml
 !.env.example
 !config.example.yaml
 
-# 上传目录：只忽略「运行期上传」的文件，保留种子图片
-#   种子图片命名约定：dining_YYYYMMDD_NNN.*（菜品图）、pay_wx.png / pay_ali.jpg（收款码）
-backend/uploads/*
-!backend/uploads/dining_2026*.jpeg
-!backend/uploads/dining_2026*.jpg
-!backend/uploads/dining_2026*.png
-!backend/uploads/dining_2026*.webp
-!backend/uploads/pay_wx.png
-!backend/uploads/pay_ali.jpg
+# 上传目录（运行期生成，UPLOAD_DIR 默认 ./uploads）：
+#   种子图片已通过 go:embed 内嵌在 internal/store/seedimg 并随二进制分发，
+#   业务表只存 /uploads/<文件名> 虚拟路径，故 uploads 目录整个不入库。
+backend/uploads/
 
 # ---------------- 前端 (Vue / Vite) ----------------
 frontend/node_modules/

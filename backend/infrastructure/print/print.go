@@ -1,0 +1,733 @@
+// Package print 负责把订单变成打印机上的一张小票。
+//
+// 分成三层,互不耦合:
+//   - ticket.go            渲染层: 订单 -> []string 文本行(与厂商无关)
+//   - escpos.go            发送层: 文本行 -> ESC/POS 指令 -> TCP 直连打印机
+//   - feie.go              发送层: 文本行 -> <BR> 拼接的 content -> 飞鹅适配器
+//     (协议本身在 infrastructure/adapter/feie:签名、接口调用、响应解码)
+//   - print.go             编排层: 决定「谁该打哪张单」「失败怎么办」「日志怎么记」
+//
+// 打印一律在后台异步执行,失败只记日志、不影响下单/结账主流程;
+// 但每次发送的结果(成功或失败)都会落到 tb_print_log,商家端可查、可补打。
+//
+// 依赖方向:print 依赖 po + dto + service(数据访问统一收口到 service)。
+package print
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"runtime/debug"
+	"strings"
+	"time"
+
+	"go.uber.org/zap"
+
+	"dining-system/application/service"
+	"dining-system/domain/po"
+	"dining-system/infrastructure/adapter/feie"
+	"dining-system/infrastructure/logger"
+)
+
+// sendAttempts 单次发送的总尝试次数(首次 + 1 次重试)。
+// 网络抖动/打印机刚上电这类瞬时问题,重试一次就能救回来;
+// 配置类错误(SN 填错、账号没配)会返回永久错误,不重试。
+const sendAttempts = 2
+
+// 测试单据类型(仅用于日志分类,不是业务单据)。
+const docTest = "test"
+
+// permError 标记「重试也没有意义」的错误(参数/权限/配置类)。
+type permError struct{ msg string }
+
+func (e *permError) Error() string { return e.msg }
+
+// newPermError 构造永久性错误。
+func newPermError(format string, a ...interface{}) error {
+	return &permError{msg: fmt.Sprintf(format, a...)}
+}
+
+// isRetryable 判断错误是否值得重试。
+// 永久性错误有两类:本包的 permError(配置缺失/参数问题),以及飞鹅适配器的
+// APIError(接口返回 ret!=0,重试不会有不同结果)。
+func isRetryable(err error) bool {
+	var pe *permError
+	if errors.As(err, &pe) {
+		return false
+	}
+	var fe *feie.APIError
+	return !errors.As(err, &fe)
+}
+
+// ============================================================================
+// 配置读取
+// ============================================================================
+
+// printEnabled 打印总开关。与 handler.settingFlag 同一套语义:只有明确的 "1" 才开启,
+// 空值/脏值一律关闭——此前用「!= "0"」会把被清空的键也当作开启,与管理端
+// 开关的显示状态相反。出厂默认 "1" 由 EnsureSettingDefaults 每次启动补齐,
+// 正常部署不受影响。
+func printEnabled() bool { return service.GetSetting("print_enabled") == "1" }
+
+// kitchenShowPrice 厨房单是否带单价与金额(默认不带)。
+func kitchenShowPrice() bool { return service.GetSetting("print_kitchen_show_price") == "1" }
+
+// kitchenSplitByItem 厨房单是否按菜品拆成小票(默认关,整单一张)。
+//
+// 开启后每道菜单独出一张带桌号的小票,供夹在菜上/传菜对口使用;
+// 分类分单(Printer.CategoryIDs)仍然生效 —— 先按分类挑出某台机器负责的菜,
+// 再把这部分菜逐道拆单。补打与预览不拆,仍按整单出。
+func kitchenSplitByItem() bool { return service.GetSetting("print_kitchen_split_by_item") == "1" }
+
+// guestFooter 食客小票页脚文案;留空表示不打印页脚。
+// 出厂默认值由 seed 的 EnsureSettingDefaults 补齐(老库升级也会补),
+// 用户在管理端清空后保存,即得到空串 → 页脚行整体省略。
+func guestFooter() string { return strings.TrimSpace(service.GetSetting("print_guest_footer")) }
+
+// guestShowSeatFee 食客小票是否显示茶位费行(默认显示,对账透明)。
+func guestShowSeatFee() bool { return service.GetSetting("print_guest_show_seat_fee") != "0" }
+
+// guestShowDiscount 食客小票是否显示优惠行(默认显示;有优惠金额时才出现该行)。
+func guestShowDiscount() bool { return service.GetSetting("print_guest_show_discount") != "0" }
+
+// guestQR 食客小票页脚后是否打印二维码(默认关闭)。
+//
+// 默认关的原因是它需要两个外部条件同时成立:H5 地址已配置成手机能访问的真实
+// 地址、且打印机支持 GS ( k 二维码指令。出厂即开会让一部分机型吐出乱码,
+// 让门店自己在「系统配置 → 小票打印」里确认后再开。
+func guestQR() bool { return service.GetSetting("print_guest_qr") == "1" }
+
+// guestPrintOnAppend 加菜后是否向小票机重出一张食客小票(默认开)。
+//
+// 沿用 show_seat_fee 的「!= "0"」语义:管理端关掉时写入明确的 "0",
+// 老库没有这个键时视为开启 —— 与 seed 的出厂默认一致。
+func guestPrintOnAppend() bool { return service.GetSetting("print_guest_on_append") != "0" }
+
+// guestPrintOnOrder 下单时是否向小票机出「点菜单」(默认开)。
+//
+// 下单即出的小票相当于点菜凭证(菜品上错、漏上当场能对),但与结账小票
+// 内容高度重叠,不想要重复出纸的门店可关 —— 关闭后下单只打厨房单,
+// 加菜小票(print_guest_on_append)与结账小票不受影响。
+func guestPrintOnOrder() bool { return service.GetSetting("print_guest_on_order") != "0" }
+
+// ============================================================================
+// 打印机选取
+// ============================================================================
+
+// loadPrinters 查询启用的打印机。printerType 传 0 表示全部,否则按类型过滤(1=厨房单 2=食客小票)。
+func loadPrinters(printerType int) ([]po.Printer, error) {
+	return service.ListEnabledPrinters(printerType)
+}
+
+// itemsForPrinter 按打印机的「分类分单」配置筛出它该打的菜品。
+//
+// 食客小票不过滤 —— 小票必须含全部菜品,否则金额合计对不上。
+// 未配置 category_ids 的厨房机也不过滤(传统的一台机器打全单)。
+// 配了分类却一道菜都没匹配上时返回空,调用方据此跳过该机器:
+// 否则凉菜机会打出一张只有抬头、没有菜品的空白单。
+func itemsForPrinter(p po.Printer, items []service.PrintOrderItemRow) []service.PrintOrderItemRow {
+	cats := service.ParseIDList(p.CategoryIDs)
+	if p.PrinterType == po.PrinterTypeGuest || len(cats) == 0 {
+		return items
+	}
+	want := map[int]bool{}
+	for _, c := range cats {
+		want[c] = true
+	}
+	out := make([]service.PrintOrderItemRow, 0, len(items))
+	for _, it := range items {
+		if want[it.CategoryID] {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// ============================================================================
+// 发送
+// ============================================================================
+
+// sendOnce 按厂商把文本行送出去。detail 是写进日志的补充信息。
+func sendOnce(p po.Printer, lines []string) (remoteID, detail string, err error) {
+	if p.IsFeie() {
+		client, cerr := NewFeieClient()
+		if cerr != nil {
+			return "", "", &permError{msg: cerr.Error()}
+		}
+		remoteID, err = sendViaFeie(client, p, lines)
+		if err != nil {
+			return remoteID, "", err
+		}
+		return remoteID, "飞鹅云端单号 " + remoteID, nil
+	}
+	detail, err = sendViaTCP(p, lines)
+	if err != nil {
+		return "", detail, err
+	}
+	return "", detail, nil
+}
+
+// sendWithRetry 发送并在「值得重试」的错误上重试一次。
+func sendWithRetry(p po.Printer, lines []string) (remoteID, detail string, err error) {
+	for attempt := 1; attempt <= sendAttempts; attempt++ {
+		remoteID, detail, err = sendOnce(p, lines)
+		if err == nil {
+			return remoteID, detail, nil
+		}
+		if !isRetryable(err) || attempt == sendAttempts {
+			return remoteID, detail, err
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+	return remoteID, detail, err
+}
+
+// ============================================================================
+// 日志
+// ============================================================================
+
+// recordLog 把一次发送结果写入打印日志(成功与失败都记)。
+//
+// 打印是异步且依赖打印机在线状态的,没有这张表时「小票没出来」无法追查;
+// 日志写入本身失败只记后端日志,绝不向上抛 —— 它是旁路数据。
+func recordLog(log *zap.SugaredLogger, p po.Printer, o po.Order, docType, triggerBy, operator, remoteID, detail string, costMs int, sendErr error) {
+	entry := po.PrintLog{
+		OrderID:     o.OrderID,
+		OrderNo:     o.OrderNo,
+		TableNo:     o.TableNo,
+		TableName:   o.TableName,
+		PrinterID:   p.PrinterID,
+		PrinterName: p.PrinterName,
+		PrinterType: p.PrinterType,
+		Provider:    p.Provider,
+		DocType:     docType,
+		Copies:      p.EffectiveCopies(),
+		Status:      po.PrintStatusSuccess,
+		RemoteID:    remoteID,
+		Detail:      detail,
+		TriggerBy:   triggerBy,
+		Operator:    operator,
+		CostMs:      costMs,
+		CreateTime:  service.Now(),
+	}
+	if sendErr != nil {
+		entry.Status = po.PrintStatusFailed
+		entry.Detail = truncate(sendErr.Error(), 480)
+	}
+	if err := service.InsertPrintLog(entry); err != nil {
+		log.Warnf("打印: 写打印日志失败: %v", err)
+	}
+}
+
+// truncate 按字符数截断(避免超长错误信息撑爆 VARCHAR(500))。
+// 必须按 rune 截断:按字节切会把多字节 UTF-8 字符切一半,写入 utf8mb4 列时
+// 轻则乱码、重则整行 INSERT 被拒(诊断信息反而丢失)。
+func truncate(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
+
+// ============================================================================
+// 作业
+// ============================================================================
+
+// job 一次「向单台打印机送一张单据」的完整描述。
+type job struct {
+	p         po.Printer
+	o         po.Order
+	items     []service.PrintOrderItemRow
+	docType   string
+	title     string
+	triggerBy string
+	operator  string
+	// log / agentLog 是入口处就已绑定 requestID 与订单号的 logger。
+	//
+	// 为什么不带 ctx 进 goroutine:打印是异步的,handler 返回后请求 ctx 随即被
+	// cancel,goroutine 里再读 ctx 语义上已不属于该请求。因此在入口(仍在请求内)
+	// 就把 requestID 取出来固化成字段交给 goroutine —— 值已落定,不受 ctx 生命周期影响,
+	// 「小票没出来」时仍能凭响应头的 X-Request-ID 反查到这次打印。
+	//
+	// 两个 logger 分别对应两条输出通道:log → 主日志;agentLog → 代理专属
+	// agent.log(直连打印机与代理通道的日志不该混在一起,见 logger 包注释)。
+	log      *zap.SugaredLogger
+	agentLog *zap.SugaredLogger
+}
+
+// jobLog 取本作业的主日志 logger;极端情况下(手工构造 job)回落到包级 logger,不丢日志。
+func (j job) jobLog() *zap.SugaredLogger {
+	if j.log != nil {
+		return j.log
+	}
+	return logger.With(zap.String("orderNo", j.o.OrderNo))
+}
+
+// jobAgentLog 取本作业的代理日志 logger;同上,回落时也不丢日志。
+func (j job) jobAgentLog() *zap.SugaredLogger {
+	if j.agentLog != nil {
+		return j.agentLog
+	}
+	return logger.AgentWithContext(nil, zap.String("orderNo", j.o.OrderNo))
+}
+
+// toPOItems 把带分类的订单明细还原为纯持久化明细(渲染层只关心 po.OrderItem 字段)。
+func toPOItems(rows []service.PrintOrderItemRow) []po.OrderItem {
+	out := make([]po.OrderItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.OrderItem)
+	}
+	return out
+}
+
+// render 按单据类型渲染文本行。
+func (j job) render() []string {
+	if j.docType == po.PrintDocGuest {
+		return RenderGuestTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
+	}
+	if j.docType == po.PrintDocGuestAppend {
+		return RenderGuestAppendTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
+	}
+	return RenderKitchenTicket(j.o, toPOItems(j.items), j.p.PaperWidth, kitchenShowPrice(), j.title)
+}
+
+// run 渲染 + 发送 + 记日志,返回发送错误(异步调用方通常会忽略)。
+//
+// agent 通道走单独的入队路径:它不做网络发送,只把票据写进任务队列等门店代理来取,
+// 因此日志也要等代理回执后才回写结果(见 agent.go 的 enqueueAgentJob)。
+func run(j job) error {
+	if j.p.IsAgent() {
+		return enqueueAgentJob(j)
+	}
+	lines := j.render()
+	start := time.Now()
+	remoteID, detail, err := sendWithRetry(j.p, lines)
+	cost := int(time.Since(start).Milliseconds())
+	log := j.jobLog()
+	recordLog(log, j.p, j.o, j.docType, j.triggerBy, j.operator, remoteID, detail, cost, err)
+
+	if err != nil {
+		log.Warnf("打印: 向打印机[%s](%s) 发送 %s 失败: %v",
+			j.p.PrinterName, providerAddr(j.p), j.docType, err)
+		return err
+	}
+	log.Infof("打印: 已向打印机[%s](%s) 发送单据 %s(%s)", j.p.PrinterName, providerAddr(j.p), j.o.OrderNo, j.docType)
+	return nil
+}
+
+// providerAddr 日志用的打印机定位串。
+func providerAddr(p po.Printer) string {
+	if p.IsFeie() {
+		return "飞鹅SN:" + p.FeieSN
+	}
+	if p.IsAgent() {
+		return "本地代理→" + addrOf(p.IP, effectivePort(p.Port))
+	}
+	return addrOf(p.IP, p.Port)
+}
+
+// goSafe 以带 panic recover 的方式启动后台 goroutine。
+//
+// 打印/清理都是旁路任务,任何一次渲染或数据异常都不该把整个进程带崩;
+// recover 后记 error 日志(含 panic 值与堆栈),既保留现场又不影响主流程。
+func goSafe(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Errorf("打印: 后台任务 %s panic: %v\n%s", name, r, debug.Stack())
+			}
+		}()
+		fn()
+	}()
+}
+
+// runJobRecovered 在 per-job recover 下执行单个打印作业。
+//
+// 与 goSafe 的整批 recover 配合:单个作业 panic 被捕获后仍继续处理本批剩余作业,
+// 避免一张坏单卡住同一订单的其它打印。
+func runJobRecovered(j job) {
+	defer func() {
+		if r := recover(); r != nil {
+			j.jobLog().Errorf("打印: 单个打印作业 panic(已跳过,继续后续作业): %v\n%s", r, debug.Stack())
+		}
+	}()
+	_ = run(j)
+}
+
+// runAsync 异步执行一批作业。打印失败只记日志,不影响调用方。
+func runAsync(jobs []job) {
+	if len(jobs) == 0 {
+		return
+	}
+	goSafe("runAsync", func() {
+		for _, j := range jobs {
+			runJobRecovered(j)
+		}
+	})
+}
+
+// buildJobs 按「单据类型 + 分类分单 + 拆单开关」为一批启用的打印机生成作业。
+//
+// docType 为 guest / guest_append 时只挑小票机(两者都不做分类过滤);
+// kitchen 时只挑厨房机并做分类过滤。分类过滤后无菜可打的机器直接跳过
+// (不打空白单)。
+//
+// 厨房单在 print_kitchen_split_by_item 开启时进一步按菜品拆单:一台机器负责
+// 的 N 道菜出 N 张小票(每张抬头都带桌号,方便夹在菜上/送菜)。整单备注会随
+// 每张小票重复打印 —— 拆单本来就是为了逐道对菜,备注跟着菜走才有效。
+// 食客小票永远整单一张,金额合计对不上就是事故。
+func buildJobs(log, agentLog *zap.SugaredLogger, printers []po.Printer, o po.Order, items []service.PrintOrderItemRow,
+	docType, title, triggerBy, operator string) []job {
+
+	splitByItem := docType == po.PrintDocKitchen && kitchenSplitByItem()
+	jobs := []job{}
+	for _, p := range printers {
+		if (docType == po.PrintDocGuest || docType == po.PrintDocGuestAppend) &&
+			p.PrinterType != po.PrinterTypeGuest {
+			continue
+		}
+		if docType == po.PrintDocKitchen && p.PrinterType == po.PrinterTypeGuest {
+			continue
+		}
+		sel := itemsForPrinter(p, items)
+		if len(sel) == 0 {
+			continue
+		}
+		if splitByItem {
+			for _, it := range sel {
+				jobs = append(jobs, job{
+					p: p, o: o, items: []service.PrintOrderItemRow{it},
+					docType: docType, title: title,
+					triggerBy: triggerBy, operator: operator,
+					log: log, agentLog: agentLog,
+				})
+			}
+			continue
+		}
+		jobs = append(jobs, job{
+			p: p, o: o, items: sel,
+			docType: docType, title: title,
+			triggerBy: triggerBy, operator: operator,
+			log: log, agentLog: agentLog,
+		})
+	}
+	return jobs
+}
+
+// ============================================================================
+// 对外入口
+// ============================================================================
+
+// PrintOrder 下单后自动打印:厨房机出厨房单、小票机出「点菜单」。
+//
+// 小票机这张是点菜凭证(下单即出,金额只覆盖已点的菜),可由
+// print_guest_on_order 单独关闭;加菜小票与结账小票不受它影响。
+// items 应为本次下单的菜品(未补分类也可,内部会补)。
+func PrintOrder(ctx context.Context, o po.Order, items []po.OrderItem) {
+	if !printEnabled() {
+		return
+	}
+	// 在入口(仍处于请求上下文内)绑定 requestID;goroutine 内只使用这个已固化的
+	// logger,不再触碰可能已 cancel 的 ctx。
+	log := logger.WithContext(ctx, zap.String("orderNo", o.OrderNo))
+	agentLog := logger.AgentWithContext(ctx, zap.String("orderNo", o.OrderNo))
+	goSafe("PrintOrder", func() {
+		attached := service.AttachItemCategories(items)
+		printers, err := loadPrinters(0)
+		if err != nil {
+			log.Warnf("打印: 查询打印机失败: %v", err)
+			return
+		}
+		if len(printers) == 0 {
+			log.Warnf("打印: 没有启用中的打印机,跳过订单")
+			return
+		}
+		jobs := buildJobs(log, agentLog, printers, o, attached, po.PrintDocKitchen, "【厨房单】", po.PrintTriggerOrder, "")
+		if guestPrintOnOrder() {
+			jobs = append(jobs, buildJobs(log, agentLog, printers, o, attached, po.PrintDocGuest, "", po.PrintTriggerOrder, "")...)
+		}
+		for _, j := range jobs {
+			runJobRecovered(j)
+		}
+	})
+}
+
+// PrintKitchen 加菜:只向厨房机推「加菜单」。
+//
+// 食客小票由 PrintGuestAppend 负责 —— 厨房单只列本次新增的菜品(后厨只补做
+// 这几道),小票则重出整单最新金额;两者口径不同,不要合并。
+// items 应为本次新增的菜品(不是整桌的全部菜品)。
+func PrintKitchen(ctx context.Context, o po.Order, items []po.OrderItem) {
+	if !printEnabled() {
+		return
+	}
+	log := logger.WithContext(ctx, zap.String("orderNo", o.OrderNo))
+	agentLog := logger.AgentWithContext(ctx, zap.String("orderNo", o.OrderNo))
+	goSafe("PrintKitchen", func() {
+		attached := service.AttachItemCategories(items)
+		printers, err := loadPrinters(po.PrinterTypeKitchen)
+		if err != nil {
+			log.Warnf("打印: 查询厨房打印机失败: %v", err)
+			return
+		}
+		runAsync(buildJobs(log, agentLog, printers, o, attached, po.PrintDocKitchen, "【加菜单】", po.PrintTriggerAppend, ""))
+	})
+}
+
+// PrintGuestAppend 加菜后向小票机出一张「加菜小票」(仅小票机)。
+//
+// 只列本次新增的菜品,金额只给一行整单「当前合计」—— 客人刚加完菜,
+// 关心的是加了什么、现在多少钱,不必再重放一遍此前已点的全部菜品。
+// 结账时仍会出完整食客小票,茶位费/优惠等整单口径的分项在那张票上呈现。
+//
+// items 应为本次新增的菜品(与 PrintKitchen 同一份,不是整单明细)。
+// 打印开关由 print_guest_on_append 单独控制(默认开):加菜频繁的门店可关掉省纸。
+//
+// 补打/预览说明:该单据在日志里落 doc_type=guest_append,但补打与预览无法
+// 还原「当时新增了哪些菜」(订单只增不减、日志不存渲染快照),统一按
+// docType=guest 重放当前整单 —— 见 po.PrintDocGuestAppend 的注释。
+func PrintGuestAppend(ctx context.Context, o po.Order, items []po.OrderItem) {
+	if !printEnabled() || !guestPrintOnAppend() {
+		return
+	}
+	log := logger.WithContext(ctx, zap.String("orderNo", o.OrderNo))
+	agentLog := logger.AgentWithContext(ctx, zap.String("orderNo", o.OrderNo))
+	goSafe("PrintGuestAppend", func() {
+		printers, err := loadPrinters(po.PrinterTypeGuest)
+		if err != nil {
+			log.Warnf("打印: 查询小票打印机失败: %v", err)
+			return
+		}
+		if len(printers) == 0 {
+			log.Warnf("打印: 没有启用中的小票打印机,跳过加菜小票")
+			return
+		}
+		attached := service.AttachItemCategories(items)
+		runAsync(buildJobs(log, agentLog, printers, o, attached, po.PrintDocGuestAppend, "", po.PrintTriggerAppend, ""))
+	})
+}
+
+// PrintGuestTicket 结账后打印食客小票(仅小票机)。
+//
+// 这里曾经复用 PrintOrder,导致结账时厨房机又被打了一张一模一样的厨房单;
+// 结账单只该出给小票机,厨房不需要知道客人什么时候结的账。
+func PrintGuestTicket(ctx context.Context, o po.Order) {
+	if !printEnabled() {
+		return
+	}
+	log := logger.WithContext(ctx, zap.String("orderNo", o.OrderNo))
+	agentLog := logger.AgentWithContext(ctx, zap.String("orderNo", o.OrderNo))
+	goSafe("PrintGuestTicket", func() {
+		attached := service.LoadOrderItemsForPrint(o.OrderID)
+		printers, err := loadPrinters(po.PrinterTypeGuest)
+		if err != nil {
+			log.Warnf("打印: 查询小票打印机失败: %v", err)
+			return
+		}
+		// 没有启用中的小票机时必须留一条日志:结账后客人等着拿小票却始终不出纸,
+		// 若此处静默返回,排查时既没有打印记录也没有任何线索(与 PrintOrder 同款兜底)。
+		if len(printers) == 0 {
+			log.Warnf("打印: 没有启用中的小票打印机,跳过结账小票")
+			return
+		}
+		runAsync(buildJobs(log, agentLog, printers, o, attached, po.PrintDocGuest, "", po.PrintTriggerSettle, ""))
+	})
+}
+
+// normalizeDocType 单据类型归一化:渲染形态只有 kitchen 与 guest 两种。
+// guest_append(加菜小票)无法按「当时新增的菜品」重放(订单只增不减、
+// 日志不存渲染快照),补打与预览一律回落为整单 guest。
+func normalizeDocType(docType string) string {
+	if docType == po.PrintDocKitchen {
+		return po.PrintDocKitchen
+	}
+	return po.PrintDocGuest
+}
+
+// Reprint 人工补打:把指定订单的单据重新送到指定打印机(同步返回结果)。
+//
+// 与自动打印的区别:这是商家明确要求的动作,失败必须让前端看到原因,
+// 所以同步执行并把错误原样返回;同时日志里 trigger_by=reprint 便于区分。
+// 补打始终整单一张,不受 print_kitchen_split_by_item 拆单影响 —— 逐道菜
+// 补打无法从界面表达,商家要的也是核对全单。
+func Reprint(printerID, orderID int, docType, operator string) error {
+	docType = normalizeDocType(docType)
+	p, err := service.LoadPrinter(printerID)
+	if err != nil {
+		return errors.New("打印机不存在")
+	}
+	o, items, err := service.LoadOrderAndItemsForPrint(orderID)
+	if err != nil {
+		return errors.New("订单不存在")
+	}
+	sel := itemsForPrinter(p, items)
+	if len(sel) == 0 {
+		if docType == po.PrintDocKitchen && len(service.ParseIDList(p.CategoryIDs)) > 0 {
+			return errors.New("该打印机只负责部分菜品分类,本单没有它负责的菜")
+		}
+		return errors.New("订单没有可打印的菜品")
+	}
+	title := "【厨房单】"
+	j := job{p: p, o: o, items: sel, docType: docType, title: title,
+		triggerBy: po.PrintTriggerReprint, operator: operator}
+	return run(j)
+}
+
+// PreviewTicket 生成某订单在某台打印机上的票据文本行(预览用)。
+//
+// 与 Reprint 走完全相同的取数与渲染路径(同一份 job.render),保证「预览即所得」:
+// 前端按等宽字体渲染这些行,就是这张票在 9100 热敏机上吐出来的样子。
+// 只渲染,不发送、不出纸、不记日志。
+//
+// 返回按实际入队规则(splitJobPayload)切好的段:超长票据在实际打印时会拆成多条
+// 任务依次送出,预览按同样规则分段返回,前端逐段渲染即与出纸 1:1。
+// 第二个返回值是行宽(半角字符数,前端排版用)。
+func PreviewTicket(printerID, orderID int, docType string) ([][]string, int, error) {
+	docType = normalizeDocType(docType)
+	p, err := service.LoadPrinter(printerID)
+	if err != nil {
+		return nil, 0, errors.New("打印机不存在")
+	}
+	o, items, err := service.LoadOrderAndItemsForPrint(orderID)
+	if err != nil {
+		return nil, 0, errors.New("订单不存在")
+	}
+	sel := itemsForPrinter(p, items)
+	if len(sel) == 0 {
+		if docType == po.PrintDocKitchen && len(service.ParseIDList(p.CategoryIDs)) > 0 {
+			return nil, 0, errors.New("该打印机只负责部分菜品分类,本单没有它负责的菜")
+		}
+		return nil, 0, errors.New("订单没有可打印的菜品")
+	}
+	j := job{p: p, o: o, items: sel, docType: docType, title: "【厨房单】"}
+	chunks := make([][]string, 0, 1)
+	for _, c := range splitJobPayload(j.render()) {
+		chunks = append(chunks, strings.Split(c, "\n"))
+	}
+	return chunks, LineWidth(p.PaperWidth), nil
+}
+
+// GuestTicketOverrides 示例预览的模板配置覆盖;nil 字段表示「用当前库配置」,
+// 非 nil 字段以请求值优先 —— 让管理端在保存前就能看到「表单里改的值」的效果。
+type GuestTicketOverrides struct {
+	Footer       *string
+	ShowSeatFee  *bool
+	ShowDiscount *bool
+	QR           *bool
+}
+
+// PreviewTicketSample 用示例订单渲染一版「预计打印模板」。
+//
+// 不依赖任何真实订单与打印机:管理端配置页即时查看模板效果(所见即所改,
+// 表单值通过 overrides 注入,未保存也能预览)。示例金额自洽(菜品+茶位费-优惠=合计)。
+// kitchenShowPrice 仅厨房单生效;paperWidth 取 32(58mm)/48(80mm),其余值按 48。
+func PreviewTicketSample(docType string, paperWidth int, ov GuestTicketOverrides, kitchenShowPrice bool) ([][]string, int) {
+	if paperWidth != 32 {
+		paperWidth = 48
+	}
+	o, items := samplePreviewOrder()
+	if docType == po.PrintDocKitchen {
+		lines := RenderKitchenTicket(o, items, paperWidth, kitchenShowPrice, "【厨房单】")
+		return [][]string{lines}, LineWidth(paperWidth)
+	}
+	cfg := currentGuestTicketConfig()
+	if ov.Footer != nil {
+		cfg.footer = strings.TrimSpace(*ov.Footer)
+	}
+	if ov.ShowSeatFee != nil {
+		cfg.showSeatFee = *ov.ShowSeatFee
+	}
+	if ov.ShowDiscount != nil {
+		cfg.showDiscount = *ov.ShowDiscount
+	}
+	if ov.QR != nil {
+		cfg.qr = *ov.QR
+	}
+	return [][]string{renderGuestTicketWith(o, items, paperWidth, cfg)}, LineWidth(paperWidth)
+}
+
+// samplePreviewOrder 构造示例订单:金额自洽,菜名贴近真实门店,便于看排版效果。
+//
+// 带上支付方式与结账时间,是为了让「示例预览」能看到结账小票的那几行结算信息
+// —— 下单即出的小票这几行为空,只看下单模板会误以为小票上没有支付方式。
+func samplePreviewOrder() (po.Order, []po.OrderItem) {
+	payType := "微信"
+	settleTime := service.Now()
+	o := po.Order{
+		OrderNo:        "D20260922SAMPLE001",
+		TableNo:        "08",
+		TableName:      "大厅08桌",
+		PersonCount:    3,
+		DishAmount:     8600,
+		SeatFee:        1800,
+		DiscountAmount: 600,
+		TotalAmount:    9800,
+		OrderRemark:    "少辣",
+		CreateTime:     service.Now(),
+		SettleType:     "normal",
+		PayType:        &payType,
+		SettleTime:     &settleTime,
+	}
+	items := []po.OrderItem{
+		{DishName: "凉拌青瓜", SpecName: "份", Quantity: 2, Price: 2800, Amount: 5600, Remark: "加辣"},
+		{DishName: "海鲜炒饭", Quantity: 1, Price: 1000, Amount: 1000},
+		{DishName: "柴火土鸡", SpecName: "半只", Quantity: 1, Price: 2000, Amount: 2000},
+	}
+	return o, items
+}
+
+// ProbePrinter 测试打印机连通性,不落地任何纸:
+//   - tcp   只探一次 TCP 连接(不写数据,避免又吐一张测试页);
+//   - feie  查云端在线状态与设备类型,顺带验证账号/SN 是否配对;
+//   - agent 云端够不到门店内网,只能看「代理是否还在轮询」与队列积压。
+func ProbePrinter(p po.Printer) (string, error) {
+	if p.IsAgent() {
+		return probeAgent(p)
+	}
+	if p.IsFeie() {
+		client, err := NewFeieClient()
+		if err != nil {
+			return "", err
+		}
+		sn := strings.TrimSpace(p.FeieSN)
+		if sn == "" {
+			return "", errors.New("未填写飞鹅打印机编号(SN)")
+		}
+		status, err := client.PrinterStatus(sn)
+		if err != nil {
+			return "", err
+		}
+		return "飞鹅云状态:" + status, nil
+	}
+	if err := ProbeTCP(p); err != nil {
+		return "", err
+	}
+	return "TCP 连接正常(" + addrOf(p.IP, effectivePort(p.Port)) + ")", nil
+}
+
+// effectivePort 端口兜底 9100。
+func effectivePort(port int) int {
+	if port <= 0 {
+		return 9100
+	}
+	return port
+}
+
+// SendTestPrint 发送测试打印页(同步,失败原因原样返回给前端)。
+// agent 通道下「同步」的含义变为「已同步入队」——代理在线时几乎立刻出纸,
+// 离线则排队等它上线,与前端的交互仍是「点一下、马上有结果」。
+func SendTestPrint(ctx context.Context, p po.Printer) error {
+	log := logger.WithContext(ctx, zap.String("printer", p.PrinterName))
+	if p.IsAgent() {
+		return enqueueAgentTicket(
+			logger.AgentWithContext(ctx, zap.String("printer", p.PrinterName)),
+			p, RenderTestTicket(p), docTest, po.Order{}, po.PrintTriggerTest, "")
+	}
+	lines := RenderTestTicket(p)
+	start := time.Now()
+	remoteID, detail, err := sendWithRetry(p, lines)
+	cost := int(time.Since(start).Milliseconds())
+	recordLog(log, p, po.Order{}, docTest, po.PrintTriggerTest, "", remoteID, detail, cost, err)
+	return err
+}

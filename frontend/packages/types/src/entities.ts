@@ -113,6 +113,8 @@ export interface OrderSummary extends Extensible {
   transactionId?: string;
   payChannel?: string;
   refundAmount?: number;
+  /** 处理中的退款金额（元，服务端补算）：refundAmount 只在退款成功时累加，该字段用于展示「退款中」并禁用再次退款 */
+  refundingAmount?: number;
   refundTime?: NullableString;
   settleType?: string;
   settleTime?: NullableString;
@@ -363,6 +365,15 @@ export interface PublicConfig extends Extensible {
   alipay_enabled?: string;
   /** 会员功能开关：后端已配置小程序 AppID/AppSecret 才为 "1"，顾客端据此显隐登录入口。 */
   member_enabled?: string;
+  /**
+   * 小程序内支付（JSAPI）开关：**后端目前尚未下发该键**，恒为 undefined。
+   *
+   * 显式声明它是因为小程序结账页用它决定「微信支付」按钮是否出现
+   * （`wxpay_jsapi_enabled === '1'`）。`PublicConfig extends Extensible` 有索引签名，
+   * 不声明也能编译 —— 但那样拼错/后端漏发都不会有任何提示。等后端补上
+   * `/api/customer/pay/jsapi` 与这一项（见 docs/miniprogram.md 4.1）即自动生效。
+   */
+  wxpay_jsapi_enabled?: string;
 }
 
 export type Id = number | string;
@@ -657,6 +668,8 @@ export interface PrintAgent extends Extensible {
   printerIdList?: number[];
   status?: number;
   lastSeen?: string;
+  /** 由服务端按同一时区判定的在线状态（见 print.AgentSeenOnline）。前端不要自己解析 lastSeen：它按服务端墙钟格式化，浏览器时区不同会恒判离线 */
+  online?: boolean;
   lastReport?: string;
   createTime?: string;
   updateTime?: string;

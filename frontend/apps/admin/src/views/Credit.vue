@@ -432,14 +432,16 @@ async function load(): Promise<void> {
     const params: PageQuery = { pageNum: pagination.current, pageSize: pagination.pageSize, settleType: 'credit' };
     if (tab.value === 'pending') params.creditStatus = 1;
     if (tab.value === 'settled') params.creditStatus = 2;
-    const res = await listOrders(params);
-    const rows = res.items || [];
-    // 关键词在前端做二次过滤(挂账人为自由文本,后端仅支持订单号/桌号精确匹配)
+    // 关键词（挂账人 / 单号模糊）必须下沉到服务端：只过滤当前页会让第 2 页起的命中记录
+    // 永远搜不到，而总数又被改成「本页命中数」，页数与内容完全对不上。
     const kw = keyword.value.trim();
-    list.value = kw ? rows.filter(r => (r.settleRemark || '').includes(kw) || (r.orderNo || '').includes(kw)) : rows;
-    // 前端过滤后,分页总数必须跟着列表走:沿用服务端总数会让页数虚高,翻到没有数据的空页。
-    pagination.total = kw ? list.value.length : res.total;
+    if (kw) params.settleRemark = kw;
+    const res = await listOrders(params);
+    list.value = res.items || [];
+    pagination.total = res.total;
     if (canReport.value) summary.value = await getReportSummary();
+  } catch {
+    /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted(load) 会抛未处理的 Promise 拒绝 */
   } finally {
     loading.value = false;
   }
@@ -463,7 +465,9 @@ function onPageChange(page: PageInfo): void {
 
 function onSettle(row: OrderSummary): void {
   form.orderId = row.orderId;
-  form.amount = row.creditAmount || row.totalAmount;
+  // 待收金额口径与后端一致:后端核销额 = 应收 - (已成功 + 处理中)退款,
+  // 用记账快照 creditAmount 会让「挂账后被部分退款」的单子显示多了、照此收款会多收。
+  form.amount = Number(row.totalAmount || 0) - Number(row.refundAmount || 0) - Number(row.refundingAmount || 0);
   form.payType = '现金';
   form.remark = row.settleRemark || '';
   settleVisible.value = true;

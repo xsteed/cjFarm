@@ -96,6 +96,11 @@ def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f'PRAGMA table_info({q_ident(table)})')]
 
 
+def table_column_types(conn: sqlite3.Connection, table: str) -> list[str]:
+    """各列的声明类型(供「整型列 NULL 预检」用)。"""
+    return [str(r[2]).upper() for r in conn.execute(f'PRAGMA table_info({q_ident(table)})')]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="SQLite -> MySQL 数据导出")
     ap.add_argument("--sqlite", default="data/dining.db", help="SQLite 数据库文件路径")
@@ -118,73 +123,80 @@ def main() -> int:
     tables = [t for t in wanted if t in present]
     missing = [t for t in wanted if t not in present]
 
-    lines: list[str] = []
-    lines.append("-- ============================================================================")
-    lines.append("-- 扫码点餐管理系统 — SQLite 数据导出（由 scripts/sqlite2mysql.py 生成）")
-    lines.append(f"-- 源库：{args.sqlite}")
-    lines.append("-- 目标：MySQL（需先执行 migrations/full/mysql/schema.sql 建表）")
-    lines.append("-- 说明：tb_config 中敏感值为 AES 密文，已原样搬运，请一并迁移 data/master.key。")
-    lines.append("-- ============================================================================")
-    lines.append("")
-    lines.append("SET NAMES utf8mb4;")
-    lines.append("SET FOREIGN_KEY_CHECKS = 0;")
-    lines.append("")
-
     counts: dict[str, int] = {}
     failed: list[str] = []
+    # 整型列里的 NULL 计数:键为 (表, 列)。见下方「NULL 预检」说明。
+    null_int_cols: dict[tuple[str, str], int] = {}
 
-    for t in tables:
-        try:
-            cols = table_columns(conn, t)
-            rows = conn.execute(f'SELECT * FROM {q_ident(t)}').fetchall()
-        except sqlite3.Error as e:
-            print(f"  ✗ {t}: {e}", file=sys.stderr)
-            failed.append(t)
-            continue
+    # 全程流式写出:旧实现先 `fetchall()` 把整表读进内存、再把全文攒在 `lines` 里最后
+    # 一次性落盘 —— tb_image 存的是菜品图/收款码的 LONGBLOB,十六进制后又翻一倍,
+    # 峰值内存可达源库的数倍,偏偏迁移窗口往往就贴着生产机的内存上限,极易 OOM。
+    # 现在按游标逐行读、按块写出,内存只与单块(≤48MB)有关。
+    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
+        f.write("-- ============================================================================\n")
+        f.write("-- 扫码点餐管理系统 — SQLite 数据导出（由 scripts/sqlite2mysql.py 生成）\n")
+        f.write(f"-- 源库：{args.sqlite}\n")
+        f.write("-- 目标：MySQL（需先执行 migrations/full/mysql/schema.sql 建表）\n")
+        f.write("-- 说明：tb_config 中敏感值为 AES 密文，已原样搬运，请一并迁移 data/master.key。\n")
+        f.write("-- ============================================================================\n")
+        f.write("\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n")
 
-        counts[t] = len(rows)
-        verb = "TRUNCATE TABLE" if args.truncate else None
+        for t in tables:
+            try:
+                cols = table_columns(conn, t)
+                types = table_column_types(conn, t)
+                # 头部注释要写行数,而流式读取事先不知道;COUNT(*) 很便宜,单独查一次。
+                n = int(conn.execute(f'SELECT COUNT(*) FROM {q_ident(t)}').fetchone()[0])
+                cursor = conn.execute(f'SELECT * FROM {q_ident(t)}')
+            except sqlite3.Error as e:
+                print(f"  ✗ {t}: {e}", file=sys.stderr)
+                failed.append(t)
+                continue
 
-        lines.append(f"-- ---------- {t} ({len(rows)} 行) ----------")
-        if verb:
-            lines.append(f"{verb} {q_ident(t)};")
-        if not rows:
-            lines.append("")
-            continue
+            counts[t] = n
+            f.write(f"-- ---------- {t} ({n} 行) ----------\n")
+            if args.truncate:
+                f.write(f"TRUNCATE TABLE {q_ident(t)};\n")
+            if n == 0:
+                f.write("\n")
+                cursor.close()
+                continue
 
-        col_sql = ", ".join(q_ident(c) for c in cols)
-        insert_verb = "INSERT INTO" if args.truncate else "INSERT IGNORE INTO"
-        # 切块双重上限:行数上限沿用 --batch;字节上限防 tb_image 的二进制行
-        # (X'..' 十六进制约 2×blob 体积)被合并成超 max_allowed_packet(64M) 的巨型
-        # INSERT,mysql 客户端导入会直接报 ER_NET_PACKET_TOO_LARGE,违背「迁移无损」。
-        # 48MB 预算给 64M 服务端上限留出余量。
-        max_packet = 48 * 1024 * 1024
-        chunk: list[str] = []
-        cur = 0
-        for row in rows:
-            row_s = "(" + ", ".join(q_value(v) for v in row) + ")"
-            if chunk and (len(chunk) >= args.batch or cur + len(row_s) + 2 > max_packet):
-                lines.append(
+            col_sql = ", ".join(q_ident(c) for c in cols)
+            insert_verb = "INSERT INTO" if args.truncate else "INSERT IGNORE INTO"
+            # 切块双重上限:行数上限沿用 --batch;字节上限防 tb_image 的二进制行
+            # (X'..' 十六进制约 2×blob 体积)被合并成超 max_allowed_packet(64M) 的巨型
+            # INSERT,mysql 客户端导入会直接报 ER_NET_PACKET_TOO_LARGE,违背「迁移无损」。
+            # 48MB 预算给 64M 服务端上限留出余量。
+            max_packet = 48 * 1024 * 1024
+            int_idx = [i for i, ty in enumerate(types) if "INT" in ty]
+            chunk: list[str] = []
+            cur = 0
+            for row in cursor:
+                for i in int_idx:
+                    if row[i] is None:
+                        key = (t, cols[i])
+                        null_int_cols[key] = null_int_cols.get(key, 0) + 1
+                row_s = "(" + ", ".join(q_value(v) for v in row) + ")"
+                if chunk and (len(chunk) >= args.batch or cur + len(row_s) + 2 > max_packet):
+                    f.write(
+                        f"{insert_verb} {q_ident(t)} ({col_sql}) VALUES\n  "
+                        + ",\n  ".join(chunk)
+                        + ";\n"
+                    )
+                    chunk, cur = [], 0
+                chunk.append(row_s)
+                cur += len(row_s) + 2
+            if chunk:
+                f.write(
                     f"{insert_verb} {q_ident(t)} ({col_sql}) VALUES\n  "
                     + ",\n  ".join(chunk)
-                    + ";"
+                    + ";\n"
                 )
-                chunk, cur = [], 0
-            chunk.append(row_s)
-            cur += len(row_s) + 2
-        if chunk:
-            lines.append(
-                f"{insert_verb} {q_ident(t)} ({col_sql}) VALUES\n  "
-                + ",\n  ".join(chunk)
-                + ";"
-            )
-        lines.append("")
+            f.write("\n")
+            cursor.close()
 
-    lines.append("SET FOREIGN_KEY_CHECKS = 1;")
-    lines.append("")
-
-    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines))
+        f.write("SET FOREIGN_KEY_CHECKS = 1;\n\n")
 
     total = sum(counts.values())
     print(f"已导出 {len(counts)} 张表 / {total} 行 -> {args.out}")
@@ -195,6 +207,19 @@ def main() -> int:
                 print(f"  {t:22s} {counts[t]:>6d}")
     if missing:
         print(f"\n注意：以下表在 SQLite 中不存在，已跳过：{', '.join(missing)}")
+
+    # ---- NULL 预检 ----
+    # 整型列在 SQLite 里可以为 NULL,搬过去仍是 NULL,而 Go 侧不少地方是
+    # `Scan(&int)`/`Scan(&int64)`(只有查询里显式 COALESCE 的列才安全),
+    # 一旦命中就会在生产上抛 `converting NULL to int is unsupported`。
+    # 这里只**报告**不改写:哪些列真的能容忍 NULL 取决于代码里怎么读,脚本无权替用户决定。
+    if null_int_cols:
+        print("\n⚠ 以下整型列存在 NULL：MySQL 会原样保留，若代码用 Scan(&int) 读取将报错。")
+        print("  建议导入前先在源库归一化，例如：")
+        for (t, c), cnt in sorted(null_int_cols.items()):
+            print(f"    {t}.{c}: {cnt} 行为 NULL   ->  UPDATE {t} SET {c}=0 WHERE {c} IS NULL;")
+        print("  （执行完 UPDATE 后请重新导出）")
+
     if failed:
         print(f"\n以下表读取失败：{', '.join(failed)}", file=sys.stderr)
         return 1

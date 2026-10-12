@@ -200,12 +200,23 @@ Page({
   /**
    * 每道菜「当前选中的规格」（与 H5 useCart 的 selectedSpec 同语义）。
    * 不进 data：改了它只影响某一行的展示，重建那一行即可（见 syncRow）。
+   * 惰性创建：写在 options 里的对象会被所有页面实例共享（options 只被浅拷贝），
+   * 页面销毁重建后会带上上一实例残留的选中规格，与「新实例应当干净」的预期不符。
    */
-  specPick: {} as Record<number, number>,
+  specPick: null as Record<number, number> | null,
+
+  /** 取「当前选中规格」表;首次写入时才创建本实例自己的对象(见 specPick 的注释)。 */
+  specPicks(): Record<number, number> {
+    if (!this.specPick) this.specPick = {};
+    return this.specPick;
+  },
 
   /** 程序触发的滚动（点分类）期间不让 scroll 事件回写高亮，否则高亮会来回跳。 */
   spyLock: false,
   spyTimer: null as ReturnType<typeof setTimeout> | null,
+
+  /** 飞球动画的定时器句柄（量落点 50ms + 飞行结束 470ms），卸载时统一清理，见 onUnload。 */
+  flyTimers: [] as ReturnType<typeof setTimeout>[],
 
   /**
    * 本次进入是否为「订单页点加菜」。
@@ -251,6 +262,10 @@ Page({
       clearTimeout(this.spyTimer);
       this.spyTimer = null;
     }
+    // 飞球动画的两个定时器同理:顾客加菜后立刻离开菜单页时,回调仍会对已卸载的页面
+    // setData、并对已销毁的结算栏组件 setData(微信会打印告警)。
+    for (const t of this.flyTimers) clearTimeout(t);
+    this.flyTimers = [];
   },
 
   async loadAll(code: string) {
@@ -478,7 +493,8 @@ Page({
   pickedSpecIdOf(dishId: number, specs: DishSpec[]): number {
     const available = specs.filter(s => Number(s.stock) !== 0);
     const candidates: number[] = [];
-    candidates.push(Number(this.specPick[dishId]) || 0);
+    // 只读,不触发惰性创建(见 specPick 的注释)
+    candidates.push(Number(this.specPick?.[dishId]) || 0);
     const lines = cartState().filter(l => l.dishId === dishId);
     if (lines.length === 1) candidates.push(Number(lines[0].specId) || 0);
     for (const id of candidates) {
@@ -660,9 +676,15 @@ Page({
     if (!key) return;
     if (!this.failedImgs) this.failedImgs = new Set<string>();
     this.failedImgs.add(key);
-    this.setData({
-      rows: this.data.rows.map(r => (r.kind === 'dish' && r.key === key ? { ...r, image: '' } : r))
-    });
+    // 只回写命中的那一行(rows[i]),不再整表重建:
+    // setData 的开销与本次传递的数据量成正比,菜单几十行时整份 rows 的序列化会卡住滑动。
+    const idx = this.data.rows.findIndex(r => r.kind === 'dish' && r.key === key);
+    if (idx < 0) return;
+    const row = this.data.rows[idx];
+    if (row.kind !== 'dish' || !row.image) return; // 已置空(重复触发)就不必再 setData
+    const patch: Record<string, string> = {};
+    patch[`rows[${idx}].image`] = '';
+    this.setData(patch);
   },
 
   /**
@@ -690,7 +712,7 @@ Page({
       toast.info('该规格已售罄');
       return;
     }
-    this.specPick[dishId] = specId;
+    this.specPicks()[dishId] = specId;
     this.syncRow(dishId);
   },
 
@@ -742,23 +764,31 @@ Page({
     // 落点：购物车图标中心。结算栏组件里 .cart-bar 是 fixed 定位（脱离文档流），
     // 宿主节点在页面流里是塌缩的，量宿主拿不到真实位置 —— 必须用
     // SelectorQuery.in(组件实例) 跨组件去量组件内部的 .cb-cart 图标本体。
+    // 句柄统一登记进 flyTimers,页面卸载时清掉(见 onUnload),否则回调会打到已卸载的页面。
+    const flyTimer = (fn: () => void, ms: number) => {
+      const h = setTimeout(() => {
+        this.flyTimers = this.flyTimers.filter(t => t !== h);
+        fn();
+      }, ms);
+      this.flyTimers.push(h);
+    };
     const launch = (cx: number, cy: number) => {
       const ball: FlyBall = { id: ++flySeq, x, y, dx: cx - x, dy: cy - y };
       this.setData({ flyBalls: [...this.data.flyBalls, ball] });
       // 飞行 0.4s：结束时移除节点，并让购物车图标弹一下
-      setTimeout(() => {
+      flyTimer(() => {
         this.setData({ flyBalls: this.data.flyBalls.filter(b => b.id !== ball.id) });
         const bar = this.selectComponent('.cart-bar-host');
         if (bar) {
           bar.setData({ bump: true });
-          setTimeout(() => bar.setData({ bump: false }), 400);
+          flyTimer(() => bar.setData({ bump: false }), 400);
         }
       }, 470);
     };
     // 布局常量兜底：结算栏高 108rpx，坐在 104rpx 的 tab-bar 之上，图标中心距左 54rpx
     const fallback = () => launch(54 * k, win.windowHeight - (104 + 54) * k);
     // 首次加菜时结算栏才刚被 wx:if 渲染出来，等一帧再量
-    setTimeout(() => {
+    flyTimer(() => {
       const bar = this.selectComponent('.cart-bar-host');
       if (!bar) {
         fallback();
@@ -858,7 +888,7 @@ Page({
     const dishId = this.data.sheetDishId;
     if (dishId) {
       // 弹层里选的规格就是这道菜之后的「当前规格」：行内的 chip、价格、步进器都要跟着走
-      this.specPick[dishId] = Number(detail.specId) || 0;
+      this.specPicks()[dishId] = Number(detail.specId) || 0;
       this.addToCart(dishId, detail, String(detail.itemRemark || ''));
       toast.success('已加入购物车');
     }

@@ -6,8 +6,14 @@
 // 无从察觉。这里补一条看门狗:主循环每轮打一次活动戳,超过 stuckMaxIdle
 // 仍无活动即判定假死,主动以非零码退出,交给外部守护拉起。
 //
-// 阈值取值:打印任务全部带 5s 拨号/写入超时,长轮询最多 hold 30s,
-// 一轮最坏情况也就分把钟 —— 5 分钟无活动只可能是进程卡死。
+// 阈值取值:主循环在**每条任务处理完**、每轮取单前后都会打活动戳(见 runCycle /
+// runLoop),所以「长时间无活动」确实等于卡死。
+//
+// 注意不能按「一轮最坏耗时」来定阈值:一轮要串行处理 limit 条任务,每条还可能
+// copies 份;走 CUPS 时每次 lp 调用最坏 30s(cups.go 的 cupsExecTimeout),
+// 默认 limit=10 就已经到 5 分钟,limit=50/copies>1 时远超。
+// 阈值定得比这个还小,就会把正常干活的进程判成假死自杀 —— 而它手里正握着
+// 尚未回执的 claimed 任务,自杀 → 租约到期 → 云端重发 → 已经出过的纸再打一遍。
 package main
 
 import (
@@ -17,15 +23,23 @@ import (
 )
 
 // stuckMaxIdle 判定假死的最大空闲时长。
-const stuckMaxIdle = 5 * time.Minute
+//
+// 取 30 分钟:远大于「单条任务最坏耗时」(CUPS 30s × 份数上限 20 = 10 分钟),
+// 因此不会误杀;又足够短,真卡死时能在守护重启周期内自愈。
+const stuckMaxIdle = 30 * time.Minute
 
-// lastActiveNano 主循环最近一次完成一轮的时间戳(纳秒)。
-// atomic 保证主循环与看门狗 goroutine 之间的可见性。
-var lastActiveNano atomic.Int64
+// lastActive 主循环最近一次活动的时间戳。
+//
+// 存 time.Time 而不是 UnixNano:time.Now() 带单调时钟读数,time.Since 会优先用它,
+// 于是 NTP 校时/人工改时间(墙钟前跳)不会把「一切正常的进程」判成假死 ——
+// 早先按墙钟比较时,一次向前跳 5 分钟就足以触发自杀。
+// atomic.Pointer 保证主循环与看门狗 goroutine 之间的可见性。
+var lastActive atomic.Pointer[time.Time]
 
-// markActive 记录一次主循环活动(每轮 runCycle 完成后调用)。
+// markActive 记录一次主循环活动(每条任务处理后、每轮取单后都会调用)。
 func markActive() {
-	lastActiveNano.Store(time.Now().UnixNano())
+	t := time.Now()
+	lastActive.Store(&t)
 }
 
 // startWatchdog 启动假死看门狗 goroutine:每分钟检查一次活动戳,
@@ -42,8 +56,8 @@ func startWatchdog(done <-chan struct{}) {
 			case <-done:
 				return
 			case <-ticker.C:
-				last := lastActiveNano.Load()
-				if last == 0 || time.Since(time.Unix(0, last)) > stuckMaxIdle {
+				last := lastActive.Load()
+				if last == nil || time.Since(*last) > stuckMaxIdle {
 					logf("[崩溃] 看门狗判定进程假死(超过 %s 无活动),主动退出交由守护拉起", stuckMaxIdle)
 					os.Exit(1)
 				}

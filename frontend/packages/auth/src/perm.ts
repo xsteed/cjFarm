@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { getProfile } from '@dining/api';
+import { getProfile, onAuthCleared } from '@dining/api';
 import { LS_TOKEN, LS_USER, LS_REALNAME, LS_ROLE, LS_ROLENAME, LS_PERMS, AUTH_KEYS, safeStorage } from '@dining/shared';
 import type { LoginResult, Profile } from '@dining/types';
 
@@ -78,7 +78,12 @@ export function hasToken(): boolean {
  * 解出第 4 段 exp(Unix 秒)即可在不打后端的情况下识别「显然已过期」的令牌:
  * 路由守卫据此直接去登录页,省掉「进页面 → 发请求撞 401 → 整页刷新弹回」的绕路。
  * 篡改 exp 骗过本判断没有意义 —— 安全校验仍在后端验签,伪造/篡改的令牌照样 401。
- * 解析失败一律视为已过期,交给后端兜底。
+ *
+ * ⚠️ 「解析失败」必须返回 false(视为未过期),不能返回 true:
+ *    这是纯粹的省一次请求的乐观优化,判错的代价不对称 —— 漏判只是多打一次接口、
+ *    由后端 401 兜底;误判却会把正常登录的用户反复踢回登录页(而登录页又会因为
+ *    「记住我」静默换发再次跳回来,形成来回弹跳)。令牌格式一旦调整(段数/顺序变化),
+ *    返回 true 的写法会让所有人都登不进去。
  */
 export function tokenExpired(): boolean {
   const t = safeStorage.get(LS_TOKEN);
@@ -90,9 +95,11 @@ export function tokenExpired(): boolean {
     const raw = t.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
     const b64 = raw + '='.repeat((4 - (raw.length % 4)) % 4);
     const exp = Number(atob(b64).split('|')[3]);
-    return !Number.isFinite(exp) || exp * 1000 <= Date.now();
+    // 解析不出 exp(格式不认识):交后端兜底,不在这里判过期。
+    if (!Number.isFinite(exp)) return false;
+    return exp * 1000 <= Date.now();
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -152,3 +159,9 @@ export async function refreshProfile(): Promise<Profile> {
 
 // 页面加载即恢复一次缓存,避免路由守卫首次判定时拿到 null。
 restorePerms();
+
+// 401 清登录态时同步清掉内存里的权限集合(见 @dining/api 的 onAuthCleared)。
+// clearAuth() 走的是同一件事;这里覆盖「拦截器直接清 storage」那条路径。
+onAuthCleared(() => {
+  permSet.value = null;
+});

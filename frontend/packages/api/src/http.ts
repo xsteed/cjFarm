@@ -57,6 +57,21 @@ type FriendlyAxiosError = AxiosError<ApiErrorBody> & {
 // 回到同样的默认行为,而不是静默不跳转。
 // 小程序端可 setUnauthorizedHandler(() => wx.reLaunch({ url: '/pages/login/index' }))。
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 登录态被清空时的附加回调(可注册多个)
+//
+// 401 只清了 localStorage,而权限集合是 @dining/auth 里的模块级 ref。不把内存里那份
+// 一起复位,hasPerm() 会继续按已失效的旧权限放行菜单/按钮。Web 端默认的 onUnauthorized
+// 会整页跳转、顺带重建内存态,掩盖了这一点;一旦调用方替换掉跳转策略(如小程序端),
+// 就会真的暴露出来。auth 包在加载时注册复位回调,方向为 auth → api,无循环依赖。
+// ---------------------------------------------------------------------------
+const authClearedListeners: Array<() => void> = [];
+
+/** 注册「登录态已被清空」的回调(可多次调用注册多个)。 */
+export function onAuthCleared(cb: () => void): void {
+  authClearedListeners.push(cb);
+}
+
 let onUnauthorized: () => void = () => {
   if (typeof window === 'undefined' || typeof location === 'undefined') return;
   if (location.pathname.startsWith('/login')) return;
@@ -115,6 +130,8 @@ http.interceptors.response.use(unwrapResponse, err => {
     for (const k of AUTH_KEYS) {
       safeStorage.remove(k);
     }
+    // 同步复位内存里的派生状态(权限集合等),避免「库已清、内存还在」。
+    for (const cb of authClearedListeners) cb();
     // 带 redirect 回跳,与路由守卫踢人(见 src/router/index.ts)保持一致:
     // 若「记住我」令牌仍有效,登录页会静默换发新登录态并回到被打断的
     // 页面,而不是莫名落到默认落地页。默认实现只接受站内路径。

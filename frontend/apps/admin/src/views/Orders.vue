@@ -194,8 +194,17 @@
             >
               {{ row.creditStatus === 1 ? '挂账' : '挂账已结' }}
             </span>
+            <!-- 退款中优先展示:refundAmount 只在退款成功时累加,处理中的退款单不会体现在
+                 已退款金额里 —— 不单独标出来,收银会看不出该单正在退款（并会去点「退款」） -->
             <t-tag
-              v-if="row.refundAmount > 0"
+              v-if="(row.refundingAmount || 0) > 0"
+              theme="warning"
+              variant="light"
+            >
+              退款中 ¥{{ $money(row.refundingAmount || 0) }}
+            </t-tag>
+            <t-tag
+              v-else-if="row.refundAmount > 0"
               :theme="row.refundAmount >= row.totalAmount ? 'danger' : 'warning'"
               variant="light"
             >
@@ -560,14 +569,16 @@ const columns = computed(() => {
   return cols;
 });
 
-// canRefund 仅在线支付(微信/支付宝)且已支付、未全额退款的订单可发起在线退款。
+// canRefund 仅在线支付(微信/支付宝)且已支付、未全额退款、且没有处理中退款的订单可发起在线退款。
 // 另需 refund:operate —— 本期该权限只授予超级管理员。
+// refundingAmount（处理中的退款单）同样占用可退额度，必须排除：否则按钮可点、点了被后端拒。
 function canRefund(row: OrderRow): boolean {
   return (
     canRefundOperate.value &&
     row &&
     row.payStatus === 1 &&
     ['wxpay', 'alipay'].includes(row.payChannel) &&
+    !((row.refundingAmount || 0) > 0) &&
     (row.refundAmount || 0) < row.totalAmount
   );
 }
@@ -591,7 +602,9 @@ function canSettleRow(row: OrderRow): boolean {
   return !!row && [1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle.value;
 }
 function canCancelRow(row: OrderRow): boolean {
-  return !!row && [1, 2, 3].includes(row.orderStatus) && canCancel.value;
+  // 已支付订单不可直接取消(后端 CancelOrder 会拒绝并要求先退款),
+  // 少这道条件按钮可点但点了必然报错。
+  return !!row && [1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canCancel.value;
 }
 
 // 请求序号:快速连点查询/翻页时,仅最新一次请求可写回列表,防止旧页响应乱序覆盖新页
@@ -747,7 +760,7 @@ function cardActions(row: OrderRow): CardAction[] {
     items.push({ key: 'serve', label: '上齐', theme: 'warning', run: () => setStatus(row, 3), disabled: acting.value });
   if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle.value)
     items.push({ key: 'settle', label: '结算', theme: 'success', run: () => openSettle(row, 'settle') });
-  if ([1, 2, 3].includes(row.orderStatus) && canCancel.value)
+  if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canCancel.value)
     items.push({ key: 'cancel', label: '取消', theme: 'danger', run: () => onCancel(row) });
   if (canRefund(row)) items.push({ key: 'refund', label: '退款', theme: 'danger', run: () => openRefund(row) });
   return items;
@@ -778,6 +791,10 @@ function resetFilters(): void {
   query.tableNo = '';
   query.payStatus = '';
   query.settleFilter = '';
+  // 订单号搜索框与桌面端共用同一个 query.orderNo,漏清会让「重置」后关键词仍在;
+  // 同时回到第一页,否则重置完仍停在第 N 页,看起来「没生效」。
+  query.orderNo = '';
+  pagination.current = 1;
 }
 
 onMounted(load);

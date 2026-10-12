@@ -11,6 +11,8 @@ import type { TableInfo } from '@dining/types';
 // 与 Tables.vue / BatchQrDialog / perm 共享同一个 @dining/api 模块，统一 mock 全部导出，
 // 避免真实 http(axios) 被加载或发起请求。
 vi.mock('@dining/api', () => ({
+  // @dining/auth 在模块加载时会注册它(见 perm.ts 末尾),漏了会让整个套件加载失败
+  onAuthCleared: vi.fn(),
   listTables: vi.fn(),
   saveTable: vi.fn(),
   updateTable: vi.fn(),

@@ -12,15 +12,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"dining-system/infra"
-	"dining-system/infra/logger"
-	"dining-system/internal/conf"
-	"dining-system/internal/handler"
-	"dining-system/internal/middleware"
-	"dining-system/internal/print"
-	"dining-system/internal/service"
-	"dining-system/internal/store"
-	"dining-system/internal/store/dao"
+	"dining-system/application/service"
+	"dining-system/infrastructure"
+	"dining-system/infrastructure/conf"
+	"dining-system/infrastructure/logger"
+	"dining-system/infrastructure/print"
+	"dining-system/infrastructure/store"
+	"dining-system/infrastructure/store/dao"
+	"dining-system/interfaces/handler"
+	"dining-system/interfaces/middleware"
 )
 
 // 构建信息,通过 -ldflags "-X main.version=... -X main.buildTime=... -X main.gitCommit=..." 注入。
@@ -215,7 +215,7 @@ func main() {
 	// 装配部署配置,优先级:真实环境变量 > config.yaml > .env > 代码默认值。
 	// config.yaml 解析失败(键名拼错 / 缩进错)会让启动直接失败 —— 静默跑起来
 	// 更难排查;其它来源缺失都属正常,单机 SQLite 零配置即可启动。
-	deployStats, err := infra.LoadDeployConfig()
+	deployStats, err := infrastructure.LoadDeployConfig()
 	if err != nil {
 		logger.Fatalf("[deploy] %v", err)
 	}
@@ -234,7 +234,7 @@ func main() {
 	// 登录令牌签名密钥:service 包 init 阶段已做过只读解析(进程随机兜底),
 	// 这里在部署配置(.env/config.yaml)写入环境后重新解析,必要时落盘 data/auth.key,
 	// 并输出「进程随机密钥」告警。多实例部署必须共享 TOKEN_SECRET 或同一密钥文件。
-	infra.InitAuthKey()
+	infrastructure.InitAuthKey()
 
 	// 跨域白名单须在部署配置装配后求值(见 middleware.LoadAllowedOrigins 的说明)。
 	corsAllowedOrigins := middleware.LoadAllowedOrigins()
@@ -248,12 +248,12 @@ func main() {
 	// 启动探测引导管理员是否仍是默认口令 admin123 —— 公网部署不改密等于裸奔。
 	dao.WarnDefaultAdminPassword()
 	// 加载/生成本机主密钥,并把历史明文敏感配置迁移为密文(须在建库之后)。
-	infra.InitSecretKeys()
-	if !infra.SecretsEncrypted() {
+	infrastructure.InitSecretKeys()
+	if !infrastructure.SecretsEncrypted() {
 		logger.Warnf("[warn] 敏感配置未加密存储,建议设置 CONFIG_MASTER_KEY 或允许自动生成本机主密钥")
 	} else {
 		dao.MigrateSecrets()
-		if old, ok := infra.OldMasterKey(); ok {
+		if old, ok := infrastructure.OldMasterKey(); ok {
 			dao.RotateSecrets(old)
 		}
 	}
@@ -266,7 +266,7 @@ func main() {
 	// 与代理程序侧 conf.EnvPrintAgentToken(PRINT_AGENT_TOKEN)是两个不同角色 ——
 	// 前者在服务端启动时回填 tb_config.agent_token,后者写在门店 agent.env 里供代理读取;
 	// 两者值相同才能连通,但变量名/所在位置不同,运维/脚本切勿混用。
-	if tok := strings.TrimSpace(infra.Getenv(conf.EnvAgentToken, "")); tok != "" {
+	if tok := strings.TrimSpace(infrastructure.Getenv(conf.EnvAgentToken, "")); tok != "" {
 		if err := dao.SetSettingIfEmpty("agent_token", tok); err != nil {
 			logger.Warnf("[warn] 从环境变量预置 agent_token 失败: %v", err)
 		} else {
@@ -289,7 +289,7 @@ func main() {
 	// 前端静态目录支持环境变量覆盖,便于打包部署到不同工作目录。
 	// 启动审计:校验菜品图片引用与图片表内容一一对应,缺失即 [warn](回答「不能少东西」)。
 	store.AuditDishImages()
-	staticDir := infra.Getenv(conf.EnvStaticDir, conf.DefaultStaticDir)
+	staticDir := infrastructure.Getenv(conf.EnvStaticDir, conf.DefaultStaticDir)
 
 	r := gin.New()
 	// RequestID 必须在最前:先生成 requestID 注入 context,后面的访问日志、
@@ -350,7 +350,7 @@ func main() {
 		})
 	}
 
-	port := infra.Getenv(conf.EnvPort, conf.DefaultPort)
+	port := infrastructure.Getenv(conf.EnvPort, conf.DefaultPort)
 
 	// http.Server 超时配置:只收紧「读请求头」与「空闲连接」两个维度,显式不设
 	// ReadTimeout / WriteTimeout —— /api/agent/print/pull 是门店代理的长轮询,

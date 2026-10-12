@@ -42,6 +42,8 @@ vi.mock('qrcode', () => ({
 }));
 
 vi.mock('@dining/api', () => ({
+  // @dining/auth 在模块加载时会注册它(见 perm.ts 末尾),漏了会让整个套件加载失败
+  onAuthCleared: vi.fn(),
   getTable: vi.fn(),
   getMenu: vi.fn(),
   getRemarks: vi.fn(),

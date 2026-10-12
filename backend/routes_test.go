@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"dining-system/internal/handler"
-	"dining-system/internal/store"
+	"dining-system/infrastructure/store"
+	"dining-system/interfaces/handler"
 )
 
 // TestAdminRoutePermCoverage 管理端路由权限覆盖率测试。
@@ -46,7 +46,7 @@ func TestAdminRoutePermCoverage(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Errorf("以下管理端路由未在 handler.routePerms 中登记权限(会被 fail-closed 中间件拒绝):\n  %s\n"+
-			"请在 internal/handler/perm.go 的 routePerms 中补上对应权限码;"+
+			"请在 interfaces/handler/perm.go 的 routePerms 中补上对应权限码;"+
 			"「登录即可、无权限点」的路由请显式登记为 handler.PermFree。",
 			strings.Join(missing, "\n  "))
 	}
@@ -107,7 +107,7 @@ func TestAdminWriteRoutesHaveAuditMeta(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Errorf("以下管理端写操作路由未在 handler.routeAudit 中登记审计信息(将不会被记录):\n  %s\n"+
-			"请在 internal/handler/audit.go 的 routeAudit 中补上模块/动作/操作类型。",
+			"请在 interfaces/handler/audit.go 的 routeAudit 中补上模块/动作/操作类型。",
 			strings.Join(missing, "\n  "))
 	}
 }

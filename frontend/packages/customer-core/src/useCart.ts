@@ -1,6 +1,7 @@
 import { computed, reactive, ref } from 'vue';
 import type { Ref } from 'vue';
 import { ui } from '@dining/shared';
+import { round2 } from '@dining/shared/money';
 import { isOrderable, isSoldOut } from './spec';
 import type { Dish, DishSpec, RemarkOption } from '@dining/types';
 
@@ -31,10 +32,6 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
   const totalCount = computed(() => cart.value.reduce((s, i) => s + i.quantity, 0));
   const dishTotal = computed(() => round2(cart.value.reduce((s, i) => s + i.price * i.quantity, 0)));
 
-  function round2(v: number): number {
-    return Math.round(v * 100) / 100;
-  }
-
   function currentSpec(d: Dish): DishSpec {
     const specs = d.specs || [];
     const selected = specs.find(s => s.specId === selectedSpec[d.dishId as number]);
@@ -43,10 +40,12 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     return specs.find(s => Number(s.stock) !== 0) || selected || specs[0] || { specId: 0, specName: '', price: 0 };
   }
 
-  function dishQty(dishId: number | undefined): number {
-    // 按「当前选中规格」的条目计数,与步进器 +/- 的作用对象(changeQty 按 key 定位)对齐:
-    // 同菜多规格各自计数,切换规格后卡片显示的是所选规格的份数,显示与操作永远一致。
-    const key = `${dishId}-${selectedSpec[dishId as number] || 0}`;
+  function dishQty(dishId: number | undefined, dish?: Dish): number {
+    // 按「当前生效规格」的条目计数,与步进器 +/- 的作用对象(changeQty 里的 currentSpec)对齐:
+    // 同菜多规格各自计数;所选规格沽清后 currentSpec 会回退到有货的规格,这里必须跟着回退,
+    // 否则卡片显示的份数与 +/- 实际改的条目是两条不同的购物车行,「显示与操作永远一致」不成立。
+    const specId = (dish ? currentSpec(dish).specId : selectedSpec[dishId as number]) || 0;
+    const key = `${dishId}-${specId}`;
     const f = cart.value.find(i => i.key === key);
     return f ? f.quantity : 0;
   }
@@ -77,8 +76,9 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
       }
     }
     const spec = currentSpec(d);
-    // 当前选中规格已售罄（库存 0）时不可加减。
-    if (Number(spec.stock) === 0) return;
+    // 只有「加」才受沽清影响:减号操作的是购物车里已有的条目,不该因为该规格今天沽清
+    // 就减不掉（否则卡片步进器会「点不动」,顾客只能去购物车抽屉里删）。
+    if (delta > 0 && Number(spec.stock) === 0) return;
     const key = `${d.dishId}-${spec.specId || 0}`;
     const f = cart.value.find(i => i.key === key);
     if (f) {

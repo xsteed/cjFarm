@@ -448,6 +448,8 @@ async function load(): Promise<void> {
   try {
     const res = await listRoles();
     list.value = (res.items || []) as RoleRow[];
+  } catch {
+    /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted(load) 会抛未处理的 Promise 拒绝 */
   } finally {
     loading.value = false;
   }
@@ -526,7 +528,9 @@ async function save(): Promise<void> {
     MessagePlugin.warning('请填写角色标识');
     return;
   }
-  if (!form.roleId && form.permList.length === 0) {
+  // 新增与编辑都要校验:编辑态取消整组勾选(closePerms 还会连带裁掉依赖它的
+  // 跨模块权限)同样会产出零权限角色,后端不拦,之后该角色的员工一开页就 403。
+  if (form.permList.length === 0) {
     MessagePlugin.warning('请至少勾选一项权限');
     return;
   }

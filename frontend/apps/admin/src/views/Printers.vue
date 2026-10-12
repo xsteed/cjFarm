@@ -717,13 +717,14 @@ const hasAgentPrinter = computed(() => list.value.some(r => r.provider === 'agen
 // 最老待打印单已等分钟数(向上取整);老后端没有 oldestPendingSec 时为 0。
 const agentWaitMinutes = computed(() => Math.ceil((agent.oldestPendingSec || 0) / 60));
 
-// 与后端 agentOnlineWindow(90s)一致的在线判定:最近心跳距今 < 90 秒。
-// lastSeen 为「YYYY-MM-DD HH:mm:ss」本地时间,补 T 后由浏览器按本地时区解析。
+// 在线判定直接用服务端下发的 online（后端按 90 秒窗口、且与写入同一时区判定）。
+//
+// 不要自己解析 lastSeen:它是服务端本地墙钟字符串「YYYY-MM-DD HH:mm:ss」,浏览器按自己的
+// 时区解析 —— 容器多跑在 UTC、门店浏览器在东八区,相差 8 小时远超 90 秒窗口,代理明明在
+// 正常心跳,页面却恒显示「离线」。
+// 老后端不返回 online 字段时退回 false（显示离线），不再做有歧义的本地时间推算。
 function isAgentOnline(row: PrintAgent): boolean {
-  const seen = row.lastSeen || '';
-  if (!seen) return false;
-  const t = new Date(seen.replace(' ', 'T')).getTime();
-  return !Number.isNaN(t) && Date.now() - t < 90_000;
+  return row.online === true;
 }
 
 // 清空队列:仅飞鹅云与本地代理有「云端/队列」概念,直连是即发即走。
@@ -752,7 +753,11 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     const res = await listPrinters();
-    list.value = res.items as PrinterRow[];
+    // 必须兜底:后端返回 { total: 0 } 而无 items 时,undefined 会让模板里的
+    // !list.length 直接抛 TypeError 白屏(同仓库其它页面都写了 || [])。
+    list.value = (res.items || []) as PrinterRow[];
+  } catch {
+    /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted(load) 会抛未处理的 Promise 拒绝 */
   } finally {
     loading.value = false;
   }
@@ -782,7 +787,16 @@ async function loadAgent(): Promise<void> {
     // 云端配置的代理最新版本号;老后端无此字段时按缺省容错。
     agent.latestAgentVersion = res.latestAgentVersion || '';
   } catch {
+    // 整体复位:只改 configured 会让 online/pending/dead/agents 停留在上一次的值,
+    // 网络抖动时页面继续渲染几分钟前的旧状态(「在线」「积压 N 单」)且不会消失。
     agent.configured = false;
+    agent.online = false;
+    agent.lastSeen = '';
+    agent.pending = 0;
+    agent.dead = 0;
+    agent.oldestPendingSec = 0;
+    agent.agents = [];
+    agent.latestAgentVersion = '';
   }
 }
 
@@ -848,6 +862,25 @@ async function save(): Promise<void> {
     MessagePlugin.warning('请填写飞鹅打印机编号(SN)');
     return;
   }
+  // 端口/份数必须在这里兜住:t-input-number 的 min/max 只约束输入控件,
+  // 用户清空输入框后值会变成 undefined/null —— 原样提交会落库成 0 端口 / 0 份,
+  // 之后测试打印与出纸全部失效,且报错信息与「端口填错」长得一样,很难排查。
+  if (form.provider !== 'feie') {
+    const port = Number(form.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      MessagePlugin.warning('请填写合法的端口(1~65535)');
+      return;
+    }
+    form.port = port;
+  }
+  const copies = Number(form.copies);
+  // 后端契约与归一化均为 1-5(handler 会把超值收敛为 5),前端必须同口径拦截,
+  // 否则填 6-10 会「校验通过却被静默改成 5」,与用户填写的值不一致。
+  if (!Number.isInteger(copies) || copies < 1 || copies > 5) {
+    MessagePlugin.warning('请填写合法的打印份数(1~5)');
+    return;
+  }
+  form.copies = copies;
   // 食客小票必须含全部菜品，后端也会强制清空分类，这里保持一致避免误导。
   const payload: PrinterPayload = { ...form, printerId: form.printerId ?? undefined };
   if (payload.printerType === 2) payload.categoryIdList = [];
@@ -931,8 +964,8 @@ async function doBind(): Promise<void> {
   if (saving.value) return;
   saving.value = true;
   try {
-    await bindFeiePrinter({ ...bindForm });
-    MessagePlugin.success('绑定成功');
+    const res = await bindFeiePrinter({ ...bindForm });
+    MessagePlugin.success(res?.msg || '绑定成功');
     bindVisible.value = false;
   } catch {
     // 拦截器已提示

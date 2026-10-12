@@ -7,16 +7,20 @@
 // 两端**计价规则**保持一致，但最终金额仍以后端重算为准。
 import type { GlobalData, CartLine } from '../types';
 import type { OrderCreateItem, PublicConfig } from '@dining/types';
+import { round2 } from '@dining/shared/money';
 
 /** 购物车数组本体（跨页共享，见 src/types.ts 顶部注释）。 */
 export function cartState(): CartLine[] {
   return getApp<GlobalData>().cart;
 }
 
-/** 两位小数取整，避免浮点误差累积（与 H5 的 round2 一致）。 */
-export function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
+/**
+ * 两位小数取整，避免浮点误差累积。
+ *
+ * 直接用 @dining/shared 的实现：两端各留一份时曾经漂移（一边加 EPSILON、一边没加），
+ * 同一个购物车在 H5 与小程序会显示出相差 1 分的合计。
+ */
+export { round2 };
 
 export function cartCount(): number {
   return cartState().reduce((sum, l) => sum + l.quantity, 0);

@@ -330,11 +330,20 @@ if [ -f "$CONF_DST" ]; then
   BACKUP="$CONF_DST.bak.$(date +%Y%m%d-%H%M%S)"
   cp -a "$CONF_DST" "$BACKUP"
   log "已备份旧配置 -> $BACKUP"
+  # 用通配 + 数组收集, 而不是 `for f in $(ls -1dt ...)`: 命令替换按空白分词,
+  # 配置目录含空格时文件名会被拆成多个词, rm -f 可能删到非预期的路径。
   COUNT=0
-  for f in $(ls -1dt "$CONF_DST".bak.* 2>/dev/null); do
-    COUNT=$((COUNT + 1))
-    [ "$COUNT" -gt "$KEEP_BACKUPS" ] && rm -f "$f"
+  nt_backups=()
+  for f in "$CONF_DST".bak.*; do
+    [ -f "$f" ] && nt_backups+=("$f")
   done
+  if [ "${#nt_backups[@]}" -gt 0 ]; then
+    # 备份名是 <配置>.bak.YYYYmmdd-HHMMSS, 字典序倒序即最新在前, 不依赖 ls -t。
+    while IFS= read -r f; do
+      COUNT=$((COUNT + 1))
+      [ "$COUNT" -gt "$KEEP_BACKUPS" ] && rm -f "$f"
+    done < <(printf '%s\n' "${nt_backups[@]}" | LC_ALL=C sort -r)
+  fi
 fi
 
 # ---------------------------- 写入配置 ----------------------------

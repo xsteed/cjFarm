@@ -171,13 +171,13 @@ describe('菜单页 · 行内规格', () => {
     cartAdd({ dishId: 6, dishName: '红烧肉', specId: 62, specName: '大份', price: 58, image: '' });
     cartAdd({ dishId: 6, dishName: '红烧肉', specId: 62, specName: '大份', price: 58, image: '' });
 
-    page.specPick[6] = 61;
+    page.specPicks()[6] = 61;
     const small = page.dishRowOf(dish, {});
     expect(small.priceText).toBe('38.00');
     expect(small.cartQty).toBe(1);
     expect(small.specChips?.[0].on).toBe(true);
 
-    page.specPick[6] = 62;
+    page.specPicks()[6] = 62;
     const large = page.dishRowOf(dish, {});
     expect(large.priceText).toBe('58.00');
     expect(large.cartQty).toBe(2);
@@ -186,7 +186,7 @@ describe('菜单页 · 行内规格', () => {
 
   it('「+」加的是当前选中的规格（不是第一个规格）', async () => {
     const page = await loadMenu();
-    page.specPick[6] = 62;
+    page.specPicks()[6] = 62;
     page.onAdd(tap(6));
 
     expect(cartState()).toHaveLength(1);

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -393,5 +394,85 @@ func TestPrJobBriefsTruncates(t *testing.T) {
 	few := jobBriefs(jobs[:2])
 	if strings.Contains(few, "…") {
 		t.Fatalf("未超上限不应省略, got %q", few)
+	}
+}
+
+// ============================================================================
+// 多份打印与份数上限
+// ============================================================================
+
+// TestPrWriteViaTCPPartialCopiesKeepsSuccess 多份打印中第 2 份失败时,不能按整单失败上报。
+//
+// 第 1 份已经完整送出(纸已出)。若此时回执失败,云端会把同一 deliveryId 重新下发,
+// 代理再跑一遍完整份数循环 —— 门店就多出重复小票(厨房多做一份菜)。
+// 宁可「少一份 + 告警」,也不要「多一份」。
+func TestPrWriteViaTCPPartialCopiesKeepsSuccess(t *testing.T) {
+	var calls int32
+	orig := dialTCP
+	dialTCP = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		if atomic.AddInt32(&calls, 1) > 1 {
+			return nil, errors.New("dial refused")
+		}
+		server, client := net.Pipe()
+		go func() {
+			defer server.Close()
+			_, _ = io.ReadAll(server)
+		}()
+		return client, nil
+	}
+	t.Cleanup(func() { dialTCP = orig })
+
+	err, _ := writeViaTCP("192.168.1.100:9100", []byte("payload"), 2)
+	if err != nil {
+		t.Fatalf("第 1 份已送出时不该整单失败(会导致云端重发重打), got %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("应尝试 2 次连接, got %d", got)
+	}
+}
+
+// TestPrWriteViaTCPFirstCopyFailureStillFails 一份都没送出去时,必须如实报失败。
+func TestPrWriteViaTCPFirstCopyFailureStillFails(t *testing.T) {
+	orig := dialTCP
+	dialTCP = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return nil, errors.New("dial refused")
+	}
+	t.Cleanup(func() { dialTCP = orig })
+
+	if err, _ := writeViaTCP("192.168.1.100:9100", []byte("payload"), 2); err == nil {
+		t.Fatal("一份都没送出时必须报失败,否则整单被静默丢弃")
+	}
+}
+
+// TestPrJobCopiesClamped 份数必须钳到 [1, maxJobCopies]:copies 来自云端任务体,
+// 与 validatePrinterAddr 属同一威胁模型(任务可能被篡改)。管理端保存时已钳到 1..5,
+// 这里再兜一层,避免被改成大数时把代理拖去串行建立上万次连接。
+func TestPrJobCopiesClamped(t *testing.T) {
+	cases := []struct{ in, want int }{
+		{0, 1}, {-3, 1}, {1, 1}, {5, 5},
+		{maxJobCopies, maxJobCopies}, {maxJobCopies + 1, maxJobCopies}, {1000000, maxJobCopies},
+	}
+	for _, c := range cases {
+		if got := jobCopies(agentJob{Copies: c.in}); got != c.want {
+			t.Fatalf("jobCopies(%d)=%d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// TestPrPrintJobClampsCopies 打印侧实际生效的份数也要被钳制(不只是日志口径)。
+func TestPrPrintJobClampsCopies(t *testing.T) {
+	mock := &prPipeMock{}
+	mock.installDialHook(t)
+
+	j := agentJob{
+		IP: "192.168.1.100", Port: 9100, Copies: 1000000, DeliveryID: "big-copies",
+		Payload: base64.StdEncoding.EncodeToString([]byte{0x1B, 0x40, 'x'}),
+	}
+	if err, _ := printJob(j); err != nil {
+		t.Fatalf("printJob 不应报错: %v", err)
+	}
+	mock.waitIdle()
+	if got := mock.connCount(); got != maxJobCopies {
+		t.Fatalf("应只建 %d 次连接(份数被钳制), got %d", maxJobCopies, got)
 	}
 }

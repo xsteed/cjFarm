@@ -36,12 +36,33 @@ type jobState struct {
 // 文件不可写时降级为纯内存(仍然工作,只是重启后失去去重能力),并打一条告警。
 func loadJobState(path string) *jobState {
 	s := &jobState{path: path, seen: map[string]struct{}{}}
+	// 断电可能把最后一行写成半截。半截行不是一个真实的幂等号,而且危害不只是
+	// 「多一条垃圾记录」:后续 append 会与它粘成一行(abcd<newid>\n),新记录反而
+	// 没被独立记录 —— 该单在下次重启后失去去重,可能被重打一次。
+	// 因此不仅要丢弃它,还要把它**从文件里摘掉**(否则下次加载又会把它的前缀
+	// 当有效记录读进来)。
+	truncated := false
 	if data, err := os.ReadFile(path); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
+		text := string(data)
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			truncated = true
+			if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+				text = text[:i+1]
+			} else {
+				text = ""
+			}
+		}
+		for _, line := range strings.Split(text, "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				s.seen[line] = struct{}{}
 				s.order = append(s.order, line)
 			}
+		}
+	}
+	if truncated {
+		// 用原子重写摘掉残行:失败也不影响后续追加(残行最多留到下次启动)。
+		if werr := writeStateFileAtomically(path, s.order); werr != nil {
+			logf("[警告] 修复状态文件残行失败 %s: %v(下次启动会再试)", path, werr)
 		}
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -77,8 +98,14 @@ func (s *jobState) markDone(id string) {
 	s.seen[id] = struct{}{}
 	s.order = append(s.order, id)
 	if s.f != nil {
-		_, _ = s.f.WriteString(id + "\n")
-		_ = s.f.Sync() // 落盘后再回执,断电也不丢
+		// 错误必须告警,不能丢弃:调用方紧接着就会回执成功,而「先落盘再回执」这条
+		// 不重复出票的承诺正是靠这一步。静默失败的后果是断电/重启后该单被重打一遍,
+		// 且现场没有任何线索。
+		if _, werr := s.f.WriteString(id + "\n"); werr != nil {
+			logf("[警告] 去重记录写入失败 %s: %v(该单在重启后可能被重打一次,请检查磁盘)", s.path, werr)
+		} else if serr := s.f.Sync(); serr != nil {
+			logf("[警告] 去重记录落盘失败 %s: %v(断电后该单可能被重打一次)", s.path, serr)
+		}
 	}
 	s.maybeCompactLocked()
 }
@@ -94,15 +121,19 @@ func (s *jobState) maybeCompactLocked() {
 	for _, k := range keep {
 		s.seen[k] = struct{}{}
 	}
+
+	// 关键:先原子重写成功、再动现有句柄。
+	// 旧实现是「先 Close + 置 nil,再 os.WriteFile」——os.WriteFile 内部是 O_TRUNC,
+	// 一打开就截断:磁盘满 / I/O 错误时文件被清成 0 字节,历史幂等号全部丢失,
+	// 而 s.f 已被置 nil,本进程此后**再也不落盘**(只剩第一句告警),可谓最坏组合。
+	if err := writeStateFileAtomically(s.path, keep); err != nil {
+		logf("[警告] 状态文件重写失败 %s: %v(继续用原文件追加去重记录,请关注磁盘状态)", s.path, err)
+		return
+	}
+	// 重写成功:旧句柄指向的是已被 rename 掉的旧 inode,必须换到新文件上继续追加。
 	if s.f != nil {
 		_ = s.f.Close()
 		s.f = nil
-	}
-	if err := os.WriteFile(s.path, []byte(strings.Join(keep, "\n")+"\n"), 0o600); err != nil {
-		// 与 loadJobState 同口径:失败必须告警,不能静默退化成纯内存去重,
-		// 否则重启后云端重发会重复出纸,且现场毫无线索。
-		logf("[警告] 状态文件重写失败 %s: %v(重启后将失去重复打印去重能力,请关注磁盘状态)", s.path, err)
-		return
 	}
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -112,4 +143,32 @@ func (s *jobState) maybeCompactLocked() {
 		return
 	}
 	s.f = f
+}
+
+// writeStateFileAtomically 用「临时文件 + fsync + rename」原子替换状态文件。
+//
+// 直接 os.WriteFile 会在写之前就把目标截断(O_TRUNC),中途失败就得到一个空文件 ——
+// 而去重记录一旦丢失,门店重启后云端重发旧任务就会重复出纸。rename 在同一文件系统内
+// 是原子的,读者要么看到旧内容、要么看到新内容,不存在「被清空」的中间态。
+func writeStateFileAtomically(path string, keep []string) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(strings.Join(keep, "\n") + "\n"); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
 }

@@ -70,7 +70,12 @@ export interface MemberOrderRow {
   tableName: string;
   orderStatus: number;
   payStatus: number;
-  /** 金额单位是分，展示用 money() 换算。 */
+  /**
+   * 金额单位是**元**，与订单页/支付页的 totalAmount 同口径，直接 `money()` 展示。
+   *
+   * 这里曾误注为「单位是分，用 money() 换算」——money() 只做 toFixed(2)，不会 ÷100，
+   * 而后端当时也确实下发了分，于是 ¥28.00 的单显示成 ¥2800.00（后端已改为一律下发元）。
+   */
   totalAmount: number;
   createTime: string;
 }

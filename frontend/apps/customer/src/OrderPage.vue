@@ -326,7 +326,11 @@ const submitting = ref(false);
 const currentOrder = ref<OrderDetail | null>(null);
 const servingOrders = ref<OrderSummary[]>([]);
 // 幂等键:同一次提交(含超时重试)复用同一 ID,后端据此去重。
+// pendingFingerprint 记录该幂等键对应的「提交内容指纹」:后端命中幂等键时会直接返回
+// 首次结果、完全不看本次 items,所以键必须与内容绑定 —— 否则弱网超时后顾客改了菜再提交,
+// 会拿到第一次的 orderNo(新加的菜没进单),前端还会清空购物车。
 let pendingRequestId = '';
+let pendingFingerprint = '';
 const payTab = ref<'wx' | 'ali'>('wx');
 const onlineQr = ref(''); // 在线支付二维码(dataURL)
 const paying = ref(false);
@@ -488,6 +492,9 @@ function onFly(x: number, y: number): void {
   });
 }
 
+// 飞球动画的兜底定时器句柄:组件卸载时要一并清掉(见 onUnmounted)。
+const flyBallTimers = new Set<number>();
+
 function startFly(x: number, y: number, target: HTMLElement): void {
   const rect = target.getBoundingClientRect();
 
@@ -505,7 +512,15 @@ function startFly(x: number, y: number, target: HTMLElement): void {
   outer.appendChild(mid);
   document.body.appendChild(outer);
 
+  // 兜底:动画事件丢失(如测试环境)也不残留节点。
+  // 句柄登记进 flyBallTimers:动画正常结束时清掉它,组件卸载时也一并清 ——
+  // 否则连续加菜会在 body 上堆积一串待执行的 remove 回调(切页时残留)。
+  const fallback = window.setTimeout(() => outer.remove(), 900);
+  flyBallTimers.add(fallback);
+
   const done = () => {
+    window.clearTimeout(fallback);
+    flyBallTimers.delete(fallback);
     outer.remove();
     // 落地反馈:购物车图标弹一下
     target.classList.remove('cart-bump');
@@ -513,8 +528,6 @@ function startFly(x: number, y: number, target: HTMLElement): void {
     target.classList.add('cart-bump');
   };
   outer.addEventListener('animationend', done, { once: true });
-  // 兜底:动画事件丢失(如测试环境)也不残留节点
-  setTimeout(() => outer.remove(), 900);
 }
 
 // 清空前二次确认:抽屉里一键清空太容易误触(与小程序 showModal 同文案)
@@ -556,6 +569,9 @@ function startNewOrder(): void {
   orderRemark.value = '';
   personCount.value = 1;
   view.value = 'menu';
+  // 必须显式停轮询:pollOnce 在 currentOrder 为空时会直接 return 不发请求,
+  // 但 3 秒的定时器会一直空转到组件卸载(「再点一单」后长时间停在菜单页)。
+  stopPolling();
 }
 
 // 底部 tabbar 切页。加菜时随时切回订单页核对已下单菜品,购物车内容保留不丢。
@@ -584,9 +600,6 @@ async function submit(): Promise<void> {
     return;
   }
   submitting.value = true;
-  // 幂等:同一次提交复用同一 clientRequestId;成功后清空,下次提交重新生成。
-  const clientRequestId = pendingRequestId || genRequestId();
-  pendingRequestId = clientRequestId;
   try {
     const items = cart.value.map(i => ({
       dishId: i.dishId,
@@ -594,6 +607,21 @@ async function submit(): Promise<void> {
       quantity: i.quantity,
       itemRemark: i.remark
     }));
+    // 幂等:只有「本次提交内容与上次完全一致」的重复提交才复用同一个 clientRequestId
+    // (超时/未知错误后的原样重试)。内容变了(顾客改了菜、加了菜、改了备注)就换新键,
+    // 否则后端命中幂等键直接返回首次结果,新提交的内容会被静默丢弃。
+    const fingerprint = JSON.stringify({
+      append: canAppend.value,
+      orderNo: currentOrder.value?.orderNo || '',
+      personCount: personCount.value,
+      orderRemark: orderRemark.value,
+      items
+    });
+    if (!pendingRequestId || pendingFingerprint !== fingerprint) {
+      pendingRequestId = genRequestId();
+      pendingFingerprint = fingerprint;
+    }
+    const clientRequestId = pendingRequestId;
     if (canAppend.value) {
       const res = await appendOrder({
         tableId: tableId.value,
@@ -616,6 +644,7 @@ async function submit(): Promise<void> {
       currentOrder.value = await getOrderByNo(res.orderNo);
     }
     pendingRequestId = '';
+    pendingFingerprint = '';
     cart.value = [];
     cartVisible.value = false;
     view.value = 'order';
@@ -718,6 +747,9 @@ onUnmounted(() => {
   stopPolling();
   clearUrgeTimer();
   if (payDoneTimer) clearTimeout(payDoneTimer);
+  // 飞球兜底定时器:动画未结束时卸载也要清掉,否则回调仍会执行(且节点残留在 body)
+  for (const t of flyBallTimers) window.clearTimeout(t);
+  flyBallTimers.clear();
 });
 </script>
 

@@ -16,6 +16,7 @@ package main
 // ============================================================================
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -31,6 +33,9 @@ import (
 
 // upgradeDownloadTimeout 下载超时:产物约 6~8MB,给门店慢网络留足余量。
 const upgradeDownloadTimeout = 5 * time.Minute
+
+// maxAgentArtifactBytes 单一升级产物的字节上限(64MB):正常产物约 6~8MB。
+const maxAgentArtifactBytes = 64 << 20
 
 // runUpgrade 执行自助升级;任何一步失败都 fatalf 退出并保持旧程序原样。
 func runUpgrade(client *http.Client, base string, cfg config) {
@@ -68,6 +73,13 @@ func runUpgrade(client *http.Client, base string, cfg config) {
 	}
 	if err := verifyFileSHA256(tmp, sha); err != nil {
 		fatalf("升级包校验失败(下载损坏或传输被篡改,请重试): %v", err)
+	}
+	// sha256 只能证明「传输完整」,证明不了「这就是配置里那个版本」:文档也承认
+	// 产物与 agent_latest_version 只靠发布顺序保证一致。不核对的话,服务端给了旧
+	// 产物也会照刷不误,还打印「已替换为 v{latest}」——门店看到的是「升级成功、
+	// 版本却没变」,是最难查的一类问题;更糟的是把不兼容的产物刷上去直接跑不起来。
+	if err := verifyBinaryVersion(tmp, latest); err != nil {
+		fatalf("新产物自检未通过,已中止升级(旧程序未受影响): %v", err)
 	}
 	if err := replaceBinary(exe, tmp); err != nil {
 		fatalf("替换程序失败(旧程序未受影响): %v", err)
@@ -111,6 +123,41 @@ func syncDarwinBundleAfterUpgrade(exe string) {
 	signDarwinBundle(app)
 }
 
+// verifyBinaryVersion 运行临时文件里的新产物 `--version`,核对它自报的版本。
+//
+// 这一步同时兜住两类事故:
+//   - 服务端产物与「代理最新版本号」不一致(发布顺序没跟上)→ 拒绝刷新,不再谎报成功;
+//   - 产物与本机平台不兼容(架构/系统不匹配)→ 直接跑不起来,此时宁可保留旧程序。
+//
+// 只跑 `--version`,进程立即退出;超时 10 秒兜底,避免一个坏产物把升级流程挂住。
+func verifyBinaryVersion(path, want string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return fmt.Errorf("执行新产物 `--version` 失败: %w", err)
+	}
+	got := parseVersionOutput(string(out))
+	if got == "" {
+		return fmt.Errorf("无法从新产物输出中解析版本号: %.120s", strings.TrimSpace(string(out)))
+	}
+	if got != want {
+		return fmt.Errorf("产物版本不符:期望 v%s,实际 v%s", want, got)
+	}
+	return nil
+}
+
+// parseVersionOutput 从 printVersion 的输出里取 version= 那一行。
+func parseVersionOutput(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if v, ok := strings.CutPrefix(line, "version="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // fetchLatestVersion ping 云端,取「代理最新版本号」。
 func fetchLatestVersion(client *http.Client, base string, cfg config) (string, error) {
 	var out struct {
@@ -149,12 +196,17 @@ func downloadAgent(client *http.Client, base string, cfg config, path string) (s
 	}
 
 	// 产物约 6~8MB,按 10 倍上限防异常响应撑爆磁盘。
+	// 先看 Content-Length:超限直接失败,而不是靠 LimitReader 静默截断 ——
+	// 截断的产物要到 sha256 校验才暴露,报错会指向「下载损坏」,方向完全错了。
+	if resp.ContentLength > maxAgentArtifactBytes {
+		return "", fmt.Errorf("产物大小 %d 字节超出上限 %d 字节", resp.ContentLength, maxAgentArtifactBytes)
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, io.LimitReader(resp.Body, 64<<20)); err != nil {
+	if _, err := io.Copy(f, io.LimitReader(resp.Body, maxAgentArtifactBytes+1)); err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(resp.Header.Get("X-Agent-Sha256")), nil

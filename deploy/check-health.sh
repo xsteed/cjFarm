@@ -23,6 +23,8 @@
 set -uo pipefail
 
 SERVICE_NAME="${SERVICE_NAME:-dining-backend}"
+# INSTALL_DIR 与 deploy.sh 的默认值保持一致: 端口等配置全在 <INSTALL_DIR>/config.yaml。
+INSTALL_DIR="${INSTALL_DIR:-/opt/dining-system}"
 HOST="127.0.0.1"
 PORT=""
 HEALTH_PATH="${HEALTH_PATH:-/api/customer/config}"
@@ -39,7 +41,7 @@ usage() {
 
 选项:
   -H, --host <host>   后端主机, 默认 127.0.0.1
-  -p, --port <port>   后端端口, 默认 8080(或自动读取 systemd 服务单元)
+  -p, --port <port>   后端端口, 默认读取 <INSTALL_DIR>/config.yaml 的 server.port(兜底 8080)
   -u, --url <url>     直接指定完整健康检查 URL(优先级最高)
       --json          以 JSON 输出结果, 便于监控系统解析
   -q, --quiet         静默模式, 不输出内容, 仅用退出码表达结果
@@ -48,6 +50,7 @@ usage() {
 退出码: 0=在线  1=离线/异常  2=用法错误
 
 环境变量: TIMEOUT(单次超时秒, 默认3) RETRIES(重试次数, 默认3) SERVICE_NAME(默认 dining-backend)
+          INSTALL_DIR(安装根目录, 默认 /opt/dining-system; 用于读取 config.yaml 里的端口)
 EOF
 }
 
@@ -73,9 +76,20 @@ command -v curl >/dev/null 2>&1 || die "缺少 curl, 无法进行 HTTP 探测"
 # ---------------------------- 组装探测地址 ----------------------------
 if [ -z "$URL" ]; then
   if [ -z "$PORT" ]; then
-    # 优先从 systemd 服务单元里读端口(与 deploy.sh 安装的配置保持一致);
-    # 锚定行首, 避免命中单元里被注释掉的示例行(# Environment=PORT=8080)。
-    PORT="$(grep -oE '^Environment=PORT=[0-9]+' "/etc/systemd/system/${SERVICE_NAME}.service" 2>/dev/null | head -1 | cut -d= -f3 || true)"
+    # 端口只能来自 <INSTALL_DIR>/config.yaml 的 server.port。
+    #
+    # 不要再从 systemd 单元里 grep `Environment=PORT=`: 现在的服务单元**不再声明任何
+    # 配置项**(配置统一搬到 config.yaml, 见 deploy.sh 头注释), 那段 grep 永远读不到值,
+    # 只能回落到 8080。于是用 BACKEND_PORT=9000 部署的服务器会被 cron/监控误判为离线。
+    PORT="$(awk '
+      $0 ~ /^server:[[:space:]]*(#.*)?$/        { insec = 1; next }
+      insec && /^[^[:space:]#]/                 { insec = 0 }
+      insec && /^[[:space:]]+port:[[:space:]]*[0-9]+/ {
+        sub(/^[[:space:]]+port:[[:space:]]*/, "")
+        sub(/[[:space:]]*#.*$/, "")
+        print; exit
+      }
+    ' "$INSTALL_DIR/config.yaml" 2>/dev/null || true)"
     PORT="${PORT:-8080}"
   fi
   URL="http://${HOST}:${PORT}${HEALTH_PATH}"

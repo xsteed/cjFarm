@@ -582,3 +582,40 @@ func TestCfgParseFlags(t *testing.T) {
 		}
 	})
 }
+
+// TestCfgParseEnvLine agent.env 的解析规则必须与后端 infra/parseDotEnvLine 一致。
+//
+// main.go 顶部注释承诺「与后端 .env 同格式」,而早先的实现有三处偏离,门店照着后端
+// 的写法写就必然踩坑:
+//   - 不支持 `export ` 前缀 → 变量名变成「export PRINT_AGENT_SERVER」→ 报「缺少 --server」;
+//   - 不去行尾注释 → `TOKEN=abc123 # 代理令牌` 会把注释一起当令牌 → 云端报「令牌不正确」;
+//   - strings.Trim(v, "\"'") 是无条件剥两端(而非成对引号)。
+func TestCfgParseEnvLine(t *testing.T) {
+	cases := []struct {
+		raw, key, val string
+		ok            bool
+	}{
+		{"KEY=VALUE", "KEY", "VALUE", true},
+		{"KEY = VALUE", "KEY", "VALUE", true},
+		{"export PRINT_AGENT_SERVER=https://x.example.com", "PRINT_AGENT_SERVER", "https://x.example.com", true},
+		{"PRINT_AGENT_TOKEN=abc123 # 代理令牌", "PRINT_AGENT_TOKEN", "abc123", true},
+		{"PRINT_AGENT_TOKEN=abc123\t# 注释", "PRINT_AGENT_TOKEN", "abc123", true},
+		{`PRINT_AGENT_LOG="a b c.log"`, "PRINT_AGENT_LOG", "a b c.log", true},
+		{"PRINT_AGENT_LOG='x#y.log'", "PRINT_AGENT_LOG", "x#y.log", true},
+		// '#' 前没有空白:是值的一部分,不能当注释截断(否则令牌被切掉后半截)
+		{"PRINT_AGENT_TOKEN=abc#def", "PRINT_AGENT_TOKEN", "abc#def", true},
+		// 只有一端有引号:不是「成对引号」,按原样保留
+		{`KEY=abc"`, "KEY", `abc"`, true},
+		{"# 整行注释", "", "", false},
+		{"", "", "", false},
+		{"NOEQUALSSIGN", "", "", false},
+		{"BAD KEY=v", "", "", false},
+		{"=novalue", "", "", false},
+	}
+	for _, c := range cases {
+		k, v, ok := parseEnvLine(c.raw)
+		if ok != c.ok || k != c.key || v != c.val {
+			t.Fatalf("parseEnvLine(%q)=(%q,%q,%v), want (%q,%q,%v)", c.raw, k, v, ok, c.key, c.val, c.ok)
+		}
+	}
+}

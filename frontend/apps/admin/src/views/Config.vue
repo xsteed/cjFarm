@@ -265,7 +265,7 @@
             <t-input
               v-model="form.wxpay_apiv3_key"
               type="password"
-              placeholder="32位 APIv3 密钥（留空表示不修改）"
+              placeholder="32位 APIv3 密钥（已配置显示 ******；留空表示不修改）"
             />
           </t-form-item>
           <t-form-item
@@ -338,7 +338,7 @@
             <t-input
               v-model="form.wx_app_secret"
               type="password"
-              placeholder="微信公众平台 → 开发管理 → 开发设置 中的 AppSecret（留空表示不修改）"
+              placeholder="微信公众平台 → 开发管理 → 开发设置 中的 AppSecret（已配置显示 ******；留空表示不修改）"
             />
           </t-form-item>
           <t-form-item
@@ -441,6 +441,23 @@
               <span class="tip"
                 >开启后厨房单会带出每道菜的小计，便于后厨或传菜核对；默认关闭，后厨只看菜名与数量。</span
               >
+            </t-space>
+          </t-form-item>
+          <t-form-item label="厨房单按菜拆单">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_kitchen_split_by_item"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后厨房单不再整单一张，而是<b>每道菜单独出一张带桌号的小票</b>，方便夹在菜上、逐道传菜对口；
+                整单备注会随每张小票重复打印，菜品多时更费纸。
+                「打印机管理」里按分类分单的配置仍然生效（先按分类挑机器，再逐道拆单）；
+                打印记录里的「补打」与「预览」始终整单出，不受此开关影响。
+              </span>
             </t-space>
           </t-form-item>
           <t-form-item label="加菜重打小票">
@@ -586,7 +603,7 @@
             <t-input
               v-model="form.feie_ukey"
               type="password"
-              placeholder="开发者 UKEY（留空表示不修改）"
+              placeholder="开发者 UKEY（已配置显示 ******；留空表示不修改）"
             />
           </t-form-item>
           <t-form-item
@@ -672,7 +689,7 @@
                 v-model="form.agent_token"
                 type="password"
                 style="width: 320px"
-                placeholder="留空表示不修改；未配置时「本地代理」通道的打印机不会出纸"
+                placeholder="已配置显示 ******；留空表示不修改"
               />
               <t-button
                 v-if="canEdit"
@@ -1034,6 +1051,7 @@ interface ConfigForm {
   alipay_notify_url: string;
   print_enabled: string;
   print_kitchen_show_price: string;
+  print_kitchen_split_by_item: string;
   print_guest_footer: string;
   print_guest_show_seat_fee: string;
   print_guest_show_discount: string;
@@ -1067,6 +1085,7 @@ type ConfigPayloadFull = ConfigData & {
   alipay_notify_url?: string;
   print_enabled?: string;
   print_kitchen_show_price?: string;
+  print_kitchen_split_by_item?: string;
   print_guest_footer?: string;
   print_guest_show_seat_fee?: string;
   print_guest_show_discount?: string;
@@ -1116,6 +1135,7 @@ const form = reactive<ConfigForm>({
   alipay_notify_url: '',
   print_enabled: '1',
   print_kitchen_show_price: '0',
+  print_kitchen_split_by_item: '0',
   print_guest_footer: '谢谢惠顾,欢迎再次光临',
   print_guest_show_seat_fee: '1',
   print_guest_show_discount: '1',
@@ -1154,6 +1174,7 @@ const FLAG_KEYS = [
   'alipay_enabled',
   'print_enabled',
   'print_kitchen_show_price',
+  'print_kitchen_split_by_item',
   'print_guest_show_seat_fee',
   'print_guest_show_discount',
   'print_guest_qr',
@@ -1234,6 +1255,10 @@ async function save(): Promise<void> {
     FLAG_KEYS.forEach(k => {
       payload[k] = normFlag(form[k]);
     });
+    // 清空全局代理令牌必须显式提交 agent_token_clear="1" —— 后端契约里
+    // agent_token 留空的语义是「本次不修改」,单清输入框不会真的停用令牌。
+    // 指令是一次性的,已随本次保存生效,保存成功后统一复位(见下方)。
+    if (agentTokenClear.value) payload.agent_token_clear = '1';
     await saveConfig(payload);
     MessagePlugin.success('保存成功');
     // 保存后重新拉取,保证界面与库里的真实值一致。
@@ -1241,11 +1266,8 @@ async function save(): Promise<void> {
     await load(true);
     // 代理令牌可能刚被修改:刷新运行状态,让「在线/离线」跟着真实配置走。
     loadAgentStatus();
-    // 代理令牌是敏感项、后端不回显:保存后清空输入框,避免它一直明文挂在页面上,
-    // 也避免下次保存时把同一个值再提交一遍(虽然后端是幂等的,但看着容易误解)。
-    form.agent_token = '';
-    // 敏感项同理:后端不回显,保存后立刻清空输入框,避免明文一直挂在页面上。
-    form.wx_app_secret = '';
+    // 敏感项回显的是 ****** 占位(不回显明文):load(true) 已带回占位,
+    // 不需要也不能手动清空——清成空串会让管理员误以为「没保存上」。
     // 清空指令是一次性的:已随本次保存生效,不能留在表单里影响后续保存。
     agentTokenClear.value = false;
   } catch (e) {
@@ -1388,13 +1410,11 @@ async function loadAgentStatus(): Promise<void> {
   }
 }
 
-// 与后端 agentOnlineWindow(90s)一致的在线判定:最近心跳距今 < 90 秒。
-// lastSeen 为「YYYY-MM-DD HH:mm:ss」本地时间,补 T 后由浏览器按本地时区解析。
+// 在线判定必须用后端下发的 online 字段:后端已按 90s 窗口在服务端判定。
+// lastSeen 是服务端本地时区的墙钟字符串,浏览器自己解析会在「容器 UTC +
+// 门店浏览器东八区」下恒判离线(与 Printers.vue 同款修正,见 print.AgentSeenOnline)。
 function isAgentOnline(row: PrintAgent): boolean {
-  const seen = row.lastSeen || '';
-  if (!seen) return false;
-  const t = new Date(seen.replace(' ', 'T')).getTime();
-  return !Number.isNaN(t) && Date.now() - t < 90_000;
+  return row.online === true;
 }
 
 // 最老待打印单已等分钟数(向上取整);老后端没有 oldestPendingSec 时为 0。

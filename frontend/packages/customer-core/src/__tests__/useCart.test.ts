@@ -71,6 +71,30 @@ describe('加购拦截', () => {
     c.changeQty(dish({ soldOut: 1 }), -1);
     expect(c.cart.value).toHaveLength(0);
   });
+
+  it('选中规格被买空后，卡片份数与减号指向同一条购物车行', () => {
+    const c = cartOf();
+    const d = dish({
+      specs: [
+        { specId: 11, specName: '小份', price: 18, stock: -1 },
+        { specId: 12, specName: '大份', price: 28, stock: -1 }
+      ]
+    });
+    c.addToCart(d, d.specs![0] as DishSpec, '');
+    expect(c.dishQty(d.dishId, d)).toBe(1);
+
+    // 小份被下单占满（stock=0）、大份还有货 → currentSpec 回退到大份。
+    // 显示与减号必须同口径：都回到 0，而不是「显示 1、点减号毫无反应」。
+    const depleted = dish({
+      specs: [
+        { specId: 11, specName: '小份', price: 18, stock: 0 },
+        { specId: 12, specName: '大份', price: 28, stock: 5 }
+      ]
+    });
+    expect(c.dishQty(depleted.dishId, depleted)).toBe(0);
+    c.changeQty(depleted, -1);
+    expect(c.dishQty(depleted.dishId, depleted)).toBe(0);
+  });
 });
 
 describe('规格弹层', () => {

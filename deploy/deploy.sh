@@ -19,9 +19,10 @@
 #   INSTALL_DIR=/opt/dining-system BACKEND_PORT=9000 sudo bash deploy/deploy.sh
 #
 # 可选参数:
-#   --skip-build    不编译, 只用现成产物(产物缺失时报错)
-#   --rebuild       强制重新编译(仓库内开发时用)
-#   --no-fix-nginx  不自动修复线上遗留的 /prod-api 旧前缀(默认会自动修复)
+#   --skip-build      不编译, 只用现成产物(产物缺失时报错)
+#   --rebuild         强制重新编译(仓库内开发时用)
+#   --no-fix-nginx    不自动修复线上遗留的 /prod-api 旧前缀(默认会自动修复)
+#   --allow-db-switch 允许把 driver 从 sqlite 改为 mysql(默认拒绝, 见下方「切换 MySQL」)
 #   默认: 有产物就直接用, 没有才编译(更新包内天然走这条路)
 #
 # 部署配置(统一落在 config.yaml, 后端启动时读工作目录下这个文件):
@@ -37,8 +38,12 @@
 #
 # 切换 MySQL(config.yaml 的 database 段由此重写, 详见 docs/mysql-migration.md):
 #   sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_USER=dining \
-#     DB_PASSWORD=xxx DB_NAME=dining bash deploy/deploy.sh
-#   或一行完整连接串: sudo DB_DSN='dining:pw@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh
+#     DB_PASSWORD=xxx DB_NAME=dining bash deploy/deploy.sh --allow-db-switch
+#   或一行完整连接串: sudo DB_DSN='dining:pw@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh --allow-db-switch
+#
+#   ⚠️ 数据不会自动搬迁。本脚本**默认拒绝** sqlite -> mysql 的切换(必须显式加
+#      --allow-db-switch), 因为切到空库后系统会建表并灌入出厂种子, 现场表现与
+#      「数据全丢了」无异。切库前请先按 docs/mysql-migration.md 把数据搬过去。
 #
 # 产物来源(相对项目/包根目录):
 #   backend/bin/dining-backend-linux-<arch>   后端二进制
@@ -84,12 +89,14 @@ usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' 
 FORCE_REBUILD=0
 SKIP_BUILD=0
 FIX_NGINX_LEGACY=1
+ALLOW_DB_SWITCH=0
 for arg in "$@"; do
   case "$arg" in
-    --rebuild)      FORCE_REBUILD=1 ;;
-    --skip-build)   SKIP_BUILD=1 ;;
-    --no-fix-nginx) FIX_NGINX_LEGACY=0 ;;
-    -h|--help)      usage; exit 0 ;;
+    --rebuild)        FORCE_REBUILD=1 ;;
+    --skip-build)     SKIP_BUILD=1 ;;
+    --no-fix-nginx)   FIX_NGINX_LEGACY=0 ;;
+    --allow-db-switch) ALLOW_DB_SWITCH=1 ;;
+    -h|--help)        usage; exit 0 ;;
     *) echo "未知参数: $arg (用 -h 查看用法)" >&2; exit 2 ;;
   esac
 done
@@ -244,10 +251,18 @@ admin_yaml_block() {
 # mask_dsn 隐藏连接串密码(root:secret@tcp(...) -> root:***@tcp(...)),
 # 避免在部署总结里明文输出。与后端 store.maskDSN 逻辑一致。
 mask_dsn() {
-  local dsn="$1" cred="${dsn%@*}"
+  # 必须分成两条 local:写成 `local dsn="$1" cred="${dsn%@*}"` 时,同一句里的
+  # 展开先于赋值求值,cred 取到的是**外层**（通常为空）的 dsn —— 于是 cred=""、
+  # 落进下面的 `*)` 分支,函数把**未遮盖的连接串原样返回**,数据库明文密码就这样
+  # 被打进了部署总结与 CI 日志里。这个坑只有拆开赋值才躲得掉。
+  local dsn="$1"
+  local cred="${dsn%@*}"
   [ "$cred" = "$dsn" ] && { printf '%s' "$dsn"; return 0; }   # 无 @,原样返回
   case "$cred" in
-    *:*) printf '%s' "${cred%%:*}:***@${dsn#*@}" ;;
+    # 必须按**最后一个** @ 切分(与后端 strings.LastIndex 一致):密码里允许出现 @,
+    # 用第一个 @ 切分时 ${dsn#*@} 会把密码 "@" 之前的尾部片段留在输出里 ——
+    # 本想遮密码,反而把口令的一部分打进了部署日志。
+    *:*) printf '%s' "${cred%%:*}:***@${dsn##*@}" ;;
     *)   printf '%s' "$dsn" ;;
   esac
 }
@@ -289,7 +304,10 @@ set_yaml_scalar() {
     END {
       s = 0; e = 0
       for (i = 1; i <= NR; i++) {
-        if (!s && line[i] ~ ("^" sec ":[[:space:]]*$")) { s = i; continue }
+        # 段头允许带行尾注释(`server:   # HTTP 服务`)—— 运维手改 config.yaml 时很常见。
+        # 早先要求严格到行尾, 匹配不上就会走下面的「追加到文件末尾」分支, 生成**重复的
+        # 顶层键**; 而后端用 KnownFields(true) 解析, 重复键直接报错起不来。
+        if (!s && line[i] ~ ("^" sec ":[[:space:]]*(#.*)?$")) { s = i; continue }
         if (s && !e && line[i] ~ /^[^[:space:]#]/)      { e = i; break }
       }
       if (s && !e) e = NR + 1
@@ -380,6 +398,12 @@ backup_current() {
   # 迁移过来; 回滚时必须连它一起还原, 否则会出现「二进制回滚了、配置还指着新库」。
   [ -f "$DEPLOY_CONFIG" ] && cp -a "$DEPLOY_CONFIG" "$BACKUP_DIR/config.yaml"
   [ -f "$SERVICE_ENV_FILE" ] && cp -a "$SERVICE_ENV_FILE" "$BACKUP_DIR/dining-backend.env"
+  # install_artifacts 还会覆盖这三处, 回滚必须一起还原, 否则会出现
+  # 「二进制回滚了、VERSION 仍是新的」: 运维按脚本提示 `cat $INSTALL_DIR/VERSION`
+  # 核对提交号时会读到与实际运行版本不符的内容, 排查方向直接被带偏。
+  [ -f "$INSTALL_DIR/VERSION" ] && cp -a "$INSTALL_DIR/VERSION" "$BACKUP_DIR/VERSION"
+  [ -f "$BIN_DIR/check-health.sh" ] && cp -a "$BIN_DIR/check-health.sh" "$BACKUP_DIR/check-health.sh"
+  [ -d "$INSTALL_DIR/print-agent/bin" ] && cp -a "$INSTALL_DIR/print-agent/bin" "$BACKUP_DIR/print-agent-bin"
   log "已备份当前版本 -> $BACKUP_DIR"
 }
 
@@ -403,6 +427,19 @@ rollback() {
     install -m 0600 "$BACKUP_DIR/dining-backend.env" "$SERVICE_ENV_FILE"
     chown "$SERVICE_USER:$SERVICE_USER" "$SERVICE_ENV_FILE" 2>/dev/null || true
     warn "已还原 $SERVICE_ENV_FILE"
+  fi
+  if [ -f "$BACKUP_DIR/VERSION" ]; then
+    cp -f "$BACKUP_DIR/VERSION" "$INSTALL_DIR/VERSION"
+    warn "已还原 $INSTALL_DIR/VERSION"
+  fi
+  if [ -f "$BACKUP_DIR/check-health.sh" ]; then
+    install -m 0755 "$BACKUP_DIR/check-health.sh" "$BIN_DIR/check-health.sh"
+  fi
+  if [ -d "$BACKUP_DIR/print-agent-bin" ]; then
+    rm -rf "$INSTALL_DIR/print-agent/bin"
+    mkdir -p "$INSTALL_DIR/print-agent/bin"
+    cp -a "$BACKUP_DIR/print-agent-bin/." "$INSTALL_DIR/print-agent/bin/"
+    warn "已还原打印代理产物"
   fi
   [ "$HAS_SYSTEMD" = "1" ] && systemctl restart "$SERVICE_NAME" || true
 }
@@ -434,8 +471,15 @@ install_artifacts() {
   # 部署到这里即与默认路径对齐, 无需额外配置。
   if [ -d "$PROJECT_DIR/print-agent/bin" ]; then
     mkdir -p "$INSTALL_DIR/print-agent/bin"
-    cp -f "$PROJECT_DIR"/print-agent/bin/* "$INSTALL_DIR/print-agent/bin/"
-    log "安装打印代理产物 -> $INSTALL_DIR/print-agent/bin"
+    # 目录存在但为空时, 裸 `cp .../bin/*` 不会展开通配符, 而会把字面量 `*` 当源文件
+    # 报错 —— 在 set -e 下会让脚本在「装完二进制、还没写 config.yaml/装服务」时中断,
+    # 且不触发回滚。先判空再拷。
+    if compgen -G "$PROJECT_DIR/print-agent/bin/*" >/dev/null; then
+      cp -f "$PROJECT_DIR"/print-agent/bin/* "$INSTALL_DIR/print-agent/bin/"
+      log "安装打印代理产物 -> $INSTALL_DIR/print-agent/bin"
+    else
+      warn "print-agent/bin 为空, 跳过代理产物安装(门店自助升级将拿不到产物)"
+    fi
   fi
 
   # 版本信息: 发布包根部的 VERSION(含 git_commit / build_time / arch) 装到安装目录,
@@ -487,7 +531,8 @@ ensure_trusted_proxies() {
   tmp="$(mktemp)"
   awk -v v="$value" '
     { print }
-    /^server:[[:space:]]*$/ && !done {
+    # 段头允许行尾注释, 否则匹配不上会走下面的 END 分支追加出第二个 server: 段
+    /^server:[[:space:]]*(#.*)?$/ && !done {
       print "  # 经 Nginx 反代时必须声明可信代理, 否则登录限流取不到真实客户端 IP"
       print "  trusted_proxies:"
       print "    - " v
@@ -567,6 +612,26 @@ EOF
   fi
 
   local block
+  # ---- 切库守卫 ----
+  # 把 driver 从 sqlite 改成 mysql 时, 数据**不会**自动搬过去: 后端启动会在空库上
+  # 建好全套空表, 再因为 tb_category 为空而灌入出厂种子。现场表现就是「菜品变回
+  # 出厂菜单、历史订单与会员全部消失」—— 从运维视角看与数据丢失无异, 且旧库还躺在
+  # ./data/dining.db 里没人用。这种事故只能靠拦截, 不能靠文档提醒。
+  if [ "$existed" = "1" ] && db_switch_requested && [ "$ALLOW_DB_SWITCH" != "1" ]; then
+    local prev_driver
+    prev_driver="$(yaml_section_value database driver)"
+    if [ "${prev_driver:-sqlite}" != "mysql" ]; then
+      die "检测到本次要切换数据库后端: ${prev_driver:-sqlite} -> mysql, 但数据不会自动搬迁。
+     直接切库会让系统看到一台空库(菜品回到出厂种子、订单与会员全部为 0)。
+     请先在新库搬完数据, 再用 --allow-db-switch 重跑:
+       1) 建库与账号, 见 docs/mysql-migration.md
+       2) python3 <发布包>/backend/scripts/sqlite2mysql.py --sqlite ./data/dining.db --out ./data.sql
+       3) mysql -h <host> -u <user> -p <dbname> < ./data.sql
+       4) 把 data/master.key 一起带过去(否则已加密的支付密钥无法解密)
+     本次部署未改动任何文件。"
+    fi
+  fi
+
   # database 段: 新建的文件一定写; 已存在时只在本次传了 DB_* 才重写。
   if [ "$existed" = "0" ] || db_switch_requested; then
     block="$(mktemp)"
@@ -638,7 +703,12 @@ setup_service() {
       -e "s|^Group=dining|Group=$SERVICE_USER|" \
       "$src" > "/etc/systemd/system/$SERVICE_NAME.service"
 
-  systemctl daemon-reload
+  # 必须兜住失败: 脚本是 set -e, 裸执行 systemctl 一旦非 0 就立刻退出,
+  # 跳过后面的健康检查与 rollback —— 留下「新二进制已装、单元却没生效」的半吊子状态,
+  # 与文档承诺的「失败自动回滚」不符。
+  if ! systemctl daemon-reload; then
+    warn "systemctl daemon-reload 失败, 服务单元可能未生效(请手动执行后重启服务)"
+  fi
   systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
 }
 
@@ -717,7 +787,12 @@ fix_nginx_legacy_prefix() {
 restart_and_verify() {
   if [ "$HAS_SYSTEMD" = "1" ]; then
     log "重启服务 $SERVICE_NAME ..."
-    systemctl restart "$SERVICE_NAME"
+    # 同样不能裸执行: set -e 会直接退出, 把 rollback 一并跳过。
+    if ! systemctl restart "$SERVICE_NAME"; then
+      warn "服务重启失败: $SERVICE_NAME"
+      rollback
+      die "服务启动失败, 已回滚。排查: journalctl -u $SERVICE_NAME -n 100 --no-pager"
+    fi
   else
     warn "跳过重启(无 systemd), 直接做健康检查"
   fi
@@ -746,10 +821,19 @@ restart_and_verify() {
 prune_backups() {
   [ -d "$INSTALL_DIR/backup" ] || return 0
   local count=0 d
-  for d in $(ls -1dt "$INSTALL_DIR"/backup/*/ 2>/dev/null); do
+  local -a dirs=()
+  # 用 bash 通配 + 数组收集, 而不是 `for d in $(ls -1dt ...)`: 命令替换按空白分词,
+  # 安装目录一旦含空格, 备份路径会被拆成多个词, 后面的 rm -rf 就可能删到非预期路径。
+  for d in "$INSTALL_DIR"/backup/*/; do
+    [ -d "$d" ] && dirs+=("${d%/}")
+  done
+  [ "${#dirs[@]}" -gt 0 ] || return 0
+  # 备份目录名是 YYYYmmdd-HHMMSS, 字典序倒序即「最新在前」, 不必依赖 ls -t。
+  while IFS= read -r d; do
     count=$((count + 1))
     [ "$count" -gt "$KEEP_BACKUPS" ] && rm -rf "$d"
-  done
+  done < <(printf '%s\n' "${dirs[@]}" | LC_ALL=C sort -r)
+  return 0
 }
 
 # ============================================================================

@@ -352,9 +352,12 @@
           label="角色"
           name="roleId"
         >
+          <!-- 编辑自己时禁用角色下拉:这与后端「不能修改自己的角色」的规则保持一致
+               (不能只给一句提示却让用户改完再收到报错)。 -->
           <t-select
             v-model="form.roleId"
             :options="roleOptions"
+            :disabled="!!form.userId && isSelfId(form.userId)"
             placeholder="请选择角色"
           />
           <!-- 角色下拉为空时必须说清原因。后端 user:view 已隐含 role:view(见
@@ -583,6 +586,8 @@ async function load(): Promise<void> {
     });
     list.value = (res.items || []) as UserRow[];
     total.value = res.total || 0;
+  } catch {
+    /* 失败已由拦截器统一 toast;这里必须 catch,否则 onMounted(load) 会抛未处理的 Promise 拒绝 */
   } finally {
     loading.value = false;
   }

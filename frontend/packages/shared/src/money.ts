@@ -9,3 +9,16 @@ export function formatMoney(v: unknown): string {
 
 /** 供组件直接 import 使用(模板里可用),行为与全局 $money 完全一致。 */
 export const money = formatMoney;
+
+/**
+ * 金额四舍五入到两位小数(按分取整),用于购物车的逐项累加与优惠计算。
+ *
+ * H5（@dining/customer-core 的 useCart）与小程序（store/cart）共用这一份实现。
+ * 两端此前各写一份且实现漂移(一边加了 Number.EPSILON、一边没加),同一个购物车
+ * 在两端会显示出相差 1 分的合计金额 —— 顾客会认为其中一端算错了。
+ * 最终金额仍以后端重算为准(见 README「安全与生产要点」),这里只保证展示一致。
+ */
+export function round2(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.round((v + Number.EPSILON) * 100) / 100;
+}

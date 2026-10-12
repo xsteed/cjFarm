@@ -22,6 +22,8 @@ vi.mock('tdesign-vue-next', async importOriginal => {
 });
 
 vi.mock('@dining/api', () => ({
+  // @dining/auth 在模块加载时会注册它(见 perm.ts 末尾),漏了会让整个套件加载失败
+  onAuthCleared: vi.fn(),
   listTables: vi.fn(),
   getTableWeappCode: vi.fn()
 }));

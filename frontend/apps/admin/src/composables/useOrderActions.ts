@@ -50,7 +50,9 @@ export function useOrderActions(detail: Ref<OrderDetail | null>): OrderActions {
   const canMake = computed(() => canOperate.value && detail.value?.orderStatus === ORDER_STATUS_CODE.PLACED);
   const canServe = computed(() => canOperate.value && detail.value?.orderStatus === ORDER_STATUS_CODE.MAKING);
   const canPay = computed(() => canSettle.value && active.value && unpaid.value);
-  const canCancelOrder = computed(() => canCancelPerm.value && active.value);
+  // 取消仅对「未支付」订单开放:已收款订单必须先退款,后端 CancelOrder 同样拒绝
+  // (少了 unpaid 这道条件,按钮可点但点了必然报错)。
+  const canCancelOrder = computed(() => canCancelPerm.value && active.value && unpaid.value);
   const canFinish = computed(
     () => canOperate.value && detail.value?.orderStatus === ORDER_STATUS_CODE.SERVED && detail.value?.payStatus === 1
   );
@@ -64,12 +66,15 @@ export function useOrderActions(detail: Ref<OrderDetail | null>): OrderActions {
       detail.value?.settleType !== 'normal' &&
       !(detail.value?.settleType === 'credit' && detail.value?.creditStatus === 2)
   );
-  // 仅在线支付(微信/支付宝)且已支付、未全额退款的订单可发起在线退款
+  // 仅在线支付(微信/支付宝)且已支付、未全额退款的订单可发起在线退款。
+  // refundingAmount(处理中的退款单)同样占用可退额度,必须一并排除 ——
+  // 否则退款到账前按钮仍可点,点了会被后端按额度校验拒绝。
   const canRefundOrder = computed(
     () =>
       canRefundOperate.value &&
       detail.value?.payStatus === 1 &&
       ['wxpay', 'alipay'].includes(detail.value?.payChannel ?? '') &&
+      !(detail.value?.refundingAmount && detail.value.refundingAmount > 0) &&
       (detail.value?.refundAmount || 0) < (detail.value?.totalAmount || 0)
   );
   const hasExtraActions = computed(

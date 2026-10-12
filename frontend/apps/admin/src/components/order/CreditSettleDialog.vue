@@ -45,6 +45,10 @@ interface CreditTarget {
   orderId?: number;
   creditAmount?: number;
   totalAmount?: number;
+  /** 已成功退款（元）：后端核销额 = 应收 - 已退(含处理中)，必须一并扣减 */
+  refundAmount?: number;
+  /** 处理中的退款（元）：同样占用可退额度，核销时要扣 */
+  refundingAmount?: number;
 }
 
 const emit = defineEmits<{
@@ -60,7 +64,10 @@ const money = (v: unknown): string => Number(v || 0).toFixed(2);
 
 function open(row: CreditTarget): void {
   creditForm.orderId = Number(row.orderId);
-  creditForm.amount = Number(row.creditAmount || row.totalAmount);
+  // 与后端核销口径一致：应收 - 已成功退款 - 处理中退款。
+  // 若只看记账快照 creditAmount，挂账后被部分退款时弹窗会多显示，照此收款就会多收顾客的钱。
+  const due = Number(row.totalAmount ?? 0) - Number(row.refundAmount ?? 0) - Number(row.refundingAmount ?? 0);
+  creditForm.amount = due > 0 ? due : Number(row.creditAmount || row.totalAmount || 0);
   creditForm.payType = '现金';
   creditVisible.value = true;
 }

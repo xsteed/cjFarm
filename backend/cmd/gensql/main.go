@@ -1,4 +1,4 @@
-// Command gensql 从 internal/store 的表结构与学生成数据库脚本。
+// Command gensql 从 infrastructure/store 的表结构与学生成数据库脚本。
 //
 // 用法(在 backend 目录下执行):
 //
@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"dining-system/internal/store"
+	"dining-system/infrastructure/store"
 )
 
 func main() {
@@ -119,7 +119,7 @@ func sqliteSchemaHeader() []string {
 		"-- 扫码点餐管理系统 — 全量建表脚本(SQLite)",
 		"-- 文件名:schema.sql —— 全量建表脚本(通用命名)",
 		"-- ----------------------------------------------------------------------------",
-		"-- 本文件由 `go run ./cmd/gensql` 从 backend/internal/store 的表结构定义生成,",
+		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的表结构定义生成,",
 		"-- 请勿手工修改;需要变更表结构时改 Go 定义后重新生成。",
 		"--",
 		"-- 适用场景:全新部署 / 从零建库,执行后得到与后端代码完全一致的库结构",
@@ -140,7 +140,7 @@ func mysqlSchemaHeader() []string {
 		"-- 扫码点餐管理系统 — 全量建表脚本(MySQL 8.0 / 5.7,MariaDB 10.3+)",
 		"-- 文件名:schema.sql —— 全量建表脚本(通用命名)",
 		"-- ----------------------------------------------------------------------------",
-		"-- 本文件由 `go run ./cmd/gensql` 从 backend/internal/store 的表结构定义生成,",
+		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的表结构定义生成,",
 		"-- 请勿手工修改;需要变更表结构时改 Go 定义后重新生成。",
 		"--",
 		"-- 前置步骤(只需执行一次):",
@@ -173,7 +173,7 @@ func sqliteSeedHeader() []string {
 		"-- 扫码点餐管理系统 — 种子/存量数据(SQLite)",
 		"-- 文件名:seed.sql —— 种子/存量数据(通用命名)",
 		"-- ----------------------------------------------------------------------------",
-		"-- 本文件由 `go run ./cmd/gensql` 从 backend/internal/store 的种子数据生成,",
+		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,",
 		"-- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。",
 		"--",
 		"-- 内容:" + seedSummary() + "。",
@@ -193,7 +193,7 @@ func mysqlSeedHeader() []string {
 		"-- 扫码点餐管理系统 — 种子/存量数据(MySQL 8.0 / 5.7,MariaDB 10.3+)",
 		"-- 文件名:seed.sql —— 种子/存量数据(通用命名)",
 		"-- ----------------------------------------------------------------------------",
-		"-- 本文件由 `go run ./cmd/gensql` 从 backend/internal/store 的种子数据生成,",
+		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,",
 		"-- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。",
 		"--",
 		"-- 内容:" + seedSummary() + "。",

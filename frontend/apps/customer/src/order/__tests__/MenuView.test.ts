@@ -41,6 +41,15 @@ const menu: MenuCategory[] = [
   }
 ];
 
+// 卖家把唯一规格点成沽清（stock=0）的菜单：整道菜按「售罄」处理。
+const soldOutMenu: MenuCategory[] = [
+  {
+    categoryId: 1,
+    categoryName: '主食',
+    dishes: [{ dishId: 1, dishName: '牛肉面', specs: [{ specId: 11, specName: '小份', price: 18, stock: 0 }] }]
+  }
+];
+
 const openSheet = vi.fn();
 const changeQty = vi.fn();
 const selectSpec = vi.fn();
@@ -165,5 +174,39 @@ describe('MenuView 行的点击分工（对齐小程序：整行开弹层）', (
     await w.findAll('.op-dish')[3].find('.op-add').trigger('click');
     expect(openSheet).toHaveBeenCalledTimes(1);
     expect(changeQty).not.toHaveBeenCalled();
+  });
+});
+
+describe('MenuView 沽清菜品的步进器', () => {
+  it('沽清且不在购物车里：显示「售罄」占位，没有加减号', () => {
+    const w = mount(MenuView, {
+      props: { ...commonProps(), menu: soldOutMenu }
+    });
+    const row = w.findAll('.op-dish')[0];
+    expect(row.find('.op-soldout').text()).toBe('售罄');
+    expect(row.find('.op-stepper').exists()).toBe(false);
+    expect(row.find('.op-add').exists()).toBe(false);
+  });
+
+  it('沽清但已在购物车里：保留步进器，「−」可减、「+」置灰不可加', async () => {
+    const w = mount(MenuView, {
+      props: { ...commonProps(), menu: soldOutMenu, dishQty: () => 2 }
+    });
+    const row = w.findAll('.op-dish')[0];
+    // 不能把加减号整体换成「售罄」——那样顾客在卡片上减不掉，只能进购物车抽屉删。
+    expect(row.find('.op-stepper').exists()).toBe(true);
+    expect(row.find('.op-soldout').exists()).toBe(false);
+    expect(row.find('.op-stepper .n').text()).toBe('2');
+
+    await row.find('.op-stepper .m').trigger('click');
+    expect(changeQty).toHaveBeenCalledWith(expect.objectContaining({ dishId: 1 }), -1);
+
+    // 「+」置灰：点了不该加购、也不该弹层
+    changeQty.mockClear();
+    const plus = row.find('.op-stepper .p');
+    expect(plus.classes()).toContain('off');
+    await plus.trigger('click');
+    expect(changeQty).not.toHaveBeenCalled();
+    expect(openSheet).not.toHaveBeenCalled();
   });
 });

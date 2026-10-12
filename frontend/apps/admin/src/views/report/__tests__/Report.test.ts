@@ -70,6 +70,8 @@ vi.mock('echarts/components', () => ({
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }));
 
 vi.mock('@dining/api', () => ({
+  // @dining/auth 在模块加载时会注册它(见 perm.ts 末尾),漏了会让整个套件加载失败
+  onAuthCleared: vi.fn(),
   getReportSummary: vi.fn(),
   getDailyTrend: vi.fn(),
   getMonthlyTrend: vi.fn(),

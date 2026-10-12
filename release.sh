@@ -25,6 +25,12 @@
 #   DB_NAME=dining
 # (也可只给一行连接串: DB_DSN='dining:pw@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864')
 #
+# ⚠️ 切库需要额外的显式许可: sqlite -> mysql 时 deploy.sh 默认会**拒绝执行**,
+#    必须再加 ALLOW_DB_SWITCH=1(它会转成 --allow-db-switch)。因为切库**不会自动搬数据**,
+#    切到空库后系统会建表并灌入出厂种子, 现场表现与「数据全丢」无异。
+#    正确顺序: 先按 docs/mysql-migration.md 把数据搬过去, 再 ALLOW_DB_SWITCH=1 发版切库。
+#   ALLOW_DB_SWITCH=1
+#
 # 产物结构(与仓库相对路径一致, 包内 deploy/deploy.sh 可直接执行):
 #   dining-<版本>-<时间戳>/
 #   ├── backend/bin/dining-backend-linux-*   # 后端二进制
@@ -235,11 +241,22 @@ for _k in DB_DRIVER DB_DSN DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME DB_PARAMS
 done
 [ -n "$REMOTE_VARS" ] && log "将透传数据库配置(DB_*)到远程 deploy.sh"
 
+# 切库需要额外的显式许可: sqlite -> mysql 时 deploy.sh 默认拒绝(数据不会自动搬迁,
+# 切到空库会建表并灌入出厂种子, 现场表现与「数据全丢」无异)。
+# 想真的切就带上 ALLOW_DB_SWITCH=1。
+DEPLOY_EXTRA_ARGS=""
+if [ "${ALLOW_DB_SWITCH:-}" = "1" ]; then
+  DEPLOY_EXTRA_ARGS=" --allow-db-switch"
+elif [ -n "$REMOTE_VARS" ]; then
+  warn "本次透传了 DB_*: 若这是 sqlite -> mysql 的切换, 远程 deploy.sh 会拒绝执行(默认防误切空库)。"
+  warn "确认新库已搬完数据后, 用 ALLOW_DB_SWITCH=1 ./release.sh 重跑。"
+fi
+
 log "远程执行 deploy.sh (安装或更新, 自动识别) ..."
 # -t 分配 TTY, 便于远程 sudo 提示输入密码
 ssh -p "$SSH_PORT" -t "$SERVER" "set -e
   rm -rf '/tmp/$PKG_NAME' '/tmp/$TARBALL'
   cd /tmp && tar -xzf '$TARBALL'
-  cd '/tmp/$PKG_NAME' && sudo INSTALL_DIR='$INSTALL_DIR'$REMOTE_VARS bash deploy/deploy.sh --skip-build"
+  cd '/tmp/$PKG_NAME' && sudo INSTALL_DIR='$INSTALL_DIR'$REMOTE_VARS bash deploy/deploy.sh --skip-build$DEPLOY_EXTRA_ARGS"
 
 log "发布完成: $VERSION -> $SERVER:$INSTALL_DIR"

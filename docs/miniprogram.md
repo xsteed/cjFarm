@@ -24,7 +24,7 @@
 |---|---|---|
 | 扫小程序码 / 普通二维码进入 | `src/pages/index/index.ts` + `src/utils/scene.ts` | 支持 `scene=tableCode=X`、裸码值、`?tableCode=X`；无参数时用本地缓存兜底 |
 | 菜单浏览 | `src/pages/index/*` | 左侧分类 + 右侧菜品，右栏是**所有分类首尾相连的连续列表**（内容少的分类不会留白）；点分类平滑定位到对应分组标题，滚动时左侧高亮跟随，分组标题吸顶。菜品图/描述/价格（规格太多时显示「起」） |
-| 菜品搜索 | `src/pages/index/index.ts` + `src/utils/search.ts` | 菜名 / 描述 / 规格名模糊搜索：按「包含」匹配，并支持菜名的顺序包含（「红肉」→「红烧肉」）；多关键词是「与」。搜索态隐藏左栏、结果回到顶部 |
+| 菜品搜索 | `src/pages/index/index.ts` + `packages/customer-core/src/search.ts` | 菜名 / 描述 / 规格名模糊搜索：按「包含」匹配，并支持菜名的顺序包含（「红肉」→「红烧肉」）；多关键词是「与」。搜索态隐藏左栏、结果回到顶部。搜索实现已抽到 `@dining/customer-core`，与 H5 共用同一份 |
 | 行内规格 / 份数 | `src/pages/index/index.ts` | 规格 ≤3 个的菜在菜品行里直接点 chip 切换（与 H5 同口径：只算**所选规格**的份数），并在行内加减；规格更多只能进弹层 |
 | 售罄（人工） | 后端 `tb_dish.sold_out` + 管理端「售罄」开关 + 小程序/H5 顾客端 | 与「下架」正交：下架不再下发，售罄仍下发但置灰、盖「售罄」遮罩、不可下单 |
 | 售罄（自动 · 库存） | 后端 `tb_spec.stock` + 管理端规格库存输入 + 顾客端规格级/菜品级售罄 | 规格按库存计数：下单/加菜扣减、取消未支付订单回补、改单回补旧明细再扣新明细；扣到 0 该规格售罄、全部售罄则菜品售罄；`-1` 不限量。后端 `DecrementSpecStockTx` 带守卫原子扣减，并发抢光回滚整单 |
@@ -63,7 +63,7 @@ frontend/apps/miniprogram/
     ├── store/             # cart（购物车）/ session（桌台与订单）/ poller（轮询）
     ├── utils/             # toast / scene（桌台码解析）/ nav（点餐 ↔ 订单切页）
     ├── components/        # tab-bar（底部主导航）/ cart-bar（底部结算栏）/ spec-sheet（规格备注弹层）
-    └── pages/             # index（菜单）/ cart（确认下单）/ order（进度）/ pay（结账）
+    └── pages/             # index（菜单）/ cart（确认下单）/ order（进度）/ pay（结账）/ profile（我的）
 ```
 
 ### 命令
@@ -146,7 +146,9 @@ npm run test -w @dining/app-miniprogram   # 只跑单测（用例数与覆盖见
 | 6 | **主体与类目资质** | 未确认 | 餐饮/点餐类目需企业主体 + 营业执照 + 食品经营许可证；个人主体做不了微信支付 |
 | 7 | **用户隐私保护指引** | 未填写 | 若后续接 openid / 订阅消息 / 手机号，必须在公众平台声明采集项 |
 
-> 现阶段**不采集任何用户信息**（无 `wx.login`、无手机号），因此第 7 项可以暂缓。
+> 不采集手机号。顾客身份走的是 `wx.login` 静默换 openid（会员一期已实现，见 4.2 节），
+> 因此上线前**必须**先在公众平台补「用户隐私保护指引」声明（openid / 昵称 / 头像）——
+> 也就是硬前置第 7 项，不能再缓。
 
 ### 3.1 上线前必改的代码
 
@@ -236,8 +238,10 @@ POST /api/customer/pay/jsapi
 
 - 失败时返回业务错误码 + 中文 `msg`，前端据此提示「小程序内支付暂不可用，请用上方收款码或到前台结账」
   （不会重试、不会卡在支付页）。
-- 是否展示「微信支付」按钮，由公开配置 `wxpay_jsapi_enabled` 决定（`'1'` 才显示）；
-  后端没配这一项时该字段为空，按钮不出现。
+- 是否展示「微信支付」按钮，由公开配置 `wxpay_jsapi_enabled` 决定（`'1'` 才显示）。
+  **注意：这一项目前在后端还不存在**（`CustomerSettings()` 没下发它，管理端配置里也没有），
+  所以线上按钮恒不出现 —— 这是刻意的 fail-closed：宁可少一个入口，也不要出现
+  「点了在线支付却 404」。实现第 1~3 步时请一并把它加进 `CustomerSettings()` 与管理端配置项。
 - `signType` 取值限定 `MD5` / `HMAC-SHA256` / `RSA`（`PayJsapiResult` 已按 `wx.requestPayment` 收窄）。
 
 ⚠️ 关键约束：`openid` 是**同一个微信号在小程序下的** openid，与公众号下的不同。若 1、2 两步不做，
@@ -297,7 +301,7 @@ POST /api/customer/pay/jsapi
 
 ### 5.3 工程上的简化（不是缺陷，但要知道）
 
-- **不做代码分割**：产物是每页自包含的 CJS，axios 被内联进每个入口，8 个产物（4 页面 + 3 组件 + app）
+- **不做代码分割**：产物是每页自包含的 CJS，axios 被内联进每个入口，9 个产物（5 页面 + 3 组件 + app）
   的 JS 合计约 305KB，整个 `dist/`（含 wxml/wxss/json）约 460KB —— 主包上限 2MB，安全。
   要压到 ~70KB 可改 `format: 'esm'` + `splitting: true`（小程序支持 ESM，但需真机回归）；
   或把 axios 换成约 40 行的 `wx.request` 封装。
@@ -360,7 +364,7 @@ POST /api/customer/pay/jsapi
 | `src/pages/pay/__tests__/paid.test.ts`（2） | 支付成功先落「已付款」再回拉详情；延时跳转期间顾客手动返回不重复导航 |
 | `src/components/spec-sheet/__tests__/confirm.test.ts`（3） | 弹层「确定」的防重入：连点只加一份 |
 | `src/utils/__tests__/scene.test.ts`（10） | 小程序码 scene / 裸码值 / urlencode / 多参数 / 非法编码 / 空值 |
-| `src/utils/__tests__/search.test.ts`（14） | 关键词拆分（空白/中英文逗号）、菜名与描述与规格名命中、顺序包含、多关键词「与」、空词短路、过滤时不改写原菜单 |
+| `packages/customer-core/src/__tests__/search.test.ts` | 关键词拆分（空白/中英文逗号）、菜名与描述与规格名命中、顺序包含、多关键词「与」、空词短路、过滤时不改写原菜单（与 H5 共用同一份实现与用例） |
 | `src/utils/__tests__/nav.test.ts`（7） | 底部导航切页：已在目标页不跳、目标页在栈里就 `navigateBack`（含跨页 delta）、不在栈里 `redirectTo`（点餐页必须带 `append=1`，否则被弹回订单页） |
 | `src/utils/__tests__/toast.test.ts`（3） | 只有带图标的提示才截断到 7 字，纯文字提示完整保留 |
 
