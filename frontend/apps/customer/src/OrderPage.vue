@@ -345,6 +345,7 @@ import type { MenuCategory, OrderDetail, OrderSummary, PublicConfig, RemarkOptio
 import { isActiveStatus, safeSession, ui } from '@dining/shared';
 import { useCart, useOrderPolling, useUrge } from '@dining/customer-core';
 import type { ViewState } from '@dining/customer-core';
+import { setCustomerTitle } from './title';
 import { useCartPersist } from './composables/useCartPersist';
 import { useScrollSpy } from './composables/useScrollSpy';
 import HeroHeader from './order/HeroHeader.vue';
@@ -802,6 +803,7 @@ async function load(): Promise<void> {
     config.value = cfg;
     // 顶部展示「店铺名称 · 标语」(标语为系统配置的独立字段,留空则只显示名称)
     shopName.value = [cfg.shop_name, cfg.shop_slogan].filter(Boolean).join(' · ') || '扫码点餐';
+    setCustomerTitle(cfg.shop_name);
     table.value = tb;
     tableId.value = tb.tableId ?? 0;
     servingOrders.value = tb.servingOrders || [];

@@ -1,5 +1,5 @@
 # ============================================================================
-# 扫码点餐管理系统 - 根构建脚本(统一编排两个独立 Go module)
+# 点餐管理系统 - 根构建脚本(统一编排两个独立 Go module)
 #
 # backend/     后端服务(module: dining-system)
 # print-agent/ 门店本地打印代理(module: cjfarm/print-agent)

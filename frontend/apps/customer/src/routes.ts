@@ -15,12 +15,12 @@ export const customerRoutes: RouteRecordRaw[] = [
     path: '/order/:tableId',
     name: 'OrderPage',
     component: () => import('./OrderPage.vue'),
-    meta: { title: '扫码点餐' }
+    meta: { title: '扫码点餐', customer: true }
   },
   {
     path: '/printTicket',
     name: 'PrintTicket',
     component: () => import('./PrintTicket.vue'),
-    meta: { title: '打印票据' }
+    meta: { title: '打印票据', customer: true }
   }
 ];

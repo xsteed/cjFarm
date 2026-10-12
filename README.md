@@ -1,6 +1,6 @@
-# 扫码点餐管理系统
+# 点餐管理系统
 
-完整复刻自目标站点 `http://221.226.11.83:58085` 的「扫码点餐管理系统」。
+完整复刻自目标站点 `http://221.226.11.83:58085` 的「点餐管理系统」。
 
 - **前端**：Vue 3 + TDesign + Vue Router + Axios + ECharts（Vite 构建）
 - **后端**：Golang + Gin + SQLite / MySQL 双后端（默认 SQLite，纯 Go 驱动 `modernc.org/sqlite`，无需 CGO，天然支持交叉编译；**改环境变量即可切 MySQL**，见 [`docs/mysql-migration.md`](docs/mysql-migration.md)）
@@ -53,8 +53,14 @@ dining-system/
 │   ├── deploy.sh           # 服务器端部署/更新（自动识别首次安装或覆盖更新）
 │   ├── setup-nginx.sh      # Nginx 配置一键生成（server_name/HTTPS/校验/回滚/重载）
 │   ├── nginx-production.conf   # Nginx 配置模板（唯一来源，由 setup-nginx.sh 生成）
-│   ├── check-health.sh     # 健康检查（也可用于 cron 探测）
-│   └── dining-backend.service  # 服务端 systemd 服务单元
+│   ├── dining-backend.service  # 服务端 systemd 服务单元
+│   └── op/                 # 后端运维脚本一整套（安装到 <INSTALL_DIR>/op/，说明见 op/README.md）
+│       ├── p.sh / check-health.sh   #   状态一览 / 健康探测（cron、监控）
+│       ├── start|stop|restart.sh    #   服务启停（改完 config.yaml 必须 restart）
+│       ├── backup.sh / restore.sh   #   业务备份（DB+密钥+配置）/ 数据还原
+│       ├── upgrade.sh / rollback.sh #   用新发布包升级 / 回滚到升级前版本
+│       ├── install.sh / uninstall.sh#   首次安装 / 卸载（默认保留数据）
+│       └── _common.sh               #   内部共用库（非执行入口）
 ├── docs/                   # 文档
 │   ├── mysql-migration.md  #   切换到 MySQL 操作手册
 │   ├── print-agent.md      #   云部署 + 门店 9100 打印机的本地代理方案
@@ -486,7 +492,7 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 - 顾客下单金额由**后端以数据库价格为准重新计算**，不信任前端传入的价格，防止篡改。
 - 订单创建/改单/菜品规格等涉及多表写入的操作均使用**数据库事务**，保证数据一致性。
 - 食客下单成功后**自动触发网络打印机打印**：向启用的厨房单打印机打印厨房单、向食客小票打印机打印食客小票（ESC/POS，GBK 编码，异步执行，打印失败仅记录日志不影响下单）。
-- 上传接口限制**仅图片、单文件 ≤ 5MB**（按实际读入字节数校验，伪造 multipart 大小头无效），并对文件内容做**图片魔数嗅探**（防止伪造扩展名）；需登录且具备「菜品管理」或「系统配置修改」权限。
+- 上传接口限制**仅图片、单文件 ≤ 64MB**（按实际读入字节数校验，伪造 multipart 大小头无效），并对文件内容做**图片魔数嗅探**（防止伪造扩展名）；需登录且具备「菜品管理」或「系统配置修改」权限。
 - 员工口令以 **bcrypt**（自适应成本 + 内置随机盐）保存，不存明文，兼容校验历史「加盐 SHA-256」旧哈希并在登录成功后自动升级；账号不存在时也走一次等价耗时的校验（`WastePasswordVerify`），**防止用户名枚举**。
 - 登录接口内置**防暴力破解限流**（IP 与账号双维度：同一 IP 连续 5 次失败锁定 15 分钟；同一真实账号累计 5 次失败也锁定 15 分钟，防止攻击者换 IP 慢速爆破同一账号）；登录令牌为 HMAC-SHA256 签名（含过期时间），服务重启后旧令牌自动失效。启动时会探测引导管理员是否仍在使用默认口令 `admin123` 并打高可见度告警。
 - 前端图标改为**本地打包**（不依赖腾讯 CDN），内网离线环境可正常显示。

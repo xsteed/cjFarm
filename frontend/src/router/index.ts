@@ -13,6 +13,8 @@ declare module 'vue-router' {
     /** 菜单分组 key(见 apps/admin/src/menu.ts 的 MENU_GROUPS):同组的菜单收进一个可折叠子菜单;不填即一级菜单。 */
     group?: string;
     requiresAuth?: boolean;
+    /** 顾客端(H5)路由:标题由页面按「商家名 点餐系统」自行设置,不沿用管理端「- 管理系统」后缀。 */
+    customer?: boolean;
   }
 }
 
@@ -86,8 +88,10 @@ router.beforeEach(async to => {
 });
 
 router.afterEach(to => {
+  // 顾客端(H5)标题由各自页面在拿到商家配置后设置,跳过管理端的「- 管理系统」后缀。
+  if (to.meta.customer) return;
   if (to.meta.title) {
-    document.title = `${to.meta.title} - 扫码点餐管理系统`;
+    document.title = `${to.meta.title} - 管理系统`;
   }
 });
 

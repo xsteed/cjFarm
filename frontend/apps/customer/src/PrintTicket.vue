@@ -165,6 +165,7 @@ import { useRoute } from 'vue-router';
 import { getOrderByNo, getPublicConfig } from '@dining/api';
 import { money } from '@dining/shared';
 import type { OrderDetail } from '@dining/types';
+import { setCustomerTitle } from './title';
 
 // 模板里 $money 与全局属性共用 @dining/shared 里 money 的实现(TS 模板消费不到全局属性,须显式导入)。
 const $money = money;
@@ -203,6 +204,7 @@ onMounted(async () => {
   try {
     const cfg = await getPublicConfig();
     shopName.value = cfg.shop_name || '';
+    setCustomerTitle(cfg.shop_name);
   } catch {
     /* 店名拉取失败不阻塞票据查询,拦截器已提示 */
   }

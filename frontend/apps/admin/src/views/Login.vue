@@ -116,8 +116,8 @@ const router = useRouter();
 const route = useRoute();
 
 // 登录页标题:配置了店铺名就展示「店铺名称 · 点餐系统」(与侧栏左上角同一份取数与格式),
-// 未配置时回退默认的「扫码点餐管理系统」。useShopBrand 挂载时自动拉取,无需登录态。
-const { brandName } = useShopBrand('扫码点餐管理系统');
+// 未配置时回退默认的「点餐管理系统」。useShopBrand 挂载时自动拉取,无需登录态。
+const { brandName } = useShopBrand('点餐管理系统');
 const form = reactive<{ username: string; password: string }>({ username: '', password: '' });
 const loading = ref(false);
 const remember = ref(false);
