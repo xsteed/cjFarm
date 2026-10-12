@@ -265,11 +265,19 @@ async function doRevoke(): Promise<void> {
   try {
     if (confirmAll.value) {
       // 后端仅提供单条吊销;设备数是个位数,逐台吊销即可。
+      // 逐台独立 try:某一条已过期/被别处吊销而失败,不应中断后续设备,更不能跳过
+      // 本机令牌清理(否则本机残留一条已失效的令牌,下次打开必然白撞一次 401)。
+      let failed = 0;
       for (const row of list.value) {
-        await revokeRememberSession({ tokenId: row.tokenId });
+        try {
+          await revokeRememberSession({ tokenId: row.tokenId });
+        } catch {
+          failed++;
+        }
       }
       clearRemember();
-      MessagePlugin.success('已吊销全部设备的免登录');
+      if (failed > 0) MessagePlugin.warning(`已清理本机免登录,${failed} 台设备吊销失败(可能已失效),请刷新后重试`);
+      else MessagePlugin.success('已吊销全部设备的免登录');
     } else {
       const row = pending.value;
       if (!row) return;

@@ -53,6 +53,17 @@ func RoleSave(c *gin.Context) {
 		fail(c, "参数错误")
 		return
 	}
+	// 提权防护:新增角色同样是一次「授予权限」,不能授予超出自身权限的权限项,
+	// 否则只持 role:edit 的角色可造出全量权限角色再自行套用。见 EnsurePermsWithinOperator。
+	auth := currentAuth(c)
+	if auth == nil {
+		unauthorized(c, "未登录或登录已过期")
+		return
+	}
+	if err := service.EnsurePermsWithinOperator(p.PermList, auth.Perms); err != nil {
+		fail(c, err.Error())
+		return
+	}
 	id, detail, err := service.SaveRole(p.RoleKey, p.RoleName, p.PermList, p.SortOrder, p.Remark, adminName(c))
 	if err != nil {
 		fail(c, err.Error())
@@ -73,6 +84,16 @@ func RoleUpdate(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&p); err != nil || p.RoleID == 0 {
 		fail(c, "参数错误")
+		return
+	}
+	// 提权防护:不能把角色权限改成超出自身权限的子集(否则可改自己角色自提权)。见 EnsurePermsWithinOperator。
+	auth := currentAuth(c)
+	if auth == nil {
+		unauthorized(c, "未登录或登录已过期")
+		return
+	}
+	if err := service.EnsurePermsWithinOperator(p.PermList, auth.Perms); err != nil {
+		fail(c, err.Error())
 		return
 	}
 	detail, err := service.UpdateRole(p.RoleID, p.RoleKey, p.RoleName, p.PermList, p.SortOrder, p.Remark, adminName(c))

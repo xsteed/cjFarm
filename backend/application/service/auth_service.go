@@ -745,6 +745,46 @@ func EnsureRoleAssignable(roleID int, operatorPerms []string) error {
 	return nil
 }
 
+// EnsureUserPasswordResettable 校验操作人有权重置目标员工的密码。
+//
+// 与 EnsureRoleAssignable 同源:重置密码是比「改角色」更直接的提权路径 ——
+// 只持 user:edit 的角色若能把超管的密码重置掉,就能直接用新密码登录超管账号
+// 拿到全量权限,连「等对方下次登录」都不需要,完全绕过 role:edit。
+// 因此这里复用同一套规则:目标员工的角色权限集不得高于操作人自身。
+func EnsureUserPasswordResettable(userID int, operatorPerms []string) error {
+	u, err := dao.GetUserByID(userID)
+	if err != nil || u == nil {
+		return errors.New("员工不存在")
+	}
+	return EnsureRoleAssignable(u.RoleID, operatorPerms)
+}
+
+// EnsurePermsWithinOperator 校验「待写入角色的权限集」不高于操作人自身。
+//
+// 为什么必须有:role:edit 的持有者能改任意非内置 admin 角色的权限。若不校验子集,
+// 一个只给 role:edit 的自定义角色可以把自己所在角色的权限改成全量,下一次请求
+// AuthenticateToken 读到的 perms 即全量,RequirePerm 全部放行 —— 与
+// EnsureRoleAssignable 挡住的「授出高权限角色」是同一条提权路径的另一面。
+// 超级管理员持全量权限,永远满足子集关系,不受影响;权限不足者只能维护自己不超出自身的角色。
+func EnsurePermsWithinOperator(permList, operatorPerms []string) error {
+	have := make(map[string]bool, len(operatorPerms))
+	for _, p := range operatorPerms {
+		have[p] = true
+	}
+	for _, p := range permList {
+		if have[p] {
+			continue
+		}
+		// 非法权限码交由 service.SaveRole/UpdateRole 的 UnknownPerms 统一报「无效的权限项」,
+		// 这里只拦「合法但超出自身」的权限项,避免把两种错误混为一谈。
+		if len(store.UnknownPerms([]string{p})) > 0 {
+			continue
+		}
+		return errors.New("不能授予超出自身权限的权限项:" + p)
+	}
+	return nil
+}
+
 // validateRole 校验角色存在且启用。
 func validateRole(roleID int) error {
 	if roleID <= 0 {

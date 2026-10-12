@@ -289,6 +289,42 @@ func TestUserResetPasswordMissingID(t *testing.T) {
 	}
 }
 
+// TestUserResetPasswordRejectsHigherRole 只持 user:edit 的操作人不得重置权限更高的账号密码。
+//
+// 回归用例:重置密码是比「改角色」更直接的提权路径 —— 拿到超管密码即可直接登录超管账号;
+// 必须与 UserSave/UserUpdate 一致地校验「目标员工角色权限不高于操作人」。
+func TestUserResetPasswordRejectsHigherRole(t *testing.T) {
+	userInitDB(t)
+	adminID := userAdminID(t)
+	hashBefore := dao.GetUserPasswordHash(adminID)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/user/resetPassword",
+		strings.NewReader(`{"userId":`+strconv.Itoa(adminID)+`,"password":"newpass1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	c.Request = req
+	// 受限操作人:仅有 user:view / user:edit,不具备 role:edit。
+	setAuth(c, &dao.AuthInfo{
+		UserID: 99, Username: "limited", RealName: "受限员工",
+		RoleID: dao.RoleIDByKey(store.RoleKeyStaff), RoleKey: store.RoleKeyStaff, RoleName: "员工",
+		Status: po.UserStatusEnabled, Perms: []string{"user:view", "user:edit"},
+	})
+	UserResetPassword(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("越权重置应返回 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	resp := userJSON(t, w)
+	if msg, _ := resp["msg"].(string); !strings.Contains(msg, "权限") {
+		t.Fatalf("应提示权限不足, got %v", resp)
+	}
+	if dao.GetUserPasswordHash(adminID) != hashBefore {
+		t.Fatal("超管密码不应被越权重置")
+	}
+}
+
 // TestUserToggleStatus 停用/启用员工成功路径。
 func TestUserToggleStatus(t *testing.T) {
 	userInitDB(t)

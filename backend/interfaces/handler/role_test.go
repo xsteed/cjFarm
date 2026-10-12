@@ -41,6 +41,9 @@ func roleCall(t *testing.T, h gin.HandlerFunc, method, target, body string, para
 	if params != nil {
 		c.Params = params
 	}
+	// 注入超级管理员身份(全量权限):RoleSave/RoleUpdate 会校验「授予的权限不得超出
+	// 操作人自身」(service.EnsurePermsWithinOperator),测试里的操作人须为超管语义。
+	userSetAuth(c, userAdminID(t))
 	h(c)
 	return w
 }
@@ -169,6 +172,37 @@ func TestRoleUpdate(t *testing.T) {
 	resp := roleJSON(t, w)
 	if resp["msg"] != "修改成功" {
 		t.Fatalf("修改角色 msg 错误: %v", resp)
+	}
+}
+
+// TestRoleUpdateRejectsHigherPerm 只持 role:edit 的操作人不得把角色权限改成超出自身权限。
+//
+// 回归用例:role:edit 可改任意非内置 admin 角色;不校验子集时,受限角色能把自己所在角色
+// 的权限改成全量,下一次请求即拿到全部权限(自提权)。
+func TestRoleUpdateRejectsHigherPerm(t *testing.T) {
+	roleInitDB(t)
+	id := roleInsert(t, "low_role", "低权限角色")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/role/update",
+		strings.NewReader(`{"roleId":`+strconv.Itoa(id)+`,"roleKey":"low_role","roleName":"低权限角色","permList":["order:settle","user:edit"],"sortOrder":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	c.Request = req
+	setAuth(c, &dao.AuthInfo{
+		UserID: 88, Username: "limited", RealName: "受限员工",
+		RoleID: dao.RoleIDByKey(store.RoleKeyCashier), RoleKey: store.RoleKeyCashier, RoleName: "收银员",
+		Status: po.UserStatusEnabled, Perms: []string{"role:view", "role:edit"},
+	})
+	RoleUpdate(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("越权修改角色权限应返回 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	resp := roleJSON(t, w)
+	if msg, _ := resp["msg"].(string); !strings.Contains(msg, "超出自身权限") {
+		t.Fatalf("应提示权限超范围, got %v", resp)
 	}
 }
 

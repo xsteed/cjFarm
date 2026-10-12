@@ -113,6 +113,18 @@ func UserResetPassword(c *gin.Context) {
 		fail(c, "参数错误")
 		return
 	}
+	// 提权防护:重置密码是比「改角色」更直接的提权入口 —— 只持 user:edit 的角色
+	// 若能重置超管密码,就能直接登录超管账号。与 UserSave/UserUpdate 一致地校验
+	// 「目标员工的角色权限不高于操作人」。见 service.EnsureUserPasswordResettable。
+	auth := currentAuth(c)
+	if auth == nil {
+		unauthorized(c, "未登录或登录已过期")
+		return
+	}
+	if err := service.EnsureUserPasswordResettable(p.UserID, auth.Perms); err != nil {
+		fail(c, err.Error())
+		return
+	}
 	if err := service.ResetUserPassword(p.UserID, p.Password, adminName(c)); err != nil {
 		fail(c, err.Error())
 		return
