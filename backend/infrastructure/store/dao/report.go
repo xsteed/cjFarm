@@ -198,9 +198,10 @@ func FreeTableCount() int {
 }
 
 // ActiveOrderCount 统计进行中的订单数。
-func ActiveOrderCount() int {
+func ActiveOrderCount(guardBizDate string) int {
+	guard, args := bizDateGuardSQL(guardBizDate)
 	var v int
-	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE order_status IN (1,2,3)`).Scan(&v)
+	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE order_status IN (1,2,3)`+guard, args...).Scan(&v)
 	return v
 }
 

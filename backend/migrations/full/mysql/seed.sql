@@ -5,7 +5,7 @@
 -- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 40 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 内容:系统配置 43 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
 -- 执行方式:mysql -u dining -p dining < seed.sql
 -- 幂等性  :全部使用 INSERT IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
@@ -22,6 +22,7 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('alipay_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('alipay_notify_url', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('alipay_private_key_path', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('alipay_public_key', '');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('biz_date_cutoff_hour', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_api_url', 'https://api.feieyun.cn/Api/Open/');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_ukey', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_user', '');
@@ -34,16 +35,18 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_on_append',
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_on_order', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_qr', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_discount', '1');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_seat_fee', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_show_price', '0');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_split_by_item', '0');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_split_mode', 'whole');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_discount', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_threshold', '100');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee', '6');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee_enabled', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_logo', '');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场 柴火农家土菜');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场 · 柴火农家土菜');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_enabled', '0');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_hours', '4');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_release_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_app_secret', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_code_env_version', 'release');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_apiv3_key', '');  -- 敏感项,落库前会自动加密

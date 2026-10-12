@@ -61,6 +61,7 @@ var routePerms = map[string]string{
 	"POST /api/admin/table/save":      "table:edit",
 	"POST /api/admin/table/update":    "table:edit",
 	"POST /api/admin/table/lock":      "table:edit",
+	"POST /api/admin/table/release":   "table:edit",
 	"DELETE /api/admin/table/:id":     "table:edit",
 
 	// ---- 分类 ----
@@ -114,7 +115,9 @@ var routePerms = map[string]string{
 	"GET /api/admin/print/preview":         "printer:edit",
 	"POST /api/admin/print/preview/sample": "printer:edit",
 	"POST /api/admin/print/log/reprint":    "printer:edit",
-	"POST /api/admin/order/reprint":        "printer:edit",
+	// 测试页预览只读渲染,给 view 权限即可:不会出纸,也不改任何状态。
+	"GET /api/admin/printer/preview/:id": "printer:view",
+	"POST /api/admin/order/reprint":      "printer:edit",
 
 	// ---- 系统配置 ----
 	"GET /api/admin/config/list":         "config:view",
@@ -124,6 +127,7 @@ var routePerms = map[string]string{
 	// ---- 订单 ----
 	"GET /api/admin/order/list":           "order:view",
 	"GET /api/admin/order/board":          "order:view",
+	"GET /api/admin/order/stale":          "order:view",
 	"GET /api/admin/order/urge/list":      "order:view",
 	"GET /api/admin/order/:id":            "order:view",
 	"POST /api/admin/order/status":        "order:operate",

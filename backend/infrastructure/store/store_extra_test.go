@@ -407,6 +407,47 @@ func TestSvcEnsureTableCodeNotFound(t *testing.T) {
 // seed.go
 // ============================================================================
 
+// TestSvcSettingDefaultShopNameIsBrandDotSlogan 出厂店铺名必须是「品牌 · 标语」
+// (中点分隔):桌牌二维码按 [·•] 取品牌名,小票抬头与顾客端顶部直接展示整串。
+func TestSvcSettingDefaultShopNameIsBrandDotSlogan(t *testing.T) {
+	if got := SettingDefault("shop_name"); !strings.Contains(got, "·") {
+		t.Fatalf("店铺名出厂默认应含中点分隔符, got %q", got)
+	}
+}
+
+// TestSvcMigrateShopNameDot 老库升级:仍是出厂默认且用空格分隔的店铺名被改写成中点分隔;
+// 门店自定义的名字(即便是别的空格写法)一律不动。
+func TestSvcMigrateShopNameDot(t *testing.T) {
+	svcTxInit(t, "shopname-dot.db")
+	setShopName := func(v string) {
+		if _, err := DB.Exec(`UPDATE tb_config SET cfg_value=? WHERE cfg_key='shop_name'`, v); err != nil {
+			t.Fatalf("写入店铺名失败: %v", err)
+		}
+	}
+	readShopName := func() string {
+		var v string
+		if err := DB.QueryRow(`SELECT cfg_value FROM tb_config WHERE cfg_key='shop_name'`).Scan(&v); err != nil {
+			t.Fatalf("读取店铺名失败: %v", err)
+		}
+		return v
+	}
+
+	// 1) 出厂默认(空格分隔)→ 改写为中点分隔。
+	setShopName(legacyShopNameWithSpace)
+	migrateShopNameDot()
+	if got, want := readShopName(), SettingDefault("shop_name"); got != want {
+		t.Fatalf("出厂默认店铺名应改写为 %q, got %q", want, got)
+	}
+
+	// 2) 门店自定义的名字不动(改过名就是商家自己的口径,启动时不得悄悄改写)。
+	const custom = "自家菜馆 老字号"
+	setShopName(custom)
+	migrateShopNameDot()
+	if got := readShopName(); got != custom {
+		t.Fatalf("自定义店铺名不应被改写, got %q", got)
+	}
+}
+
 func TestSvcSettingDefault(t *testing.T) {
 	if got := SettingDefault("shop_name"); got == "" {
 		t.Fatal("shop_name 应有出厂默认值")

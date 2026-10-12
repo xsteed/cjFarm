@@ -98,6 +98,14 @@ func OrderGet(c *gin.Context) {
 	ok(c, dto.FromOrder(o, items, pendingUrge))
 }
 
+// OrderStale 未结账超时告警:当天开台超过配置阈值仍未收款的订单。
+//
+// 开关与阈值一并下发(而不是让前端去读系统配置):告警开关属 config:edit 侧的管理项,
+// 而看板只要 order:view 就能进 —— 前端各自判断会出现「开关开了但界面不显示」的错配。
+func OrderStale(c *gin.Context) {
+	ok(c, service.ListStaleOrderAlerts())
+}
+
 // OrderBoard 看板:所有桌台 + 每桌当前进行中订单。
 func OrderBoard(c *gin.Context) {
 	tables, err := service.OrderBoard()

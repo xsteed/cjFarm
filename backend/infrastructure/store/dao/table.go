@@ -34,6 +34,29 @@ func SetTableStatusTx(tx *sql.Tx, tableID, status int) error {
 	return err
 }
 
+// GetTableStatus 读取桌台占用状态(0 空闲 / 1 占用)。桌台不存在或已删除时返回错误。
+func GetTableStatus(tableID int) (int, error) {
+	var s int
+	err := store.DB.QueryRow(`SELECT status FROM tb_table WHERE table_id=? AND del_flag='0'`, tableID).Scan(&s)
+	return s, err
+}
+
+// SetTableStatus 非事务版桌台状态更新,返回受影响行数(0 表示桌台不存在或已删除)。
+//
+// 仅供「强制清台」这类人工兜底操作使用:它跨多笔订单逐个结算/取消,无法整体放进
+// 一个事务;常规流转一律走 SetTableStatusTx 以保证与订单变更原子完成。
+func SetTableStatus(tableID, status int) (int64, error) {
+	res, err := store.DB.Exec(`UPDATE tb_table SET status=?, update_time=? WHERE table_id=? AND del_flag='0'`, status, store.Now(), tableID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // OccupyTableTx 在事务中占用桌台,带未删除与「未被人工停用/预约」守卫;返回受影响行数
 // (0 表示桌台不存在)。桌台被停用/预约时返回 ErrTableLocked。
 //

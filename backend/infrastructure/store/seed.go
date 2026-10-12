@@ -48,7 +48,9 @@ func seed() {
 // 既用于首次初始化,也用于每次启动补齐「缺失」的键(冲突则忽略,绝不覆盖已有值)。
 // 该表同时是 migrations/*/seed.sql 中 tb_config 部分的数据来源。
 var settingDefaults = map[string]string{
-	"shop_name":           "长健农场 柴火农家土菜",
+	// 店铺名即「品牌 · 标语」组合:顾客端顶部、小票抬头直接整串展示,
+	// 桌牌二维码按 [·•] 取前一段作品牌名(见前端 shopBrandName),故分隔符必须是中点。
+	"shop_name":           "长健农场 · 柴火农家土菜",
 	"shop_logo":           "",
 	"seat_fee_enabled":    "1",
 	"seat_fee":            "6",
@@ -62,30 +64,30 @@ var settingDefaults = map[string]string{
 	//   print_enabled             打印总开关,关闭后所有自动打印一律跳过(手动补打仍可用);
 	//   print_kitchen_show_price  厨房单是否带单价与金额(默认不打,后厨只看菜名和数量);
 	//   print_guest_footer        食客小票页脚文案,清空则不打印页脚(门店可改成自己的口号);
-	//   print_guest_show_seat_fee 食客小票是否显示茶位费行(默认显示,对账透明);
 	//   print_guest_show_discount 食客小票是否显示优惠行(默认显示,有优惠时才出现该行);
 	//   print_guest_qr            小票末尾是否打印二维码(默认关:需先确认 H5 地址手机可访问、
 	//                             且打印机支持 GS ( k 二维码指令,否则会在票尾留一块空白或乱码);
 	//   print_guest_on_append     加菜后是否向小票机出「加菜小票」(只列本次新菜,默认开);
 	//   print_guest_on_order      下单后是否向小票机出「点菜单」(默认开,嫌与结账小票重复可关)。
-	//   print_kitchen_split_by_item 厨房单按菜品拆小票(默认关:开启后每道菜单独出一张带桌号的
-	//                             小票,方便夹在菜上/送菜;整单备注会随每张小票重复打印,费纸)。
-	"print_enabled":               "1",
-	"print_kitchen_show_price":    "0",
-	"print_kitchen_split_by_item": "0",
-	"print_guest_footer":          "谢谢惠顾,欢迎再次光临",
-	"print_guest_show_seat_fee":   "1",
-	"print_guest_show_discount":   "1",
-	"print_guest_qr":              "0",
-	"print_guest_on_append":       "1",
-	"print_guest_on_order":        "1",
+	//   print_kitchen_split_mode  厨房单打印粒度:whole=整单一张(默认)/ item=一菜一单 /
+	//                             portion=一菜一单且按份数拆(点 3 份出 3 张)。拆单后每张小票
+	//                             带桌号(放大居中)与序号(如 2/5),方便夹在菜上、传菜对口;
+	//                             整单备注会随每张小票重复打印,菜品多时更费纸。
+	"print_enabled":             "1",
+	"print_kitchen_show_price":  "0",
+	"print_kitchen_split_mode":  "whole",
+	"print_guest_footer":        "谢谢惠顾,欢迎再次光临",
+	"print_guest_show_discount": "1",
+	"print_guest_qr":            "0",
+	"print_guest_on_append":     "1",
+	"print_guest_on_order":      "1",
 	// 飞鹅云打印(provider=feie 的打印机使用)。
 	//   feie_user    飞鹅云后台注册账号(手机号/邮箱);
 	//   feie_ukey    开发者 UKEY —— 敏感项,落库前自动加密,接口不回显;
-	//   feie_api_url 接口地址,国内默认 api.de.feieyun.com,海外/私有云可改。
+	//   feie_api_url 接口地址,国内默认 api.feieyun.cn,海外/私有云可改。
 	"feie_user":    "",
 	"feie_ukey":    "",
-	"feie_api_url": "https://api.de.feieyun.com/Api/Open/",
+	"feie_api_url": "https://api.feieyun.cn/Api/Open/",
 	// 本地打印代理(provider=agent 的打印机使用)。
 	//   agent_token 门店代理程序出站拉单时的鉴权令牌 —— 敏感项,落库前自动加密、
 	//   接口不回显;留空表示未启用代理通道(代理程序会被拒绝,并提示去系统配置填写)。
@@ -114,6 +116,24 @@ var settingDefaults = map[string]string{
 	"alipay_private_key_path": "",
 	"alipay_public_key":       "",
 	"alipay_notify_url":       "",
+	// 桌台遗留订单防护(两项默认都关:开不开取决于店家的营业习惯与营业时段)。
+	// 未接在线支付时「收款」全靠店家手动点,漏点一次桌台就永远占用,下一桌扫码会被
+	// 直接带进上一桌的账单。这里提供两道防线(实现见 application/service/stale_service.go):
+	//   stale_release_enabled 跨日自动清台:超过一个营业日仍未结账的订单,其桌台自动恢复
+	//     空闲,且顾客端读取/下单防重/桌台释放判定同步隔离这些旧单。只动桌台状态,不动
+	//     订单与账务 —— 自动补结账会虚增营收、自动作废会漏记收入,都比留一张待处理的单危险。
+	//   stale_alert_enabled   未结账超时告警:看板上标出当天开台超过 N 小时还没收款的桌。
+	//     不改变任何状态,只是把「可能要忘」推到店员眼前。
+	//   stale_alert_hours     告警阈值(小时,合法区间 1~72;越界回落 4)。
+	//   biz_date_cutoff_hour  营业日切换时刻(0~12 点,0 = 按自然日 00:00 切换)。
+	// 营业日不等同于自然日:晚市客人 23:50 下单、00:30 还在吃是常态。若一律按 00:00 切,
+	// 这些订单会在午夜瞬间变成「上一营业日的遗留单」—— 客人看不到自己的单、还能重复
+	// 下单,服务员在看板上也找不到它去收款。把切换时刻后移到打烊之后(如凌晨 4 点),
+	// 营业日才真正对上「这一场营业」;它同时决定当日取餐号在哪一刻重置回 1。
+	"stale_release_enabled": "0",
+	"stale_alert_enabled":   "0",
+	"stale_alert_hours":     "4",
+	"biz_date_cutoff_hour":  "0",
 }
 
 // SettingDefault 返回配置项出厂默认值(不存在时返回空串)。

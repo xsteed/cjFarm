@@ -107,7 +107,7 @@ func OrderBoard() ([]BoardTable, error) {
 	// 一次取出待处理催菜集合,循环内直接查表标记,避免 N+1 查询。
 	pendingUrges := dao.PendingUrgeOrderIDs()
 
-	activeOrders, err := dao.ListActiveOrders()
+	activeOrders, err := dao.ListActiveOrders(StaleGuardBizDate())
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +161,10 @@ func OrderBoard() ([]BoardTable, error) {
 // 一桌多单场景下,某一单完成/取消/结账不等于整桌空闲,必须等该桌所有订单
 // 都走出餐流程(4/5)后才置空闲,避免「还有单在出餐却显示空闲」。
 // 必须在当前订单已更新为终态之后调用(计数才不会把当前单算进去)。
-func releaseTableIfIdle(tx *sql.Tx, tableID int) error {
-	n, err := dao.CountUnfinishedOrdersTx(tx, tableID)
+func releaseTableIfIdle(tx *sql.Tx, tableID int, guardBizDate string) error {
+	// 带营业日隔离:跨日遗留单不算「还在出餐」,否则桌台永远释放不掉。
+	// 隔离值由调用方在事务外取好传入(见 customer_service.CustomerCreateOrder 的说明)。
+	n, err := dao.CountUnfinishedOrdersTx(tx, tableID, guardBizDate)
 	if err != nil {
 		return err
 	}
@@ -203,6 +205,8 @@ func ChangeOrderStatus(orderID, target int, reason, operator string) error {
 	if err != nil {
 		return fmt.Errorf("订单不存在")
 	}
+	// 营业日隔离值在事务外取:事务内读 tb_config 会与已持有的写锁叠加(SQLite)。
+	guard := StaleGuardBizDate()
 	// 订单状态变更与桌台占用/释放需原子完成,避免中间态。
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 带当前状态守卫:并发「完成」与「取消」只有先到者生效。
@@ -228,10 +232,10 @@ func ChangeOrderStatus(orderID, target int, reason, operator string) error {
 					return err
 				}
 			}
-			return releaseTableIfIdle(tx, tableID)
+			return releaseTableIfIdle(tx, tableID, guard)
 		}
 		if target == OrderStatusFinished {
-			return releaseTableIfIdle(tx, tableID)
+			return releaseTableIfIdle(tx, tableID, guard)
 		} else if target >= OrderStatusPlaced && target <= OrderStatusDining {
 			return dao.SetTableStatusTx(tx, tableID, 1)
 		}
@@ -341,6 +345,7 @@ func SettleOrder(orderID int, settleTypeRaw, payTypeRaw, remark, operator string
 		payType = "挂账"
 	}
 	now := store.Now()
+	guard := StaleGuardBizDate()
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 带守卫:仅「进行中且未支付」可结账。并发两次结账时只有先到者生效。
 		// pre_settle_status 记录结账前的真实状态,撤销结算时按它恢复而非硬编码回 3。
@@ -361,7 +366,7 @@ func SettleOrder(orderID int, settleTypeRaw, payTypeRaw, remark, operator string
 		if n == 0 {
 			return fmt.Errorf("订单状态已变更，请刷新后重试")
 		}
-		return releaseTableIfIdle(tx, info.TableID)
+		return releaseTableIfIdle(tx, info.TableID, guard)
 	})
 	if err != nil {
 		return SettleOutcome{}, err
@@ -485,6 +490,7 @@ func FinishOrder(orderID int, operator string) error {
 	if err != nil {
 		return fmt.Errorf("订单不存在")
 	}
+	guard := StaleGuardBizDate()
 	err = store.WithTx(func(tx *sql.Tx) error {
 		n, err := dao.FinishOrderTx(tx, orderID, operator, curStatus)
 		if err != nil {
@@ -493,7 +499,7 @@ func FinishOrder(orderID int, operator string) error {
 		if n == 0 {
 			return fmt.Errorf("订单状态已变更，请刷新后重试")
 		}
-		return releaseTableIfIdle(tx, tableID)
+		return releaseTableIfIdle(tx, tableID, guard)
 	})
 	if err != nil {
 		return err
@@ -519,6 +525,7 @@ func CancelOrder(orderID int, reason, operator string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("订单不存在")
 	}
+	guard := StaleGuardBizDate()
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 带守卫:防止「取消」与「收款/完成」并发时同时生效。
 		n, err := dao.CancelOrderTx(tx, orderID, reason, operator, curStatus)
@@ -538,7 +545,7 @@ func CancelOrder(orderID int, reason, operator string) (string, error) {
 				return err
 			}
 		}
-		return releaseTableIfIdle(tx, tableID)
+		return releaseTableIfIdle(tx, tableID, guard)
 	})
 	if err != nil {
 		return "", err

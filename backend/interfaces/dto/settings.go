@@ -36,12 +36,13 @@ type Settings struct {
 	AlipayPublicKey      string `json:"alipay_public_key"`
 	AlipayNotifyURL      string `json:"alipay_notify_url"`
 	// 小票打印
-	PrintEnabled            string `json:"print_enabled"`               // 打印总开关
-	PrintKitchenShowPrice   string `json:"print_kitchen_show_price"`    // 厨房单是否带单价金额
-	PrintKitchenSplitByItem string `json:"print_kitchen_split_by_item"` // 厨房单按菜品拆小票("1"=每道菜单独出一张)
+	PrintEnabled          string `json:"print_enabled"`            // 打印总开关
+	PrintKitchenShowPrice string `json:"print_kitchen_show_price"` // 厨房单是否带单价金额
+	// 厨房单打印粒度:whole=整单一张(默认)/ item=一菜一单 / portion=一菜一单且按份数拆
+	PrintKitchenSplitMode string `json:"print_kitchen_split_mode"`
 	// 食客小票模板配置(方案A:高频变化点做成设置项,后端渲染实时读取)
+	// 金额区按「有才打」渲染(茶位费/优惠/赠送),没有对应的展示开关。
 	PrintGuestFooter       string `json:"print_guest_footer"`        // 页脚文案,清空则不打印页脚
-	PrintGuestShowSeatFee  string `json:"print_guest_show_seat_fee"` // 是否显示茶位费行("1"=显示)
 	PrintGuestShowDiscount string `json:"print_guest_show_discount"` // 是否显示优惠行("1"=显示)
 	PrintGuestQR           string `json:"print_guest_qr"`            // 小票末尾是否打印二维码("1"=打印)
 	PrintGuestOnAppend     string `json:"print_guest_on_append"`     // 加菜后是否出加菜小票("1"=打印)
@@ -59,6 +60,12 @@ type Settings struct {
 	AgentTokenClear string `json:"agent_token_clear,omitempty"`
 	// 代理最新版本号(普通配置项):管理端配置后随 ping 下发给代理,代理据此提示门店升级。
 	AgentLatestVersion string `json:"agent_latest_version"`
+	// 桌台遗留订单防护(两项默认关,详见 store.settingDefaults 的说明)
+	StaleReleaseEnabled string `json:"stale_release_enabled"` // 跨日自动清台开关
+	StaleAlertEnabled   string `json:"stale_alert_enabled"`   // 未结账超时告警开关
+	StaleAlertHours     string `json:"stale_alert_hours"`     // 告警阈值(小时,1~72)
+	// 营业日切换时刻(0~12 点,0=自然日 00:00)。同时决定跨日清台的判定边界与当日取餐号的重置时刻。
+	BizDateCutoffHour string `json:"biz_date_cutoff_hour"`
 	// 配置内容指纹(乐观锁):SettingList 下发,SettingSave 原样带回校验。
 	Version string `json:"version,omitempty"`
 }

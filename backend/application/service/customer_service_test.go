@@ -182,6 +182,45 @@ func TestCustomerSvcCreateOrder(t *testing.T) {
 	})
 }
 
+// TestCustomerSvcCreateOrderIgnoresGift 顾客端提交的 isGift 必须被强制清零。
+//
+// 回归用例:is_gift 是商家改单标记,赠送菜不计入应收金额;若顾客端原样接受请求体里的
+// isGift,任何人都能把菜品标成赠送实现零元下单(库存照扣、金额记 0),属于资损漏洞。
+func TestCustomerSvcCreateOrderIgnoresGift(t *testing.T) {
+	customerSvcInit(t)
+	dishID, specID := customerSvcSpecID(t)
+
+	// 基准:正常下单的应付金额(桌台 1)。
+	normal, err := CustomerCreateOrder(0, 1, 2, "", []dto.OrderItem{{DishID: dishID, SpecID: specID, Quantity: 2}})
+	if err != nil {
+		t.Fatalf("正常下单应成功, got %v", err)
+	}
+	if normal.TotalAmount <= 0 {
+		t.Fatalf("正常下单金额应大于 0, got %v", normal.TotalAmount)
+	}
+
+	// 顾客谎报赠送(桌台 2):应被忽略,金额与正常单一致而不是 0。
+	order, err := CustomerCreateOrder(0, 2, 2, "", []dto.OrderItem{
+		{DishID: dishID, SpecID: specID, Quantity: 2, IsGift: 1, GiftReason: "顾客自填"},
+	})
+	if err != nil {
+		t.Fatalf("下单应成功, got %v", err)
+	}
+	if order.TotalAmount != normal.TotalAmount {
+		t.Fatalf("顾客端 isGift 应被忽略:总金额 %v != 正常单 %v", order.TotalAmount, normal.TotalAmount)
+	}
+	// 明细落库的 is_gift 必须为 0,否则让利报表会被污染。
+	var isGift int
+	var giftReason string
+	if err := store.DB.QueryRow(`SELECT is_gift, COALESCE(gift_reason,'') FROM tb_order_item WHERE order_id=?`,
+		order.OrderID).Scan(&isGift, &giftReason); err != nil {
+		t.Fatalf("读取订单明细失败: %v", err)
+	}
+	if isGift != 0 || giftReason != "" {
+		t.Fatalf("顾客端提交的赠送标记不应落库: is_gift=%d gift_reason=%q", isGift, giftReason)
+	}
+}
+
 func TestCustomerSvcOrderByNo(t *testing.T) {
 	customerSvcInit(t)
 	dishID, specID := customerSvcSpecID(t)

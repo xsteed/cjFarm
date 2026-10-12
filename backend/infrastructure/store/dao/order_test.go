@@ -80,7 +80,7 @@ func TestOrderInsertAndScanRoundTrip(t *testing.T) {
 func TestGetActiveOrderByTable(t *testing.T) {
 	orderDaoInitDB(t)
 
-	if _, ok := GetActiveOrderByTable(1); ok {
+	if _, ok := GetActiveOrderByTable(1, ""); ok {
 		t.Fatal("无进行中订单时应返回 ok=false")
 	}
 
@@ -94,12 +94,62 @@ func TestGetActiveOrderByTable(t *testing.T) {
 		t.Fatalf("归档订单失败: %v", err)
 	}
 
-	active, ok := GetActiveOrderByTable(1)
+	active, ok := GetActiveOrderByTable(1, "")
 	if !ok {
 		t.Fatal("应存在进行中订单")
 	}
 	if active.OrderNo != "D-ACTIVE-0002" {
 		t.Fatalf("应返回最近的进行中订单, got %s", active.OrderNo)
+	}
+}
+
+// TestActiveOrderQueriesRespectBizDateGuard 营业日隔离:带隔离值时,更早营业日的
+// 订单不再被当作「本桌进行中」—— 这是跨日自动清台不让旧单串给新客人的核心。
+func TestActiveOrderQueriesRespectBizDateGuard(t *testing.T) {
+	orderDaoInitDB(t)
+
+	// 一笔昨天的未结账进行中订单
+	if _, err := store.DB.Exec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, biz_date,
+		order_status, total_amount, pay_status, create_time, update_time)
+		VALUES('D-STALE-0001', 7, '07', '旧桌', '2026-01-01', 3, 5000, 0, '2026-01-01 12:00:00', '2026-01-01 12:00:00')`); err != nil {
+		t.Fatalf("插入跨日订单失败: %v", err)
+	}
+	// 一笔不明营业日(biz_date 为空)的进行中订单,挂在另一桌
+	if _, err := store.DB.Exec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, biz_date,
+		order_status, total_amount, pay_status, create_time, update_time)
+		VALUES('D-NODATE-0001', 8, '08', '无日期桌', NULL, 3, 6000, 0, '2026-01-01 12:00:00', '2026-01-01 12:00:00')`); err != nil {
+		t.Fatalf("插入无日期订单失败: %v", err)
+	}
+
+	// 不隔离(传空串):两笔都能查到,行为与历史一致
+	if _, ok := GetActiveOrderByTable(7, ""); !ok {
+		t.Fatal("不隔离时应能看到跨日订单")
+	}
+	if _, ok := GetUnpaidOrderByTable(7, ""); !ok {
+		t.Fatal("不隔离时应能看到跨日未结账订单")
+	}
+
+	// 隔离到今天:昨天的单被挡掉
+	if _, ok := GetActiveOrderByTable(7, "2026-10-13"); ok {
+		t.Fatal("隔离后不应再返回更早营业日的订单")
+	}
+	if _, ok := GetUnpaidOrderByTable(7, "2026-10-13"); ok {
+		t.Fatal("隔离后不应再返回更早营业日的未结账订单")
+	}
+	if n := len(ListServingOrdersByTable(7, "2026-10-13")); n != 0 {
+		t.Fatalf("隔离后不应再返回更早营业日的出餐中订单, got %d", n)
+	}
+
+	// biz_date 为空的行无从判定归属,一律放行(保守:宁可留给店家人工处理,
+	// 也不能把一张正在用餐的桌判成空闲)
+	if _, ok := GetActiveOrderByTable(8, "2026-10-13"); !ok {
+		t.Fatal("biz_date 为空的订单不应被隔离")
+	}
+
+	// 清台巡检要能找出「更早营业日仍有进行中订单」的桌台;无日期的桌不算在内
+	ids := ListStaleTableIDs("2026-10-13")
+	if len(ids) != 1 || ids[0] != 7 {
+		t.Fatalf("应只找出桌台 7, got %v", ids)
 	}
 }
 

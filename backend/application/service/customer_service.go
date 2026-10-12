@@ -68,12 +68,15 @@ func CustomerTable(ref string) (dto.Table, *dto.Order, []dto.Order, error) {
 	var currentOrder *dto.Order
 	servingOrders := make([]dto.Order, 0)
 	if !byID {
-		if o, ok := dao.GetUnpaidOrderByTable(t.TableID); ok {
+		// 跨日自动清台开启时,上一营业日的遗留单不再返回给新客人 —— 店家漏点收款
+		// 时它会把上一桌的账单直接摊到这一桌头上。开关关闭时为空串,行为与历史一致。
+		guard := StaleGuardBizDate()
+		if o, ok := dao.GetUnpaidOrderByTable(t.TableID, guard); ok {
 			order := dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false)
 			currentOrder = &order
 		}
 		// 已付款但出餐未完成的订单:顾客据此查看出餐进度。
-		for _, o := range dao.ListServingOrdersByTable(t.TableID) {
+		for _, o := range dao.ListServingOrdersByTable(t.TableID, guard) {
 			servingOrders = append(servingOrders, dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false))
 		}
 	}
@@ -223,6 +226,9 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 		return CustomerCreateOrderResult{}, ErrTableUnavailable
 	}
 
+	// 安全:赠送(is_gift)是商家改单行为,顾客端一律强制清零后再计价,
+	// 否则任意人可把菜品标成赠送实现零元下单(见 stripGiftFlagsForCustomer)。
+	stripGiftFlagsForCustomer(items)
 	resolved, err := ResolveOrderItems(items)
 	if err != nil {
 		return CustomerCreateOrderResult{}, err
@@ -240,6 +246,15 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 	var orderID int64
 	var existingOrderID int
 	var pickup int
+	// 营业日的两个派生值都在事务外取好。两条理由:
+	//   1. 它们都要读 tb_config —— 事务已经持有 tb_table 的写锁,事务内再多一次
+	//      跨表 SELECT 会拉长持锁时间,并发下单时更容易撞上 SQLITE_BUSY;
+	//   2. 同一单里「隔离口径」与「写进订单的营业日」必须来自同一次读,
+	//      否则管理员恰好在这一刻改了切换时刻,两边就会各算各的。
+	// 营业日不是自然日:切换时刻见 biz_date_cutoff_hour。它同时决定取餐号
+	// 在哪一刻重置回 1 —— 晚市跨过午夜时,号不该在 00:00 突然跳回 1。
+	guard := StaleGuardBizDate()
+	bizDate := CurrentBizDate()
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 先写桌台行(置占用)再查进行中订单:这条 UPDATE 在 MySQL/SQLite 上都会
 		// 先取到该行的写锁,把「同一桌台的并发下单」在本行上串行化,
@@ -264,7 +279,7 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 		// 一桌同一时间最多一笔「未结账」订单:重复下单(双击/并发提交/重复扫码)
 		// 应走加菜接口,而不是再开一单;已付款但出餐未完成的订单不阻断新单
 		// (顾客付款后本单即结束,再点即为新的一单)。
-		unpaid, err := dao.CountUnpaidOrdersTx(tx, tableID)
+		unpaid, err := dao.CountUnpaidOrdersTx(tx, tableID, guard)
 		if err != nil {
 			return err
 		}
@@ -273,7 +288,6 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 		}
 		// 取餐号必须在事务内取:UPDATE 计数行的锁把并发下单串行化,
 		// 且其自增随事务回滚,不会出现「号被占用却没有对应订单」的空洞。
-		bizDate := store.Now()[:10]
 		pickupNo, err := dao.NextPickupNoTx(tx, bizDate)
 		if err != nil {
 			return err
@@ -398,6 +412,8 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem, per
 		return CustomerAppendOrderResult{}, errors.New("订单已支付，不可加菜")
 	}
 
+	// 安全:同上,顾客加菜同样不接受赠送标记(只清新增项,不影响本单已有的商家赠送菜)。
+	stripGiftFlagsForCustomer(items)
 	newItems, err := ResolveOrderItems(items)
 	if err != nil {
 		return CustomerAppendOrderResult{}, err
@@ -448,6 +464,11 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem, per
 			allItems = append(allItems, dto.FromOrderItem(it))
 		}
 		allItems = append(allItems, newItems...)
+		// 累计明细条数上限:ResolveOrderItems 只限制「本次提交」的条数,若不加总上限,
+		// 可反复加菜把单笔订单明细无限撑大,拖慢金额重算与整单重写(ReplaceOrderItemsTx)。
+		if len(allItems) > maxOrderItems {
+			return fmt.Errorf("单笔订单明细过多(最多 %d 项),请分单处理", maxOrderItems)
+		}
 		dishAmount, seatFee, discount, giftAmount, total = RecalcAmount(effectivePerson, allItems)
 		// 加菜批次:首次下单批次为 1,每次加菜在上次最大批次基础上 +1。
 		nextBatch = 1

@@ -318,6 +318,23 @@ func TestCoreRecalcAmountGift(t *testing.T) {
 	_ = seat
 }
 
+// TestCoreRecalcAmountNegativeSeatFee 历史脏数据/误填的负数茶位费不应反向抬高应收。
+func TestCoreRecalcAmountNegativeSeatFee(t *testing.T) {
+	coreInitDB(t)
+	for k, v := range map[string]string{
+		"seat_fee_enabled":  "1",
+		"seat_fee":          "-5",
+		"promotion_enabled": "0",
+	} {
+		if err := dao.SetSetting(k, v); err != nil {
+			t.Fatalf("写入配置 %s 失败: %v", k, err)
+		}
+	}
+	_, seat, _, _, total := RecalcAmount(2, []dto.OrderItem{{Amount: 20, Price: 20, Quantity: 1}})
+	coreNear(t, "茶位费", seat, 0)
+	coreNear(t, "合计", total, 20)
+}
+
 // TestCoreResolveOrderItemsValidation 校验订单明细的各类非法入参。
 func TestCoreResolveOrderItemsValidation(t *testing.T) {
 	t.Run("空明细", func(t *testing.T) {

@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
+	"dining-system/domain/po"
 	"dining-system/infrastructure"
 	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/store/dao"
@@ -45,10 +48,12 @@ var ManagedSettingKeys = []string{
 	"wx_code_env_version",
 	"alipay_enabled", "alipay_appid", "alipay_private_key_path",
 	"alipay_public_key", "alipay_notify_url",
-	"print_enabled", "print_kitchen_show_price", "print_kitchen_split_by_item",
-	"print_guest_footer", "print_guest_show_seat_fee", "print_guest_show_discount", "print_guest_qr",
+	"print_enabled", "print_kitchen_show_price", "print_kitchen_split_mode",
+	"print_guest_footer", "print_guest_show_discount", "print_guest_qr",
 	"print_guest_on_append", "print_guest_on_order",
 	"feie_user", "feie_api_url", "agent_latest_version",
+	// 桌台遗留订单防护与营业日定义(见 stale_service.go)
+	"stale_release_enabled", "stale_alert_enabled", "stale_alert_hours", "biz_date_cutoff_hour",
 	// 敏感项(不回显,但同样参与指纹:它们变了,别的管理端就该刷新)
 	"wxpay_apiv3_key", "wx_app_secret", "feie_ukey", "agent_token",
 }
@@ -79,17 +84,64 @@ func normFlagValue(v string) string {
 	return "0"
 }
 
+// NormalizeAmountValue 归一化金额类配置项(茶位费 / 满减门槛 / 满减额,单位:元)。
+//
+// 为什么必须校验:这三项直接进入 total = 菜品金额 + 茶位费 - 优惠(见 RecalcAmount),
+// 且对新单与每一次加菜重算立即生效。此前原样落库,管理员误填负数(或把单位写成角)
+// 会让应收被反向抬高/压低,影响全部订单 —— 属于静默的账目差错。
+// 非法(非数字)或负数一律回落 "0"(即不生效),并留告警便于追查。
+func NormalizeAmountValue(v string) string {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return "" // 留空表示未配置(与其余普通项一致),消费侧按 0 处理
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	// NaN/Inf:ParseFloat 对 "NaN"/"Inf" 不报错,若放行会让 SeatFee 变成 NaN 传染整个合计。
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+		logger.Warnf("[setting] 金额类配置 %q 非法(应为非负数字,单位元),已回落 0.00", v)
+		return "0.00"
+	}
+	// 合法值原样保留:统一格式化会让「6」变「6.00」,在审计摘要里产生并无实事的假变更。
+	return s
+}
+
 // SettingFlagDefaultOn 「默认开启」型开关的读取归一化:只有明确 "0" 才算关闭,
 // 其余(含 "1"、空值、配置项缺失)一律返回 "1"。
 //
 // 与 SettingFlag 的分工:打印总开关等「默认关」用 SettingFlag;食客小票段落开关
-// (茶位费/优惠行)出厂即显示,渲染侧(print.guestShowSeatFee)按「!= "0」判定,
+// (优惠行等)出厂即显示,渲染侧(print.guestShowDiscount)按「!= "0」判定,
 // 回显侧必须用同一套语义,否则键缺失时配置页显示「关」而实际仍在打印。
 func SettingFlagDefaultOn(key string) string {
 	if dao.GetSetting(key) == "0" {
 		return "0"
 	}
 	return "1"
+}
+
+// SettingEnum 读取「枚举型」配置项:只有白名单内的取值放行,其余(含配置项缺失、
+// 历史脏值)一律回落默认值。
+//
+// 与开关型的区别:开关只有 1/0 两态,枚举有三个以上取值,前端用 t-radio-group
+// 绑定;一旦下发非法值,界面上会「一个都没选中」,商家以为配置丢了。
+func SettingEnum(key string, allowed []string, def string) string {
+	v := strings.TrimSpace(dao.GetSetting(key))
+	for _, a := range allowed {
+		if v == a {
+			return v
+		}
+	}
+	return def
+}
+
+// normEnumValue 写入侧的同一套归一化:非法值落库为默认值,保证库里永远是白名单取值。
+func normEnumValue(v string, allowed []string, def string) string {
+	v = strings.TrimSpace(v)
+	for _, a := range allowed {
+		if v == a {
+			return v
+		}
+	}
+	return def
 }
 
 // SecretMask 已配置敏感项的回显占位符。
@@ -145,11 +197,11 @@ func ListSettings() dto.Settings {
 		// 小票打印
 		PrintEnabled:          SettingFlag("print_enabled"),
 		PrintKitchenShowPrice: SettingFlag("print_kitchen_show_price"),
-		// 食客小票模板配置(页脚可清空,两个段落开关按「默认开」语义归一化,与渲染侧一致)
-		PrintKitchenSplitByItem: SettingFlag("print_kitchen_split_by_item"),
-		PrintGuestFooter:        dao.GetSetting("print_guest_footer"),
-		PrintGuestShowSeatFee:   SettingFlagDefaultOn("print_guest_show_seat_fee"),
-		PrintGuestShowDiscount:  SettingFlagDefaultOn("print_guest_show_discount"),
+		// 厨房单打印粒度(枚举项,回落值为整单;与渲染侧 print.kitchenSplitMode 同一套白名单)
+		PrintKitchenSplitMode: SettingEnum("print_kitchen_split_mode", po.KitchenSplitModes, po.KitchenSplitWhole),
+		// 食客小票模板配置(页脚可清空,段落开关按「默认开」语义归一化,与渲染侧一致)
+		PrintGuestFooter:       dao.GetSetting("print_guest_footer"),
+		PrintGuestShowDiscount: SettingFlagDefaultOn("print_guest_show_discount"),
 		// 加菜重出小票默认开,与渲染侧 guestPrintOnAppend 的「!= "0"」语义一致
 		PrintGuestOnAppend: SettingFlagDefaultOn("print_guest_on_append"),
 		// 下单点菜单默认开,与渲染侧 guestPrintOnOrder 的「!= "0"」语义一致
@@ -163,6 +215,11 @@ func ListSettings() dto.Settings {
 		// 本地打印代理(agent_token 为敏感项,同款占位回显;普通项直接回显)
 		AgentToken:         maskIfSet("agent_token"),
 		AgentLatestVersion: dao.GetSetting("agent_latest_version"),
+		// 桌台遗留订单防护:开关按 SettingFlag 归一化,阈值回落合法区间
+		StaleReleaseEnabled: SettingFlag(SettingStaleReleaseEnabled),
+		StaleAlertEnabled:   SettingFlag(SettingStaleAlertEnabled),
+		StaleAlertHours:     strconv.Itoa(StaleAlertHours()),
+		BizDateCutoffHour:   strconv.Itoa(BizDayCutoffHour()),
 		// 乐观锁指纹:保存时原样带回,后端比对发现不一致即拒绝(409)
 		Version: dao.SettingsFingerprint(ManagedSettingKeys),
 	}
@@ -188,38 +245,37 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 	}
 
 	vals := map[string]string{
-		"shop_name":                   settings.ShopName,
-		"shop_slogan":                 settings.ShopSlogan,
-		"shop_logo":                   settings.ShopLogo,
-		"seat_fee_enabled":            normFlagValue(settings.SeatFeeEnabled),
-		"seat_fee":                    settings.SeatFee,
-		"pay_qr_wx":                   settings.PayQrWx,
-		"pay_qr_ali":                  settings.PayQrAli,
-		"h5_base_url":                 settings.H5BaseURL,
-		"promotion_enabled":           normFlagValue(settings.PromotionEnabled),
-		"promotion_threshold":         settings.PromotionThreshold,
-		"promotion_discount":          settings.PromotionDiscount,
-		"wxpay_enabled":               normFlagValue(settings.WxpayEnabled),
-		"alipay_enabled":              normFlagValue(settings.AlipayEnabled),
-		"wxpay_mchid":                 settings.WxpayMchid,
-		"wxpay_appid":                 settings.WxpayAppid,
-		"wxpay_serial_no":             settings.WxpaySerialNo,
-		"wxpay_private_key_path":      settings.WxpayPrivateKeyPath,
-		"wxpay_platform_cert_path":    settings.WxpayPlatformCertPath,
-		"wxpay_pubkey_id":             settings.WxpayPubkeyID,
-		"wxpay_pubkey_path":           settings.WxpayPubkeyPath,
-		"wxpay_notify_url":            settings.WxpayNotifyURL,
-		"wx_code_env_version":         settings.WxCodeEnvVersion,
-		"alipay_appid":                settings.AlipayAppid,
-		"alipay_private_key_path":     settings.AlipayPrivateKeyPath,
-		"alipay_public_key":           settings.AlipayPublicKey,
-		"alipay_notify_url":           settings.AlipayNotifyURL,
-		"print_enabled":               normFlagValue(settings.PrintEnabled),
-		"print_kitchen_show_price":    normFlagValue(settings.PrintKitchenShowPrice),
-		"print_kitchen_split_by_item": normFlagValue(settings.PrintKitchenSplitByItem),
-		// 页脚是普通文本项,允许清空(清空=不打印页脚);两个段落开关归一化落库。
+		"shop_name":                settings.ShopName,
+		"shop_slogan":              settings.ShopSlogan,
+		"shop_logo":                settings.ShopLogo,
+		"seat_fee_enabled":         normFlagValue(settings.SeatFeeEnabled),
+		"seat_fee":                 NormalizeAmountValue(settings.SeatFee),
+		"pay_qr_wx":                settings.PayQrWx,
+		"pay_qr_ali":               settings.PayQrAli,
+		"h5_base_url":              settings.H5BaseURL,
+		"promotion_enabled":        normFlagValue(settings.PromotionEnabled),
+		"promotion_threshold":      NormalizeAmountValue(settings.PromotionThreshold),
+		"promotion_discount":       NormalizeAmountValue(settings.PromotionDiscount),
+		"wxpay_enabled":            normFlagValue(settings.WxpayEnabled),
+		"alipay_enabled":           normFlagValue(settings.AlipayEnabled),
+		"wxpay_mchid":              settings.WxpayMchid,
+		"wxpay_appid":              settings.WxpayAppid,
+		"wxpay_serial_no":          settings.WxpaySerialNo,
+		"wxpay_private_key_path":   settings.WxpayPrivateKeyPath,
+		"wxpay_platform_cert_path": settings.WxpayPlatformCertPath,
+		"wxpay_pubkey_id":          settings.WxpayPubkeyID,
+		"wxpay_pubkey_path":        settings.WxpayPubkeyPath,
+		"wxpay_notify_url":         settings.WxpayNotifyURL,
+		"wx_code_env_version":      settings.WxCodeEnvVersion,
+		"alipay_appid":             settings.AlipayAppid,
+		"alipay_private_key_path":  settings.AlipayPrivateKeyPath,
+		"alipay_public_key":        settings.AlipayPublicKey,
+		"alipay_notify_url":        settings.AlipayNotifyURL,
+		"print_enabled":            normFlagValue(settings.PrintEnabled),
+		"print_kitchen_show_price": normFlagValue(settings.PrintKitchenShowPrice),
+		"print_kitchen_split_mode": normEnumValue(settings.PrintKitchenSplitMode, po.KitchenSplitModes, po.KitchenSplitWhole),
+		// 页脚是普通文本项,允许清空(清空=不打印页脚);段落开关归一化落库。
 		"print_guest_footer":        settings.PrintGuestFooter,
-		"print_guest_show_seat_fee": normFlagValue(settings.PrintGuestShowSeatFee),
 		"print_guest_show_discount": normFlagValue(settings.PrintGuestShowDiscount),
 		"print_guest_qr":            normFlagValue(settings.PrintGuestQR),
 		"print_guest_on_append":     normFlagValue(settings.PrintGuestOnAppend),
@@ -227,6 +283,11 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		"feie_user":                 settings.FeieUser,
 		"feie_api_url":              settings.FeieApiURL,
 		"agent_latest_version":      settings.AgentLatestVersion,
+		// 桌台遗留订单防护:开关落库前归一化,阈值越界回落默认值(不整份拒绝保存)
+		"stale_release_enabled": normFlagValue(settings.StaleReleaseEnabled),
+		"stale_alert_enabled":   normFlagValue(settings.StaleAlertEnabled),
+		"stale_alert_hours":     NormalizeStaleAlertHours(settings.StaleAlertHours),
+		"biz_date_cutoff_hour":  NormalizeBizDateCutoffHour(settings.BizDateCutoffHour),
 	}
 	// 普通配置项:提交值直接覆盖保存(敏感项由 SetSetting 自动加密)。
 	// 旧值快照必须赶在 SetSetting 之前取——落库后 LoadSettings 读到的已是新值,

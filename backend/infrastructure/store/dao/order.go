@@ -88,9 +88,28 @@ func GetOrderByNo(orderNo string) (po.Order, error) {
 	return ScanOrder(store.DB.QueryRow(`SELECT `+OrderCols+` FROM tb_order WHERE order_no=?`, orderNo))
 }
 
+// bizDateGuardSQL 生成「营业日隔离」条件片段:只认 guardBizDate 当天及以后的订单。
+//
+// guardBizDate 为空串时返回空条件(不过滤,保持历史行为)—— 是否隔离由调用方按
+// 「跨日自动清台」配置开关决定(见 service.StaleGuardBizDate)。
+//
+// 为什么 biz_date 为 NULL / 空串的行要显式放行:那是手工补录或历史数据,无从判断
+// 属于哪个营业日。宁可让它继续占着桌台(店家看得见、能处理),也不能把一张正在用餐
+// 的桌误判成空闲。顺带一提,SQL 里 NULL 参与比较的结果是 NULL(不为真),
+// 不加这个 OR 会把它们一并过滤掉。
+func bizDateGuardSQL(guardBizDate string) (string, []interface{}) {
+	if guardBizDate == "" {
+		return "", nil
+	}
+	return ` AND (biz_date IS NULL OR biz_date='' OR biz_date>=?)`, []interface{}{guardBizDate}
+}
+
 // GetActiveOrderByTable 查询桌台最近一笔进行中订单。
-func GetActiveOrderByTable(tableID int) (po.Order, bool) {
-	o, err := ScanOrder(store.DB.QueryRow(`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND order_status IN (1,2,3) ORDER BY order_id DESC LIMIT 1`, tableID))
+func GetActiveOrderByTable(tableID int, guardBizDate string) (po.Order, bool) {
+	guard, args := bizDateGuardSQL(guardBizDate)
+	o, err := ScanOrder(store.DB.QueryRow(
+		`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`+guard+` ORDER BY order_id DESC LIMIT 1`,
+		append([]interface{}{tableID}, args...)...))
 	if err != nil {
 		return po.Order{}, false
 	}
@@ -100,17 +119,76 @@ func GetActiveOrderByTable(tableID int) (po.Order, bool) {
 // GetUnpaidOrderByTable 查询桌台最近一笔「未结账」订单(顾客付款前可加菜/付款的那一单)。
 // 与 GetActiveOrderByTable 的区别:已付款但出餐未完成的订单不算「未结账」,
 // 顾客此时应能开新单,故此处额外按 pay_status=0 过滤。
-func GetUnpaidOrderByTable(tableID int) (po.Order, bool) {
-	o, err := ScanOrder(store.DB.QueryRow(`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND pay_status=0 AND order_status IN (1,2,3) ORDER BY order_id DESC LIMIT 1`, tableID))
+func GetUnpaidOrderByTable(tableID int, guardBizDate string) (po.Order, bool) {
+	guard, args := bizDateGuardSQL(guardBizDate)
+	o, err := ScanOrder(store.DB.QueryRow(
+		`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND pay_status=0 AND order_status IN (1,2,3)`+guard+` ORDER BY order_id DESC LIMIT 1`,
+		append([]interface{}{tableID}, args...)...))
 	if err != nil {
 		return po.Order{}, false
 	}
 	return o, true
 }
 
+// ListStaleTableIDs 查「上一营业日及更早」仍有进行中订单的桌台 ID(去重)。
+//
+// 供跨日自动清台使用:这些桌台显示占用,但订单其实是过期遗留 —— 要么店家漏点了
+// 收款,要么客人早就走了。biz_date 为空的行走不到这里(NULL 比较不为真),它们
+// 仍由店家人工处理。
+func ListStaleTableIDs(today string) []int {
+	rows, err := store.DB.Query(
+		`SELECT DISTINCT table_id FROM tb_order WHERE order_status IN (1,2,3) AND biz_date IS NOT NULL AND biz_date<>'' AND biz_date<?`,
+		today)
+	if err != nil {
+		logger.Warnf("[dao] 查询跨日遗留订单桌台失败: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	ids := []int{}
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			logger.Warnf("[dao] 扫描跨日遗留订单桌台失败: %v", err)
+			return nil
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// ListActiveOrdersByTable 查询桌台进行中订单(1/2/3),按开单顺序升序。
+// 与 GetActiveOrderByTable(只取最新一笔)的区别:强制清台要一次性收走该桌全部
+// 未结单,漏掉任何一笔都会让桌台卡在占用态。
+// guardBizDate 非空时带营业日隔离,语义见 bizDateGuardSQL。
+func ListActiveOrdersByTable(tableID int, guardBizDate string) []po.Order {
+	guard, args := bizDateGuardSQL(guardBizDate)
+	rows, err := store.DB.Query(
+		`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`+guard+` ORDER BY order_id`,
+		append([]interface{}{tableID}, args...)...)
+	if err != nil {
+		logger.Warnf("[dao] 查询桌台进行中订单失败 table=%d: %v", tableID, err)
+		return nil
+	}
+	defer rows.Close()
+	list := []po.Order{}
+	for rows.Next() {
+		o, scanErr := ScanOrder(rows)
+		if scanErr != nil {
+			// 单行扫描失败就整批放弃返回:静默少收一笔,桌台会解不开。
+			logger.Warnf("[dao] 扫描桌台进行中订单失败 table=%d: %v", tableID, scanErr)
+			return nil
+		}
+		list = append(list, o)
+	}
+	return list
+}
+
 // ListServingOrdersByTable 查询桌台「已付款但出餐未完成」的订单,顾客扫码时据此查看出餐进度。
-func ListServingOrdersByTable(tableID int) []po.Order {
-	rows, err := store.DB.Query(`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND pay_status=1 AND order_status IN (1,2,3) ORDER BY order_id`, tableID)
+func ListServingOrdersByTable(tableID int, guardBizDate string) []po.Order {
+	guard, args := bizDateGuardSQL(guardBizDate)
+	rows, err := store.DB.Query(
+		`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND pay_status=1 AND order_status IN (1,2,3)`+guard+` ORDER BY order_id`,
+		append([]interface{}{tableID}, args...)...)
 	if err != nil {
 		return nil
 	}
@@ -124,10 +202,73 @@ func ListServingOrdersByTable(tableID int) []po.Order {
 	return list
 }
 
+// ListStaleUnpaidOrders 查「本营业日、未结账、进行中且开台下单早于 beforeTime」的订单。
+//
+// 只看本营业日:更早的属于跨日遗留单,那是「跨日自动清台」的职责(它们要么已被隔离、
+// 要么店家正拿着处理),混进超时告警里会让看板每天一早先响一片昨天的噪音。
+// create_time 为空的行跳过:算不出时长就无从判定是否超时。
+func ListStaleUnpaidOrders(bizDate, beforeTime string) []po.Order {
+	rows, err := store.DB.Query(
+		// LIMIT 是防御性的:看板那条提醒条要一屏能读完,真有几十桌同时超时,
+		// 拉全部回来既撑爆界面也没人逐条看 —— 按开台时长从早到晚取前 50 条即可。
+		`SELECT `+OrderCols+` FROM tb_order WHERE order_status IN (1,2,3) AND pay_status=0
+			AND biz_date=? AND create_time IS NOT NULL AND create_time<>'' AND create_time<=?
+			ORDER BY create_time LIMIT 50`,
+		bizDate, beforeTime)
+	if err != nil {
+		logger.Warnf("[dao] 查询未结账超时订单失败: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	list := []po.Order{}
+	for rows.Next() {
+		o, scanErr := ScanOrder(rows)
+		if scanErr != nil {
+			logger.Warnf("[dao] 扫描未结账超时订单失败: %v", scanErr)
+			return nil
+		}
+		list = append(list, o)
+	}
+	return list
+}
+
+// ListLegacyUnpaidOrders 查「上一营业日及更早」仍未结账的订单(跨日遗留单)。
+//
+// 与 ListStaleUnpaidOrders 的分工:那个管「当天开着台还没结」,这个管「这个营业日已经
+// 过去了却还没结」。跨日清台只把桌台恢复空闲,订单仍挂在「进行中」—— 它们会沉在订单
+// 列表最深处(列表按单号倒序,越老越靠后),不主动列出来就等于被遗忘:桌台上什么都
+// 看不到,对账时却少一笔。
+//
+// 与跨日自动清台的开关无关:不管开没开,「这个营业日过去了还没结账」都是事实,
+// 店家都该知道。开关只决定要不要顺手把桌台恢复空闲。
+func ListLegacyUnpaidOrders(bizDate string) []po.Order {
+	rows, err := store.DB.Query(
+		`SELECT `+OrderCols+` FROM tb_order WHERE order_status IN (1,2,3) AND pay_status=0
+			AND biz_date IS NOT NULL AND biz_date<>'' AND biz_date<?
+			ORDER BY biz_date, create_time LIMIT 50`,
+		bizDate)
+	if err != nil {
+		logger.Warnf("[dao] 查询跨日遗留订单失败: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	list := []po.Order{}
+	for rows.Next() {
+		o, scanErr := ScanOrder(rows)
+		if scanErr != nil {
+			logger.Warnf("[dao] 扫描跨日遗留订单失败: %v", scanErr)
+			return nil
+		}
+		list = append(list, o)
+	}
+	return list
+}
+
 // ListActiveOrders 查询全部进行中订单(1已下单/2制作中/3已上齐),按 order_id 升序。
 // 桌台看板一次性取出后按 table_id 分组取最新一笔,避免逐桌 GetActiveOrderByTable 的 N+1。
-func ListActiveOrders() ([]po.Order, error) {
-	rows, err := store.DB.Query(`SELECT ` + OrderCols + ` FROM tb_order WHERE order_status IN (1,2,3) ORDER BY order_id`)
+func ListActiveOrders(guardBizDate string) ([]po.Order, error) {
+	guard, args := bizDateGuardSQL(guardBizDate)
+	rows, err := store.DB.Query(`SELECT `+OrderCols+` FROM tb_order WHERE order_status IN (1,2,3)`+guard+` ORDER BY order_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -404,17 +545,24 @@ func CountActiveOrdersTx(tx *sql.Tx, tableID int) (int, error) {
 
 // CountUnpaidOrdersTx 统计桌台「未结账」订单数(下单防重用):
 // 付款前的订单才算未结账,已付款但出餐未完成的订单不阻断新单。
-func CountUnpaidOrdersTx(tx *sql.Tx, tableID int) (int, error) {
+func CountUnpaidOrdersTx(tx *sql.Tx, tableID int, guardBizDate string) (int, error) {
+	guard, args := bizDateGuardSQL(guardBizDate)
 	var n int
-	err := tx.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE table_id=? AND pay_status=0 AND order_status IN (1,2,3)`, tableID).Scan(&n)
+	err := tx.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE table_id=? AND pay_status=0 AND order_status IN (1,2,3)`+guard,
+		append([]interface{}{tableID}, args...)...).Scan(&n)
 	return n, err
 }
 
 // CountUnfinishedOrdersTx 统计桌台「未完成出餐」的订单数(桌台释放判定用):
 // 只要还有订单在出餐流程中(1/2/3),桌台就仍视为占用。
-func CountUnfinishedOrdersTx(tx *sql.Tx, tableID int) (int, error) {
+//
+// 必须与顾客端读口径一致地带营业日隔离:否则跨日遗留单会让桌台永远释放不掉 ——
+// 新客人正常吃完结账,桌台却因为前一天那笔旧单一直显示占用。
+func CountUnfinishedOrdersTx(tx *sql.Tx, tableID int, guardBizDate string) (int, error) {
+	guard, args := bizDateGuardSQL(guardBizDate)
 	var n int
-	err := tx.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`, tableID).Scan(&n)
+	err := tx.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`+guard,
+		append([]interface{}{tableID}, args...)...).Scan(&n)
 	return n, err
 }
 

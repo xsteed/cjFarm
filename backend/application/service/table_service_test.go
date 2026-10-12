@@ -116,6 +116,169 @@ func TestTableUpdateTable(t *testing.T) {
 	}
 }
 
+// relSeedOrder 直接种一笔挂在指定桌台的订单(绕过业务链路,精确控制状态),返回订单 ID。
+func relSeedOrder(t *testing.T, orderNo string, tableID, orderStatus, payStatus int, totalCents int64) int {
+	t.Helper()
+	now := store.Now()
+	if _, err := store.DB.Exec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, person_count, order_status,
+		dish_amount, seat_fee, discount_amount, total_amount, pay_status, create_time, update_time)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		orderNo, tableID, "01", "大厅01桌", 2, orderStatus, totalCents, 0, 0, totalCents, payStatus, now, now); err != nil {
+		t.Fatalf("插入订单失败: %v", err)
+	}
+	var id int
+	if err := store.DB.QueryRow(`SELECT order_id FROM tb_order WHERE order_no=?`, orderNo).Scan(&id); err != nil {
+		t.Fatalf("查询订单失败: %v", err)
+	}
+	return id
+}
+
+// relOccupiedTable 建一张桌台并置为占用,返回桌台 ID。
+func relOccupiedTable(t *testing.T) int {
+	t.Helper()
+	if _, err := store.DB.Exec(`DELETE FROM tb_order`); err != nil {
+		t.Fatalf("清空订单表失败: %v", err)
+	}
+	id, err := SaveTable(context.Background(), dto.Table{TableNo: "01", TableName: "大厅01桌", Capacity: 4})
+	if err != nil {
+		t.Fatalf("SaveTable 失败: %v", err)
+	}
+	if _, err := store.DB.Exec(`UPDATE tb_table SET status=1 WHERE table_id=?`, id); err != nil {
+		t.Fatalf("置为占用失败: %v", err)
+	}
+	return int(id)
+}
+
+func relTableStatus(t *testing.T, tableID int) int {
+	t.Helper()
+	var s int
+	if err := store.DB.QueryRow(`SELECT status FROM tb_table WHERE table_id=?`, tableID).Scan(&s); err != nil {
+		t.Fatalf("查询桌台状态失败: %v", err)
+	}
+	return s
+}
+
+// TestReleaseTableSettlesUnpaidOrders 补结账:未支付订单按已收款入账并归档,桌台回到空闲。
+func TestReleaseTableSettlesUnpaidOrders(t *testing.T) {
+	tableInitDB(t)
+	tid := relOccupiedTable(t)
+	relSeedOrder(t, "R1", tid, 3, 0, 2800)
+	relSeedOrder(t, "R2", tid, 2, 0, 1200)
+
+	out, err := ReleaseTable(context.Background(), tid, ReleaseActionSettle, "店长")
+	if err != nil {
+		t.Fatalf("强制清台失败: %v", err)
+	}
+	if out.Settled != 2 || out.Canceled != 0 || out.Finished != 0 {
+		t.Fatalf("清台结果异常: %+v", out)
+	}
+	if out.TotalCents != 4000 {
+		t.Fatalf("补结账金额应为 4000 分, got %d", out.TotalCents)
+	}
+	if len(out.OrderNos) != 2 {
+		t.Fatalf("应返回 2 个订单号供关闭支付单, got %v", out.OrderNos)
+	}
+	for _, no := range []string{"R1", "R2"} {
+		var payStatus, orderStatus int
+		var remark string
+		if err := store.DB.QueryRow(`SELECT pay_status, order_status, COALESCE(settle_remark,'') FROM tb_order WHERE order_no=?`, no).
+			Scan(&payStatus, &orderStatus, &remark); err != nil {
+			t.Fatalf("查询订单 %s 失败: %v", no, err)
+		}
+		if payStatus != 1 || orderStatus != 4 {
+			t.Fatalf("订单 %s 应已结账并归档, got pay=%d status=%d", no, payStatus, orderStatus)
+		}
+		if !strings.Contains(remark, "强制清台") {
+			t.Fatalf("订单 %s 应留下强制清台备注, got %q", no, remark)
+		}
+	}
+	if s := relTableStatus(t, tid); s != 0 {
+		t.Fatalf("桌台应恢复空闲, got %d", s)
+	}
+}
+
+// TestReleaseTableCancelsUnpaidOrders 作废:订单直接取消且不计收入(仍是未支付)。
+func TestReleaseTableCancelsUnpaidOrders(t *testing.T) {
+	tableInitDB(t)
+	tid := relOccupiedTable(t)
+	relSeedOrder(t, "R1", tid, 1, 0, 2800)
+
+	out, err := ReleaseTable(context.Background(), tid, ReleaseActionCancel, "店长")
+	if err != nil {
+		t.Fatalf("强制清台失败: %v", err)
+	}
+	if out.Canceled != 1 || out.Settled != 0 || out.TotalCents != 0 {
+		t.Fatalf("清台结果异常: %+v", out)
+	}
+	var payStatus, orderStatus int
+	if err := store.DB.QueryRow(`SELECT pay_status, order_status FROM tb_order WHERE order_no='R1'`).Scan(&payStatus, &orderStatus); err != nil {
+		t.Fatalf("查询订单失败: %v", err)
+	}
+	if payStatus != 0 || orderStatus != 5 {
+		t.Fatalf("作废后应为未支付且已取消, got pay=%d status=%d", payStatus, orderStatus)
+	}
+	if s := relTableStatus(t, tid); s != 0 {
+		t.Fatalf("桌台应恢复空闲, got %d", s)
+	}
+}
+
+// TestReleaseTableFinishesPaidOrder 已收款但还在出餐的订单只归档,不动账务。
+func TestReleaseTableFinishesPaidOrder(t *testing.T) {
+	tableInitDB(t)
+	tid := relOccupiedTable(t)
+	relSeedOrder(t, "R1", tid, 2, 1, 5000)
+
+	out, err := ReleaseTable(context.Background(), tid, ReleaseActionSettle, "店长")
+	if err != nil {
+		t.Fatalf("强制清台失败: %v", err)
+	}
+	if out.Finished != 1 || out.Settled != 0 || out.Canceled != 0 {
+		t.Fatalf("清台结果异常: %+v", out)
+	}
+	var payStatus, orderStatus int
+	if err := store.DB.QueryRow(`SELECT pay_status, order_status FROM tb_order WHERE order_no='R1'`).Scan(&payStatus, &orderStatus); err != nil {
+		t.Fatalf("查询订单失败: %v", err)
+	}
+	if payStatus != 1 || orderStatus != 4 {
+		t.Fatalf("已收款订单应归档为已完成, got pay=%d status=%d", payStatus, orderStatus)
+	}
+	if s := relTableStatus(t, tid); s != 0 {
+		t.Fatalf("桌台应恢复空闲, got %d", s)
+	}
+}
+
+// TestReleaseTableFreesStaleOccupiedTable 脏数据(显示占用却无进行中订单)也要能解开。
+func TestReleaseTableFreesStaleOccupiedTable(t *testing.T) {
+	tableInitDB(t)
+	tid := relOccupiedTable(t) // 只占用,不建单
+
+	out, err := ReleaseTable(context.Background(), tid, ReleaseActionSettle, "店长")
+	if err != nil {
+		t.Fatalf("强制清台失败: %v", err)
+	}
+	if out.Settled != 0 || out.Canceled != 0 || out.Finished != 0 {
+		t.Fatalf("无订单时不应产生账务动作: %+v", out)
+	}
+	if s := relTableStatus(t, tid); s != 0 {
+		t.Fatalf("桌台应恢复空闲, got %d", s)
+	}
+}
+
+// TestReleaseTableRejectsBadInput 处理方式必须显式选择,桌台必须存在。
+func TestReleaseTableRejectsBadInput(t *testing.T) {
+	tableInitDB(t)
+
+	if _, err := ReleaseTable(context.Background(), 1, "", "店长"); err == nil || !strings.Contains(err.Error(), "清台方式") {
+		t.Fatalf("未指定处理方式应报错, got %v", err)
+	}
+	if _, err := ReleaseTable(context.Background(), 0, ReleaseActionSettle, "店长"); err == nil {
+		t.Fatal("桌台 ID 为 0 应报错")
+	}
+	if _, err := ReleaseTable(context.Background(), 99999, ReleaseActionSettle, "店长"); err == nil || !strings.Contains(err.Error(), "桌台不存在") {
+		t.Fatalf("桌台不存在应报错, got %v", err)
+	}
+}
+
 // TestTableDeleteTable 校验逻辑删除后不再出现在列表。
 func TestTableDeleteTable(t *testing.T) {
 	tableInitDB(t)

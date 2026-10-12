@@ -172,7 +172,7 @@ func ReportSummary() Summary {
 	// ---- 桌台 / 在途订单 ----
 	tableCount := dao.TableCount()
 	freeTableCount := dao.FreeTableCount()
-	activeOrderCount := dao.ActiveOrderCount()
+	activeOrderCount := dao.ActiveOrderCount(StaleGuardBizDate())
 
 	// ---- 今日免单(让利额) ----
 	todayFreeCents := dao.SumFreeIn(todayStart, tomorrowStart)

@@ -238,7 +238,11 @@ func RecalcAmount(personCount int, items []dto.OrderItem) (dishAmount, seatFee, 
 	settings := dao.LoadSettings()
 	if settings["seat_fee_enabled"] == "1" {
 		f, _ := strconv.ParseFloat(settings["seat_fee"], 64)
-		seatFee = po.Round2(float64(personCount) * f)
+		// 仅正数生效:配置若为负数(历史脏数据/误填),乘以人数会让茶位费为负、
+		// 反向抬高应收。保存侧已有 NormalizeAmountValue 兜底,这里再防一手历史库。
+		if f > 0 {
+			seatFee = po.Round2(float64(personCount) * f)
+		}
 	}
 	if settings["promotion_enabled"] == "1" {
 		threshold, _ := strconv.ParseFloat(settings["promotion_threshold"], 64)
@@ -287,6 +291,23 @@ func ResolveOrderItemsForEdit(items []dto.OrderItem, orderID int) ([]dto.OrderIt
 		owned[it.SpecID] += int64(it.Quantity)
 	}
 	return resolveOrderItems(items, owned)
+}
+
+// stripGiftFlagsForCustomer 清除顾客端提交明细中的「赠送」标记(就地修改,无返回值)。
+//
+// 为什么必须清:is_gift 的语义是「商家改单标记」(见 domain/po/order.go),赠送菜
+// 按原价统计 gift_amount 但不计入应收金额(见 RecalcAmount)。而顾客端下单/加菜接口
+// 只做「可选身份」校验、并不鉴权(见 main.go 的 /customer/order*),若原样接受请求体
+// 里的 isGift,任何人都能把整单菜品标成赠送实现零元下单 —— 库存照扣、订单金额记 0
+// (或仅剩茶位费),线上支付虽被 totalCents<=0 拦下,但现金/收款码/免单/挂账路径不设防,
+// 且会污染 gift_amount 让利报表。
+//
+// 允许设置赠送的唯一入口是管理端改单(OrderEdit → ResolveOrderItemsForEdit)。
+func stripGiftFlagsForCustomer(items []dto.OrderItem) {
+	for i := range items {
+		items[i].IsGift = 0
+		items[i].GiftReason = ""
+	}
 }
 
 // resolveOrderItems 是 ResolveOrderItems / ResolveOrderItemsForEdit 的公共实现。

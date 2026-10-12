@@ -109,7 +109,7 @@ func TestGenRefundNo(t *testing.T) {
 }
 
 // TestSettingFlagDefaultOnMatchesRenderSemantics 守护「默认开」型开关的回显与渲染语义一致:
-// 食客小票的茶位费/优惠行开关,渲染侧(print 包)按「!= "0"」判定,回显侧必须同语义——
+// 食客小票的优惠行等段落开关,渲染侧(print 包)按「!= "0"」判定,回显侧必须同语义——
 // 否则配置键缺失时,配置页显示「关」而小票上仍在打印,两边自相矛盾。
 func TestSettingFlagDefaultOnMatchesRenderSemantics(t *testing.T) {
 	store.Init(filepath.Join(t.TempDir(), "flagdefaulton.db"))
@@ -127,7 +127,7 @@ func TestSettingFlagDefaultOnMatchesRenderSemantics(t *testing.T) {
 		{val: "x", want: "1", renderOn: true},  // 脏值:按默认开处理
 	}
 	for i, c := range cases {
-		key := "print_guest_show_seat_fee"
+		key := "print_guest_show_discount"
 		if c.val == "" {
 			// 键不存在(直接删掉 seed 补的行,模拟极端缺失)。
 			if _, err := store.DB.Exec(`DELETE FROM tb_config WHERE cfg_key=?`, key); err != nil {

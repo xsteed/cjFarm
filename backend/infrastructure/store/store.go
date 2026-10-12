@@ -20,11 +20,20 @@ import (
 var DB *sql.DB
 
 // WithTx 在事务中执行 fn,失败自动回滚。
-func WithTx(fn func(tx *sql.Tx) error) error {
+func WithTx(fn func(tx *sql.Tx) error) (err error) {
 	tx, err := DB.Begin()
 	if err != nil {
 		return err
 	}
+	// fn 内 panic 时必须回滚:否则该连接携带未提交事务与行锁,一直占用到连接超时,
+	// 后续对同一行的写会全部卡住(下单/支付/退款全都走这个函数,影响面很大)。
+	// 回滚后原样重新抛出,交由上层的 Gin Recovery 统一处理。
+	defer func() {
+		if r := recover(); r != nil {
+			_ = tx.Rollback()
+			panic(r)
+		}
+	}()
 	if err := fn(tx); err != nil {
 		_ = tx.Rollback()
 		return err

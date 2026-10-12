@@ -116,6 +116,8 @@ func setupAPI(r *gin.Engine) {
 			admin.POST("/table/update", handler.TableUpdate)
 			// 桌台人工可用性状态:停用 / 预约 / 恢复正常(与订单占用状态正交)。
 			admin.POST("/table/lock", handler.TableLock)
+			// 强制清台:店家漏点收款导致桌台长期占用时的唯一人工补救入口(会动钱,见 handler 注释)
+			admin.POST("/table/release", handler.TableRelease)
 			admin.DELETE("/table/:id", handler.TableDelete)
 
 			admin.GET("/category/list", handler.CategoryList)
@@ -139,6 +141,8 @@ func setupAPI(r *gin.Engine) {
 			admin.POST("/printer/update", handler.PrinterUpdate)
 			admin.DELETE("/printer/:id", handler.PrinterDelete)
 			admin.POST("/printer/test/:id", handler.PrinterTest)
+			// 预览该打印机的测试页样式(不出纸)
+			admin.GET("/printer/preview/:id", handler.PrinterPreviewTest)
 			// 只测连通性不吐纸 / 查实时状态 / 绑定到飞鹅账号 / 清空飞鹅云端队列
 			admin.POST("/printer/probe/:id", handler.PrinterProbe)
 			admin.GET("/printer/status/:id", handler.PrinterStatus)
@@ -168,6 +172,8 @@ func setupAPI(r *gin.Engine) {
 
 			admin.GET("/order/list", handler.OrderList)
 			admin.GET("/order/board", handler.OrderBoard)
+			// 未结账超时告警(开关与阈值随配置下发,见 handler.OrderStale)
+			admin.GET("/order/stale", handler.OrderStale)
 			admin.GET("/order/urge/list", handler.UrgeList)
 			admin.POST("/order/urge/handle", handler.UrgeHandle)
 			admin.GET("/order/:id", handler.OrderGet)
@@ -285,6 +291,9 @@ func main() {
 	// 后台定时清理已结案的本地打印代理任务(AGENT_JOB_RETENTION_DAYS,默认 7 天)。
 	// 队列是「待办」,结案后没有长期保留价值;翻账看的是 tb_print_log,不受影响。
 	print.StartAgentCleanup()
+	// 桌台遗留订单防护:按「跨日自动清台」配置开关后台巡检,把过期遗留单所在桌台
+	// 恢复空闲(订单与账务不动)。开关关闭时每轮直接跳过,不做查询。
+	service.StartStaleOrderGuard()
 
 	// 前端静态目录支持环境变量覆盖,便于打包部署到不同工作目录。
 	// 启动审计:校验菜品图片引用与图片表内容一一对应,缺失即 [warn](回答「不能少东西」)。

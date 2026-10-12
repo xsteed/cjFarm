@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -67,6 +68,53 @@ func TableLock(c *gin.Context) {
 		return
 	}
 	okMsg(c, "桌台状态已更新")
+}
+
+// TableRelease 强制清台:店家漏点「收款」时的唯一人工补救入口。
+//
+// 漏点收款 → 订单停在 (1/2/3, pay_status=0) → 桌台永远占用 → 下一桌扫码被直接
+// 带进上一桌的账单,而常规编辑接口又不改占用状态。这里把该桌进行中订单一次性
+// 收走(补结账/作废二选一)并置空闲。
+//
+// 这是会动钱的高危动作,校验放在 service,这里只负责透传与留痕:
+// 金额与方式必须进审计日志,否则对账时说不清钱去哪了。
+func TableRelease(c *gin.Context) {
+	var p struct {
+		TableID int    `json:"tableId"`
+		Action  string `json:"action"` // settle 补结账 / cancel 作废
+	}
+	if err := c.ShouldBindJSON(&p); err != nil || p.TableID == 0 {
+		fail(c, "参数错误")
+		return
+	}
+	// 补结账会把钱记进营收,光凭桌台管理权限不足以做这个判断:必须同时具备订单结账权限。
+	// 作废不动账务,沿用路由上的 table:edit 即可。内置角色都不受影响(店长两项俱全),
+	// 这道校验是给「自建了只有 table:edit 的角色」的店兜底,避免有人悄悄把营收做上去。
+	if p.Action == service.ReleaseActionSettle && !HasPerm(c, "order:settle") {
+		forbidden(c, "补结账需要「订单结账」权限，请改用「作废订单」或联系店长")
+		return
+	}
+	out, err := service.ReleaseTable(c.Request.Context(), p.TableID, p.Action, adminName(c))
+	if err != nil {
+		fail(c, err.Error())
+		return
+	}
+	// 桌台已清空,顾客手里还开着的在线支付二维码必须一并关掉,否则就是重复支付的入口。
+	// 与 /order/cancel 同一口径:不按 pay_status 过滤,已支付单的残留二维码同样要关。
+	for _, orderNo := range out.OrderNos {
+		closePendingPayments(c.Request.Context(), orderNo, "")
+	}
+	name := out.TableName
+	if name == "" {
+		name = strconv.Itoa(p.TableID)
+	}
+	actionText := "作废"
+	if p.Action == service.ReleaseActionSettle {
+		actionText = fmt.Sprintf("补结账 %.2f 元", float64(out.TotalCents)/100)
+	}
+	SetAuditDetail(c, "table", strconv.Itoa(p.TableID),
+		fmt.Sprintf("强制清台【%s】：%s；结算 %d 单 / 作废 %d 单 / 归档 %d 单", name, actionText, out.Settled, out.Canceled, out.Finished))
+	okMsg(c, "已清台，桌台恢复空闲")
 }
 
 func TableDelete(c *gin.Context) {

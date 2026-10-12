@@ -16,7 +16,7 @@ backend/migrations/
 │   └── mysql/
 │       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
 │       └── seed.sql
-└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 24 个，文件名一致）
+└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 25 个，文件名一致）
     ├── sqlite/
     │   ├── 20260920020000_tb_order_urge_create.sql                    # 01 催菜/加菜记录表
     │   ├── 20260920021000_tb_payment_refund_create.sql                # 02 支付/退款流水表
@@ -41,12 +41,13 @@ backend/migrations/
     │   ├── 20261008151000_tb_order_add_customer_id.sql                # 21 订单补会员归属列
     │   ├── 20261009000000_tb_order_add_pickup_no.sql                  # 22 订单营业日与当日取餐号
     │   ├── 20261009010000_tb_table_add_lock_status.sql                # 23 桌台补「人工可用性状态」列
-    │   └── 20261010000000_tb_dish_add_signature.sql                   # 24 菜品补「招牌菜」标记
+    │   ├── 20261010000000_tb_dish_add_signature.sql                   # 24 菜品补「招牌菜」标记
+    │   └── 20261013000000_tb_config_fix_shop_name_dot.sql             # 25 店铺名统一为「品牌 · 标语」
     └── mysql/                                             # 与 sqlite/ 同名同序，内容按 MySQL 语法适配
-        └──（同上 24 个文件）
+        └──（同上 25 个文件）
 ```
 
-> 下文「归属脚本」中的 incr 编号即上表 01~24 的序号。
+> 下文「归属脚本」中的 incr 编号即上表 01~25 的序号。
 
 > 另有 `tb_print_log`（打印日志）与 `tb_printer` 的飞鹅云字段，因早于 `incr/` 机制建立，
 > 老库升级由 `store.alterCols` 在启动时自动补列/建表，`full/` 脚本已包含最终结构。

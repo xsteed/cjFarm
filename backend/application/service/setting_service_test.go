@@ -21,6 +21,46 @@ func settingInitDB(t *testing.T) {
 	t.Cleanup(func() { _ = store.DB.Close() })
 }
 
+// TestNormalizeAmountValue 金额类配置的归一化:非法/负数回落 0,合法值保留两位小数。
+func TestNormalizeAmountValue(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"5", "5"},
+		{"3.5", "3.5"},
+		{"0", "0"},
+		{"", ""},
+		{" 8 ", "8"},
+		{"-3", "0.00"},
+		{"abc", "0.00"},
+		{"NaN", "0.00"},
+		{"Inf", "0.00"},
+	}
+	for _, c := range cases {
+		if got := NormalizeAmountValue(c.in); got != c.want {
+			t.Fatalf("NormalizeAmountValue(%q)=%q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestSaveSettingsClampsNegativeAmount 负数的茶位费/满减配置在保存时回落为 0,
+// 防止 total = 菜品金额 + 茶位费 - 优惠 被反算,影响全部新单与加菜重算。
+func TestSaveSettingsClampsNegativeAmount(t *testing.T) {
+	settingInitDB(t)
+
+	SaveSettings(context.Background(), dto.Settings{
+		SeatFeeEnabled:     "1",
+		SeatFee:            "-5",
+		PromotionEnabled:   "1",
+		PromotionThreshold: "-100",
+		PromotionDiscount:  "-10",
+	}, "tester")
+
+	for _, k := range []string{"seat_fee", "promotion_threshold", "promotion_discount"} {
+		if got := GetSetting(k); got != "0.00" {
+			t.Fatalf("负数配置 %s 应回落 0.00, got %q", k, got)
+		}
+	}
+}
+
 // TestSettingGetSet 校验配置项的写入/读取(含敏感项透明加解密)。
 func TestSettingGetSet(t *testing.T) {
 	settingInitDB(t)
@@ -176,8 +216,8 @@ func TestListSettings(t *testing.T) {
 		t.Fatalf("未配置的敏感项应回显空串, got feie_ukey=%q agent_token=%q", got.FeieUkey, got.AgentToken)
 	}
 	// 默认开开关:种子默认 "1"。
-	if got.PrintGuestShowSeatFee != "1" || got.PrintGuestShowDiscount != "1" {
-		t.Fatalf("默认开开关应回显 1, got seatFee=%q discount=%q", got.PrintGuestShowSeatFee, got.PrintGuestShowDiscount)
+	if got.PrintGuestShowDiscount != "1" {
+		t.Fatalf("默认开开关应回显 1, got discount=%q", got.PrintGuestShowDiscount)
 	}
 	if got.Version != dao.SettingsFingerprint(ManagedSettingKeys) {
 		t.Fatalf("Version 与指纹不一致: got %q want %q", got.Version, dao.SettingsFingerprint(ManagedSettingKeys))

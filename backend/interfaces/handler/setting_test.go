@@ -66,12 +66,17 @@ func TestDescribeSettingChange(t *testing.T) {
 		"pay_qr_ali":                "/uploads/pay_ali.jpg",
 		"promotion_threshold":       "100",
 		"promotion_discount":        "0",
-		"feie_api_url":              "https://api.de.feieyun.com/Api/Open/",
+		"feie_api_url":              "https://api.feieyun.cn/Api/Open/",
 		"print_enabled":             "1",
 		"print_guest_footer":        "谢谢惠顾,欢迎再次光临",
-		"print_guest_show_seat_fee": "1",
 		"print_guest_show_discount": "1",
-		"feie_ukey":                 "new-secret-value", // 敏感项只记键名,值不落日志
+		// 桌台遗留订单防护与营业日定义:出厂默认同样是「开关关 + 阈值 4 + 自然日切换」,
+		// 不补齐它们会额外进摘要
+		"stale_release_enabled": "0",
+		"stale_alert_enabled":   "0",
+		"stale_alert_hours":     "4",
+		"biz_date_cutoff_hour":  "0",
+		"feie_ukey":             "new-secret-value", // 敏感项只记键名,值不落日志
 	})
 	SettingSave(c2)
 	if w2.Code != http.StatusOK {
@@ -225,7 +230,7 @@ func TestManagedSettingKeysComplete(t *testing.T) {
 		WxpayPubkeyID: "pubid-x", WxpayPubkeyPath: "/pub.pem", WxpayNotifyURL: "http://n.example/cb",
 		AlipayAppid: "alappid-x", AlipayPrivateKeyPath: "/ak.pem", AlipayPublicKey: "alpub-x", AlipayNotifyURL: "http://an.example/cb",
 		PrintEnabled: "1", PrintKitchenShowPrice: "1",
-		PrintGuestFooter: "页脚测试", PrintGuestShowSeatFee: "1", PrintGuestShowDiscount: "1",
+		PrintGuestFooter: "页脚测试", PrintGuestShowDiscount: "1",
 		// 顾客小票二维码/加菜出票/下单出票:后加入的受管键,fixture 必须同步覆盖,
 		// 否则这些键保存后仍为空,乐观锁指纹对它们存在盲区(见本测试的守护说明)。
 		PrintGuestQR: "1", PrintGuestOnAppend: "1", PrintGuestOnOrder: "1",
