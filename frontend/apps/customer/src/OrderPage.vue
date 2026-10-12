@@ -69,6 +69,20 @@
         v-if="view === 'menu' && !searchOpen"
         class="menu-sheet"
       >
+        <!-- 「不是本人的单」浏览模式:可以随便挑,下单在 submit 里统一拦截 -->
+        <div
+          v-if="foreign"
+          class="serving-banner foreign-banner"
+        >
+          本桌上一笔订单还未结账，可以先挑好菜，服务员清台后即可下单。
+          <button
+            class="foreign-back"
+            @click="view = 'resume'"
+          >
+            返回
+          </button>
+        </div>
+
         <!-- 本桌「已付款但出餐未完成」的订单:顾客可查看进度 -->
         <div
           v-if="servingOrders.length"
@@ -125,10 +139,11 @@
       </div>
 
       <!-- 本桌已有一笔未结账订单:先问清楚是不是眼前这位客人的单。
-           店家忘了点「收款」时,不问就直接进订单页,等于把上一桌的账单摊给下一桌。 -->
+           店家忘了点「收款」时,不问就直接进订单页,等于把上一桌的账单摊给下一桌。
+           「不是本人的单」分支复用居中的 state-box 布局,与错误/锁定页保持一致 -->
       <div
         v-else-if="view === 'resume'"
-        class="resume-box"
+        :class="foreign ? 'state-box' : 'resume-box'"
       >
         <template v-if="!foreign">
           <div class="resume-title">本桌已有一笔未结账的订单</div>
@@ -163,17 +178,29 @@
           </button>
         </template>
 
-        <!-- 不是本人的单:后端不允许该桌再开一单(一桌只留一笔未结账订单),
-             这里只能给「等服务员清台 + 刷新」的出口 -->
+        <!-- 不是本人的单:后端不允许该桌再开一单(一桌只留一笔未结账订单)。
+             菜单可以先进去逛,购物车随便挑,清台后回这里刷新即可下单 -->
         <template v-else>
           <div class="err-icon">!</div>
-          <div class="state-text">这张桌台的上一笔订单还未结账，请稍候服务员清台后再扫码点餐。</div>
-          <button
-            class="retry-btn"
-            @click="load"
-          >
-            刷新状态
-          </button>
+          <div class="state-title">本桌还未清台</div>
+          <div class="state-text">
+            <p>上一笔订单还未结账，服务员清台后即可点餐</p>
+            <p class="sub">您可以先逛逛菜单，把想吃的挑进购物车 ～</p>
+          </div>
+          <div class="state-actions">
+            <button
+              class="retry-btn"
+              @click="browseMenu"
+            >
+              先看看菜单
+            </button>
+            <button
+              class="retry-btn plain"
+              @click="load"
+            >
+              刷新状态
+            </button>
+          </div>
         </template>
       </div>
 
@@ -197,7 +224,142 @@
         v-else-if="view === 'order'"
         class="order-empty"
       >
-        没有找到进行中的订单
+        <!-- 空态插画:菜单卡 + 筷子 + 冒热气的茶杯(与全站线性 SVG 图标同一画风,品牌色绘制) -->
+        <div
+          class="empty-illo"
+          aria-hidden="true"
+        >
+          <svg
+            viewBox="0 0 120 96"
+            fill="none"
+          >
+            <!-- 桌面投影:让元素落地,不悬空 -->
+            <ellipse
+              class="illo-shadow"
+              cx="60"
+              cy="89"
+              rx="46"
+              ry="4.5"
+              fill="var(--brand-soft, #ffb27d)"
+              opacity="0.4"
+            />
+            <!-- 闪烁星点 -->
+            <path
+              class="illo-spark s1"
+              d="M14 14l2.6 5.2 5.2 2.6-5.2 2.6L14 29.6l-2.6-5.2-5.2-2.6 5.2-2.6z"
+              fill="var(--brand-soft, #ffb27d)"
+            />
+            <path
+              class="illo-spark s2"
+              d="M80 10l1.8 3.6 3.6 1.8-3.6 1.8-1.8 3.6-1.8-3.6-3.6-1.8 3.6-1.8z"
+              fill="var(--brand-soft, #ffb27d)"
+            />
+            <!-- 单页菜单卡:品牌色标题栏 + 三行菜品占位 -->
+            <rect
+              x="24"
+              y="22"
+              width="56"
+              height="48"
+              rx="5"
+              fill="#fff"
+              stroke="var(--brand, #ff6b35)"
+              stroke-width="4"
+            />
+            <path
+              d="M29 22h46a5 5 0 0 1 5 5v7H24v-7a5 5 0 0 1 5-5z"
+              fill="var(--brand, #ff6b35)"
+            />
+            <circle
+              cx="32.5"
+              cy="28"
+              r="2.2"
+              fill="#fff"
+            />
+            <path
+              d="M39 28h28"
+              stroke="#fff"
+              stroke-width="3.5"
+              stroke-linecap="round"
+            />
+            <path
+              d="M33 43h22M33 53h16M33 63h20"
+              stroke="var(--ink-4, #c8c9cc)"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            />
+            <circle
+              cx="35.5"
+              cy="43"
+              r="3"
+              fill="var(--brand-soft, #ffb27d)"
+            />
+            <circle
+              cx="35.5"
+              cy="53"
+              r="3"
+              fill="var(--brand-soft, #ffb27d)"
+            />
+            <circle
+              cx="35.5"
+              cy="63"
+              r="3"
+              fill="var(--brand-soft, #ffb27d)"
+            />
+            <!-- 茶杯与热气:三缕波浪热气从杯沿袅袅升起 -->
+            <path
+              class="illo-steam st1"
+              d="M95 44c2.5-3-2.5-5 0-8c2.5-3-2.5-5 0-8"
+              stroke="var(--brand-soft, #ffb27d)"
+              stroke-width="3"
+              stroke-linecap="round"
+            />
+            <path
+              class="illo-steam st2"
+              d="M100 44c2.5-3-2.5-5 0-8c2.5-3-2.5-5 0-8c2-2.5-2-4.5 0-7"
+              stroke="var(--brand-soft, #ffb27d)"
+              stroke-width="3"
+              stroke-linecap="round"
+            />
+            <path
+              class="illo-steam st3"
+              d="M105 44c2.5-3-2.5-5 0-8c2.5-3-2.5-5 0-8"
+              stroke="var(--brand-soft, #ffb27d)"
+              stroke-width="3"
+              stroke-linecap="round"
+            />
+            <rect
+              x="92"
+              y="48"
+              width="17"
+              height="15"
+              rx="4"
+              fill="#fff"
+              stroke="var(--brand, #ff6b35)"
+              stroke-width="3.5"
+            />
+            <path
+              d="M87 68h27"
+              stroke="var(--brand, #ff6b35)"
+              stroke-width="3.5"
+              stroke-linecap="round"
+            />
+            <!-- 筷子 -->
+            <path
+              d="M22 80L68 76M24 85l46-4"
+              stroke="var(--brand-deep, #f0481f)"
+              stroke-width="3.5"
+              stroke-linecap="round"
+            />
+          </svg>
+        </div>
+        <div class="empty-title">上桌啦，点起来吧</div>
+        <div class="empty-sub">还没有进行中的订单，先去挑几道想吃的菜吧</div>
+        <button
+          class="empty-btn"
+          @click="switchView('menu')"
+        >
+          去点餐
+        </button>
       </div>
 
       <PayView
@@ -512,7 +674,9 @@ const orderedMap = computed<Record<number, number>>(() => {
   }
   return m;
 });
-const orderedQty = (dishId: number | undefined) => orderedMap.value[dishId as number] || 0;
+const orderedQty = (dishId: number | undefined) =>
+  // 「不是本人的单」浏览模式下不显示上一桌的「已点」标记,避免泄露他人点了什么
+  (foreign.value ? 0 : orderedMap.value[dishId as number]) || 0;
 
 // 订单是否仍在进行中(1已下单/2制作中/3已上齐)。
 // 加菜还需未支付;催菜只要求进行中——已付款但迟迟未上齐的订单同样可以催。
@@ -520,7 +684,10 @@ const isActive = computed(() => isActiveStatus(currentOrder.value?.orderStatus))
 
 // ---- 下单 / 加菜 ----
 // 存在进行中且未支付的订单时走加菜(追加到同一订单),否则首次下单。
-const canAppend = computed(() => isActive.value && Number(currentOrder.value?.payStatus) === 0);
+const canAppend = computed(
+  // foreign(不是本人的单)时绝不走加菜:currentOrder 是上一桌的账单,不能往里追加
+  () => !foreign.value && isActive.value && Number(currentOrder.value?.payStatus) === 0
+);
 
 // 订单跟踪/支付视图的渲染已由模板上的 `currentOrder &&` 守卫收窄;
 // CartDrawer 的 currentOrder prop 声明为可空并内部空值容错。
@@ -636,6 +803,11 @@ function startNewOrder(): void {
 // 底部 tabbar 切页。加菜时随时切回订单页核对已下单菜品,购物车内容保留不丢。
 function switchView(v: 'menu' | 'order'): void {
   if (view.value === v) return;
+  // 浏览模式下订单页展示的是上一桌的账单明细,不让切过去(隐私与误操作双重考虑)
+  if (v === 'order' && foreign.value) {
+    foreignTip();
+    return;
+  }
   // 离开菜单页顺手收起搜索页,避免切回时残留
   searchOpen.value = false;
   if (v === 'order') {
@@ -654,6 +826,11 @@ function genRequestId(): string {
 }
 
 async function submit(): Promise<void> {
+  // 「不是本人的单」:菜可以挑,单不能下 —— 一桌只允许一笔未结账订单,后端也会拒绝。
+  if (foreign.value) {
+    foreignTip();
+    return;
+  }
   if (!cart.value.length) {
     MessagePlugin.warning('先挑几道想吃的菜吧～');
     return;
@@ -782,6 +959,19 @@ function notMine(): void {
   foreign.value = true;
 }
 
+// 「不是本人的单」也允许先浏览菜单、把菜挑进购物车;
+// 只是本桌还没清台,提交会卡在下面 submit 的拦截上。
+function browseMenu(): void {
+  view.value = 'menu';
+}
+
+// 浏览模式的统一提示:下单与订单页入口共用
+function foreignTip(): boolean {
+  if (!foreign.value) return false;
+  MessagePlugin.warning('本桌上一笔订单还未结账，服务员清台后即可下单');
+  return true;
+}
+
 // 确认页只给「下单时间 + 菜数 + 金额」三行:够本人认出自己的单,
 // 又不至于把上一桌具体点了什么菜完整摊给陌生人看。
 const resumeTime = computed(() => {
@@ -839,7 +1029,8 @@ async function load(): Promise<void> {
     } else {
       view.value = 'menu';
     }
-    // 购物车要等订单归属定下来再恢复:它的 key 与恢复口径都依赖 currentOrder
+    // 购物车要等订单归属定下来再恢复:它的 key 与恢复口径都依赖 currentOrder。
+    // 浏览模式同样恢复 —— 顾客挑好的菜在刷新后不丢,清台后能直接提交
     restoreCart(m);
   } catch (e) {
     view.value = 'error';
@@ -1035,7 +1226,22 @@ onUnmounted(() => {
 }
 
 .state-text {
+  max-width: 300px;
+  padding: 0 16px;
   font-size: 14px;
+  line-height: 1.7;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+/* 主文案下的补充说明:缩小一号、颜色更浅,形成信息层级 */
+.state-text p {
+  margin: 0;
+}
+
+.state-text .sub {
+  margin-top: 4px;
+  font-size: 13px;
   color: var(--ink-3);
 }
 
@@ -1078,6 +1284,39 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+/* 状态页的按钮组(如「先看看菜单」+「刷新状态」):并排等宽、同一高度,
+   主按钮在前。box-sizing 统一为 border-box,避免「带边框的一颗比渐变的一颗高 2px」 */
+.state-actions {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 6px;
+}
+
+.state-actions .retry-btn {
+  flex: 1;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.retry-btn.plain {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.state-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
 /* 菜单白色卡片:整体上移盖住 hero 底部,圆角与裁切统一在这里提供 */
 .menu-sheet {
   flex: 1;
@@ -1105,15 +1344,152 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-/* 订单空态:还没下单时进「订单」页看到的是它(底部导航常驻后进得来) */
+/* 订单空态:还没下单时进「订单」页看到的是它(底部导航常驻后进得来)。
+   图标轻轻上下浮动 + 年轻化文案 + 一键去点餐,替代干巴巴的一行灰字 */
 .order-empty {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 0 24px 80px;
-  color: var(--ink-4);
-  font-size: 14px;
+  text-align: center;
+}
+
+.empty-illo {
+  width: 104px;
+  height: 84px;
+  animation: empty-float 2.4s ease-in-out infinite;
+  filter: drop-shadow(0 12px 20px rgb(240 72 31 / 14%));
+}
+
+.empty-illo svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* 桌面投影:整图上下浮动时,影子同步收放,保持「落地」错觉 */
+.illo-shadow {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: shadow-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes shadow-breathe {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scaleX(1);
+  }
+
+  50% {
+    opacity: 0.2;
+    transform: scaleX(0.88);
+  }
+}
+
+/* 星点轮流闪烁,让插画「活」起来 */
+.illo-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spark-twinkle 1.8s ease-in-out infinite;
+}
+
+.illo-spark.s2 {
+  animation-delay: 0.9s;
+}
+
+/* 热气袅袅:三缕错拍升腾 */
+.illo-steam {
+  animation: steam-rise 2.2s ease-in-out infinite;
+}
+
+.illo-steam.st2 {
+  animation-delay: 0.7s;
+}
+
+.illo-steam.st3 {
+  animation-delay: 1.4s;
+}
+
+@keyframes steam-rise {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(1px);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes spark-twinkle {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty-illo,
+  .illo-spark,
+  .illo-steam,
+  .illo-shadow {
+    animation: none;
+  }
+}
+
+@keyframes empty-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.empty-title {
+  margin-top: 16px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.empty-sub {
+  margin-top: 8px;
+  max-width: 260px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.empty-btn {
+  margin-top: 24px;
+  padding: 11px 40px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  box-shadow: 0 8px 18px rgb(240 72 31 / 28%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.empty-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 4px 10px rgb(240 72 31 / 28%);
 }
 
 /* 本桌「已付款但出餐未完成」订单提示条:置顶于白色卡片内 */
@@ -1135,6 +1511,25 @@ onUnmounted(() => {
   background: #fff;
   color: var(--brand-deep);
   font-size: 11px;
+}
+
+/* 「不是本人的单」浏览模式提示条:文案 + 返回按钮两端对齐 */
+.foreign-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.foreign-back {
+  flex-shrink: 0;
+  padding: 4px 14px;
+  border: 1px solid var(--brand, #ff6b35);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--brand-deep, #f0481f);
+  font-size: 12px;
+  cursor: pointer;
 }
 
 /* ---- 未结账订单归属确认 ---- */

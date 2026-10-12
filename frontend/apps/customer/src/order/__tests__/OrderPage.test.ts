@@ -272,7 +272,8 @@ describe('OrderPage', () => {
 
     expect(wrapper.find('.op-tabbar').exists()).toBe(true);
     await wrapper.findAll('.tb-item')[1].trigger('click'); // 订单
-    expect(wrapper.text()).toContain('没有找到进行中的订单');
+    expect(wrapper.text()).toContain('上桌啦，点起来吧');
+    expect(wrapper.text()).toContain('去点餐');
     wrapper.unmount();
   });
 
@@ -632,7 +633,7 @@ describe('未结账订单归属确认', () => {
     await wrapper.findAll('.resume-btn')[1].trigger('click');
     await flushPromises();
 
-    expect(wrapper.text()).toContain('请稍候服务员清台后再扫码点餐');
+    expect(wrapper.text()).toContain('上一笔订单还未结账，服务员清台后即可点餐');
     expect(wrapper.text()).not.toContain('去支付');
     wrapper.unmount();
   });
