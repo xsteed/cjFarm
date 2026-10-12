@@ -108,9 +108,14 @@ type PaymentSuccessResult struct {
 // 在几十条日志里人工对齐。传 nil 是安全的(退化为不带 requestID 的普通日志),
 // 便于单测与后台任务直接调用。
 func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, payType string, amountCents int64) PaymentSuccessResult {
-	// 幂等:该渠道流水已置为已支付,说明是同一笔支付的重复回调,直接成功应答。
+	// 幂等短路:仅当「本渠道流水已支付 且 订单已入账」时才成立。
+	// 只凭流水判断会吞掉掉单 —— 上一轮若 MarkPaymentPaid 成功、MarkOrderPaidByChannel
+	// 失败(已应答 Failed),流水会停在已支付而订单 pay_status 仍为 0;渠道重试若在此
+	// 被短路成成功应答,渠道就停止重试,订单永远不入账。故订单未入账时不短路,继续往下补偿。
 	if _, flowStatus, _, err := dao.GetPayment(orderNo, channel); err == nil && flowStatus == dao.PayStatusPaid {
-		return PaymentSuccessResult{}
+		if _, orderPay, _, _, e := dao.GetOrderAmount(orderNo); e == nil && orderPay == 1 {
+			return PaymentSuccessResult{}
+		}
 	}
 	_, payStatus, _, _, err := dao.GetOrderAmount(orderNo)
 	if err != nil {
@@ -149,14 +154,36 @@ func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, 
 		}
 		logger.CtxInfof(ctx, "[pay] 支付成功 订单%s 渠道%s 金额%d分 渠道流水号%s", orderNo, channel, amountCents, channelTradeNo)
 	} else {
-		// 并发重复回调:同渠道两个通知同时到达,先到者已把流水置为已支付,后到者
-		// 条件 UPDATE 命中 0 行 —— 复核流水状态,确认流水确已支付时才成功应答。
+		// changed=false:本渠道流水未被「本次」置为已支付。
 		if _, fs, _, e := dao.GetPayment(orderNo, channel); e == nil && fs == dao.PayStatusPaid {
+			// 流水已支付,有两种可能,唯一区别是「订单是否已入账」:
+			//   ① 同一笔支付的重复/并发通知(已完整入账)—— 成功应答;
+			//   ② 上一轮「流水已置已支付、订单回写失败」留下的掉单 —— 补做订单回写。
+			// 注意:这里绝不能返回 Duplicate。Duplicate 会让 handler 对同一笔已入账的支付
+			// 再发起一次自动原路退款。真正的「重复支付(另一渠道已收)」在上面的
+			// payStatus==1 分支就已判定,不会走到这里。
+			if _, orderPay, _, _, e2 := dao.GetOrderAmount(orderNo); e2 == nil && orderPay == 1 {
+				return PaymentSuccessResult{}
+			}
+			orderChanged, err := dao.MarkOrderPaidByChannel(orderNo, payType, channelTradeNo, channel)
+			if err != nil {
+				logger.CtxErrorf(ctx, "[pay][告警] 掉单补偿:订单支付状态回写失败,应答失败待渠道重试 订单%s 渠道%s 流水号%s: %v", orderNo, channel, channelTradeNo, err)
+				return PaymentSuccessResult{Failed: true}
+			}
+			if !orderChanged {
+				// 补写未命中:订单已被并发入账。仍按「重复通知」成功应答,同样不标记 Duplicate。
+				if _, orderPay, _, _, e3 := dao.GetOrderAmount(orderNo); e3 == nil && orderPay == 1 {
+					return PaymentSuccessResult{}
+				}
+				logger.CtxErrorf(ctx, "[pay][告警] 掉单补偿未命中且订单仍未入账,应答失败待渠道重试(请人工核对) 订单%s 渠道%s 流水号%s", orderNo, channel, channelTradeNo)
+				return PaymentSuccessResult{Failed: true}
+			}
+			logger.CtxWarnf(ctx, "[pay] 掉单补偿成功:流水早已支付,本次补回订单入账 订单%s 渠道%s 金额%d分 流水号%s", orderNo, channel, amountCents, channelTradeNo)
 			return PaymentSuccessResult{}
 		}
 		// 流水缺失/已关闭却收到成功回调,且订单尚未支付:钱到了但订单没入账,属于掉单。
-		// 与「已支付重复回调」不同,这里绝不能折叠成成功应答 —— 否则渠道停止重试、
-		// 订单永远不入账。应答 Failed 让渠道重试,并以 Error 级别留痕供人工核对。
+		// 绝不能折叠成成功应答 —— 否则渠道停止重试、订单永远不入账。应答 Failed 让渠道重试,
+		// 并以 Error 级别留痕供人工核对。
 		logger.CtxErrorf(ctx, "[pay][告警] 支付成功但无待支付流水可回写,应答失败待渠道重试(请人工核对) 订单%s 渠道%s 流水号%s", orderNo, channel, channelTradeNo)
 		return PaymentSuccessResult{Failed: true}
 	}

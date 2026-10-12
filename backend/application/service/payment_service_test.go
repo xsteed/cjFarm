@@ -189,6 +189,26 @@ func TestPaymentSvcApplyPaymentSuccess(t *testing.T) {
 			t.Fatalf("无流水时订单不应被标记支付, got %d", payStatus)
 		}
 	})
+
+	t.Run("掉单补偿:流水已支付但订单未入账", func(t *testing.T) {
+		// 回归用例:模拟上一轮 MarkPaymentPaid 成功、MarkOrderPaidByChannel 失败后留下的
+		// 中间态(流水已支付、订单仍 pay_status=0)。渠道重试时必须补回订单入账,
+		// 不能被「流水已支付」短路成成功应答 —— 否则渠道停止重试,订单永远不入账。
+		id := paymentSvcInsertOrder(t, "APS6", OrderStatusPlaced, 0, 5000)
+		CreatePayment("APS6", "wxpay", 5000, "prepay")
+		if _, err := dao.MarkPaymentPaid("APS6", "wxpay", "t6"); err != nil {
+			t.Fatalf("预置流水已支付失败: %v", err)
+		}
+		res := ApplyPaymentSuccess(context.Background(), "APS6", "wxpay", "t6", "wxpay", 5000)
+		if res.Failed {
+			t.Fatalf("掉单补偿不应应答失败")
+		}
+		var payStatus int
+		store.DB.QueryRow(`SELECT pay_status FROM tb_order WHERE order_id=?`, id).Scan(&payStatus)
+		if payStatus != 1 {
+			t.Fatalf("掉单补偿后订单应入账, got pay_status=%d", payStatus)
+		}
+	})
 }
 
 func TestPaymentSvcRefundAmount(t *testing.T) {

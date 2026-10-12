@@ -61,6 +61,7 @@ interface RefundTarget {
   orderNo?: string;
   totalAmount?: number;
   refundAmount?: number;
+  refundingAmount?: number;
 }
 
 const emit = defineEmits<{
@@ -79,7 +80,14 @@ const confirmBtn = reactive<{ content: string; theme: 'danger'; loading: boolean
 const money = (v: unknown): string => Number(v || 0).toFixed(2);
 
 function open(row: RefundTarget): void {
-  const maxAmount = Number((Number(row.totalAmount || 0) - Number(row.refundAmount || 0)).toFixed(2));
+  // 可退额度 = 订单金额 - 已成功退款 - 处理中退款。处理中的退款单同样占用额度
+  // (后端 SumRefundedInclPending 口径),不扣它会让展示的可退金额大于后端认可的上限。
+  const maxAmount = Math.max(
+    0,
+    Number(
+      (Number(row.totalAmount || 0) - Number(row.refundAmount || 0) - Number(row.refundingAmount || 0)).toFixed(2)
+    )
+  );
   refundForm.value = {
     orderId: Number(row.orderId),
     orderNo: row.orderNo || '',
