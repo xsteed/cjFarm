@@ -11,7 +11,7 @@
           placeholder="搜索菜品名称"
           clearable
           style="width: 220px"
-          @enter="load"
+          @enter="search"
         >
           <template #prefix-icon>
             <search-icon />
@@ -32,7 +32,7 @@
         </t-select>
         <t-button
           theme="primary"
-          @click="load"
+          @click="search"
         >
           <template #icon>
             <search-icon />
@@ -81,7 +81,7 @@
           v-model="query.dishName"
           placeholder="搜索菜品名称"
           clearable
-          @enter="load"
+          @enter="search"
         >
           <template #prefix-icon>
             <search-icon />
@@ -182,7 +182,7 @@
                   :value="Number(d.status)"
                   :custom-value="[1, 0]"
                   size="small"
-                  :disabled="statusBusyId === d.dishId"
+                  :disabled="statusBusyIds.has(Number(d.dishId))"
                   @change="(val: string | number | boolean) => toggleStatus(d, val)"
                 />
                 <span
@@ -723,7 +723,9 @@ async function load(): Promise<void> {
       dishName: query.dishName,
       categoryId: query.categoryId
     });
-    list.value = res.items;
+    // 缺 items 时兜底成空数组:否则 list.value=undefined 会让模板的 !list.length 抛
+    // TypeError 白屏(同仓库其它列表页都做了这层兜底)。
+    list.value = res.items || [];
     pagination.total = res.total;
   } finally {
     loading.value = false;
@@ -735,7 +737,15 @@ async function loadCategories(): Promise<void> {
   // 但自定义角色可能只给 dish:view —— 那时跳过请求,而不是让它弹一次 403。
   if (!hasPerm('category:view')) return;
   const res = await listCategories();
-  categories.value = res.items;
+  categories.value = res.items || [];
+}
+
+// 查询 / 搜索框回车:必须先回到第 1 页再查。
+// 不重置页码时,从第 N 页发起筛选会带着旧页码请求,命中变少就落在空页;
+// 移动端分页器还带 v-if(total > pageSize),total 变小后直接消失,无法再翻回。
+function search(): void {
+  pagination.current = 1;
+  load();
 }
 
 // current-change 首参就是新页码数字(与 page-size-change 的首参语义一致,见 t-pagination 事件签名)
@@ -759,12 +769,15 @@ function onTablePageChange(pageInfo: PageInfo): void {
 // 移动端卡片上的上下架开关。后端 /admin/dish/update 强校验分类/名称/规格必填,
 // 不能只传 status,因此用行内已有数据组装完整 payload;specId 原样带回以增量更新、保留库存。
 // 先乐观更新开关状态,请求失败再回滚(错误提示由拦截器统一 toast)。
-const statusBusyId = ref<number | null>(null);
+// 逐行在途标记(用 Set 而非单个值):一行在途时不应把其它行的开关一起锁死 ——
+// 全局锁在弱网下的表现就是「点哪一行都没反应」。模板据此逐行 disabled。
+const statusBusyIds = ref<Set<number>>(new Set());
 
 async function toggleStatus(d: Dish, val: string | number | boolean): Promise<void> {
   const next = Number(val) === 1 ? 1 : 0;
-  if (Number(d.status) === next || statusBusyId.value !== null) return;
-  statusBusyId.value = d.dishId ?? null;
+  const id = Number(d.dishId) || 0;
+  if (Number(d.status) === next || statusBusyIds.value.has(id)) return;
+  statusBusyIds.value.add(id);
   const previous = Number(d.status) === 1 ? 1 : 0;
   d.status = next;
   try {
@@ -789,7 +802,7 @@ async function toggleStatus(d: Dish, val: string | number | boolean): Promise<vo
   } catch {
     d.status = previous;
   } finally {
-    statusBusyId.value = null;
+    statusBusyIds.value.delete(id);
   }
 }
 

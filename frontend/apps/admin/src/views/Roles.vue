@@ -468,6 +468,8 @@ async function loadCatalog(): Promise<void> {
     }));
     impliesMap.value = res.implies || {};
     permTotal.value = res.total || 0;
+  } catch {
+    /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted 的 Promise.all 会抛未处理的 Promise 拒绝 */
   } finally {
     loadingCatalog.value = false;
   }

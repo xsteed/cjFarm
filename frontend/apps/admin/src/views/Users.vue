@@ -11,7 +11,7 @@
           placeholder="搜索用户名 / 姓名 / 手机号"
           clearable
           style="width: 240px"
-          @enter="load"
+          @enter="search"
         />
         <t-select
           v-model="query.roleId"
@@ -30,7 +30,7 @@
         <t-button
           theme="primary"
           variant="outline"
-          @click="load"
+          @click="search"
         >
           <template #icon>
             <search-icon />
@@ -68,7 +68,7 @@
           v-model="query.keyword"
           placeholder="搜索用户名 / 姓名 / 手机号"
           clearable
-          @enter="load"
+          @enter="search"
         >
           <template #prefix-icon>
             <search-icon />
@@ -538,8 +538,13 @@ function applyFilters(): void {
 }
 
 function resetFilters(): void {
+  // 必须连关键词一起清、并回第 1 页重查:遗漏 keyword 会让「重置」后列表仍是旧关键词的
+  // 筛选结果,用户以为没生效;不重载则连页码都停在原处。
+  query.keyword = '';
   query.roleId = undefined;
   query.status = undefined;
+  query.pageNum = 1;
+  load();
 }
 
 const roleOptions = computed(() =>
@@ -571,9 +576,16 @@ const columns = [
 function isSelf(row: UserRow): boolean {
   return row.username === getUsername();
 }
+// 当前登录者的 userId:首次在列表里按用户名匹配到后缓存。
+// 直接每次在 list 里查找的话,翻页/刷新后当前页不含自己时会把「本人」误判为 false,
+// 于是「不能修改自己的角色」的禁用失效(提交后仍会被后端拒绝)。
+const selfUserId = ref<number | null>(null);
 function isSelfId(id: number): boolean {
-  const me = list.value.find(u => u.username === getUsername());
-  return !!me && me.userId === id;
+  if (selfUserId.value === null) {
+    const me = list.value.find(u => u.username === getUsername());
+    if (me && me.userId != null) selfUserId.value = me.userId;
+  }
+  return selfUserId.value !== null && selfUserId.value === id;
 }
 
 async function load(): Promise<void> {
@@ -605,6 +617,12 @@ async function loadRoles(): Promise<void> {
     // 角色列表拉取失败时不影响员工列表展示,但要在表单里说清楚(见模板的 rolesLoadFailed)
     rolesLoadFailed.value = true;
   }
+}
+
+// 查询 / 搜索框回车:先回第 1 页再查,避免带着旧页码落在空页。
+function search(): void {
+  query.pageNum = 1;
+  load();
 }
 
 function onPageChange(pageInfo: PageInfo): void {

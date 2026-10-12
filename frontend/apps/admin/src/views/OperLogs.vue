@@ -543,6 +543,8 @@ async function load(): Promise<void> {
     const res = await listOperLogs(params);
     list.value = (res.items || []) as OperLogRow[];
     total.value = res.total || 0;
+  } catch {
+    /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted(load)/@change 会抛未处理的 Promise 拒绝 */
   } finally {
     loading.value = false;
   }
