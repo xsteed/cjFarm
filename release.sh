@@ -34,7 +34,8 @@
 # 产物结构(与仓库相对路径一致, 包内 deploy/deploy.sh 可直接执行):
 #   dining-<版本>-<时间戳>/
 #   ├── backend/bin/dining-backend-linux-*   # 后端二进制
-#   ├── backend/config.prod.yaml             # 生产配置(本机有则带上; deploy.sh 优先据此生成 config.yaml)
+#   ├── backend/bin/config.yaml              # 生产配置(由 config.prod.yaml 复制改名, 便于直接在 bin 目录启动后端)
+#   ├── backend/config.prod.yaml             # 生产配置模板(本机有则带上; deploy.sh 优先据此生成 <INSTALL_DIR>/config.yaml)
 #   ├── backend/config.example.yaml          # 全量注释模板(供查阅 / 老包回退)
 #   ├── print-agent/bin/print-agent-*        # 门店打印代理五平台产物
 #   ├── frontend/dist/                       # 前端产物
@@ -90,6 +91,34 @@ done
 log()  { printf '\033[1;36m[release]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------- 前端版本号自动递增 ----------------------------
+# 发版时把后台管理系统(admin 前端)的 package.json version 做 patch+1,
+# 左下角展示的版本号据此自动递增; 与后端运行期版本(git hash)解耦, 互不影响。
+# 默认只改动文件不提交; 设 COMMIT_VERSION=1 则顺手提交这个 bump。
+bump_admin_version() {
+  local pkg="$ROOT_DIR/frontend/apps/admin/package.json"
+  ADMIN_VERSION=""
+  [ -f "$pkg" ] || { warn "未找到 $pkg, 跳过前端版本号递增"; return 0; }
+  command -v node >/dev/null 2>&1 || { warn "未找到 node, 跳过前端版本号递增"; return 0; }
+  ADMIN_VERSION="$(node -e '
+    const fs=require("fs");
+    const p=process.argv[1];
+    const s=fs.readFileSync(p,"utf8");
+    const m=s.match(/"version"\s*:\s*"(\d+)\.(\d+)\.(\d+)"/);
+    if(!m){ process.stderr.write("package.json 缺少合法 version 字段\n"); process.exit(2); }
+    const nv=`${m[1]}.${m[2]}.${Number(m[3])+1}`;
+    fs.writeFileSync(p, s.replace(/"version"\s*:\s*"\d+\.\d+\.\d+"/, `"version": "${nv}"`));
+    process.stdout.write(nv);
+  ' "$pkg")" || die "前端版本号递增失败"
+  log "前端(admin)版本号已递增 -> v$ADMIN_VERSION"
+  if [ "${COMMIT_VERSION:-}" = "1" ]; then
+    git -C "$ROOT_DIR" add "$pkg"
+    git -C "$ROOT_DIR" commit -m "chore(admin): bump version to v$ADMIN_VERSION" \
+      && log "已提交版本号 bump" \
+      || warn "版本号 bump 提交失败(可能无改动或无提交权限)"
+  fi
+}
 
 case "$ARCH" in
   amd64|arm64|both) ;;
@@ -157,6 +186,8 @@ build_print_agent darwin amd64 darwin-amd64
 build_print_agent darwin arm64 darwin-arm64
 
 # ---------------------------- 构建前端 ----------------------------
+# 发版时先把 admin 前端版本号 patch+1, 再构建(左下角读 package.json 的 version)
+bump_admin_version
 log "构建前端 ..."
 ( cd "$ROOT_DIR/frontend"
   [ -d node_modules ] || npm install --registry="$NPM_REGISTRY" --no-audit --no-fund
@@ -177,6 +208,9 @@ copy_tree "$ROOT_DIR/frontend/dist" "$PKG_DIR/frontend/dist"
 # 优先据此生成 <INSTALL_DIR>/config.yaml; 没有它时会回退 config.example.yaml(一并带上)。
 if [ -f "$ROOT_DIR/backend/config.prod.yaml" ]; then
   cp -f "$ROOT_DIR/backend/config.prod.yaml" "$PKG_DIR/backend/config.prod.yaml"
+  # 一并复制进 bin/ 并改名为 config.yaml, 便于直接进入 bin 目录启动后端
+  # (后端读工作目录下的 config.yaml)。deploy.sh 更新时不会动 bin/ 里的这个文件。
+  cp -f "$ROOT_DIR/backend/config.prod.yaml" "$PKG_DIR/backend/bin/config.yaml"
 else
   warn "未找到 backend/config.prod.yaml(本机私有文件, 不入库): 发布包不含生产配置,"
   warn "服务器上 deploy.sh 会回退到 config.example.yaml。想用固定生产配置请先创建该文件。"
