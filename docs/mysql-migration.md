@@ -1,6 +1,6 @@
 # 切换到 MySQL 操作手册
 
-> 适用版本：扫码点餐管理系统（`dining-system`）
+> 适用版本：点餐管理系统（`dining-system`）
 > 目标读者：负责把这套系统从「SQLite 单机」迁到「MySQL 服务端」的运维 / 开发人员
 
 ---
@@ -57,14 +57,18 @@
 
 ### 4. MySQL 大图写入需调大 `max_allowed_packet`
 
-`tb_image` 单条 `INSERT` 可达 5MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝，
+`tb_image` 单条 `INSERT` 可达 64MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝，
 需提前执行：
 
 ```sql
-SET GLOBAL max_allowed_packet=64M;
+SET GLOBAL max_allowed_packet=128M;
 ```
 
-客户端侧后端默认 DSN 已带 `maxAllowedPacket=67108864`，无需额外配置。
+客户端侧后端默认 DSN 已带 `maxAllowedPacket=134217728`，无需额外配置。
+
+`SET GLOBAL` 仅对当前实例生效、重启后失效：生产环境请同时写入 my.cnf 的 `[mysqld]` 段
+（`max_allowed_packet=128M`）以持久化。后端**启动时会自检**服务端该值，低于 128MB 时在日志打印
+`[db][告警]` 并提示修复，便于在部署阶段就发现问题。
 
 ---
 
@@ -112,7 +116,7 @@ Windows 下写路径请用 `C:/path/config.yaml` 形式。
 | `database.mysql.user` | `DB_USER` | `root` | MySQL 账号 |
 | `database.mysql.password` | `DB_PASSWORD` | 空 | MySQL 密码 |
 | `database.mysql.name` | `DB_NAME` | `dining` | MySQL 库名 |
-| `database.mysql.params` | `DB_PARAMS` | `charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864` | 连接附加参数 |
+| `database.mysql.params` | `DB_PARAMS` | `charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728` | 连接附加参数 |
 | `security.master_key` | `CONFIG_MASTER_KEY` | 空 | 敏感配置加密主密钥（优先级高于 `data/master.key`） |
 | `security.master_key_path` | `MASTER_KEY_PATH` | `./data/master.key` | 主密钥文件路径 |
 | `security.token_ttl_hours` | `TOKEN_TTL_HOURS` | `24` | 登录令牌有效期（小时） |
@@ -142,7 +146,7 @@ Windows 下写路径请用 `C:/path/config.yaml` 形式。
 sudo DB_DRIVER=mysql DB_HOST=10.0.0.9 DB_PORT=3306 DB_USER=dining \
   DB_PASSWORD='强密码' DB_NAME=dining bash deploy/deploy.sh --skip-build --allow-db-switch
 # 也可只给一行连接串（非空时优先于上面的分项）：
-#   sudo DB_DSN='dining:密码@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864' bash deploy/deploy.sh --skip-build --allow-db-switch
+#   sudo DB_DSN='dining:密码@tcp(10.0.0.9:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728' bash deploy/deploy.sh --skip-build --allow-db-switch
 ```
 
 > **切库守卫**：`deploy.sh` 在检测到 `driver` 由 `sqlite` 变为 `mysql` 时会**直接拒绝**
@@ -227,7 +231,7 @@ DB_NAME=dining
 [config] 已从 .env 载入 3 项配置(未覆盖更高优先级的来源)
 [db] 已连接 mysql 后端: dining:***@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local
 种子数据已初始化
-扫码点餐管理系统已启动 v1.0.0 (build ..., commit ...): http://localhost:8080 (管理端账号 admin)
+点餐管理系统已启动 v1.0.0 (build ..., commit ...): http://localhost:8080 (管理端账号 admin)
 ```
 （密码在日志里已脱敏为 `***`。）
 
@@ -375,7 +379,7 @@ curl -s -X POST http://localhost:8080/api/auth/login \
 | **VARCHAR 长度强校验** | SQLite 不校验长度（超长会静默通过），MySQL 严格模式下**直接报错**。字段长度见 `migrations/full/mysql/schema.sql`；如需放宽请改 Go 定义后重新生成（`go run ./cmd/gensql`）。 |
 | **严格模式** | MySQL 默认 `sql_mode` 含 `STRICT_TRANS_TABLES`，类型不匹配（如把空串写进 INT）会报错而非静默转换。 |
 | **重复执行建索引会报错** | MySQL 无 `CREATE INDEX IF NOT EXISTS`，重复跑 `schema.sql` 会报 `Duplicate key name`，正常现象，可忽略。 |
-| **大图写入包大小** | `tb_image` 单条 `INSERT` 可达 5MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝；需 `SET GLOBAL max_allowed_packet=64M`。客户端侧后端默认 DSN 已带 `maxAllowedPacket=67108864`，无需配置。 |
+| **大图写入包大小** | `tb_image` 单条 `INSERT` 可达 64MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝；需 `SET GLOBAL max_allowed_packet=128M`。客户端侧后端默认 DSN 已带 `maxAllowedPacket=134217728`，无需配置。 |
 | **加列脚本不幂等** | `ALTER TABLE ADD COLUMN` 两库都没有 `IF NOT EXISTS`，列已存在会报 `Duplicate column name`，同样可忽略。执行前用 `SHOW COLUMNS FROM 表名;` 自查。 |
 | **部分索引降级** | `idx_table_code` 在 SQLite 是部分唯一索引，MySQL 降级为普通索引；唯一性由 `store.NewUniqueTableCode()` 在应用层保证。 |
 | **时区** | 时间统一存 `VARCHAR(32)` 本地时间字符串，不依赖数据库时区。连接参数 `loc=Local` 保证一致；若容器时区不对，改 `TZ` 环境变量而不是改数据库。 |
@@ -412,7 +416,7 @@ curl -s -X POST http://localhost:8080/api/auth/login \
 **Q7：想直接用连接串而不想拆成一堆变量**
 ```ini
 DB_DRIVER=mysql
-DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
+DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728
 ```
 设置了 `DB_DSN` 后，`DB_HOST` / `DB_USER` 等分项不再生效。
 （注意：密码里若含 `@` `:` `/` 等字符需要 URL 转义。）

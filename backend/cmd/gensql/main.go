@@ -116,7 +116,7 @@ func render(header []string, body []string) string {
 func sqliteSchemaHeader() []string {
 	return []string{
 		"-- ============================================================================",
-		"-- 扫码点餐管理系统 — 全量建表脚本(SQLite)",
+		"-- 点餐管理系统 — 全量建表脚本(SQLite)",
 		"-- 文件名:schema.sql —— 全量建表脚本(通用命名)",
 		"-- ----------------------------------------------------------------------------",
 		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的表结构定义生成,",
@@ -137,7 +137,7 @@ func sqliteSchemaHeader() []string {
 func mysqlSchemaHeader() []string {
 	return []string{
 		"-- ============================================================================",
-		"-- 扫码点餐管理系统 — 全量建表脚本(MySQL 8.0 / 5.7,MariaDB 10.3+)",
+		"-- 点餐管理系统 — 全量建表脚本(MySQL 8.0 / 5.7,MariaDB 10.3+)",
 		"-- 文件名:schema.sql —— 全量建表脚本(通用命名)",
 		"-- ----------------------------------------------------------------------------",
 		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的表结构定义生成,",
@@ -170,7 +170,7 @@ func mysqlSchemaHeader() []string {
 func sqliteSeedHeader() []string {
 	return []string{
 		"-- ============================================================================",
-		"-- 扫码点餐管理系统 — 种子/存量数据(SQLite)",
+		"-- 点餐管理系统 — 种子/存量数据(SQLite)",
 		"-- 文件名:seed.sql —— 种子/存量数据(通用命名)",
 		"-- ----------------------------------------------------------------------------",
 		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,",
@@ -190,7 +190,7 @@ func sqliteSeedHeader() []string {
 func mysqlSeedHeader() []string {
 	return []string{
 		"-- ============================================================================",
-		"-- 扫码点餐管理系统 — 种子/存量数据(MySQL 8.0 / 5.7,MariaDB 10.3+)",
+		"-- 点餐管理系统 — 种子/存量数据(MySQL 8.0 / 5.7,MariaDB 10.3+)",
 		"-- 文件名:seed.sql —— 种子/存量数据(通用命名)",
 		"-- ----------------------------------------------------------------------------",
 		"-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,",

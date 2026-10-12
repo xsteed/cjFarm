@@ -103,7 +103,7 @@ func TestImportDiskImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile("sub/inside.png", []byte("ignored")) // 子目录:跳过
-	writeFile("huge.png", make([]byte, 5<<20+1))   // 超过 5MB:跳过并告警
+	writeFile("huge.png", make([]byte, 64<<20+1))   // 超过 64MB:跳过并告警
 	writeFile(strings.Repeat("a", 130)+".png", []byte("x")) // 超长文件名(>128):跳过
 
 	// 已在库中的同名同大小:跳过(skipped)。

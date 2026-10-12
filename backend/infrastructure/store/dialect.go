@@ -78,7 +78,7 @@ func tableOptionsFor(d Dialect) string {
 
 // blobTypeFor 返回「大二进制列」的类型定义。
 // SQLite: BLOB(最长 2GB,无小类区分)
-// MySQL : LONGBLOB(4GB;BLOB/MEDIUMBLOB 分别只有 64KB/16MB,装不下 5MB 单图)
+// MySQL : LONGBLOB(4GB;BLOB/MEDIUMBLOB 分别只有 64KB/16MB,装不下 64MB 单图)
 func blobTypeFor(d Dialect) string {
 	if d == DialectMySQL {
 		return "LONGBLOB"
@@ -206,7 +206,7 @@ func sqliteDSN(path string) string {
 //	DB_USER     MySQL 用户        (默认 root)
 //	DB_PASSWORD MySQL 密码        (默认空)
 //	DB_NAME     MySQL 库名        (默认 dining)
-//	DB_PARAMS   MySQL 附加参数    (默认 charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864)
+//	DB_PARAMS   MySQL 附加参数    (默认 charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728)
 func resolveDBConfig(sqlitePath string) (dbConfig, error) {
 	drv := strings.ToLower(strings.TrimSpace(infrastructure.Getenv(conf.EnvDBDriver, "")))
 	if drv == "" {
@@ -221,8 +221,8 @@ func resolveDBConfig(sqlitePath string) (dbConfig, error) {
 	case DialectMySQL:
 		dsn := strings.TrimSpace(infrastructure.Getenv(conf.EnvDBDSN, ""))
 		if dsn == "" {
-			// 图片内容存库后单条 INSERT 可达 5MB,客户端需放行大包(驱动参数用字节数,
-			// 67108864=64MB);服务端 max_allowed_packet 仍需 DBA 配合,见 docs/mysql-migration.md。
+			// 图片内容存库后单条 INSERT 可达 64MB,客户端需放行大包(驱动参数用字节数,
+			// 134217728=128MB);服务端 max_allowed_packet 仍需 DBA 配合,见 docs/mysql-migration.md。
 			// 只有走「分项配置拼 DSN」路径才使用该默认值,显式 DB_PARAMS/DB_DSN 不受影响。
 			params := infrastructure.Getenv(conf.EnvDBParams, conf.DefaultDBParams)
 			dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?%s",
@@ -286,12 +286,23 @@ func InitFromEnv() { Init("") }
 //
 // sqlitePath 仅在 SQLite 方言下生效;传空串时回退到 DB_PATH 环境变量。
 // MySQL 下连接信息完全来自环境变量,该参数被忽略。
+//
+// 每一步都打一条带耗时的日志:此前「配置加载完成」与「已连接后端」之间没有任何
+// 输出,而 MySQL 不可达(安全组丢包、或对端接受 TCP 却不回握手包)时 DB.Ping 没有
+// 超时可用 —— DSN 未设 timeout、Ping 也未带 context,现场表现就是「进程卡死、
+// 无日志无报错」。有了这些打点,看最后一条日志即可判定卡在哪一步。
 func Init(sqlitePath string) {
 	cfg, err := resolveDBConfig(sqlitePath)
 	if err != nil {
 		logger.Fatalf("数据库配置错误: %v", err)
 	}
 	dialect = cfg.Dialect
+
+	// 「正在连接」必须在 DB.Ping 之前打出:它是判定「卡在建连」的唯一线索,
+	// 所以把排查提示直接写进日志本身,运维不必再去翻代码。
+	logger.Infof("[db] 正在连接 %s 后端: %s (若此行之后长时间无输出, 即为卡在数据库建连/握手;"+
+		"可执行 kill -QUIT <pid> 打印 goroutine 栈定位)", cfg.Dialect, cfg.SafeDSN)
+	connStart := time.Now()
 
 	DB, err = sql.Open(cfg.Driver, cfg.DSN)
 	if err != nil {
@@ -309,15 +320,70 @@ func Init(sqlitePath string) {
 		logger.Infof("[db] SQLite PRAGMA(逐连接): busy_timeout=5000, foreign_keys=ON, journal_mode=WAL")
 	}
 
-	logger.Infof("[db] 已连接 %s 后端: %s", cfg.Dialect, cfg.SafeDSN)
-	migrate()
+	logger.Infof("[db] 已连接 %s 后端: %s (耗时 %s)",
+		cfg.Dialect, cfg.SafeDSN, time.Since(connStart).Round(time.Millisecond))
+	// 启动自检:MySQL 服务端 max_allowed_packet 若小于单张大图的 INSERT 包,
+	// 上传会在写入时失败;提前探测并把问题暴露在部署阶段(仅告警,不阻断启动)。
+	verifyMaxAllowedPacket()
+
+	// 建表迁移:语句条数先打出来 —— 大版本升级时这一步要跑几十条 DDL,
+	// 知道总数才能判断「跑了 3 秒」是正常还是卡住。
+	stmts := schemaStatements(dialect)
+	logger.Infof("[db] 开始建表迁移与历史数据回填(建表语句 %d 条, 幂等) ...", len(stmts))
+	migStart := time.Now()
+	migrate(stmts)
+	logger.Infof("[db] 建表迁移完成(耗时 %s)", time.Since(migStart).Round(time.Millisecond))
+
+	seedStart := time.Now()
 	seed()
+	logger.Infof("[db] 配置项与种子数据就绪(耗时 %s)", time.Since(seedStart).Round(time.Millisecond))
+
 	// 图片内容初始化:先导入旧磁盘存量(权威内容先入库),再补内嵌出厂图(只填缺)。
 	// 顺序不可颠倒:老部署磁盘上被商户实际使用的同名文件(如手工换过的收款码)
 	// 必须胜过内嵌出厂图,否则升级会改变已可见的图片内容。
+	// 这一步要逐张读盘并写库(单张上限 64MB),是启动最慢的一段,单独打点便于定位。
 	imgDir := infrastructure.Getenv(conf.EnvUploadDir, conf.DefaultUploadDir)
+	logger.Infof("[db] 开始图片内容初始化(存量目录 %s) ...", imgDir)
 	ImportDiskImages(imgDir)
 	EnsureSeedImages()
+}
+
+// requiredMaxAllowedPacket 是「单张上传图片」一条 INSERT 所需的服务端
+// max_allowed_packet 下限。
+//
+// 为什么不是图片上限本身:上传上限为 64MB(见 application/service.MaxImageBytes),
+// 但一条 INSERT 除图片字节外还有 SQL 语句文本、参数编码与协议帧开销;同时客户端
+// DSN 的 maxAllowedPacket 默认放行到 128MB(见 conf.DefaultDBParams)。服务端若
+// 低于客户端可发送的包,写入时会被服务端直接拒绝(ER_NET_PACKET_TOO_LARGE)。
+// 阈值与客户端默认值保持一致,额外覆盖语句开销。此处不引用 service 常量以避免
+// 循环依赖(service -> store),两者需同步维护。
+const requiredMaxAllowedPacket = 128 << 20
+
+// verifyMaxAllowedPacket 启动时探测 MySQL 服务端 max_allowed_packet 并按需告警。
+//
+// 为什么需要:该值由 DBA 在服务端设置,客户端 DSN 的 maxAllowedPacket 只能放宽
+// 客户端自身的发送上限、管不到服务端。若服务端偏小,大图上传要到「写入那一刻」才报
+// ER_NET_PACKET_TOO_LARGE,此错误只落在运行时日志,商家只看到「上传失败」而无从定位。
+// 启动时提前比对,把问题暴露在部署阶段。SQLite 无此概念,直接跳过;探测失败也仅告警,
+// 不阻断启动(自检不该成为服务起不来的原因)。
+func verifyMaxAllowedPacket() {
+	if !IsMySQL() {
+		return
+	}
+	var serverBytes int64
+	if err := DB.QueryRow(`SELECT @@global.max_allowed_packet`).Scan(&serverBytes); err != nil {
+		logger.Warnf("[db] 读取服务端 max_allowed_packet 失败,跳过自检: %v", err)
+		return
+	}
+	if serverBytes >= requiredMaxAllowedPacket {
+		logger.Infof("[db] 服务端 max_allowed_packet=%d 字节(≥%d),可容纳单张大图的 INSERT",
+			serverBytes, requiredMaxAllowedPacket)
+		return
+	}
+	logger.Warnf("[db][告警] 服务端 max_allowed_packet=%d 字节,小于大图写入所需的 %d 字节;"+
+		"上传接近上限(64MB)的图片会报 ER_NET_PACKET_TOO_LARGE。"+
+		"请在服务端执行 SET GLOBAL max_allowed_packet=%d;并写入 my.cnf 的 [mysqld] 段后重启以持久化。",
+		serverBytes, requiredMaxAllowedPacket, requiredMaxAllowedPacket)
 }
 
 // mysqlHint 针对最常见的 MySQL 连接失败给出中文排查提示。

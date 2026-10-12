@@ -123,6 +123,7 @@ func Init() {
 		StacktraceKey:  "stack",
 		LineEnding:     zapcore.DefaultLineEnding,
 		EncodeLevel:    zapcore.CapitalLevelEncoder,
+		// 时间用本地可读格式(2026-10-13 02:26:43.986),与控制台保持一致。
 		EncodeTime:     zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000"),
 		EncodeDuration: zapcore.StringDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
@@ -667,8 +668,12 @@ func isSensitiveQueryKey(key string) bool {
 	return false
 }
 
-// GinLogger 替代 gin.Logger(): 统一输出到 zap。
-// 5xx 记 Error、4xx 记 Warn、其余记 Info,并带上耗时/客户端 IP/错误信息。
+// GinLogger 替代 gin.Logger():统一输出到 zap。
+//
+// 访问日志以「结构化字段」落盘(method/path/status/latency_ms/client_ip/query/
+// error/request_id),而不是把一列空格对齐文本拼进 msg —— app.log 的 JSON 因此能被
+// jq/ELK/Loki 直接按字段检索;终端则由 console 编码器把这些字段以 {...} 附在行尾。
+// 级别映射:5xx→Error、4xx→Warn、其余→Info。
 func GinLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if skipPath(c.Request.URL.Path) {
@@ -678,42 +683,69 @@ func GinLogger() gin.HandlerFunc {
 		start := time.Now()
 		path := c.Request.URL.Path
 		query := c.Request.URL.RawQuery
-		fileOnly := isAgentPath(path)
+		agent := isAgentPath(path)
 		c.Next()
 
 		latency := time.Since(start)
 		status := c.Writer.Status()
-		msg := fmt.Sprintf("%3d │ %13v │ %-15s │ %-7s %s", status, latency, c.ClientIP(), c.Request.Method, path)
+
+		fields := make([]zap.Field, 0, 7)
+		fields = append(fields,
+			zap.String("method", c.Request.Method),
+			zap.String("path", path),
+			zap.Int("status", status),
+			zap.Float64("latency_ms", float64(latency.Nanoseconds())/1e6),
+			zap.String("client_ip", c.ClientIP()),
+		)
 		if query != "" {
-			msg += "?" + maskQuery(query)
+			fields = append(fields, zap.String("query", maskQuery(query)))
 		}
 		if errMsg := c.Errors.ByType(gin.ErrorTypePrivate).String(); errMsg != "" {
-			msg += " | " + errMsg
+			fields = append(fields, zap.String("error", errMsg))
 		}
-		// requestID 挂在列尾:排障时用响应头 X-Request-ID 反查这条访问日志。
+		// request_id 独立成字段:排障时用响应头 X-Request-ID 反查这条访问日志,
+		// 也能与业务日志里的 requestID 对齐。
 		if rid := requestID(c); rid != "" {
-			msg += " | " + rid
+			fields = append(fields, zap.String("request_id", rid))
 		}
+
+		lvl := zapcore.InfoLevel
 		switch {
 		case status >= 500:
-			if fileOnly {
-				AgentErrorf("%s", msg)
-			} else {
-				Errorf("%s", msg)
-			}
+			lvl = zapcore.ErrorLevel
 		case status >= 400:
-			if fileOnly {
-				AgentWarnf("%s", msg)
-			} else {
-				Warnf("%s", msg)
-			}
-		default:
-			if fileOnly {
-				AgentInfof("%s", msg)
-			} else {
-				Infof("%s", msg)
-			}
+			lvl = zapcore.WarnLevel
 		}
+
+		// msg 只保留人类可读的请求行;数据都在字段里,避免 JSON 里出现空格对齐噪音。
+		accessLog(agent, lvl, c.Request.Method+" "+path, fields)
+	}
+}
+
+// accessLog 写一条访问日志,与业务日志有几点刻意差异:
+//   - 关闭 caller:访问日志统一由中间件产生,caller 恒指向 logger 包内部,没有信息量;
+//   - 关闭堆栈(阈值抬到 Fatal):5xx 访问日志的调用栈只会指向日志内部,真正需要
+//     堆栈的 panic 已由 GinRecovery 单独记录,这里再打纯属噪音;
+//   - agent 通道(门店打印代理 ping/pull/ack)只落文件、不刷控制台,避免高频轮询刷屏。
+func accessLog(agent bool, lvl zapcore.Level, msg string, fields []zap.Field) {
+	mu.RLock()
+	base := rootRaw
+	if agent {
+		base = agentRaw
+	}
+	mu.RUnlock()
+
+	lg := ctxLogger(base, nil, fields).WithOptions(
+		zap.WithCaller(false),
+		zap.AddStacktrace(zapcore.FatalLevel),
+	)
+	switch lvl {
+	case zapcore.WarnLevel:
+		lg.Warn(msg)
+	case zapcore.ErrorLevel:
+		lg.Error(msg)
+	default:
+		lg.Info(msg)
 	}
 }
 

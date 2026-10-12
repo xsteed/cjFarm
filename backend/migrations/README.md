@@ -1,6 +1,6 @@
 # 数据库迁移脚本（backend/migrations）
 
-本目录集中管理扫码点餐管理系统的 **建库与升级脚本**，位于后端工程内，
+本目录集中管理点餐管理系统的 **建库与升级脚本**，位于后端工程内，
 与 `internal/store/schema.go`、`seed.go` 保持一一对应，并**按数据库产品分为两套**：
 SQLite（默认、单机）与 MySQL（多实例 / 高并发部署）。
 
@@ -258,14 +258,14 @@ go test ./...
 
 ### MySQL 大图写入注意
 
-`tb_image` 单条 `INSERT` 可达 5MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝，
+`tb_image` 单条 `INSERT` 可达 64MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝，
 需提前调大，例如：
 
 ```sql
-SET GLOBAL max_allowed_packet=64M;
+SET GLOBAL max_allowed_packet=128M;
 ```
 
-客户端侧后端默认 DSN 已带 `maxAllowedPacket=67108864`，无需额外配置。
+客户端侧后端默认 DSN 已带 `maxAllowedPacket=134217728`，无需额外配置。
 
 ## 八、校验记录
 

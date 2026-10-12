@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""SQLite -> MySQL 数据搬运脚本（扫码点餐管理系统）
+"""SQLite -> MySQL 数据搬运脚本（点餐管理系统）
 
 用途：把现有 SQLite 库（dining.db）里的业务数据导出为 MySQL 可直接执行的
       INSERT 语句，配合 backend/migrations/full/mysql/schema.sql 完成搬家。
@@ -134,7 +134,7 @@ def main() -> int:
     # 现在按游标逐行读、按块写出,内存只与单块(≤48MB)有关。
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         f.write("-- ============================================================================\n")
-        f.write("-- 扫码点餐管理系统 — SQLite 数据导出（由 scripts/sqlite2mysql.py 生成）\n")
+        f.write("-- 点餐管理系统 — SQLite 数据导出（由 scripts/sqlite2mysql.py 生成）\n")
         f.write(f"-- 源库：{args.sqlite}\n")
         f.write("-- 目标：MySQL（需先执行 migrations/full/mysql/schema.sql 建表）\n")
         f.write("-- 说明：tb_config 中敏感值为 AES 密文，已原样搬运，请一并迁移 data/master.key。\n")
@@ -165,9 +165,10 @@ def main() -> int:
             col_sql = ", ".join(q_ident(c) for c in cols)
             insert_verb = "INSERT INTO" if args.truncate else "INSERT IGNORE INTO"
             # 切块双重上限:行数上限沿用 --batch;字节上限防 tb_image 的二进制行
-            # (X'..' 十六进制约 2×blob 体积)被合并成超 max_allowed_packet(64M) 的巨型
+            # (X'..' 十六进制约 2×blob 体积)被合并成超 max_allowed_packet 的巨型
             # INSERT,mysql 客户端导入会直接报 ER_NET_PACKET_TOO_LARGE,违背「迁移无损」。
-            # 48MB 预算给 64M 服务端上限留出余量。
+            # 48MB 预算给合并留出余量;但单张 64MB 大图十六进制后单行即约 128MB,无法再拆分,
+            # 迁移含大图的库前须把服务端/客户端 max_allowed_packet 临时调到 ≥256M。
             max_packet = 48 * 1024 * 1024
             int_idx = [i for i, ty in enumerate(types) if "INT" in ty]
             chunk: list[str] = []

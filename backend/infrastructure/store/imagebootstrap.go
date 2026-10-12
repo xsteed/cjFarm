@@ -102,10 +102,10 @@ func ImportDiskImages(dir string) (imported, skipped, mismatched int) {
 			continue
 		}
 		diskSize := info.Size()
-		// 与上传链路对齐 5MB 上限:UPLOAD_DIR 不是可信数据源,误放入超大白名单扩展名
+		// 与上传链路对齐 64MB 上限:UPLOAD_DIR 不是可信数据源,误放入超大白名单扩展名
 		// 文件(如把视频改名 .png)会把启动内存瞬间吃满;超限跳过并告警,交人工核对。
-		if diskSize > 5<<20 {
-			logger.Warnf("[image][告警] 磁盘文件 %s 超过 5MB 上限,跳过导入: %d 字节", name, diskSize)
+		if diskSize > 64<<20 {
+			logger.Warnf("[image][告警] 磁盘文件 %s 超过 64MB 上限,跳过导入: %d 字节", name, diskSize)
 			continue
 		}
 

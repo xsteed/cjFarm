@@ -453,7 +453,7 @@ var schemaTemplate = []string{
 	// 运行时依赖),业务表(tb_dish/tb_config)仍存 /uploads/<img_name> 相对路径,
 	// 由本表按名字解析。设计详见 docs/design-docs/store/image-db-storage/spec.md。
 	// img_data 类型按方言生成({{BLOB}}):SQLite BLOB 无上限差异;MySQL 用 LONGBLOB
-	// (BLOB 上限 64KB,装不下 5MB 的单张上传图)。
+	// (BLOB 上限 64KB,装不下 64MB 的单张上传图)。
 	`CREATE TABLE IF NOT EXISTS tb_image (
 		img_id       {{PK}},
 		img_name     VARCHAR(128) NOT NULL,
@@ -660,14 +660,17 @@ func alterStatements(d Dialect) []string {
 
 // migrate 建表(幂等)、补索引、补列并回填历史数据。
 //
+// stmts 由调用方(store.Init)预先算好并传进来:建表语句条数要先写进启动日志,
+// 让「迁移跑了几十秒」这件事在日志里能对应上具体条数(见 Init 的启动打点)。
+//
 // 幂等策略:
 //   - 建表:CREATE TABLE IF NOT EXISTS(两库均支持);
 //   - 建索引:先查元数据判断索引是否已存在再创建
 //     (SQLite 的 IF NOT EXISTS 是专有语法,MySQL 无对应写法,统一走存在性判断);
 //   - 补列:先查 information_schema / PRAGMA 判断列是否已存在再 ALTER
 //     (ADD COLUMN 两库都不支持 IF NOT EXISTS)。
-func migrate() {
-	for _, s := range schemaStatements(dialect) {
+func migrate(stmts []string) {
+	for _, s := range stmts {
 		if _, err := DB.Exec(s); err != nil {
 			logger.Fatalf("建表失败(%s): %v\n%s", dialect, err, s)
 		}

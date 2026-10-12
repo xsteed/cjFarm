@@ -16,14 +16,14 @@ func Upload(c *gin.Context) {
 		fail(c, "文件不能为空")
 		return
 	}
-	// 大小限制 5MB
+	// 大小限制 64MB
 	if file.Size > service.MaxImageBytes {
-		fail(c, "文件大小不能超过 5MB")
+		fail(c, "文件大小不能超过 64MB")
 		return
 	}
 
 	// 内容校验前先把文件读入内存:file.Size 只是 multipart 头声明,可伪造,
-	// 不能作为唯一的 5MB 防线(否则攻击者可声明小文件、上传超大实体拖垮内存)。
+	// 不能作为唯一的 64MB 防线(否则攻击者可声明小文件、上传超大实体拖垮内存)。
 	src, err := file.Open()
 	if err != nil {
 		fail(c, "文件读取失败")

@@ -211,10 +211,16 @@ func setupAPI(r *gin.Engine) {
 	}
 }
 
+// sinceBoot 返回从进程启动到此刻的时长(毫秒取整),供启动各阶段的日志打点使用。
+// 启动慢时(建库/迁移/图片导入)靠它区分「哪一步吃掉了时间」,不必掐表猜。
+func sinceBoot(start time.Time) time.Duration { return time.Since(start).Round(time.Millisecond) }
+
 func main() {
 	// 日志最先初始化:后续启动日志统一走 zap(控制台可读 + 文件 JSON 可采集)。
 	logger.Init()
 	defer logger.Sync()
+	// bootStart 是启动打点的统一起点(见下面各条 [boot] 日志)。
+	bootStart := time.Now()
 
 	gin.SetMode(gin.ReleaseMode)
 
@@ -235,25 +241,38 @@ func main() {
 	// 部署配置(config.yaml/.env)此时已写入环境变量,重建日志以生效其中的
 	// LOG_LEVEL / LOG_PATH 等设置;此前的启动日志已按默认配置输出(默认同样落盘到
 	// ./logs/app.log),旧文件句柄由 logger.Init 内部回收,不会泄漏。
+	// 下面这条走的是「重建之前」的默认日志:即使 config.yaml 把 log.level 设成
+	// warn/error,它也一定会出现在终端上,标出启动进度到哪一步了。
+	logger.Infof("[boot] 部署配置就绪(%s, 共 %d 项), 按配置重建日志 ...",
+		sinceBoot(bootStart), deployStats.YAMLCount+deployStats.DotEnvCount)
 	logger.Init()
 
 	// 登录令牌签名密钥:service 包 init 阶段已做过只读解析(进程随机兜底),
 	// 这里在部署配置(.env/config.yaml)写入环境后重新解析,必要时落盘 data/auth.key,
 	// 并输出「进程随机密钥」告警。多实例部署必须共享 TOKEN_SECRET 或同一密钥文件。
+	// ⚠️ 从这一步起日志已被 config.yaml 的 log.level 过滤:若设成 warn/error,
+	// 下面所有 [boot]/[db] 打点都不会出现在终端,要看 <安装目录>/logs/app.log。
 	infrastructure.InitAuthKey()
+	logger.Infof("[boot] 登录令牌签名密钥就绪(%s)", sinceBoot(bootStart))
 
 	// 跨域白名单须在部署配置装配后求值(见 middleware.LoadAllowedOrigins 的说明)。
 	corsAllowedOrigins := middleware.LoadAllowedOrigins()
 
 	// 数据库后端由环境变量决定:默认 SQLite(DB_PATH),设置 DB_DRIVER=mysql
 	// 或提供 DB_DSN 即切换到 MySQL。业务代码与 SQL 均为两库通吃,无需改动。
+	// 这一步是最容易「静默卡住」的地方(建连/握手没有超时),store.Init 内部
+	// 另有逐步打点,卡住时看最后一条 [db] 日志即可定位。
+	logger.Infof("[boot] 初始化数据库连接(%s) ...", sinceBoot(bootStart))
 	store.InitFromEnv()
+	logger.Infof("[boot] 数据库初始化完成(%s)", sinceBoot(bootStart))
 	// 员工与权限体系引导:补齐内置角色 + 超级管理员 + 归一化存量角色权限。
 	// 必须在 Init 之后单独调用(store 根包不得反向依赖 dao)。
 	dao.BootstrapRoles()
+	logger.Infof("[boot] 内置角色与管理员账号就绪(%s)", sinceBoot(bootStart))
 	// 启动探测引导管理员是否仍是默认口令 admin123 —— 公网部署不改密等于裸奔。
 	dao.WarnDefaultAdminPassword()
 	// 加载/生成本机主密钥,并把历史明文敏感配置迁移为密文(须在建库之后)。
+	logger.Infof("[boot] 装配主密钥与敏感配置(%s) ...", sinceBoot(bootStart))
 	infrastructure.InitSecretKeys()
 	if !infrastructure.SecretsEncrypted() {
 		logger.Warnf("[warn] 敏感配置未加密存储,建议设置 CONFIG_MASTER_KEY 或允许自动生成本机主密钥")
@@ -263,6 +282,10 @@ func main() {
 			dao.RotateSecrets(old)
 		}
 	}
+	logger.Infof("[boot] 主密钥与敏感配置就绪(%s)", sinceBoot(bootStart))
+	// 后台任务(打印代理任务回收、遗留订单巡检)在协程里周期执行,
+	// 单独打点:它们各自的首次查询可能较慢,与本进程「起来没有」要区分开。
+	logger.Infof("[boot] 启动后台巡检与自检任务(%s) ...", sinceBoot(bootStart))
 	// 本地调试 / 容器部署便捷通道:配置里 agent_token 为空时,可用环境变量
 	// AGENT_TOKEN 预置初始令牌(SetSetting 自动加密,幂等回填、绝不覆盖已有值)。
 	// 管理后台「系统配置 → 小票打印」保存过的令牌始终优先;门店代理程序
@@ -294,12 +317,15 @@ func main() {
 	// 桌台遗留订单防护:按「跨日自动清台」配置开关后台巡检,把过期遗留单所在桌台
 	// 恢复空闲(订单与账务不动)。开关关闭时每轮直接跳过,不做查询。
 	service.StartStaleOrderGuard()
+	logger.Infof("[boot] 后台巡检与自检任务已就绪(%s)", sinceBoot(bootStart))
 
 	// 前端静态目录支持环境变量覆盖,便于打包部署到不同工作目录。
 	// 启动审计:校验菜品图片引用与图片表内容一一对应,缺失即 [warn](回答「不能少东西」)。
 	store.AuditDishImages()
 	staticDir := infrastructure.Getenv(conf.EnvStaticDir, conf.DefaultStaticDir)
+	logger.Infof("[boot] 启动审计完成, static_dir=%s(%s)", staticDir, sinceBoot(bootStart))
 
+	logger.Infof("[boot] 注册路由与中间件(%s) ...", sinceBoot(bootStart))
 	r := gin.New()
 	// RequestID 必须在最前:先生成 requestID 注入 context,后面的访问日志、
 	// panic 恢复、业务 handler 才能读到同一个 ID 关联整条链路。
@@ -307,7 +333,7 @@ func main() {
 	if err := r.SetTrustedProxies(middleware.LoadTrustedProxies()); err != nil {
 		logger.Fatalf("配置可信代理失败: %v", err)
 	}
-	r.MaxMultipartMemory = 8 << 20 // 8MB 内存缓存,超限落盘
+	r.MaxMultipartMemory = 128 << 20 // 128MB 内存缓存,须大于上传上限(64MB),超限落盘
 
 	// 静态资源:上传文件。用自定义 handler 替代 r.Static(见 handler.ServeImage):
 	// 文件缺失时记录 [warn],避免「资源丢了却静默 404」。
@@ -326,6 +352,7 @@ func main() {
 	// assetsDir 为 "static"(见 frontend/vite.config.ts),因此只需托管 /static 即可。
 	// 同时兼容 /assets 以覆盖未改配置的旧构建产物。
 	if fi, err := os.Stat(staticDir); err == nil && fi.IsDir() {
+		logger.Infof("[boot] 已挂载前端静态资源目录 %s", staticDir)
 		r.Static("/static", filepath.Join(staticDir, "static"))
 		r.Static("/assets", filepath.Join(staticDir, "assets"))
 		// 站点图标(vite public 目录产物)。
@@ -349,6 +376,8 @@ func main() {
 			c.File(filepath.Join(staticDir, "index.html"))
 		})
 	} else {
+		logger.Warnf("[boot][告警] 前端产物目录不存在或不是目录(%s), 页面请求将返回 404;"+
+			"请确认 server.static_dir 指向 <安装目录>/frontend/dist", staticDir)
 		r.NoRoute(func(c *gin.Context) {
 			p := c.Request.URL.Path
 			if strings.HasPrefix(p, "/api/") || p == "/api" {
@@ -374,7 +403,8 @@ func main() {
 	}
 
 	go func() {
-		logger.Infof("扫码点餐管理系统已启动 v%s (build %s, commit %s): http://localhost:%s (管理端账号 %s)", version, buildTime, gitCommit, port, handler.AdminUser())
+		logger.Infof("点餐管理系统已启动 v%s (build %s, commit %s): http://localhost:%s (管理端账号 %s, 启动耗时 %s)",
+			version, buildTime, gitCommit, port, handler.AdminUser(), sinceBoot(bootStart))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("服务启动失败: %v", err)
 		}

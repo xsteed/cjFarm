@@ -1,5 +1,5 @@
 # ============================================================================
-# 扫码点餐管理系统 — 后端部署配置「全量注释模板」（config.example.yaml）
+# 点餐管理系统 — 后端部署配置「全量注释模板」（config.example.yaml）
 # ----------------------------------------------------------------------------
 # 定位：本文件是**教学/参考**模板（入库公开），列出全部可配项与逐项说明；
 #       想要一份「值已填好、可直接用」的生产配置，请复制成 config.prod.yaml
@@ -75,15 +75,15 @@ database:
   # ---- MySQL（driver 设为 mysql 时生效） ----
   mysql:
     # 方式 A（推荐）：完整 DSN，非空时优先于下面的分项配置
-    # dsn: root:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
+    # dsn: root:密码@tcp(127.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728
     # 方式 B：分项配置，程序自动拼接 DSN
     # host: 127.0.0.1
     # port: 3306
     # user: root
     # password: ""
     # name: dining
-    # 附加参数，loc=Local 保证写入的时间字符串是本地时间，maxAllowedPacket 放行 5MB 图片写入
-    # params: charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864
+    # 附加参数，loc=Local 保证写入的时间字符串是本地时间，maxAllowedPacket 放行 64MB 图片写入
+    # params: charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728
 
 # ---------------------------------------------------------------------------
 # 敏感配置加密与登录令牌

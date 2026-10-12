@@ -22,11 +22,11 @@ import (
 // 图片上传的业务逻辑:扩展名白名单、内容真实性校验、文件名生成、落库与 URL 前缀。
 // handler 只负责从 multipart 取文件、读入字节与响应组装。
 
-// MaxImageBytes 上传图片大小上限(5MB),handler 与服务共用同一份定义。
-const MaxImageBytes = 5 << 20
+// MaxImageBytes 上传图片大小上限(64MB),handler 与服务共用同一份定义。
+const MaxImageBytes = 64 << 20
 
 // 图片尺寸上限,防止解压炸弹:压缩后字节数小不代表解码后内存占用小,
-// 一张声明 50000×50000 像素的 PNG/JPEG 压缩后可能远小于 5MB,但解码器会按声明
+// 一张声明 50000×50000 像素的 PNG/JPEG 压缩后可能远小于 64MB,但解码器会按声明
 // 尺寸整帧分配像素缓冲(50000×50000×4 字节约 10GB)直接触发 OOM。
 //   - 单边 ≤ 8192:覆盖 8K 及常见宣传图/海报的显示与打印需求;
 //   - 总像素 ≤ 4000 万:即使单边都未超限,总像素仍被钳制(如 8192×8192 会被拒),
@@ -166,7 +166,7 @@ func SaveUpload(fileName string, data []byte) (string, error) {
 		return "", errors.New("仅支持上传图片文件(jpg/png/gif/webp/bmp)")
 	}
 	if len(data) > MaxImageBytes {
-		return "", errors.New("文件大小不能超过 5MB")
+		return "", errors.New("文件大小不能超过 64MB")
 	}
 	if err := isValidImage(ext, data); err != nil {
 		return "", err

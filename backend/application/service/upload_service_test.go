@@ -168,7 +168,7 @@ func TestUploadSaveUpload(t *testing.T) {
 	t.Run("超过大小上限", func(t *testing.T) {
 		uploadInitDB(t)
 		_, err := SaveUpload("big.png", make([]byte, MaxImageBytes+1))
-		if err == nil || !strings.Contains(err.Error(), "文件大小不能超过 5MB") {
+		if err == nil || !strings.Contains(err.Error(), "文件大小不能超过 64MB") {
 			t.Fatalf("超限应报错, got %v", err)
 		}
 	})

@@ -1,5 +1,5 @@
 -- ============================================================================
--- 扫码点餐管理系统 — 种子/存量数据(MySQL 8.0 / 5.7,MariaDB 10.3+)
+-- 点餐管理系统 — 种子/存量数据(MySQL 8.0 / 5.7,MariaDB 10.3+)
 -- 文件名:seed.sql —— 种子/存量数据(通用命名)
 -- ----------------------------------------------------------------------------
 -- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,
@@ -43,7 +43,7 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_threshold', '
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee', '6');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee_enabled', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_logo', '');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场 · 柴火农家土菜');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_hours', '4');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_release_enabled', '0');

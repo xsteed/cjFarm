@@ -133,7 +133,7 @@ const (
 	// DefaultDBDSN 是数据库完整连接串默认值。
 	DefaultDBDSN = ""
 	// DefaultDBParams 是 MySQL 默认连接参数。
-	DefaultDBParams = "charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=67108864"
+	DefaultDBParams = "charset=utf8mb4&parseTime=true&loc=Local&maxAllowedPacket=134217728"
 	// DefaultDBUser 是 MySQL 默认用户名。
 	DefaultDBUser = "root"
 	// DefaultDBPassword 是 MySQL 默认密码。

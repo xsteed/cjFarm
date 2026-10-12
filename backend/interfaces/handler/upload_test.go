@@ -209,13 +209,13 @@ func TestUploadRejectsFakeImage(t *testing.T) {
 	}
 }
 
-// TestUploadRejectsOversize 超过 5MB 的上传必须被拦下。
+// TestUploadRejectsOversize 超过 64MB 的上传必须被拦下。
 //
-// file.Size 是 multipart 头声明值,构造超过 5MB 的真实 body 即可触发第一道大小防线,
+// file.Size 是 multipart 头声明值,构造超过 64MB 的真实 body 即可触发第一道大小防线,
 // 避免超大实体继续进入解码与落库路径耗尽内存/磁盘。
 func TestUploadRejectsOversize(t *testing.T) {
 	initUploadTestDB(t)
-	big := bytes.Repeat([]byte("x"), 5<<20+1)
+	big := bytes.Repeat([]byte("x"), 64<<20+1)
 	w := doUpload(t, newUploadRequest(t, "file", "big.png", big))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("超限上传应 400, got %d body=%s", w.Code, w.Body.String())
