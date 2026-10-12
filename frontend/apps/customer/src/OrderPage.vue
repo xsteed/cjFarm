@@ -42,7 +42,27 @@
       v-else-if="view === 'error'"
       class="state-box"
     >
-      <div class="err-icon">!</div>
+      <div class="err-icon">
+        <svg
+          class="err-svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M12 6.5v7.2"
+            stroke="currentColor"
+            stroke-width="2.6"
+            stroke-linecap="round"
+          />
+          <circle
+            cx="12"
+            cy="17.8"
+            r="1.6"
+            fill="currentColor"
+          />
+        </svg>
+      </div>
       <div class="state-text">
         {{ loadError }}
       </div>
@@ -126,7 +146,27 @@
         v-else-if="view === 'locked'"
         class="state-box"
       >
-        <div class="err-icon">!</div>
+        <div class="err-icon">
+        <svg
+          class="err-svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M12 6.5v7.2"
+            stroke="currentColor"
+            stroke-width="2.6"
+            stroke-linecap="round"
+          />
+          <circle
+            cx="12"
+            cy="17.8"
+            r="1.6"
+            fill="currentColor"
+          />
+        </svg>
+      </div>
         <div class="state-text">
           {{ lockText }}
         </div>
@@ -181,7 +221,144 @@
         <!-- 不是本人的单:后端不允许该桌再开一单(一桌只留一笔未结账订单)。
              菜单可以先进去逛,购物车随便挑,清台后回这里刷新即可下单 -->
         <template v-else>
-          <div class="err-icon">!</div>
+          <div class="state-emoji">
+            <svg
+              class="wait-svg"
+              viewBox="0 0 64 64"
+              fill="none"
+              aria-hidden="true"
+            >
+              <!-- 餐盘:投影 + 盘沿 + 凹槽盘心 + 高光,层次齐全才像真盘子 -->
+              <ellipse
+                cx="32"
+                cy="56"
+                rx="20"
+                ry="4"
+                fill="#ffe6d3"
+              />
+              <circle
+                cx="32"
+                cy="34"
+                r="20"
+                fill="#fff"
+                stroke="var(--brand, #ff6b35)"
+                stroke-width="3.4"
+              />
+              <circle
+                cx="32"
+                cy="34"
+                r="13.5"
+                fill="#fff6ec"
+                stroke="#ffd9c2"
+                stroke-width="2"
+              />
+              <path
+                d="M25 27a13.5 13.5 0 0 1 8-6"
+                fill="none"
+                stroke="#fff"
+                stroke-width="3"
+                stroke-linecap="round"
+              />
+              <!-- 擦盘子的小海绵:圆角海绵块 + 左上高光 + 散落小气孔,左右擦动 -->
+              <g class="sponge">
+                <rect
+                  x="15.5"
+                  y="24.5"
+                  width="33"
+                  height="17"
+                  rx="8.5"
+                  fill="#fff0bd"
+                  stroke="#8a5a3b"
+                  stroke-width="2.8"
+                />
+                <!-- 左上高光,体现海绵柔软蓬松的质感 -->
+                <ellipse
+                  cx="20.5"
+                  cy="27.5"
+                  rx="2.6"
+                  ry="1.7"
+                  fill="#fff"
+                />
+                <!-- 气孔:自然散布、大小不一,一看就是海绵 -->
+                <circle
+                  cx="26"
+                  cy="29.5"
+                  r="1.2"
+                  fill="#8a5a3b"
+                />
+                <circle
+                  cx="31"
+                  cy="27"
+                  r="1.3"
+                  fill="#8a5a3b"
+                />
+                <circle
+                  cx="36"
+                  cy="29.5"
+                  r="1.1"
+                  fill="#8a5a3b"
+                />
+                <circle
+                  cx="41"
+                  cy="27"
+                  r="1.3"
+                  fill="#8a5a3b"
+                />
+                <circle
+                  cx="27.5"
+                  cy="34"
+                  r="1.1"
+                  fill="#8a5a3b"
+                />
+                <circle
+                  cx="36.5"
+                  cy="34.5"
+                  r="1.2"
+                  fill="#8a5a3b"
+                />
+                <circle
+                  cx="43"
+                  cy="32.5"
+                  r="1.1"
+                  fill="#8a5a3b"
+                />
+                <circle
+                  cx="32"
+                  cy="36.5"
+                  r="1"
+                  fill="#8a5a3b"
+                />
+              </g>
+              <!-- 洗洁精泡泡:三颗错峰往上飘 -->
+              <circle
+                class="bubble b1"
+                cx="11"
+                cy="33"
+                r="3.2"
+                fill="#ffd9c2"
+              />
+              <circle
+                class="bubble b2"
+                cx="53"
+                cy="24"
+                r="2.6"
+                fill="#ffd9c2"
+              />
+              <circle
+                class="bubble b3"
+                cx="54"
+                cy="51"
+                r="2.2"
+                fill="#ffd9c2"
+              />
+              <!-- 星星点缀 -->
+              <path
+                class="spark"
+                d="M54 8.5l1.6 3.9 3.9 1.6-3.9 1.6-1.6 3.9-1.6-3.9-3.9-1.6 3.9-1.6Z"
+                fill="#ffb27d"
+              />
+            </svg>
+          </div>
           <div class="state-title">本桌还未清台</div>
           <div class="state-text">
             <p>上一笔订单还未结账，服务员清台后即可点餐</p>
@@ -233,6 +410,26 @@
             viewBox="0 0 120 96"
             fill="none"
           >
+            <defs>
+              <!-- 筷子渐变:前端(左)浅橙 → 末端(右)深橙,整根过渡无接缝 -->
+              <linearGradient
+                id="empty-chopstick"
+                gradientUnits="userSpaceOnUse"
+                x1="20"
+                y1="80"
+                x2="70"
+                y2="76"
+              >
+                <stop
+                  offset="0"
+                  stop-color="#ff9c66"
+                />
+                <stop
+                  offset="1"
+                  stop-color="var(--brand-deep, #f0481f)"
+                />
+              </linearGradient>
+            </defs>
             <!-- 桌面投影:让元素落地,不悬空 -->
             <ellipse
               class="illo-shadow"
@@ -240,19 +437,19 @@
               cy="89"
               rx="46"
               ry="4.5"
-              fill="var(--brand-soft, #ffb27d)"
+              fill="#ffb27d"
               opacity="0.4"
             />
             <!-- 闪烁星点 -->
             <path
               class="illo-spark s1"
               d="M14 14l2.6 5.2 5.2 2.6-5.2 2.6L14 29.6l-2.6-5.2-5.2-2.6 5.2-2.6z"
-              fill="var(--brand-soft, #ffb27d)"
+              fill="#ffb27d"
             />
             <path
               class="illo-spark s2"
               d="M80 10l1.8 3.6 3.6 1.8-3.6 1.8-1.8 3.6-1.8-3.6-3.6-1.8 3.6-1.8z"
-              fill="var(--brand-soft, #ffb27d)"
+              fill="#ffb27d"
             />
             <!-- 单页菜单卡:品牌色标题栏 + 三行菜品占位 -->
             <rect
@@ -291,63 +488,78 @@
               cx="35.5"
               cy="43"
               r="3"
-              fill="var(--brand-soft, #ffb27d)"
+              fill="#ffb27d"
             />
             <circle
               cx="35.5"
               cy="53"
               r="3"
-              fill="var(--brand-soft, #ffb27d)"
+              fill="#ffb27d"
             />
             <circle
               cx="35.5"
               cy="63"
               r="3"
-              fill="var(--brand-soft, #ffb27d)"
+              fill="#ffb27d"
             />
             <!-- 茶杯与热气:三缕波浪热气从杯沿袅袅升起 -->
             <path
               class="illo-steam st1"
-              d="M95 44c2.5-3-2.5-5 0-8c2.5-3-2.5-5 0-8"
-              stroke="var(--brand-soft, #ffb27d)"
+              d="M95 44c2.5-3-2.5-5 0-8"
+              stroke="#ffb27d"
               stroke-width="3"
               stroke-linecap="round"
             />
             <path
               class="illo-steam st2"
-              d="M100 44c2.5-3-2.5-5 0-8c2.5-3-2.5-5 0-8c2-2.5-2-4.5 0-7"
-              stroke="var(--brand-soft, #ffb27d)"
+              d="M100 44c2.5-3-2.5-5 0-8c1.5-2-1.5-3 0-4"
+              stroke="#ffb27d"
               stroke-width="3"
               stroke-linecap="round"
             />
             <path
               class="illo-steam st3"
-              d="M105 44c2.5-3-2.5-5 0-8c2.5-3-2.5-5 0-8"
-              stroke="var(--brand-soft, #ffb27d)"
+              d="M105 44c2.5-3-2.5-5 0-8"
+              stroke="#ffb27d"
               stroke-width="3"
               stroke-linecap="round"
             />
-            <rect
-              x="92"
-              y="48"
-              width="17"
-              height="15"
-              rx="4"
+            <!-- 托碟:宽浅椭圆,先画、让杯子压在其上形成「坐落」关系 -->
+            <ellipse
+              cx="100.5"
+              cy="64"
+              rx="16"
+              ry="4"
+              fill="#fff"
+              stroke="var(--brand, #ff6b35)"
+              stroke-width="3"
+            />
+            <path
+              d="M92 47v8c0 5 3.5 8 8 8h1c4.5 0 8-3 8-8v-8z"
               fill="#fff"
               stroke="var(--brand, #ff6b35)"
               stroke-width="3.5"
+              stroke-linejoin="round"
             />
+            <!-- 杯口茶水:一点浅茶色,交代杯内是有水的 -->
+            <ellipse
+              cx="100"
+              cy="47.5"
+              rx="6"
+              ry="1.8"
+              fill="#f7c9a8"
+            />
+            <!-- 筷子:整根单段直线 + 渐变着色,前端浅、末端深,无接缝 -->
             <path
-              d="M87 68h27"
-              stroke="var(--brand, #ff6b35)"
-              stroke-width="3.5"
+              d="M20 80L70 76"
+              stroke="url(#empty-chopstick)"
+              stroke-width="3.4"
               stroke-linecap="round"
             />
-            <!-- 筷子 -->
             <path
-              d="M22 80L68 76M24 85l46-4"
-              stroke="var(--brand-deep, #f0481f)"
-              stroke-width="3.5"
+              d="M22 85L72 81"
+              stroke="url(#empty-chopstick)"
+              stroke-width="3.4"
               stroke-linecap="round"
             />
           </svg>
@@ -1266,11 +1478,101 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 30px;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 「本桌还未清台」的可爱插画风图标:一块圆滚滚的小海绵在盘子上左右擦动,
+   配泡泡上浮、星星闪烁,直观传达「正在清理、稍等片刻」 */
+.state-emoji {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: var(--brand-ghost, #fff3ec);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.state-emoji svg {
+  display: block;
+  width: 58px;
+  height: 58px;
+}
+
+/* 海绵:以盘心为轴左右擦动,带一点摇头似的摇摆 */
+.state-emoji .sponge {
+  transform-box: view-box;
+  transform-origin: 32px 33px;
+  animation: sponge-wipe 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes sponge-wipe {
+  from {
+    transform: translateX(-4px) rotate(-5deg);
+  }
+
+  to {
+    transform: translateX(4px) rotate(5deg);
+  }
+}
+
+/* 泡泡:三颗错峰往上飘、飘散 */
+.state-emoji .bubble {
+  animation: bubble-up 2.2s ease-in infinite;
+}
+
+.state-emoji .b2 {
+  animation-delay: 0.6s;
+}
+
+.state-emoji .b3 {
+  animation-delay: 1.2s;
+}
+
+@keyframes bubble-up {
+  0% {
+    opacity: 0;
+    transform: translateY(5px) scale(0.6);
+  }
+
+  30% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-9px) scale(1.1);
+  }
+}
+
+/* 星星:一闪一闪 */
+.state-emoji .spark {
+  transform-box: view-box;
+  transform-origin: 54px 14px;
+  animation: spark-twinkle 1.6s ease-in-out infinite;
+}
+
+@keyframes spark-twinkle {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* SVG 感叹号:线条粗细、圆点大小、光学居中均可精确控制,替代字体「!」
+   (字体基线导致的偏移在圆形底上会显得不协调) */
+.err-icon svg {
+  display: block;
+  width: 30px;
+  height: 30px;
 }
 
 .retry-btn {
