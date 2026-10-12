@@ -171,7 +171,7 @@
           <t-dropdown
             v-if="canEdit"
             trigger="click"
-            :options="MORE_OPTIONS"
+            :options="moreOptions(row)"
             @click="onMoreClick($event, row)"
           >
             <t-button
@@ -286,7 +286,7 @@
           <t-dropdown
             v-if="canEdit"
             trigger="click"
-            :options="MORE_OPTIONS"
+            :options="moreOptions(row)"
             @click="onMoreClick($event, row)"
           >
             <t-button
@@ -341,6 +341,7 @@ const emit = defineEmits<{
   'open-order': [row: TableInfo];
   edit: [row: TableInfo];
   lock: [row: TableInfo];
+  release: [row: TableInfo];
   delete: [row: TableInfo];
   qr: [row: TableInfo];
 }>();
@@ -372,14 +373,19 @@ function lockTheme(row: TableInfo): 'danger' | 'primary' {
 
 // ---- 桌面端「更多」下拉:收纳低频(二维码)与危险(删除)操作,
 // 让卡片/表格的常驻按钮不超过 4 个、不折行;移动端仍走底部操作面板。 ----
-const MORE_OPTIONS: DropdownOption[] = [
-  { content: '二维码', value: 'qr' },
-  { content: '删除', value: 'delete', theme: 'error' }
-];
+// 「强制清台」只对占用中的桌台出现:空闲桌台没有进行中订单需要收走,
+// 给了反而容易被误当成「清空桌台信息」。
+function moreOptions(row: TableInfo): DropdownOption[] {
+  const opts: DropdownOption[] = [{ content: '二维码', value: 'qr' }];
+  if (row.status === 1) opts.push({ content: '强制清台', value: 'release', theme: 'error' });
+  opts.push({ content: '删除', value: 'delete', theme: 'error' });
+  return opts;
+}
 
 function onMoreClick(opt: unknown, row: TableInfo): void {
   const value = String((opt as { value?: unknown } | null)?.value ?? '');
   if (value === 'qr') emit('qr', row);
+  else if (value === 'release') emit('release', row);
   else if (value === 'delete') emit('delete', row);
 }
 
@@ -450,6 +456,10 @@ const tableActions = computed<SheetAction[]>(() => {
     });
   }
   items.push({ key: 'qr', label: '查看二维码', theme: 'default' });
+  // 强制清台只对占用中的桌台有意义:空闲桌台没有进行中订单需要收走
+  if (props.canEdit && row.status === 1) {
+    items.push({ key: 'release', label: '强制清台（结束本桌订单）', theme: 'danger' });
+  }
   if (props.canEdit) items.push({ key: 'delete', label: '删除桌台', theme: 'danger' });
   return items;
 });
@@ -466,6 +476,7 @@ function onTablePick(key: string): void {
   if (key === 'order') emit('open-order', row);
   else if (key === 'edit') emit('edit', row);
   else if (key === 'lock') emit('lock', row);
+  else if (key === 'release') emit('release', row);
   else if (key === 'qr') emit('qr', row);
   else if (key === 'delete') emit('delete', row);
 }

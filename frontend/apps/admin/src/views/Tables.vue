@@ -11,11 +11,11 @@
           placeholder="搜索桌台名称"
           clearable
           style="width: 220px"
-          @enter="load"
+          @enter="search"
         />
         <t-button
           theme="primary"
-          @click="load"
+          @click="search"
         >
           <template #icon>
             <search-icon />
@@ -70,7 +70,7 @@
           v-model="query.tableName"
           placeholder="搜索桌台名称"
           clearable
-          @enter="load"
+          @enter="search"
         >
           <template #prefix-icon>
             <search-icon />
@@ -244,7 +244,12 @@
         </t-form-item>
         <t-form-item label="处理方式">
           <t-radio-group v-model="releaseForm.action">
-            <t-radio value="settle"> 补结账（钱已收过） </t-radio>
+            <t-radio
+              value="settle"
+              :disabled="!canSettleOrder"
+            >
+              补结账（钱已收过）{{ canSettleOrder ? '' : ' · 需订单结账权限' }}
+            </t-radio>
             <t-radio value="cancel"> 作废订单（不计收入） </t-radio>
           </t-radio-group>
         </t-form-item>
@@ -256,7 +261,8 @@
         </template>
         <template v-else> 选「作废订单」：订单直接取消、不计收入，适用于客人跑单或误开单。 </template>
         <br />
-        操作会记入操作日志，且不可撤销。若本桌其实还在用餐，请先走正常的「收款 / 结账」流程。
+        操作会记入操作日志，且不可撤销。若本桌其实还在用餐，请先走正常的「收款 / 结账」流程。<br />
+        更早营业日的遗留订单若已被「跨日自动清台」隔离，则<b>不在此处处理</b>，请到「订单管理」中补结账或作废。
       </div>
     </t-dialog>
 
@@ -421,14 +427,20 @@ async function openTableOrder(row: TableInfo): Promise<void> {
 // 后端单页上限 500,超出时循环翻页拉全,避免静默少算桌台。
 const ALL_TTL_MS = 30_000;
 const FULL_PAGE_SIZE = 500;
+// 全量翻页的硬上限(40 * 500 = 20000 桌,远超单店规模),防止死循环。
+const ALL_MAX_PAGES = 40;
 let allLoadedAt = 0;
 
 async function fetchAllTables(): Promise<TableInfo[]> {
   const rows: TableInfo[] = [];
-  for (let page = 1; ; page++) {
+  // 加硬上限:退出条件「累计行数 >= total」依赖「后端 count 与 list 条件一致」。
+  // 一旦出现 total > 0 却返回空页,rows.length 永远追不上 total,这里会变成无限打接口。
+  for (let page = 1; page <= ALL_MAX_PAGES; page++) {
     const res = await listTables({ pageNum: page, pageSize: FULL_PAGE_SIZE });
-    rows.push(...(res.items || []));
-    if (rows.length >= res.total) break;
+    const items = res.items || [];
+    rows.push(...items);
+    // 空页也退出:与上限双保险,任何情况都不会死循环。
+    if (items.length === 0 || rows.length >= res.total) break;
   }
   return rows;
 }
@@ -453,7 +465,7 @@ async function load(): Promise<void> {
       pageSize: pagination.pageSize,
       tableName: query.tableName
     });
-    list.value = res.items;
+    list.value = res.items || [];
     pagination.total = res.total;
     if (!query.tableName) allCount.value = res.total;
     await loadAll();
@@ -462,6 +474,12 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false;
   }
+}
+
+// 查询 / 搜索框回车:先回第 1 页再查,避免带着旧页码落在空页(移动端分页器还会隐藏)。
+function search(): void {
+  pagination.current = 1;
+  load();
 }
 
 function onPageChange(page: PageInfo): void {
@@ -491,11 +509,18 @@ async function save(): Promise<void> {
     MessagePlugin.warning('请填写桌号和桌台名称');
     return;
   }
+  // 容纳人数必须为正整数:此前用 `Number(form.capacity) || 10` 兜底,会把用户清空后的
+  // 0/NaN 静默改成 10,落库一个与所见不符的值。这里显式校验并阻断提交。
+  const capacity = Number(form.capacity);
+  if (!Number.isInteger(capacity) || capacity < 1) {
+    MessagePlugin.warning('请填写正确的容纳人数(正整数)');
+    return;
+  }
   const payload: TablePayload = {
     tableId: form.tableId ?? undefined,
     tableNo: String(form.tableNo),
     tableName: String(form.tableName),
-    capacity: Number(form.capacity) || 10,
+    capacity,
     sortOrder: Number(form.sortOrder) || 0
   };
   if (saving.value) return;
@@ -574,6 +599,8 @@ async function saveLock(): Promise<void> {
 // 因为会动钱,处理方式必须由店家显式选择(补结账 / 作废),不做默认。
 const releaseVisible = ref(false);
 const releaseSaving = ref(false);
+// 补结账会动钱,除桌台管理权限外还要有订单结账权限(后端同样校验)。
+const canSettleOrder = computed(() => hasPerm('order:settle'));
 const releaseConfirmBtn = computed(() => ({
   content: '确认清台',
   theme: 'danger' as const,
@@ -596,12 +623,34 @@ function openRelease(row: TableInfo): void {
     tableId: row.tableId ?? 0,
     tableNo: row.tableNo ?? '',
     tableName: row.tableName ?? '',
-    action: 'settle'
+    // 没有订单结账权限就只能作废:补结账会把钱记进营收,后端也会拒(见 handler.TableRelease)。
+    // 这里先选好,免得店家选了才发现提交不过去。
+    action: canSettleOrder.value ? 'settle' : 'cancel'
   });
   releaseVisible.value = true;
 }
 
-async function saveRelease(): Promise<void> {
+// 二次确认:这是会动钱且不可撤销的操作,与大额让利同级。
+// 对话框里的单选只是「选方式」,不能让一次误触直接落库改账。
+function saveRelease(): void {
+  if (!releaseForm.tableId || releaseSaving.value) return;
+  const settle = releaseForm.action === 'settle';
+  const name = releaseForm.tableName || `${releaseForm.tableNo} 号桌`;
+  const dlg = DialogPlugin.confirm({
+    header: '确认强制清台',
+    body: settle
+      ? `将把【${name}】本桌进行中的订单按「已收款」入账并释放桌台。这笔钱如果实际没收到，会造成营收虚增。`
+      : `将把【${name}】本桌进行中的订单全部作废（不计收入）并释放桌台。`,
+    confirmBtn: { content: '确认清台', theme: 'danger' },
+    cancelBtn: '再想想',
+    onConfirm: async () => {
+      dlg.hide();
+      await doRelease();
+    }
+  });
+}
+
+async function doRelease(): Promise<void> {
   if (!releaseForm.tableId || releaseSaving.value) return;
   releaseSaving.value = true;
   try {

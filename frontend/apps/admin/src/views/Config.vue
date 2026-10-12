@@ -51,7 +51,9 @@
                 v-model="form.shop_name"
                 placeholder="如 长健农场"
               />
-              <span class="tip">店铺品牌名；用于顾客端顶部、桌牌二维码与单据。如需在顾客端顶部展示标语，请在下方「店铺标语」填写。</span>
+              <span class="tip"
+                >店铺品牌名；用于顾客端顶部、桌牌二维码与单据。如需在顾客端顶部展示标语，请在下方「店铺标语」填写。</span
+              >
             </t-space>
           </t-form-item>
 
@@ -67,7 +69,9 @@
                 v-model="form.shop_slogan"
                 placeholder="如 柴火农家土菜（留空则不展示）"
               />
-              <span class="tip">仅用于顾客端 H5 和小程序顶部展示，格式为「店铺名称 · 标语」；桌牌二维码上不会出现。</span>
+              <span class="tip"
+                >仅用于顾客端 H5 和小程序顶部展示，格式为「店铺名称 · 标语」；桌牌二维码上不会出现。</span
+              >
             </t-space>
           </t-form-item>
 
@@ -130,12 +134,14 @@
                 v-model="form.seat_fee_enabled"
                 :custom-value="['1', '0']"
               />
-              <t-input-number
-                v-model="form.seat_fee"
-                :min="0"
-                :decimal-places="2"
-                suffix="元/人"
-              />
+              <div class="seat-fee-row">
+                <t-input-number
+                  v-model="form.seat_fee"
+                  :min="0"
+                  :decimal-places="2"
+                />
+                <span>元/人</span>
+              </div>
               <span class="tip">开启后下单按用餐人数自动计入订单</span>
             </t-space>
           </t-form-item>
@@ -219,6 +225,318 @@
                 :max="1"
               />
             </div>
+          </t-form-item>
+        </t-tab-panel>
+
+        <t-tab-panel
+          value="business"
+          label="营业设置"
+        >
+          <div class="tab-note">
+            未接在线支付时，结账靠店员手动点；漏点一次，桌台就会一直显示占用。
+            下面两道防线用来兜住这种情况，按你的营业习惯决定开不开。
+          </div>
+
+          <t-form-item label="营业日切换">
+            <div class="biz-item">
+              <div class="biz-control">
+                <span>每天</span>
+                <t-input-number
+                  v-model="form.biz_date_cutoff_hour"
+                  :min="0"
+                  :max="12"
+                />
+                <span>点起算新的一天</span>
+              </div>
+              <ul class="biz-points">
+                <li>填 <b>0</b>：按自然日 00:00 切换（默认）。</li>
+                <li>晚市跨过午夜才打烊的店，填打烊后的整点，如 <b>4</b>。</li>
+                <li>它决定两件事：跨日遗留单怎么算，以及当日取餐号何时重置回 1。</li>
+              </ul>
+              <div class="biz-warn">
+                跨夜营业却填 0：23:50 下的单会在午夜瞬间被判成「昨天的单」——
+                顾客看不到自己的订单、还可能重复下单，服务员在看板上也找不到它去收款。
+              </div>
+            </div>
+          </t-form-item>
+
+          <t-form-item label="跨日自动清台">
+            <div class="biz-item">
+              <div class="biz-control">
+                <t-switch
+                  v-model="form.stale_release_enabled"
+                  :custom-value="['1', '0']"
+                />
+                <span class="biz-state">{{ form.stale_release_enabled === '1' ? '已开启' : '已关闭' }}</span>
+              </div>
+              <div class="biz-lead"><b>上一营业日</b>还没结账的桌台，自动恢复空闲。</div>
+              <ul class="biz-points">
+                <li>下一桌客人扫码，不会再被带进上一桌的账单。</li>
+                <li>只调桌台状态：<b>订单和账务都不动</b>，遗留单仍需到「订单管理」补结账或作废。</li>
+                <li>为何不自动清账：自动补结账会虚增营收、自动作废会漏记收入，都不如留一张待处理的单。</li>
+                <li>「上一营业日」按上面的切换时刻计算，跨夜店记得先把它调到打烊之后。</li>
+              </ul>
+            </div>
+          </t-form-item>
+
+          <t-form-item label="未结账超时告警">
+            <div class="biz-item">
+              <div class="biz-control">
+                <t-switch
+                  v-model="form.stale_alert_enabled"
+                  :custom-value="['1', '0']"
+                />
+                <span class="biz-state">{{ form.stale_alert_enabled === '1' ? '已开启' : '已关闭' }}</span>
+              </div>
+              <div class="biz-lead">首页看板把「开台超过设定时长仍未收款」的桌台单独列出，提醒店员去核对。</div>
+              <ul class="biz-points">
+                <li>只提醒，不改任何状态 —— 多数漏结单在变成跨日遗留单之前就能被这道提醒拦下来。</li>
+              </ul>
+              <div
+                v-if="form.stale_alert_enabled === '1'"
+                class="biz-control biz-control-sub"
+              >
+                <span>超时判定</span>
+                <t-input-number
+                  v-model="form.stale_alert_hours"
+                  :min="1"
+                  :max="72"
+                />
+                <span>小时（1~72）</span>
+              </div>
+            </div>
+          </t-form-item>
+        </t-tab-panel>
+
+        <t-tab-panel
+          value="print"
+          label="小票打印"
+        >
+          <t-form-item label="打印总开关">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_enabled"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                关闭后下单、加菜、结账都不再自动出纸（打印机管理里的「补打」仍可用）。
+                临时缺纸或调试时可先关掉，避免打印机队列堆积。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="厨房单显示金额">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_kitchen_show_price"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip"
+                >开启后厨房单会带出每道菜的小计，便于后厨或传菜核对；默认关闭，后厨只看菜名与数量。</span
+              >
+            </t-space>
+          </t-form-item>
+          <t-form-item label="厨房单打印粒度">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start; width: 100%"
+            >
+              <t-radio-group
+                v-model="form.print_kitchen_split_mode"
+                variant="default-filled"
+                size="small"
+              >
+                <t-radio-button value="whole">整单一张</t-radio-button>
+                <t-radio-button value="item">一菜一单</t-radio-button>
+                <t-radio-button value="portion">一菜一单·按份数拆</t-radio-button>
+              </t-radio-group>
+              <!-- 三种粒度按上面的按钮同序各占一行,扫一眼就能挑;
+                   通用注意事项收在末尾一行,不再和粒度说明混成一大段 -->
+              <div class="split-mode-hint">
+                <div class="split-mode-hint__line">
+                  <b>整单一张</b>
+                  <span>一张单列全部菜品，逐道编号，末尾汇总「共 N 道 M 份」。</span>
+                </div>
+                <div class="split-mode-hint__line">
+                  <b>一菜一单</b>
+                  <span>每道菜一张、菜名放大，方便夹在菜上；同菜 2 份仍一张，标 x2。</span>
+                </div>
+                <div class="split-mode-hint__line">
+                  <b>按份数拆</b>
+                  <span>「一菜一单」的加强版：点 3 份出 3 张、每张 x1，便于分盘出菜。</span>
+                </div>
+                <div class="split-mode-hint__note">
+                  注意：拆单后每张带序号（如
+                  2/5），桌号放大居中、做法与忌口加粗；整单备注随每张重复打印，菜品多时更费纸。「补打」「预览」与小票始终整单一张，分类分单照常生效。
+                </div>
+              </div>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="加菜重打小票">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_guest_on_append"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后顾客每次加菜，小票机会重出一张整单最新金额的食客小票（后厨的「加菜单」不受影响，仍只列新菜）。
+                加菜频繁、觉得费纸的门店可关闭，金额以结账小票为准。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item
+            label="小票页脚文案"
+            name="print_guest_footer"
+          >
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-input
+                v-model="form.print_guest_footer"
+                placeholder="默认：谢谢惠顾,欢迎再次光临；清空则不打印页脚"
+                style="width: 320px"
+              />
+              <span class="tip">
+                打印在食客小票末尾的文案，可改成店铺口号。保存后到「打印记录 → 预览」即可看到效果，无需真实出纸。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="小票显示优惠">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_guest_show_discount"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">关闭后食客小票不再单列优惠行；有优惠金额时才出现该行。</span>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="下单出点菜单">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_guest_on_order"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后顾客每次下单，小票机会出一张「点菜单」（已点菜品 + 当前合计），作为点菜凭证当场可核对。
+                嫌它与结账小票重复、想省纸的门店可关闭；关闭后下单只打厨房单，加菜小票与结账小票不受影响。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="小票打印二维码">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_guest_qr"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后食客小票末尾会打一枚二维码，顾客扫码可自助查看 / 重打这张小票（内容指向「H5
+                访问地址」下的小票页）。
+                <b>两个前提</b>：H5 地址必须是手机能访问到的真实地址（不能是 localhost），且打印机支持 GS ( k
+                二维码指令——老机型可能不支持，建议先在「打印机管理」打一张测试页确认。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="模板预览">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-space>
+                <t-radio-group
+                  v-model="sampleDocType"
+                  variant="default-filled"
+                  size="small"
+                >
+                  <t-radio-button value="guest">食客小票</t-radio-button>
+                  <t-radio-button value="guest_append">加菜小票</t-radio-button>
+                  <t-radio-button value="kitchen">厨房单</t-radio-button>
+                </t-radio-group>
+                <t-radio-group
+                  v-model="samplePaperWidth"
+                  variant="default-filled"
+                  size="small"
+                >
+                  <t-radio-button :value="48">80mm</t-radio-button>
+                  <t-radio-button :value="32">58mm</t-radio-button>
+                </t-radio-group>
+                <!-- 厨房单粒度:决定后厨收到几张纸,只预览一张整单根本看不出来 -->
+                <t-radio-group
+                  v-if="sampleDocType === 'kitchen'"
+                  v-model="sampleKitchenSplit"
+                  variant="default-filled"
+                  size="small"
+                >
+                  <t-radio-button value="whole">整单一张</t-radio-button>
+                  <t-radio-button value="item">一菜一单</t-radio-button>
+                  <t-radio-button value="portion">按份数拆</t-radio-button>
+                </t-radio-group>
+                <t-button
+                  theme="primary"
+                  variant="outline"
+                  size="small"
+                  :loading="sampleLoading"
+                  @click="loadSamplePreview"
+                >
+                  预览模板
+                </t-button>
+              </t-space>
+              <span class="tip">
+                用示例数据按<b>当前表单里的值</b>即时渲染（未保存也能看）；改完点按钮刷新。正式票据在「打印记录 →
+                预览」查看。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item
+            label="飞鹅账号"
+            name="feie_user"
+          >
+            <t-input
+              v-model="form.feie_user"
+              placeholder="飞鹅云后台注册账号（手机号/邮箱）"
+            />
+          </t-form-item>
+          <t-form-item
+            label="飞鹅 UKEY"
+            name="feie_ukey"
+          >
+            <t-input
+              v-model="form.feie_ukey"
+              type="password"
+              placeholder="开发者 UKEY（已配置显示 ******；留空表示不修改）"
+            />
+          </t-form-item>
+          <t-form-item
+            label="飞鹅接口地址"
+            name="feie_api_url"
+          >
+            <t-input
+              v-model="form.feie_api_url"
+              placeholder="默认 https://api.feieyun.cn/Api/Open/"
+            />
+          </t-form-item>
+          <t-form-item label=" ">
+            <span class="tip">
+              UKEY 在飞鹅云后台「个人中心」获取，<b>不是</b>打印机机身上的识别码 KEY；填错会报签名校验失败(-3)。
+              账号配置好后，到「打印机管理」把打印机通道选成「飞鹅云」并填写 SN 即可跨网络出纸。
+            </span>
           </t-form-item>
         </t-tab-panel>
 
@@ -407,219 +725,6 @@
               v-model="form.alipay_notify_url"
               placeholder="https://域名/api/customer/pay/notify/alipay"
             />
-          </t-form-item>
-        </t-tab-panel>
-
-        <t-tab-panel
-          value="print"
-          label="小票打印"
-        >
-          <t-form-item label="打印总开关">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_enabled"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">
-                关闭后下单、加菜、结账都不再自动出纸（打印机管理里的「补打」仍可用）。
-                临时缺纸或调试时可先关掉，避免打印机队列堆积。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="厨房单显示金额">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_kitchen_show_price"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip"
-                >开启后厨房单会带出每道菜的小计，便于后厨或传菜核对；默认关闭，后厨只看菜名与数量。</span
-              >
-            </t-space>
-          </t-form-item>
-          <t-form-item label="厨房单按菜拆单">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_kitchen_split_by_item"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">
-                开启后厨房单不再整单一张，而是<b>每道菜单独出一张带桌号的小票</b>，方便夹在菜上、逐道传菜对口；
-                整单备注会随每张小票重复打印，菜品多时更费纸。
-                「打印机管理」里按分类分单的配置仍然生效（先按分类挑机器，再逐道拆单）；
-                打印记录里的「补打」与「预览」始终整单出，不受此开关影响。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="加菜重打小票">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_guest_on_append"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">
-                开启后顾客每次加菜，小票机会重出一张整单最新金额的食客小票（后厨的「加菜单」不受影响，仍只列新菜）。
-                加菜频繁、觉得费纸的门店可关闭，金额以结账小票为准。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item
-            label="小票页脚文案"
-            name="print_guest_footer"
-          >
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-input
-                v-model="form.print_guest_footer"
-                placeholder="默认：谢谢惠顾,欢迎再次光临；清空则不打印页脚"
-                style="width: 320px"
-              />
-              <span class="tip">
-                打印在食客小票末尾的文案，可改成店铺口号。保存后到「打印记录 → 预览」即可看到效果，无需真实出纸。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="小票显示茶位费">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_guest_show_seat_fee"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">关闭后食客小票不再单列茶位费行（合计金额不变，仅影响展示）。</span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="小票显示优惠">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_guest_show_discount"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">关闭后食客小票不再单列优惠行；有优惠金额时才出现该行。</span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="下单出点菜单">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_guest_on_order"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">
-                开启后顾客每次下单，小票机会出一张「点菜单」（已点菜品 + 当前合计），作为点菜凭证当场可核对。
-                嫌它与结账小票重复、想省纸的门店可关闭；关闭后下单只打厨房单，加菜小票与结账小票不受影响。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="小票打印二维码">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_guest_qr"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">
-                开启后食客小票末尾会打一枚二维码，顾客扫码可自助查看 / 重打这张小票（内容指向「H5
-                访问地址」下的小票页）。
-                <b>两个前提</b>：H5 地址必须是手机能访问到的真实地址（不能是 localhost），且打印机支持 GS ( k
-                二维码指令——老机型可能不支持，建议先在「打印机管理」打一张测试页确认。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="模板预览">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-space>
-                <t-radio-group
-                  v-model="sampleDocType"
-                  variant="default-filled"
-                  size="small"
-                >
-                  <t-radio-button value="guest">食客小票</t-radio-button>
-                  <t-radio-button value="kitchen">厨房单</t-radio-button>
-                </t-radio-group>
-                <t-radio-group
-                  v-model="samplePaperWidth"
-                  variant="default-filled"
-                  size="small"
-                >
-                  <t-radio-button :value="48">80mm</t-radio-button>
-                  <t-radio-button :value="32">58mm</t-radio-button>
-                </t-radio-group>
-                <t-button
-                  theme="primary"
-                  variant="outline"
-                  size="small"
-                  :loading="sampleLoading"
-                  @click="loadSamplePreview"
-                >
-                  预览模板
-                </t-button>
-              </t-space>
-              <span class="tip">
-                用示例数据按<b>当前表单里的值</b>即时渲染（未保存也能看）；改完点按钮刷新。正式票据在「打印记录 →
-                预览」查看。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item
-            label="飞鹅账号"
-            name="feie_user"
-          >
-            <t-input
-              v-model="form.feie_user"
-              placeholder="飞鹅云后台注册账号（手机号/邮箱）"
-            />
-          </t-form-item>
-          <t-form-item
-            label="飞鹅 UKEY"
-            name="feie_ukey"
-          >
-            <t-input
-              v-model="form.feie_ukey"
-              type="password"
-              placeholder="开发者 UKEY（已配置显示 ******；留空表示不修改）"
-            />
-          </t-form-item>
-          <t-form-item
-            label="飞鹅接口地址"
-            name="feie_api_url"
-          >
-            <t-input
-              v-model="form.feie_api_url"
-              placeholder="默认 https://api.de.feieyun.com/Api/Open/"
-            />
-          </t-form-item>
-          <t-form-item label=" ">
-            <span class="tip">
-              UKEY 在飞鹅云后台「个人中心」获取，<b>不是</b>打印机机身上的识别码 KEY；填错会报签名校验失败(-3)。
-              账号配置好后，到「打印机管理」把打印机通道选成「飞鹅云」并填写 SN 即可跨网络出纸。
-            </span>
           </t-form-item>
         </t-tab-panel>
 
@@ -853,6 +958,11 @@
       </t-tabs>
 
       <div class="cfg-footer">
+        <span
+          v-if="!canEdit"
+          class="tip"
+          >当前账号只能查看配置，不能修改</span
+        >
         <t-button
           theme="primary"
           :loading="saving"
@@ -861,11 +971,6 @@
         >
           保存配置
         </t-button>
-        <span
-          v-if="!canEdit"
-          class="tip"
-          >当前账号只能查看配置，不能修改</span
-        >
       </div>
     </t-form>
 
@@ -1051,9 +1156,9 @@ interface ConfigForm {
   alipay_notify_url: string;
   print_enabled: string;
   print_kitchen_show_price: string;
-  print_kitchen_split_by_item: string;
+  // 厨房单打印粒度:whole=整单一张 / item=一菜一单 / portion=一菜一单且按份数拆
+  print_kitchen_split_mode: string;
   print_guest_footer: string;
-  print_guest_show_seat_fee: string;
   print_guest_show_discount: string;
   print_guest_qr: string;
   print_guest_on_append: string;
@@ -1063,6 +1168,12 @@ interface ConfigForm {
   feie_api_url: string;
   agent_token: string;
   agent_latest_version: string;
+  // 桌台遗留订单防护(见后端 application/service/stale_service.go)
+  stale_release_enabled: string;
+  stale_alert_enabled: string;
+  stale_alert_hours: number | string;
+  // 营业日切换时刻(0~12 点,0=自然日 00:00)
+  biz_date_cutoff_hour: number | string;
 }
 
 // 后端 config 全量字段:entities 的 ConfigData 只声明了公开配置子集,这里补齐
@@ -1085,9 +1196,8 @@ type ConfigPayloadFull = ConfigData & {
   alipay_notify_url?: string;
   print_enabled?: string;
   print_kitchen_show_price?: string;
-  print_kitchen_split_by_item?: string;
+  print_kitchen_split_mode?: string;
   print_guest_footer?: string;
-  print_guest_show_seat_fee?: string;
   print_guest_show_discount?: string;
   print_guest_qr?: string;
   print_guest_on_append?: string;
@@ -1097,6 +1207,10 @@ type ConfigPayloadFull = ConfigData & {
   feie_api_url?: string;
   agent_token?: string;
   agent_latest_version?: string;
+  stale_release_enabled?: string;
+  stale_alert_enabled?: string;
+  stale_alert_hours?: string;
+  biz_date_cutoff_hour?: string;
   // 一次性指令:传 '1' 表示主动清空 agent_token(敏感项留空只表示「不修改」)。
   agent_token_clear?: string;
 };
@@ -1135,20 +1249,25 @@ const form = reactive<ConfigForm>({
   alipay_notify_url: '',
   print_enabled: '1',
   print_kitchen_show_price: '0',
-  print_kitchen_split_by_item: '0',
+  print_kitchen_split_mode: 'whole',
   print_guest_footer: '谢谢惠顾,欢迎再次光临',
-  print_guest_show_seat_fee: '1',
   print_guest_show_discount: '1',
   print_guest_qr: '0',
   print_guest_on_append: '1',
   print_guest_on_order: '1',
   feie_user: '',
   feie_ukey: '',
-  feie_api_url: 'https://api.de.feieyun.com/Api/Open/',
+  feie_api_url: 'https://api.feieyun.cn/Api/Open/',
   // 敏感项：后端不回显，留空表示不修改（与飞鹅 UKEY 同一套语义）
   agent_token: '',
   // 普通配置项：随 ping 下发给代理，代理据此提示门店升级；留空不提示。
-  agent_latest_version: ''
+  agent_latest_version: '',
+  // 桌台遗留订单防护：两项开关默认关，阈值默认 4 小时(与后端默认值一致)
+  stale_release_enabled: '0',
+  stale_alert_enabled: '0',
+  stale_alert_hours: 4,
+  // 营业日切换时刻：出厂默认 0 = 按自然日 00:00 切换
+  biz_date_cutoff_hour: 0
 });
 const logoFiles = ref<UploadFile[]>([]);
 const wxFiles = ref<UploadFile[]>([]);
@@ -1174,17 +1293,21 @@ const FLAG_KEYS = [
   'alipay_enabled',
   'print_enabled',
   'print_kitchen_show_price',
-  'print_kitchen_split_by_item',
-  'print_guest_show_seat_fee',
   'print_guest_show_discount',
   'print_guest_qr',
   'print_guest_on_append',
-  'print_guest_on_order'
+  'print_guest_on_order',
+  'stale_release_enabled',
+  'stale_alert_enabled'
 ] as const;
 
 function normFlag(v: unknown): '1' | '0' {
   return String(v ?? '') === '1' ? '1' : '0';
 }
+
+// 厨房单打印粒度的合法取值:与后端 po.KitchenSplitModes 一一对应,
+// 枚举项不参与 FLAG_KEYS 归一化(它不是开关,有三个取值)。
+const KITCHEN_SPLIT_MODES = ['whole', 'item', 'portion'] as const;
 
 // silent = true 表示保存后的静默回显:不切换 loading 态(避免表单卸载重挂的闪烁),
 // 失败时也保留当前已加载状态。
@@ -1199,12 +1322,24 @@ async function load(silent = false): Promise<void> {
     form.shop_logo = res.shop_logo || '';
     // 新加的文本项对老后端(未下发该字段)兜底为空串,避免 undefined 绑定到输入框。
     form.print_guest_footer = res.print_guest_footer ?? '';
+    // 枚举项兜底:老后端不下发该字段、或下发非法值时,回落「整单一张」,
+    // 否则 t-radio-group 会一个都不选中(商家以为配置丢了)。
+    form.print_kitchen_split_mode = KITCHEN_SPLIT_MODES.includes(
+      form.print_kitchen_split_mode as (typeof KITCHEN_SPLIT_MODES)[number]
+    )
+      ? form.print_kitchen_split_mode
+      : 'whole';
     // 记录当前配置指纹,保存时带回做并发冲突校验(乐观锁)
     version.value = res.version || '';
     // 数值字段转为数字,便于 t-input-number 绑定
     form.seat_fee = Number(res.seat_fee) || 0;
     form.promotion_threshold = Number(res.promotion_threshold) || 0;
     form.promotion_discount = Number(res.promotion_discount) || 0;
+    // 超时阈值兜底:老后端不下发该字段时回落 4,越界同样收敛到 1~72,
+    // 否则 t-input-number 会显示一个超出 min/max 的值。
+    form.stale_alert_hours = Math.min(72, Math.max(1, Number(res.stale_alert_hours) || 4));
+    // 营业日切换时刻兜底:老后端不下发时回落 0(自然日),越界同样收敛到 0~12
+    form.biz_date_cutoff_hour = Math.min(12, Math.max(0, Number(res.biz_date_cutoff_hour) || 0));
     // 开关字段归一化为 '1' / '0'
     FLAG_KEYS.forEach(k => {
       form[k] = normFlag(res[k]);
@@ -1249,6 +1384,8 @@ async function save(): Promise<void> {
       seat_fee: String(form.seat_fee),
       promotion_threshold: String(form.promotion_threshold),
       promotion_discount: String(form.promotion_discount),
+      stale_alert_hours: String(form.stale_alert_hours),
+      biz_date_cutoff_hour: String(form.biz_date_cutoff_hour),
       // 乐观锁:带回回显时的指纹,后端发现不一致(有其他人已先保存)会拒绝
       version: version.value
     };
@@ -1354,13 +1491,20 @@ function onClearAgentToken(): void {
 const sampleVisible = ref(false);
 const sampleLoading = ref(false);
 const sampleData = ref<TicketPreview | null>(null);
-const sampleDocType = ref<'guest' | 'kitchen'>('guest');
-const samplePaperWidth = ref<number>(48);
+type SampleDoc = 'guest' | 'guest_append' | 'kitchen';
 
-const sampleTitle = computed(() => {
-  const doc = sampleDocType.value === 'kitchen' ? '厨房单' : '食客小票';
-  return `模板预览 · ${doc}(示例数据)`;
-});
+const SAMPLE_DOC_LABEL: Record<SampleDoc, string> = {
+  guest: '食客小票',
+  guest_append: '加菜小票',
+  kitchen: '厨房单'
+};
+
+const sampleDocType = ref<SampleDoc>('guest');
+const samplePaperWidth = ref<number>(48);
+// 厨房单打印粒度:决定后厨一次收几张纸,示例预览按「一段一张纸」还原。
+const sampleKitchenSplit = ref<string>('whole');
+
+const sampleTitle = computed(() => `模板预览 · ${SAMPLE_DOC_LABEL[sampleDocType.value]}(示例数据)`);
 
 async function loadSamplePreview(): Promise<void> {
   sampleVisible.value = true;
@@ -1371,10 +1515,10 @@ async function loadSamplePreview(): Promise<void> {
       docType: sampleDocType.value,
       paperWidth: samplePaperWidth.value,
       footer: form.print_guest_footer,
-      showSeatFee: form.print_guest_show_seat_fee === '1',
       showDiscount: form.print_guest_show_discount === '1',
       qr: form.print_guest_qr === '1',
-      kitchenShowPrice: form.print_kitchen_show_price === '1'
+      kitchenShowPrice: form.print_kitchen_show_price === '1',
+      kitchenSplit: sampleDocType.value === 'kitchen' ? sampleKitchenSplit.value : undefined
     });
   } catch {
     // 失败原因由请求拦截器统一弹出
@@ -1681,6 +1825,35 @@ onMounted(() => {
   font-size: 12px;
 }
 
+/* 厨房单打印粒度说明:三种粒度各占一行、与上面的按钮同序,粒度名对齐成一列,
+   扫一眼就能对上;通用注意事项收在末尾单独一行,不再糊成一大段长文。
+   行宽限到 560px:长句不横跨整行,换行位置也更稳定。 */
+.split-mode-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: 560px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.split-mode-hint__line {
+  display: flex;
+  gap: 8px;
+}
+
+.split-mode-hint__line b {
+  flex: 0 0 auto;
+  width: 84px;
+  color: var(--ink-2);
+}
+
+.split-mode-hint__note {
+  margin-top: 4px;
+}
+
 .qr-item {
   display: flex;
   gap: 16px;
@@ -1699,6 +1872,95 @@ onMounted(() => {
 .promo-row .t-input-number {
   flex: 0 0 auto;
   min-width: 92px;
+}
+
+/* 茶位费:单位「元/人」放在输入框外。
+   内置 suffix 会把 144px 宽的输入框里的数字区挤到只剩十几像素,
+   金额被裁成「1.」看不到小数位;外置单位与促销行的写法也保持一致。
+   同样保持输入框最小宽度,窄屏折行后不会被 flex 压扁。 */
+.seat-fee-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.seat-fee-row .t-input-number {
+  flex: 0 0 auto;
+  min-width: 144px;
+}
+
+/* 营业设置:每个设置项作一个纵向块,「控件 → 一句结论 → 要点 → 警示」层层递进,
+   不再把说明糊成一大段带 <br/> 的长文。限宽 560px:长句不横跨整行,换行位置更稳定。 */
+.biz-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+  text-align: left;
+}
+
+/* 控件行:开关 / 输入框 + 外置单位,与茶位费同一套写法 */
+.biz-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.biz-control .t-input-number {
+  flex: 0 0 auto;
+  min-width: 144px;
+}
+
+/* 告警开关下挂的「超时判定」参数行,缩进以体现从属关系 */
+.biz-control-sub {
+  margin-top: 2px;
+}
+
+/* 开关后的状态词,开 / 关一眼可辨 */
+.biz-state {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* 一句式核心结论:先给结论,再展开细节 */
+.biz-lead {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* 要点列表:逐条换行,与上面的结论同宽 */
+.biz-points {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.biz-points b {
+  color: var(--ink-2);
+}
+
+/* 高风险提示单独成条,与普通要点区分开 */
+.biz-warn {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: #fff7e6;
+  border: 1px solid #ffe0a3;
+  color: #b26a00;
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .logo-side {
@@ -1753,10 +2015,12 @@ onMounted(() => {
   line-height: 1.4;
 }
 
-/* 底部保存栏:与 tabs 分隔,任意 tab 内编辑后都能直接保存 */
+/* 底部保存栏:与 tabs 分隔,任意 tab 内编辑后都能直接保存。
+   按钮靠右下角(与各列表页 .pager 的落点一致);只读提示排在其左侧。 */
 .cfg-footer {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   margin-top: 4px;
   padding-top: 16px;

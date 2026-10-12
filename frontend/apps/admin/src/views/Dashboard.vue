@@ -47,6 +47,43 @@
       </div>
     </div>
 
+    <!-- 未结账超时告警:开关与阈值都由后端下发(见 handler.OrderStale)。
+         它不改变任何状态,只是把「可能被忘掉的那几桌」推到店员眼前。 -->
+    <div
+      v-if="stale.items.length"
+      class="stale-bar"
+    >
+      <div class="sh">
+        <span class="t">有 {{ stale.items.length }} 笔订单还没结账，去核对一下</span>
+        <router-link
+          class="l"
+          to="/dining/orders"
+        >
+          订单管理 →
+        </router-link>
+      </div>
+      <button
+        v-for="it in stale.items"
+        :key="it.orderId"
+        type="button"
+        class="stale-line"
+        :aria-label="`${it.tableName || it.tableNo} ${it.shortNo || it.orderNo} 已开台 ${durationText(it.minutes)}`"
+        @click="goOrders"
+      >
+        <span class="tb">{{ it.tableName || it.tableNo }}</span>
+        <span class="no">#{{ it.shortNo || (it.orderNo || '').slice(-6) }}</span>
+        <span class="tm">已 {{ durationText(it.minutes) }}</span>
+        <!-- 跨日遗留单的桌台已被自动清空,看板上什么都看不到 —— 这里必须标出来,
+             否则店家会以为「桌上没人,怎么还有单」 -->
+        <span
+          v-if="it.legacy"
+          class="lg"
+          >跨日</span
+        >
+        <span class="am">¥{{ $money(it.totalAmount) }}</span>
+      </button>
+    </div>
+
     <div class="panels">
       <!-- 桌台看板 -->
       <div class="panel">
@@ -113,10 +150,10 @@
           :key="o.orderId"
           type="button"
           class="orderline"
-          :aria-label="`订单 ${o.shortNo || o.orderNo.slice(-6)},${statusLabel(o.orderStatus)}`"
+          :aria-label="`订单 ${o.shortNo || (o.orderNo || '').slice(-6)},${statusLabel(o.orderStatus)}`"
           @click="goOrders"
         >
-          <div class="no">#{{ o.shortNo || o.orderNo.slice(-6) }}</div>
+          <div class="no">#{{ o.shortNo || (o.orderNo || '').slice(-6) }}</div>
           <div class="meta">{{ o.tableName || o.tableNo }} · {{ o.personCount }}人</div>
           <div class="amount">¥{{ $money(o.totalAmount) }}</div>
           <span
@@ -138,10 +175,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { getReportSummary, getOrderBoard } from '@dining/api';
+import { getReportSummary, getOrderBoard, getStaleOrders } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { money } from '@dining/shared';
-import type { OrderSummary, ReportSummary, TableInfo } from '@dining/types';
+import type { OrderSummary, ReportSummary, StaleOrderAlert, TableInfo } from '@dining/types';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
 import PullRefresh from '../components/PullRefresh.vue';
@@ -169,6 +206,22 @@ const canReport = computed(() => hasPerm('report:view'));
 
 const summary = ref<ReportSummary>({});
 const board = ref<TableInfo[]>([]);
+// 未结账超时告警。接口类型里三个字段都是可选的(兼容老后端),这里落地成必填:
+// items 恒为数组,模板就能直接 .length / v-for,不必到处写 || []。
+type StaleState = { enabled: boolean; hours: number; items: StaleOrderAlert[] };
+const stale = ref<StaleState>({ enabled: false, hours: 0, items: [] });
+
+/** 把分钟数说成人话:店员扫一眼就知道这桌开了多久(跨日遗留单会到几十小时,得说到天)。 */
+function durationText(minutes?: number): string {
+  const m = Math.max(0, Number(minutes) || 0);
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  const restMin = m % 60;
+  if (h < 24) return restMin ? `${h} 小时 ${restMin} 分` : `${h} 小时`;
+  const days = Math.floor(h / 24);
+  const restHour = h % 24;
+  return restHour ? `${days} 天 ${restHour} 小时` : `${days} 天`;
+}
 
 const busyCount = computed(() => board.value.filter(t => t.status === 1).length);
 
@@ -206,6 +259,9 @@ async function load(): Promise<void> {
     }
     // order/board 返回桌台数组(每桌带当前进行中订单),与 TableInfo 同形。
     board.value = await getOrderBoard();
+    // 告警开关关着时后端会直接返回 enabled=false 且不带数据,前端不必先判断配置。
+    const alerts = await getStaleOrders();
+    stale.value = { enabled: !!alerts.enabled, hours: Number(alerts.hours) || 0, items: alerts.items || [] };
   } catch {
     /* 失败已由拦截器统一 toast */
   }
@@ -278,6 +334,99 @@ onMounted(load);
 .kpi.acc .v,
 .kpi.acc .v small {
   color: #fff;
+}
+
+/* 未结账超时告警:用告警色把它从一屏白卡片里拎出来,但不做成弹窗 ——
+   它是「提醒」不是「阻断」,店家可以先把手上这单忙完再回来处理。 */
+.stale-bar {
+  background: #fff8e6;
+  border: 1px solid #ffe1a8;
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.sh {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sh .t {
+  font-size: 13px;
+  font-weight: 700;
+  color: #a86a00;
+}
+
+.sh .l {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #a86a00;
+  text-decoration: none;
+}
+
+.sh .l:hover {
+  text-decoration: underline;
+}
+
+.stale-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 0;
+  border: none;
+  border-top: 1px solid #ffe1a8;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stale-line:active {
+  opacity: 0.72;
+}
+
+.stale-line:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.stale-line .tb {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.stale-line .no {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
+.stale-line .tm {
+  flex: 1;
+  color: #a86a00;
+  font-weight: 600;
+  font-size: 11.5px;
+}
+
+/* 「跨日」标记:这类单的桌台已被清空,与还在占台的超时单区分开 */
+.stale-line .lg {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: #ffe1a8;
+  color: #a86a00;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.stale-line .am {
+  font-weight: 700;
+  color: var(--brand-deep);
 }
 
 /* 面板 */
