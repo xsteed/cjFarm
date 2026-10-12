@@ -17,7 +17,12 @@
       <div class="logo">
         <div class="logo-dot">点</div>
         <div class="logo-text">
-          <div class="logo-name">扫码点餐系统</div>
+          <div
+            class="logo-name"
+            :title="brandName"
+          >
+            {{ brandName }}
+          </div>
           <div class="logo-sub">Dining Admin</div>
         </div>
         <!-- 移动端抽屉内关闭按钮:手机上除点遮罩/选菜单项外,给一个明确的收起入口 -->
@@ -200,6 +205,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { listTables } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { useShopBrand } from '../composables/useShopBrand';
 import { accessibleMenus, menuTree } from '../menu';
 import type { MenuNode } from '../menu';
 import { clearAuth, getDisplayName, getRoleName, hasPerm, revokeRemember } from '@dining/auth';
@@ -301,6 +307,19 @@ const tabs = computed(() => {
 });
 
 const currentTitle = computed(() => route.meta.title || '');
+
+// 左上角品牌名:配置了店铺名就展示「店铺名称 · 点餐系统」,未配置回退「扫码点餐系统」。
+// 取数与拼接格式在 useShopBrand 里统一维护(登录页共用同一份,避免两处漂移)。
+const { brandName, loadShopBrand } = useShopBrand('扫码点餐系统');
+// 布局在整段会话里常驻,只在挂载时拉一次的话,去「系统配置」改完店铺名左上角不会跟着变
+// (要整页刷新才生效)。这里随路由变化轻量重取一次,切到别的页面就能看到新名字。
+watch(
+  () => route.path,
+  () => {
+    loadShopBrand();
+  }
+);
+
 const displayName = computed(() => getDisplayName());
 const roleName = computed(() => getRoleName());
 // 侧栏底部展示的版本号,直接取自 package.json,发版改版本号即可同步,不会漂移
@@ -383,11 +402,20 @@ function onLogout() {
   box-shadow: 0 4px 12px rgb(240 72 31 / 28%);
 }
 
+/* 品牌名文本列:占据剩余宽度,长店名截断而不撑破 220px 侧栏 */
+.logo-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .logo-name {
   font-size: 14px;
   font-weight: 700;
   color: var(--ink);
   line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .logo-sub {

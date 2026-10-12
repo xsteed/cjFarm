@@ -2,7 +2,7 @@
   <div class="login-wrap">
     <div class="login-card">
       <div class="login-logo">点</div>
-      <div class="login-title">扫码点餐管理系统</div>
+      <div class="login-title">{{ brandName }}</div>
       <div class="login-sub">管理端登录</div>
 
       <div class="field">
@@ -104,6 +104,7 @@ import { BrowseIcon, BrowseOffIcon } from 'tdesign-icons-vue-next';
 import { login, rememberLogin } from '@dining/api';
 import { setAuth, getRemember, saveRemember, clearRemember, revokeRemember } from '@dining/auth';
 import { firstAccessiblePath } from '../menu';
+import { useShopBrand } from '../composables/useShopBrand';
 import type { LoginResult } from '@dining/types';
 
 interface FriendlyError {
@@ -113,6 +114,10 @@ interface FriendlyError {
 
 const router = useRouter();
 const route = useRoute();
+
+// 登录页标题:配置了店铺名就展示「店铺名称 · 点餐系统」(与侧栏左上角同一份取数与格式),
+// 未配置时回退默认的「扫码点餐管理系统」。useShopBrand 挂载时自动拉取,无需登录态。
+const { brandName } = useShopBrand('扫码点餐管理系统');
 const form = reactive<{ username: string; password: string }>({ username: '', password: '' });
 const loading = ref(false);
 const remember = ref(false);

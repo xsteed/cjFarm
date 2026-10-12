@@ -702,6 +702,35 @@ func migrate() {
 	DB.Exec(`UPDATE tb_order SET settle_type='normal' WHERE settle_type IS NULL OR settle_type=''`)
 	backfillTableCodes()
 	migrateUploadPrefix()
+	migrateShopNameDot()
+}
+
+// legacyShopNameWithSpace 出厂默认的店铺名曾用空格分隔「品牌 标语」,与全系统
+// 「品牌 · 标语」的约定不一致:桌牌二维码的品牌名提取(前端 shopBrandName 按 [·•] 切分)
+// 会取到整串,小票抬头与顾客端顶部也少一个分隔点。
+//
+// 保留该常量只用于一次性数据改写,新代码一律以 settingDefaults["shop_name"] 为准。
+const legacyShopNameWithSpace = "长健农场 柴火农家土菜"
+
+// migrateShopNameDot 把仍是出厂默认、且用空格分隔的店铺名统一成中点分隔。
+//
+// 只命中出厂默认那一条精确值:门店若已自行改名(哪怕是别的空格分隔写法),一律不动,
+// 避免启动时悄悄改写商家自己的配置。幂等,重复执行无副作用。
+func migrateShopNameDot() {
+	want := settingDefaults["shop_name"]
+	if want == "" {
+		return
+	}
+	res, err := DB.Exec(`UPDATE tb_config SET cfg_value=? WHERE cfg_key='shop_name' AND cfg_value=?`,
+		want, legacyShopNameWithSpace)
+	if err != nil {
+		// 不 Fatalf:店铺名只是展示口径,不该让服务起不来。
+		logger.Warnf("[db] 店铺名统一为「品牌 · 标语」失败: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		logger.Infof("[db] 已将店铺名改写为 %q(与品牌名提取规则一致)", want)
+	}
 }
 
 // legacyUploadPrefix 是图片/收款码的历史路径前缀,已废弃。
