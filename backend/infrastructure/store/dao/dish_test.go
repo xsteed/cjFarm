@@ -170,7 +170,9 @@ func TestDishCreateUpdateDeleteRoundTrip(t *testing.T) {
 	}
 }
 
-func TestGetSpecForOrder(t *testing.T) {
+// TestLoadSpecsForOrderJoin 批量加载规格时的「菜品 + 规格」联表投影
+// (原先 GetSpecForOrder 逐条查询承担的职责)。
+func TestLoadSpecsForOrderJoin(t *testing.T) {
 	dishDaoInitDB(t)
 
 	dishID, _ := dishDaoCreate(t, "规格查询菜", 1, []po.Spec{{SpecName: "份", Price: 3200}})
@@ -179,18 +181,24 @@ func TestGetSpecForOrder(t *testing.T) {
 		t.Fatalf("应有一条规格, got %d", len(specs))
 	}
 
-	dishName, specName, delFlag, dishStatus, priceCents, err := GetSpecForOrder(specs[0].SpecID, int(dishID))
+	loaded, err := LoadSpecsForOrder([]int{specs[0].SpecID})
 	if err != nil {
-		t.Fatalf("查询规格失败: %v", err)
+		t.Fatalf("批量查询规格失败: %v", err)
 	}
-	if dishName != "规格查询菜" || specName != "份" || delFlag != po.DelFlagOK || dishStatus != 1 || priceCents != 3200 {
-		t.Fatalf("规格信息异常: dish=%s spec=%s delFlag=%s status=%d price=%d",
-			dishName, specName, delFlag, dishStatus, priceCents)
+	info, ok := loaded[specs[0].SpecID]
+	if !ok {
+		t.Fatal("应按 spec_id 命中规格")
+	}
+	if info.DishName != "规格查询菜" || info.SpecName != "份" || info.DelFlag != po.DelFlagOK ||
+		info.DishStatus != 1 || info.PriceCents != 3200 || info.DishID != int(dishID) {
+		t.Fatalf("规格信息异常: %+v", info)
 	}
 
-	// 规格与菜品不匹配时不返回行。
-	if _, _, _, _, _, err := GetSpecForOrder(specs[0].SpecID, int(dishID)+1); err == nil {
-		t.Fatal("菜品 ID 不匹配应报错")
+	// 按 spec_id 查不到时不返回该 key(菜品 ID 是否匹配由调用方在内存比对)。
+	if miss, err := LoadSpecsForOrder([]int{specs[0].SpecID + 1}); err != nil {
+		t.Fatalf("查询不存在规格失败: %v", err)
+	} else if len(miss) != 0 {
+		t.Fatalf("不存在的规格不应返回行, got %+v", miss)
 	}
 }
 

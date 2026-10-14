@@ -80,18 +80,17 @@ func TestPaymentSvcPaymentFlow(t *testing.T) {
 	if err := CreatePayment("PF1", "wxpay", 5000, "prepay-1"); err != nil {
 		t.Fatalf("创建支付流水失败: %v", err)
 	}
-	paymentID, status, amount, err := GetPayment("PF1", "wxpay")
-	if err != nil || paymentID <= 0 || status != dao.PayStatusPending || amount != 5000 {
-		t.Fatalf("支付流水查询异常: id=%d status=%d amount=%d err=%v", paymentID, status, amount, err)
+	flow, err := GetPayment("PF1", "wxpay")
+	if err != nil || flow.PaymentID <= 0 || flow.Status != dao.PayStatusPending || flow.Amount != 5000 {
+		t.Fatalf("支付流水查询异常: id=%d status=%d amount=%d err=%v", flow.PaymentID, flow.Status, flow.Amount, err)
 	}
 
 	// 重复发起同一渠道复用旧流水。
 	if err := CreatePayment("PF1", "wxpay", 5001, "prepay-2"); err != nil {
 		t.Fatalf("重复创建支付流水失败: %v", err)
 	}
-	_, _, amount, _ = GetPayment("PF1", "wxpay")
-	if amount != 5001 {
-		t.Fatalf("复用流水应更新金额, got %d", amount)
+	if reused, _ := GetPayment("PF1", "wxpay"); reused.Amount != 5001 {
+		t.Fatalf("复用流水应更新金额, got %d", reused.Amount)
 	}
 
 	// 另一渠道待支付流水。
@@ -111,10 +110,10 @@ func TestPaymentSvcPaymentFlow(t *testing.T) {
 		t.Fatalf("按 ID 查订单号失败: no=%q err=%v", no, err)
 	}
 
-	if err := MarkPaymentClosed(paymentID); err != nil {
+	if err := MarkPaymentClosed(flow.PaymentID); err != nil {
 		t.Fatalf("关闭流水失败: %v", err)
 	}
-	if err := MarkPaymentRefunded(paymentID); err != nil {
+	if err := MarkPaymentRefunded(flow.PaymentID); err != nil {
 		t.Fatalf("标记退款失败: %v", err)
 	}
 }
@@ -136,9 +135,8 @@ func TestPaymentSvcApplyPaymentSuccess(t *testing.T) {
 		if payStatus != 1 {
 			t.Fatalf("支付成功后订单应已支付, got %d", payStatus)
 		}
-		_, flowStatus, _, _ := dao.GetPayment("APS1", "wxpay")
-		if flowStatus != dao.PayStatusPaid {
-			t.Fatalf("支付成功后流水应已支付, got %d", flowStatus)
+		if f, _ := dao.GetPayment("APS1", "wxpay"); f.Status != dao.PayStatusPaid {
+			t.Fatalf("支付成功后流水应已支付, got %d", f.Status)
 		}
 	})
 
@@ -170,9 +168,8 @@ func TestPaymentSvcApplyPaymentSuccess(t *testing.T) {
 		if !res.Duplicate {
 			t.Fatalf("第一次应返回重复标记")
 		}
-		_, flowStatus, _, _ := dao.GetPayment("APS5", "wxpay")
-		if flowStatus != dao.PayStatusPaid {
-			t.Fatalf("重复支付后输家流水应置为已支付, got %d", flowStatus)
+		if f, _ := dao.GetPayment("APS5", "wxpay"); f.Status != dao.PayStatusPaid {
+			t.Fatalf("重复支付后输家流水应置为已支付, got %d", f.Status)
 		}
 		res = ApplyPaymentSuccess(context.Background(), "APS5", "wxpay", "t5", "wxpay", 5000)
 		if res.Duplicate {

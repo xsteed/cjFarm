@@ -63,7 +63,7 @@ func ListRefunds(orderID int) ([]po.Refund, error) {
 	for rows.Next() {
 		var r po.Refund
 		if err := rows.Scan(&r.RefundID, &r.OrderID, &r.OrderNo, &r.PaymentID, &r.RefundNo, &r.Channel,
-			&r.ChannelRefundNo, &r.Amount, &r.Status, &r.Reason, &r.Operator, &r.FailReason, &r.CreateTime, &r.UpdateTime, &r.IsDuplicate); err != nil {
+			&r.ChannelRefundNo, &r.Amount, &r.Status, &r.Reason, &r.Operator, &r.FailReason, TS(&r.CreateTime), TS(&r.UpdateTime), &r.IsDuplicate); err != nil {
 			return nil, err // 退款记录扫描失败必须报错,静默丢弃会让商家少看一笔退款
 		}
 		out = append(out, r)
@@ -78,15 +78,19 @@ func ListRefunds(orderID int) ([]po.Refund, error) {
 // (is_duplicate=1 且状态为处理中/成功)。支付通知重发时会再次进入重复支付分支,
 // 若不加查重就会对同一笔支付二次调用渠道退款(商户同一笔被退两次);查到已有
 // 未终态退款单时直接复用、不再发起。
-func GetPendingDuplicateRefund(orderNo, channel string) (refundID int, refundNo string, err error) {
-	err = store.DB.QueryRow(`SELECT refund_id, refund_no FROM tb_refund
+//
+// 只填充 po.Refund 的 RefundID/RefundNo 两列,其余为零值;
+// 查不到时返回零值结构体与 nil ——「没有重复退款单」是正常分支,不是错误。
+func GetPendingDuplicateRefund(orderNo, channel string) (po.Refund, error) {
+	var r po.Refund
+	err := store.DB.QueryRow(`SELECT refund_id, refund_no FROM tb_refund
 		WHERE order_no=? AND channel=? AND COALESCE(is_duplicate,0)=1 AND status IN (?,?)
 		ORDER BY refund_id DESC LIMIT 1`,
-		orderNo, channel, po.RefundStatusProcessing, po.RefundStatusSuccess).Scan(&refundID, &refundNo)
+		orderNo, channel, po.RefundStatusProcessing, po.RefundStatusSuccess).Scan(&r.RefundID, &r.RefundNo)
 	if err == sql.ErrNoRows {
-		return 0, "", nil
+		return po.Refund{}, nil
 	}
-	return refundID, refundNo, err
+	return r, err
 }
 
 // MarkRefund 更新退款单状态(成功/失败)。

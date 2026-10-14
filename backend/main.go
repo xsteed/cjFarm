@@ -197,6 +197,8 @@ func setupAPI(r *gin.Engine) {
 			// 时段分布(排班/备货参考)与结算方式构成
 			admin.GET("/report/hourly", handler.ReportHourly)
 			admin.GET("/report/settleMix", handler.ReportSettleMix)
+			// 用户用餐时长分析(翻台/排台参考)
+			admin.GET("/report/diningDuration", handler.ReportDiningDuration)
 
 			// ---- 操作日志(审计留痕) ----
 			admin.GET("/log/list", handler.LogList)

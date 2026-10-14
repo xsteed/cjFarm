@@ -3,6 +3,7 @@ import { defineComponent, h } from 'vue';
 import Report from '../../Report.vue';
 import {
   getDailyTrend,
+  getDiningDuration,
   getDishRank,
   getHourlyReport,
   getMonthlyTrend,
@@ -11,6 +12,7 @@ import {
 } from '@dining/api';
 import type {
   DailyTrendRow,
+  DiningDurationStats,
   DishRankRow,
   HourlyRow,
   MonthlyTrendRow,
@@ -77,7 +79,8 @@ vi.mock('@dining/api', () => ({
   getMonthlyTrend: vi.fn(),
   getDishRank: vi.fn(),
   getHourlyReport: vi.fn(),
-  getSettleMix: vi.fn()
+  getSettleMix: vi.fn(),
+  getDiningDuration: vi.fn()
 }));
 
 vi.mock('vue-router', () => ({
@@ -171,6 +174,7 @@ const getMonthlyTrendMock = vi.mocked(getMonthlyTrend);
 const getDishRankMock = vi.mocked(getDishRank);
 const getHourlyReportMock = vi.mocked(getHourlyReport);
 const getSettleMixMock = vi.mocked(getSettleMix);
+const getDiningDurationMock = vi.mocked(getDiningDuration);
 
 const summaryFixture: ReportSummary = {
   todayAmount: 12888.5,
@@ -230,6 +234,21 @@ const rankFixture: DishRankRow[] = [
   { dishName: '米饭', quantity: 900, amount: 1800 }
 ];
 
+const durationFixture: DiningDurationStats = {
+  orderCount: 42,
+  avgMinutes: 68,
+  medianMinutes: 55,
+  maxMinutes: 185,
+  guestCount: 130,
+  buckets: [
+    { label: '30分钟内', count: 8 },
+    { label: '30-60分钟', count: 15 },
+    { label: '1-1.5小时', count: 10 },
+    { label: '1.5-2小时', count: 6 },
+    { label: '2小时以上', count: 3 }
+  ]
+};
+
 function chartInstances(): ChartInstance[] {
   return echartsMock.init.mock.results.map(r => r.value as ChartInstance);
 }
@@ -254,6 +273,7 @@ beforeEach(() => {
   getDishRankMock.mockResolvedValue(rankFixture);
   getHourlyReportMock.mockResolvedValue(hourlyFixture);
   getSettleMixMock.mockResolvedValue(mixFixture);
+  getDiningDurationMock.mockResolvedValue(durationFixture);
 });
 
 afterEach(() => {
@@ -262,12 +282,12 @@ afterEach(() => {
 });
 
 describe('Report', () => {
-  it('挂载后渲染 5 个图表容器并初始化 echarts 实例,setOption 收到非空 option', async () => {
+  it('挂载后渲染 6 个图表容器并初始化 echarts 实例,setOption 收到非空 option', async () => {
     const wrapper = mountReport();
     await flushPromises();
 
-    expect(wrapper.findAll('.chart-canvas')).toHaveLength(5);
-    expect(echartsMock.init).toHaveBeenCalledTimes(5);
+    expect(wrapper.findAll('.chart-canvas')).toHaveLength(6);
+    expect(echartsMock.init).toHaveBeenCalledTimes(6);
 
     for (const inst of chartInstances()) {
       const hasRealOption = inst.setOption.mock.calls.some(call => call[0] !== EMPTY_OPTION);
@@ -311,11 +331,13 @@ describe('Report', () => {
     getDishRankMock.mockResolvedValue([]);
     getHourlyReportMock.mockResolvedValue([]);
     getSettleMixMock.mockResolvedValue([]);
+    // 用餐时长为空回报示例「无任何已完成订单」:分布退化为 EMPTY_OPTION
+    getDiningDurationMock.mockResolvedValue({});
 
     const wrapper = mountReport();
     await flushPromises();
 
-    expect(echartsMock.init).toHaveBeenCalledTimes(5);
+    expect(echartsMock.init).toHaveBeenCalledTimes(6);
     for (const inst of chartInstances()) {
       const calls = inst.setOption.mock.calls;
       expect(calls.length).toBeGreaterThan(0);
@@ -325,13 +347,14 @@ describe('Report', () => {
     wrapper.unmount();
   });
 
-  it('切换日期区间只重新拉取三个区间相关接口', async () => {
+  it('切换日期区间只重新拉取区间相关接口', async () => {
     const wrapper = mountReport();
     await flushPromises();
 
     expect(getDailyTrendMock).toHaveBeenCalledTimes(1);
     expect(getHourlyReportMock).toHaveBeenCalledTimes(1);
     expect(getSettleMixMock).toHaveBeenCalledTimes(1);
+    expect(getDiningDurationMock).toHaveBeenCalledTimes(1);
 
     await wrapper.find('.date-range-picker').trigger('click');
     await flushPromises();
@@ -339,6 +362,9 @@ describe('Report', () => {
     expect(getDailyTrendMock).toHaveBeenCalledTimes(2);
     expect(getHourlyReportMock).toHaveBeenCalledTimes(2);
     expect(getSettleMixMock).toHaveBeenCalledTimes(2);
+    // 用餐时长同样随区间变化
+    expect(getDiningDurationMock).toHaveBeenCalledTimes(2);
+    expect(getDiningDurationMock).toHaveBeenLastCalledWith({ start: '2025-01-01', end: '2025-01-10' });
     expect(getDailyTrendMock).toHaveBeenLastCalledWith({ start: '2025-01-01', end: '2025-01-10' });
 
     expect(getReportSummaryMock).toHaveBeenCalledTimes(1);

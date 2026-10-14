@@ -216,13 +216,15 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 	if personCount > 100 {
 		return CustomerCreateOrderResult{}, errors.New("用餐人数超出限制")
 	}
-	// 校验桌台存在且未删除
-	tableNo, tableName, err := dao.GetTableNoName(tableID)
+	// 校验桌台存在且未删除,并同时取到人工状态:
+	// 「桌台存在」与「人工状态可用」是对同一行的两个判断,一次读齐,不做两遍查询。
+	table, err := dao.GetTableByID(tableID)
 	if err != nil {
 		return CustomerCreateOrderResult{}, errors.New("桌台不存在")
 	}
+	tableNo, tableName := table.TableNo, table.TableName
 	// 人工停用/预约的桌台拒绝新点餐(事务内 OccupyTableTx 还会再兜底校验一次,防并发漏判)。
-	if lockStatus, _, err := dao.GetTableLock(tableID); err == nil && lockStatus != po.TableLockNormal {
+	if table.LockStatus != po.TableLockNormal {
 		return CustomerCreateOrderResult{}, ErrTableUnavailable
 	}
 
@@ -396,13 +398,14 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem, per
 		return CustomerAppendOrderResult{}, errors.New("用餐人数超出限制")
 	}
 
-	orderID, orderTableID, _, orderStatus, payStatus, err := dao.GetOrderAppendInfo(orderNo)
+	o, err := dao.GetOrderAppendInfo(orderNo)
 	if err != nil {
 		return CustomerAppendOrderResult{}, errors.New("订单不存在")
 	}
+	orderID, orderStatus, payStatus := o.OrderID, o.OrderStatus, o.PayStatus
 	// 归属校验:orderNo 可被猜测/泄露,不能单独作为加菜凭据;
 	// 只有「订单所属桌台 == 请求方声称的桌台」才允许改动他人账单。
-	if orderTableID != tableID {
+	if o.TableID != tableID {
 		return CustomerAppendOrderResult{}, errors.New("订单不属于当前桌台")
 	}
 	if !ActiveStatus(orderStatus) {
@@ -441,15 +444,15 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem, per
 		}
 		// 事务内重读状态:并发收款/改单/取消时,基于事务外旧快照重算金额会互相覆盖,
 		// 出现「明细多了、金额没加上」的坏账。
-		curStatus, curPay, curPerson, err := dao.GetOrderStateTx(tx, orderID)
+		cur, err := dao.GetOrderStateTx(tx, orderID)
 		if err != nil {
 			return err
 		}
-		if !ActiveStatus(curStatus) || curPay == 1 {
+		if !ActiveStatus(cur.OrderStatus) || cur.PayStatus == 1 {
 			return errors.New("订单状态已变更，请刷新后重试")
 		}
 		// 用餐人数可随加菜一并更新:请求未传(<=0)则沿用订单现值。
-		effectivePerson := curPerson
+		effectivePerson := cur.PersonCount
 		if personCount > 0 {
 			effectivePerson = personCount
 		}
@@ -572,15 +575,16 @@ func CustomerUrgeOrder(tableID int, orderNo string) (CustomerUrgeOrderResult, er
 		return CustomerUrgeOrderResult{}, errors.New("参数错误")
 	}
 
-	orderID, orderTableID, orderStatus, tableNo, tableName, err := dao.GetUrgeTarget(orderNo)
+	o, err := dao.GetUrgeTarget(orderNo)
 	if err != nil {
 		return CustomerUrgeOrderResult{}, errors.New("订单不存在")
 	}
+	orderID, tableNo, tableName := o.OrderID, o.TableNo, o.TableName
 	// 归属校验:与加菜同理,orderNo 不能单独作为催单凭据,须与请求桌台匹配。
-	if orderTableID != tableID {
+	if o.TableID != tableID {
 		return CustomerUrgeOrderResult{}, errors.New("订单不属于当前桌台")
 	}
-	if !ActiveStatus(orderStatus) {
+	if !ActiveStatus(o.OrderStatus) {
 		return CustomerUrgeOrderResult{}, errors.New("订单已结束，无需催菜")
 	}
 
@@ -600,7 +604,7 @@ func CustomerUrgeOrder(tableID int, orderNo string) (CustomerUrgeOrderResult, er
 		if recent > 0 {
 			return errCooldown
 		}
-		return dao.InsertUrgeTx(tx, orderID, orderNo, orderTableID, tableNo, tableName,
+		return dao.InsertUrgeTx(tx, orderID, orderNo, o.TableID, tableNo, tableName,
 			po.UrgeTypeUrge, po.UrgeStatusPending)
 	})
 	if err != nil {

@@ -24,7 +24,7 @@ func ScanPrinter(rows interface{ Scan(...interface{}) error }) (po.Printer, erro
 	var p po.Printer
 	err := rows.Scan(&p.PrinterID, &p.PrinterName, &p.PrinterType, &p.Provider, &p.IP, &p.Port,
 		&p.FeieSN, &p.PaperWidth, &p.Copies, &p.CategoryIDs, &p.Status, &p.DelFlag,
-		&p.CreateTime, &p.UpdateTime)
+		TS(&p.CreateTime), TS(&p.UpdateTime))
 	if err != nil {
 		return p, err
 	}
@@ -153,8 +153,8 @@ func scanPrintJob(rows interface{ Scan(...interface{}) error }) (po.PrintJob, er
 	var j po.PrintJob
 	err := rows.Scan(&j.JobID, &j.PrinterID, &j.PrinterName, &j.PrinterType, &j.IP, &j.Port,
 		&j.DocType, &j.OrderID, &j.OrderNo, &j.TableNo, &j.Copies, &j.PrintLogID, &j.DeliveryID, &j.Payload,
-		&j.Status, &j.Attempts, &j.LastError, &j.ClaimedBy, &j.ClaimTime, &j.NextTryTime,
-		&j.TriggerBy, &j.Operator, &j.CreateTime, &j.DoneTime)
+		&j.Status, &j.Attempts, &j.LastError, &j.ClaimedBy, TS(&j.ClaimTime), TS(&j.NextTryTime),
+		&j.TriggerBy, &j.Operator, TS(&j.CreateTime), TS(&j.DoneTime))
 	return j, err
 }
 
@@ -315,9 +315,9 @@ func ClaimPrintJobs(agentID string, limit, leaseSeconds int, kitchenCutoff, gues
 		// 同一瞬间 SELECT 到同一条过期任务会双双改写 claimed_by/claim_time,
 		// 同一张票被下发两次。带上旧值后,先到者改写 claim_time,后到者必然落空。
 		// 待取单分支旧值为空串,COALESCE 兜住 NULL 行,语义不变。
-		res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, claimed_by=?, claim_time=?,
+		res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, claimed_by=?, claim_time=?, update_time=?,
 			attempts=attempts+1 WHERE job_id=? AND status=? AND COALESCE(claim_time,'')=?`,
-			po.PrintJobClaimed, agentID, now, j.JobID, j.Status, j.ClaimTime)
+			po.PrintJobClaimed, agentID, now, now, j.JobID, j.Status, j.ClaimTime)
 		if err != nil {
 			continue
 		}
@@ -339,8 +339,8 @@ func ClaimPrintJobs(agentID string, limit, leaseSeconds int, kitchenCutoff, gues
 // 的抢占范式一致,避免迟到的成功回执把已放弃(dead)或尚未取走(pending)的任务结案。
 // 未命中时读当前状态:已是 done 说明是重复回执,按幂等成功处理;其余状态返回错误。
 func MarkPrintJobDone(jobID int) error {
-	res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error='', done_time=?
-		WHERE job_id=? AND status=?`, po.PrintJobDone, store.Now(), jobID, po.PrintJobClaimed)
+	res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error='', done_time=?, update_time=?
+		WHERE job_id=? AND status=?`, po.PrintJobDone, store.Now(), store.Now(), jobID, po.PrintJobClaimed)
 	if err != nil {
 		return err
 	}
@@ -371,13 +371,14 @@ func RetryPrintJob(jobID int, errMsg string, backoffSeconds int) (bool, error) {
 	// 单条 UPDATE 里按 attempts 分支,避免并发回执在 SELECT attempts 与 UPDATE 之间交错。
 	res, err := store.DB.Exec(`UPDATE tb_print_job SET
 		last_error=?,
+		update_time=?,
 		status=CASE WHEN attempts>=? THEN ? ELSE ? END,
 		done_time=CASE WHEN attempts>=? THEN ? ELSE done_time END,
 		next_try_time=CASE WHEN attempts>=? THEN next_try_time ELSE ? END,
 		claimed_by=CASE WHEN attempts>=? THEN claimed_by ELSE '' END,
 		claim_time=CASE WHEN attempts>=? THEN claim_time ELSE '' END
 		WHERE job_id=? AND status=?`,
-		errMsg,
+		errMsg, now,
 		po.PrintJobMaxAttempts, po.PrintJobDead, po.PrintJobPending,
 		po.PrintJobMaxAttempts, now,
 		po.PrintJobMaxAttempts, nextTry,
@@ -423,11 +424,11 @@ func ReleasePrintJob(jobID int, errMsg string, retryAfterSeconds int) error {
 		retryAfterSeconds = 300
 	}
 	now := store.Now()
-	res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error=?,
+	res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error=?, update_time=?,
 		attempts=CASE WHEN attempts>0 THEN attempts-1 ELSE 0 END,
 		next_try_time=?, claimed_by='', claim_time=''
 		WHERE job_id=? AND status=?`,
-		po.PrintJobPending, errMsg, shiftSeconds(now, retryAfterSeconds), jobID, po.PrintJobClaimed)
+		po.PrintJobPending, errMsg, now, shiftSeconds(now, retryAfterSeconds), jobID, po.PrintJobClaimed)
 	if err != nil {
 		return err
 	}
@@ -525,16 +526,16 @@ func ExpireOverduePrintJobs(leaseSeconds int, kitchenCutoff, guestCutoff, otherC
 
 	deadText := "任务过期自动作废(TTL)"
 	total := 0
-	pendingUpdateArgs := append([]interface{}{po.PrintJobDead, deadText, now, po.PrintJobPending}, expiredArgs...)
-	res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error=?, done_time=?
+	pendingUpdateArgs := append([]interface{}{po.PrintJobDead, deadText, now, now, po.PrintJobPending}, expiredArgs...)
+	res, err := store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error=?, done_time=?, update_time=?
 		WHERE status=? AND (`+printJobExpiredCond+`)`, pendingUpdateArgs...)
 	if err == nil {
 		if n, _ := res.RowsAffected(); n > 0 {
 			total += int(n)
 		}
 	}
-	claimedUpdateArgs := append([]interface{}{po.PrintJobDead, deadText, now, po.PrintJobClaimed, leaseCutoff}, expiredArgs...)
-	res, err = store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error=?, done_time=?
+	claimedUpdateArgs := append([]interface{}{po.PrintJobDead, deadText, now, now, po.PrintJobClaimed, leaseCutoff}, expiredArgs...)
+	res, err = store.DB.Exec(`UPDATE tb_print_job SET status=?, last_error=?, done_time=?, update_time=?
 		WHERE status=? AND claim_time<>'' AND claim_time<=? AND (`+printJobExpiredCond+`)`, claimedUpdateArgs...)
 	if err == nil {
 		if n, _ := res.RowsAffected(); n > 0 {
@@ -590,12 +591,12 @@ func UpdatePrintLogResult(printID int, status int, detail string, costMs int) er
 		return nil
 	}
 	if costMs >= 0 {
-		_, err := store.DB.Exec(`UPDATE tb_print_log SET status=?, detail=?, cost_ms=? WHERE print_id=? AND status IN (?,?)`,
-			status, truncateRunes(detail, 480), costMs, printID, po.PrintStatusQueued, po.PrintStatusSuccess)
+		_, err := store.DB.Exec(`UPDATE tb_print_log SET status=?, detail=?, cost_ms=?, update_time=? WHERE print_id=? AND status IN (?,?)`,
+			status, truncateRunes(detail, 480), costMs, store.Now(), printID, po.PrintStatusQueued, po.PrintStatusSuccess)
 		return err
 	}
-	_, err := store.DB.Exec(`UPDATE tb_print_log SET status=?, detail=? WHERE print_id=? AND status IN (?,?)`,
-		status, truncateRunes(detail, 480), printID, po.PrintStatusQueued, po.PrintStatusSuccess)
+	_, err := store.DB.Exec(`UPDATE tb_print_log SET status=?, detail=?, update_time=? WHERE print_id=? AND status IN (?,?)`,
+		status, truncateRunes(detail, 480), store.Now(), printID, po.PrintStatusQueued, po.PrintStatusSuccess)
 	return err
 }
 

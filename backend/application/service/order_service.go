@@ -181,19 +181,19 @@ func ChangeOrderStatus(orderID, target int, reason, operator string) error {
 	if !ValidOrderStatus(target) {
 		return fmt.Errorf("非法的订单状态")
 	}
-	curStatus, payStatus, err := dao.GetOrderState(orderID)
+	cur, err := dao.GetOrderState(orderID)
 	if err != nil {
 		return fmt.Errorf("订单不存在")
 	}
-	if !CanTransition(curStatus, target) {
+	if !CanTransition(cur.OrderStatus, target) {
 		return fmt.Errorf("非法的状态变更")
 	}
 	// 置为已完成(4)等同「归档收尾」,未收款订单必须先收款/结账,防止漏收。
-	if target == OrderStatusFinished && payStatus != 1 {
+	if target == OrderStatusFinished && cur.PayStatus != 1 {
 		return fmt.Errorf("订单未支付，请先收款或结账")
 	}
 	// 置为已取消(5)同样要求未支付:已收款订单先退款,防止「钱已收、单已废」。
-	if target == OrderStatusCanceled && payStatus == 1 {
+	if target == OrderStatusCanceled && cur.PayStatus == 1 {
 		return fmt.Errorf("已支付订单不能取消，请先处理退款")
 	}
 	if r := []rune(strings.TrimSpace(reason)); len(r) > 60 {
@@ -210,7 +210,7 @@ func ChangeOrderStatus(orderID, target int, reason, operator string) error {
 	// 订单状态变更与桌台占用/释放需原子完成,避免中间态。
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 带当前状态守卫:并发「完成」与「取消」只有先到者生效。
-		n, err := dao.UpdateOrderStatusTx(tx, orderID, target, operator, curStatus)
+		n, err := dao.UpdateOrderStatusTx(tx, orderID, target, operator, cur.OrderStatus)
 		if err != nil {
 			return err
 		}
@@ -277,14 +277,14 @@ func HandleUrges(urgeID, orderID int, operator string) error {
 // 返回归一化后的支付方式,供 handler 组装审计摘要。
 func PayOrder(orderID int, payType, operator string) (string, error) {
 	payType = NormalizePayType(payType)
-	curStatus, payStatus, err := dao.GetOrderState(orderID)
+	cur, err := dao.GetOrderState(orderID)
 	if err != nil {
 		return payType, fmt.Errorf("订单不存在")
 	}
-	if !ActiveStatus(curStatus) {
+	if !ActiveStatus(cur.OrderStatus) {
 		return payType, fmt.Errorf("当前订单状态不可收款")
 	}
-	if payStatus == 1 {
+	if cur.PayStatus == 1 {
 		return payType, fmt.Errorf("订单已支付")
 	}
 	// 收款即全额入账:实收金额 = 应收金额,结算方式为正常收款。
@@ -475,15 +475,15 @@ func CancelSettleOrder(orderID int, reason, operator string) (CancelSettleOutcom
 
 // FinishOrder 完成订单归档:已支付订单置为已完成并释放桌台。
 func FinishOrder(orderID int, operator string) error {
-	curStatus, payStatus, err := dao.GetOrderState(orderID)
+	cur, err := dao.GetOrderState(orderID)
 	if err != nil {
 		return fmt.Errorf("订单不存在")
 	}
-	if !CanTransition(curStatus, OrderStatusFinished) {
+	if !CanTransition(cur.OrderStatus, OrderStatusFinished) {
 		return fmt.Errorf("当前订单状态不可完成")
 	}
 	// 完成订单 = 对「已支付」订单的收尾归档,未支付订单必须先收款/结账。
-	if payStatus != 1 {
+	if cur.PayStatus != 1 {
 		return fmt.Errorf("订单未支付，请先收款或结账")
 	}
 	tableID, err := dao.GetOrderTable(orderID)
@@ -492,7 +492,7 @@ func FinishOrder(orderID int, operator string) error {
 	}
 	guard := StaleGuardBizDate()
 	err = store.WithTx(func(tx *sql.Tx) error {
-		n, err := dao.FinishOrderTx(tx, orderID, operator, curStatus)
+		n, err := dao.FinishOrderTx(tx, orderID, operator, cur.OrderStatus)
 		if err != nil {
 			return err
 		}
@@ -511,14 +511,14 @@ func FinishOrder(orderID int, operator string) error {
 
 // CancelOrder 取消未支付订单并释放桌台,返回原始取消原因。
 func CancelOrder(orderID int, reason, operator string) (string, error) {
-	curStatus, payStatus, err := dao.GetOrderState(orderID)
+	cur, err := dao.GetOrderState(orderID)
 	if err != nil {
 		return "", fmt.Errorf("订单不存在")
 	}
-	if !CanTransition(curStatus, OrderStatusCanceled) {
+	if !CanTransition(cur.OrderStatus, OrderStatusCanceled) {
 		return "", fmt.Errorf("当前订单状态不可取消")
 	}
-	if payStatus == 1 {
+	if cur.PayStatus == 1 {
 		return "", fmt.Errorf("已支付订单不能直接取消，请先处理退款")
 	}
 	tableID, err := dao.GetOrderTable(orderID)
@@ -528,7 +528,7 @@ func CancelOrder(orderID int, reason, operator string) (string, error) {
 	guard := StaleGuardBizDate()
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 带守卫:防止「取消」与「收款/完成」并发时同时生效。
-		n, err := dao.CancelOrderTx(tx, orderID, reason, operator, curStatus)
+		n, err := dao.CancelOrderTx(tx, orderID, reason, operator, cur.OrderStatus)
 		if err != nil {
 			return err
 		}
@@ -570,14 +570,14 @@ type EditOrderOutcome struct {
 
 // EditOrder 改单:以数据库为准校验并重建明细,重算金额后原子更新订单与明细。
 func EditOrder(ctx context.Context, orderID, personCount int, orderRemark string, items []dto.OrderItem, operator string) (EditOrderOutcome, error) {
-	curStatus, payStatus, err := dao.GetOrderState(orderID)
+	cur, err := dao.GetOrderState(orderID)
 	if err != nil {
 		return EditOrderOutcome{}, fmt.Errorf("订单不存在")
 	}
-	if !ActiveStatus(curStatus) {
+	if !ActiveStatus(cur.OrderStatus) {
 		return EditOrderOutcome{}, fmt.Errorf("当前订单状态不可改单")
 	}
-	if payStatus == 1 {
+	if cur.PayStatus == 1 {
 		return EditOrderOutcome{}, fmt.Errorf("已支付订单不能改单")
 	}
 	if len(items) == 0 {

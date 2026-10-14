@@ -20,7 +20,7 @@ const customerCols = `customer_id, openid, nickname, avatar_url, status, order_c
 func scanCustomer(row *sql.Row) (*po.Customer, error) {
 	var c po.Customer
 	err := row.Scan(&c.CustomerID, &c.OpenID, &c.Nickname, &c.AvatarURL, &c.Status,
-		&c.OrderCount, &c.LastOrderTime, &c.CreateTime, &c.LastLoginTime, &c.Remark)
+		&c.OrderCount, TS(&c.LastOrderTime), TS(&c.CreateTime), TS(&c.LastLoginTime), &c.Remark)
 	if err != nil {
 		return nil, err
 	}
@@ -59,30 +59,30 @@ func InsertCustomer(c po.Customer) (int64, error) {
 
 // TouchCustomerLogin 记录一次成功登录(时间)。失败仅告警,不影响登录结果。
 func TouchCustomerLogin(id int) {
-	if _, err := store.DB.Exec(`UPDATE tb_customer SET last_login_time=? WHERE customer_id=?`, store.Now(), id); err != nil {
+	if _, err := store.DB.Exec(`UPDATE tb_customer SET last_login_time=?, update_time=? WHERE customer_id=?`, store.Now(), store.Now(), id); err != nil {
 		logger.Warnf("[member] 刷新会员登录时间失败(id=%d): %v", id, err)
 	}
 }
 
 // UpdateCustomerProfile 更新昵称与头像(「完善资料」,均为用户主动填写)。
 func UpdateCustomerProfile(id int, nickname, avatarURL string) error {
-	_, err := store.DB.Exec(`UPDATE tb_customer SET nickname=?, avatar_url=? WHERE customer_id=?`,
-		nickname, avatarURL, id)
+	_, err := store.DB.Exec(`UPDATE tb_customer SET nickname=?, avatar_url=?, update_time=? WHERE customer_id=?`,
+		nickname, avatarURL, store.Now(), id)
 	return err
 }
 
 // SetCustomerStatus 启用/停用会员。停用后现有令牌在下一次登录态校验时立即被拒
 // (校验路径每次都查 status)。
 func SetCustomerStatus(id, status int) error {
-	_, err := store.DB.Exec(`UPDATE tb_customer SET status=? WHERE customer_id=?`, status, id)
+	_, err := store.DB.Exec(`UPDATE tb_customer SET status=?, update_time=? WHERE customer_id=?`, status, store.Now(), id)
 	return err
 }
 
 // TouchCustomerOrder 下单成功后维护会员卡展示用的冗余列(累计次数 +1、最近下单时间)。
 // 展示数据,失败不影响下单结果。
 func TouchCustomerOrder(id int) {
-	if _, err := store.DB.Exec(`UPDATE tb_customer SET order_count=order_count+1, last_order_time=? WHERE customer_id=?`,
-		store.Now(), id); err != nil {
+	if _, err := store.DB.Exec(`UPDATE tb_customer SET order_count=order_count+1, last_order_time=?, update_time=? WHERE customer_id=?`,
+		store.Now(), store.Now(), id); err != nil {
 		logger.Warnf("[member] 维护会员订单计数失败(id=%d): %v", id, err)
 	}
 }
@@ -126,7 +126,7 @@ func ListOrdersByCustomer(customerID, pageNum, pageSize int) (int, []CustomerOrd
 		var r CustomerOrderRow
 		var totalCents int64
 		if err := rows.Scan(&r.OrderID, &r.OrderNo, &r.PickupNo, &r.TableID, &r.TableName,
-			&r.OrderStatus, &r.PayStatus, &totalCents, &r.CreateTime); err != nil {
+			&r.OrderStatus, &r.PayStatus, &totalCents, TS(&r.CreateTime)); err != nil {
 			return 0, nil, err
 		}
 		// 库里存的是「分」,出参必须是「元」:顾客端所有接口都以元计价(同 dto.Order)。

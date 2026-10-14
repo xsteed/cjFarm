@@ -152,6 +152,8 @@ var routePerms = map[string]string{
 	"GET /api/admin/report/dishRank":     "report:view",
 	"GET /api/admin/report/hourly":       "report:view",
 	"GET /api/admin/report/settleMix":    "report:view",
+	// 用餐时长分析(翻台/排台参考),与其他报表同属 report:view。
+	"GET /api/admin/report/diningDuration": "report:view",
 
 	// ---- 操作日志(审计) ----
 	// 查看只需 log:view;清理会真的删数据,单独收口到 log:manage。

@@ -23,8 +23,10 @@ import (
 //     金额单位为「分」,单笔上限约 2100 万元,足够覆盖餐饮单笔订单);
 //   - 字符串一律 VARCHAR(n):SQLite 归入 TEXT 亲和性且不校验长度,MySQL 为变长字符串
 //     并强制长度上限 —— 这是两库唯一的显式行为差异,写入前请遵守长度约定;
-//   - 时间一律 VARCHAR(32) 存 'YYYY-MM-DD HH:MM:SS' 字符串,两库排序/区间比较行为一致,
-//     避免 TIMESTAMP 的时区与零值('0000-00-00')差异,也便于跨库迁移。
+//   - 业务时间列(支付/打印/登录/用餐等)一律 VARCHAR(32) 存 'YYYY-MM-DD HH:MM:SS' 字符串,
+//     两库排序/区间比较行为一致,避免 TIMESTAMP 的时区与零值('0000-00-00')差异;
+//   - 仅 create_time / update_time 按方言分叉(见 tsTypeFor):MySQL 为 DATETIME,
+//     由数据库负责默认值与自动更新;SQLite 仍为 VARCHAR(32) + datetime('now') 默认值 + 触发器。
 var schemaTemplate = []string{
 	`CREATE TABLE IF NOT EXISTS tb_table (
 		table_id    {{PK}},
@@ -37,11 +39,11 @@ var schemaTemplate = []string{
 		sort_order  INTEGER      DEFAULT 0,
 		del_flag    VARCHAR(2)   DEFAULT '0',
 		create_by   VARCHAR(64)  DEFAULT '',
-		create_time VARCHAR(32),
 		update_by   VARCHAR(64)  DEFAULT '',
-		update_time VARCHAR(32),
 		remark      VARCHAR(500),
-		table_code  VARCHAR(16)  DEFAULT ''
+		table_code  VARCHAR(16)  DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_category (
@@ -49,8 +51,8 @@ var schemaTemplate = []string{
 		category_name VARCHAR(64) NOT NULL,
 		sort_order    INTEGER     DEFAULT 0,
 		del_flag      VARCHAR(2)  DEFAULT '0',
-		create_time   VARCHAR(32),
-		update_time   VARCHAR(32)
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_dish (
@@ -65,10 +67,10 @@ var schemaTemplate = []string{
 		sort_order  INTEGER      DEFAULT 0,
 		del_flag    VARCHAR(2)   DEFAULT '0',
 		create_by   VARCHAR(64)  DEFAULT '',
-		create_time VARCHAR(32),
 		update_by   VARCHAR(64)  DEFAULT '',
-		update_time VARCHAR(32),
-		remark      VARCHAR(500)
+		remark      VARCHAR(500),
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_spec (
@@ -76,7 +78,9 @@ var schemaTemplate = []string{
 		dish_id   INTEGER      NOT NULL,
 		spec_name VARCHAR(64)  NOT NULL,
 		price     INTEGER      DEFAULT 0,
-		stock     INTEGER      DEFAULT -1
+		stock     INTEGER      DEFAULT -1,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_remark (
@@ -84,8 +88,8 @@ var schemaTemplate = []string{
 		option_name VARCHAR(64) NOT NULL,
 		sort_order  INTEGER     DEFAULT 0,
 		del_flag    VARCHAR(2)  DEFAULT '0',
-		create_time VARCHAR(32),
-		update_time VARCHAR(32)
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// provider 决定「怎么把票据送出去」:
@@ -112,8 +116,8 @@ var schemaTemplate = []string{
 		category_ids VARCHAR(255) DEFAULT '',
 		status       INTEGER     DEFAULT 1,
 		del_flag     VARCHAR(2)  DEFAULT '0',
-		create_time  VARCHAR(32),
-		update_time  VARCHAR(32)
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// 打印日志:每「向一台打印机发一次单据」记一行(成功与失败都记)。
@@ -139,7 +143,8 @@ var schemaTemplate = []string{
 		trigger_by   VARCHAR(16)  DEFAULT '',
 		operator     VARCHAR(64)  DEFAULT '',
 		cost_ms      INTEGER      DEFAULT 0,
-		create_time  VARCHAR(32)
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// 本地打印代理任务队列(tb_printer.provider='agent' 的打印机使用)。
@@ -175,12 +180,13 @@ var schemaTemplate = []string{
 		attempts     INTEGER       DEFAULT 0,
 		last_error   VARCHAR(500)  DEFAULT '',
 		claimed_by   VARCHAR(64)   DEFAULT '',
-		claim_time   VARCHAR(32),
-		next_try_time VARCHAR(32),
+		claim_time VARCHAR(32) DEFAULT NULL,
+		next_try_time VARCHAR(32) DEFAULT NULL,
 		trigger_by   VARCHAR(16)   DEFAULT '',
 		operator     VARCHAR(64)   DEFAULT '',
-		create_time  VARCHAR(32),
-		done_time    VARCHAR(32)
+		done_time VARCHAR(32) DEFAULT NULL,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// 本地打印代理身份(per-agent 令牌)。
@@ -193,10 +199,10 @@ var schemaTemplate = []string{
 		token_hint  VARCHAR(8)   DEFAULT '',
 		printer_ids VARCHAR(255) DEFAULT '',
 		status      INTEGER      DEFAULT 1,
-		last_seen   VARCHAR(32),
+		last_seen VARCHAR(32) DEFAULT NULL,
 		last_report VARCHAR(64)  DEFAULT '',
-		create_time VARCHAR(32),
-		update_time VARCHAR(32)
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// 操作日志(审计留痕):管理端每次写操作落一行,只追加、不修改。
@@ -225,12 +231,15 @@ var schemaTemplate = []string{
 		status        INTEGER       DEFAULT 0,
 		error_msg     VARCHAR(500)  DEFAULT '',
 		cost_ms       INTEGER       DEFAULT 0,
-		create_time   VARCHAR(32)
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_config (
 		cfg_key   VARCHAR(64)   PRIMARY KEY,
-		cfg_value VARCHAR(4000) DEFAULT ''
+		cfg_value VARCHAR(4000) DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// tb_day_seq 按营业日维护取餐号(pickup_no)计数器。
@@ -243,7 +252,9 @@ var schemaTemplate = []string{
 	//   - 计数行按 biz_date 作主键而非自增 INTEGER,故此处手写 PRIMARY KEY 而非 {{PK}}。
 	`CREATE TABLE IF NOT EXISTS tb_day_seq (
 		biz_date VARCHAR(10) PRIMARY KEY,
-		next_val INTEGER      DEFAULT 0
+		next_val INTEGER      DEFAULT 0,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_order (
@@ -260,28 +271,26 @@ var schemaTemplate = []string{
 		total_amount    INTEGER      DEFAULT 0,
 		pay_status      INTEGER      DEFAULT 0,
 		pay_type        VARCHAR(16),
-		pay_time        VARCHAR(32),
+		pay_time VARCHAR(32) DEFAULT NULL,
 		transaction_id  VARCHAR(64)  DEFAULT '',
 		pay_channel     VARCHAR(16)  DEFAULT '',
 		refund_amount   INTEGER      DEFAULT 0,
-		refund_time     VARCHAR(32),
-		finish_time     VARCHAR(32),
+		refund_time VARCHAR(32) DEFAULT NULL,
+		finish_time VARCHAR(32) DEFAULT NULL,
 		order_remark    VARCHAR(500) DEFAULT '',
 		cancel_reason   VARCHAR(255) DEFAULT '',
-		begin_time      VARCHAR(32),
-		end_time        VARCHAR(32),
+		begin_time VARCHAR(32) DEFAULT NULL,
+		end_time VARCHAR(32) DEFAULT NULL,
 		create_by       VARCHAR(64)  DEFAULT '',
-		create_time     VARCHAR(32),
 		update_by       VARCHAR(64)  DEFAULT '',
-		update_time     VARCHAR(32),
 		remark          VARCHAR(500),
 		settle_type     VARCHAR(16)  DEFAULT 'normal',
-		settle_time     VARCHAR(32),
+		settle_time VARCHAR(32) DEFAULT NULL,
 		settle_operator VARCHAR(64)  DEFAULT '',
 		settle_remark   VARCHAR(255) DEFAULT '',
 		credit_status   INTEGER      DEFAULT 0,
 		credit_amount   INTEGER      DEFAULT 0,
-		credit_settle_time VARCHAR(32),
+		credit_settle_time VARCHAR(32) DEFAULT NULL,
 		credit_settle_by   VARCHAR(64) DEFAULT '',
 		paid_amount     INTEGER      DEFAULT 0,
 		-- 赠送金额(分):赠送菜品按原价计的金额合计,不计入应收金额(让利口径)。
@@ -298,7 +307,15 @@ var schemaTemplate = []string{
 		-- biz_date 缺省 NULL 而非空串的用意:让「非下单写入的行」不参与下面
 		-- (biz_date, pickup_no) 的唯一判定 —— 两种数据库对含 NULL 的组合都不判重复。
 		biz_date   VARCHAR(10) DEFAULT NULL,
-		pickup_no  INTEGER     DEFAULT 0
+		pickup_no  INTEGER     DEFAULT 0,
+		-- 用餐起止时间(落库值):
+		--   meal_start_time —— 下单时写入(用餐开始);
+		--   meal_end_time   —— 订单走到终态(4 已完成 / 5 已取消)时写入(用餐结束)。
+		-- 默认 NULL 而非空串:区分「还没结束」与「时间未知」,回填脚本与报警 SQL 一眼明了。
+		meal_start_time VARCHAR(32) DEFAULT NULL,
+		meal_end_time VARCHAR(32) DEFAULT NULL,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_order_item (
@@ -318,7 +335,9 @@ var schemaTemplate = []string{
 		client_request_id VARCHAR(64) DEFAULT '',
 		-- 是否赠送:0 正常计费 1 赠送(商家改单标记,amount 记 0,原价计入订单 gift_amount)。
 		is_gift   INTEGER      DEFAULT 0,
-		gift_reason VARCHAR(255) DEFAULT ''
+		gift_reason VARCHAR(255) DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_order_urge (
@@ -331,9 +350,10 @@ var schemaTemplate = []string{
 		urge_type   VARCHAR(16)  DEFAULT 'urge',
 		status      INTEGER      DEFAULT 0,
 		remark      VARCHAR(255) DEFAULT '',
-		create_time VARCHAR(32),
-		handle_time VARCHAR(32),
-		handle_by   VARCHAR(64)  DEFAULT ''
+		handle_time VARCHAR(32) DEFAULT NULL,
+		handle_by   VARCHAR(64)  DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_payment (
@@ -344,9 +364,9 @@ var schemaTemplate = []string{
 		amount           INTEGER      DEFAULT 0,
 		status           INTEGER      DEFAULT 0,
 		prepay_id        VARCHAR(128) DEFAULT '',
-		notify_time      VARCHAR(32),
-		create_time      VARCHAR(32),
-		update_time      VARCHAR(32)
+		notify_time VARCHAR(32) DEFAULT NULL,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_refund (
@@ -362,12 +382,12 @@ var schemaTemplate = []string{
 		reason            VARCHAR(255) DEFAULT '',
 		operator          VARCHAR(64)  DEFAULT '',
 		fail_reason       VARCHAR(255) DEFAULT '',
-		create_time       VARCHAR(32),
-		update_time       VARCHAR(32),
 		-- 1 = 重复支付自动退回(顾客在两个渠道各付了一笔,后到的一笔原路退回)。
 		-- 这类退款的金额从未计入订单营收(paid_amount),因此不计入订单退款额度、
 		-- 也不扣减订单实收 —— 与普通退款(SumRefunded/applyRefundSuccess)严格区分。
-		is_duplicate      INTEGER      DEFAULT 0
+		is_duplicate      INTEGER      DEFAULT 0,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// ---- 员工与权限(见 docs/user-permission-design.md) ----
@@ -386,9 +406,9 @@ var schemaTemplate = []string{
 		sort_order  INTEGER       DEFAULT 0,
 		status      INTEGER       DEFAULT 1,
 		del_flag    VARCHAR(2)    DEFAULT '0',
-		create_time VARCHAR(32),
-		update_time VARCHAR(32),
-		remark      VARCHAR(500)  DEFAULT ''
+		remark      VARCHAR(500)  DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// real_name 用于订单操作留痕(显示中文姓名比显示登录名直观);
@@ -401,17 +421,17 @@ var schemaTemplate = []string{
 		role_id         INTEGER      NOT NULL DEFAULT 0,
 		phone           VARCHAR(32)  DEFAULT '',
 		status          INTEGER      DEFAULT 1,
-		last_login_time VARCHAR(32),
+		last_login_time VARCHAR(32) DEFAULT NULL,
 		last_login_ip   VARCHAR(64)  DEFAULT '',
 		login_count     INTEGER      DEFAULT 0,
-		pwd_update_time VARCHAR(32),
+		pwd_update_time VARCHAR(32) DEFAULT NULL,
 		token_version   INTEGER      DEFAULT 0,
 		del_flag        VARCHAR(2)   DEFAULT '0',
 		create_by       VARCHAR(64)  DEFAULT '',
-		create_time     VARCHAR(32),
 		update_by       VARCHAR(64)  DEFAULT '',
-		update_time     VARCHAR(32),
-		remark          VARCHAR(500) DEFAULT ''
+		remark          VARCHAR(500) DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// 顾客会员档案(小程序「注册成为会员」,见 docs/design-docs/customer-member/spec.md)。
@@ -427,10 +447,11 @@ var schemaTemplate = []string{
 		avatar_url       VARCHAR(255) DEFAULT '',
 		status           INTEGER      DEFAULT 1,
 		order_count      INTEGER      DEFAULT 0,
-		last_order_time  VARCHAR(32)  DEFAULT '',
-		create_time      VARCHAR(32),
-		last_login_time  VARCHAR(32)  DEFAULT '',
-		remark           VARCHAR(255) DEFAULT ''
+		last_order_time VARCHAR(32) DEFAULT NULL,
+		last_login_time VARCHAR(32) DEFAULT NULL,
+		remark           VARCHAR(255) DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// 记住登录令牌(实现「记住我(7/30 天免登录)」)。
@@ -443,10 +464,11 @@ var schemaTemplate = []string{
 		user_id        INTEGER      NOT NULL,
 		token          VARCHAR(64)  NOT NULL,
 		token_prefix   VARCHAR(8)   DEFAULT '',
-		expire_time    VARCHAR(32)  NOT NULL,
-		create_time    VARCHAR(32),
-		last_used_time VARCHAR(32),
-		ua             VARCHAR(255) DEFAULT ''
+		expire_time VARCHAR(32) DEFAULT NULL,
+		last_used_time VARCHAR(32) DEFAULT NULL,
+		ua             VARCHAR(255) DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	// 图片内容存储:菜品图/收款码/店铺 Logo 的二进制内容随数据库走(磁盘不再是
@@ -460,7 +482,8 @@ var schemaTemplate = []string{
 		content_type VARCHAR(32)  DEFAULT '',
 		img_data     {{BLOB}},
 		file_size    INTEGER      DEFAULT 0,
-		create_time  VARCHAR(32)
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 }
 
@@ -471,7 +494,108 @@ func schemaStatements(d Dialect) []string {
 		s := strings.ReplaceAll(tpl, "{{PK}}", autoIncPKFor(d))
 		s = strings.ReplaceAll(s, "{{OPTS}}", tableOptionsFor(d))
 		s = strings.ReplaceAll(s, "{{BLOB}}", blobTypeFor(d))
+		s = strings.ReplaceAll(s, "{{TSTYPE}}", tsTypeFor(d))
+		s = strings.ReplaceAll(s, "{{NOWDEF}}", tsNowDefaultFor(d))
+		s = strings.ReplaceAll(s, "{{ONUPD}}", tsOnUpdateFor(d))
 		out = append(out, s)
+	}
+	return out
+}
+
+// ---- 时间列的方言分叉 ----
+//
+// 目标:时间由**数据库**负责生成 —— 插入自动填 create_time,行更新自动推进 update_time,
+// 应用层(以及任何手工 SQL / 外部导入)都不必再关心这两个字段。
+//
+// 两库能力不同,所以在这里分叉:
+//
+//	MySQL  —— create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+//	          update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+//	          原生支持,不需要触发器。
+//	SQLite —— 没有真正的时间类型,也没有 ON UPDATE:列仍是 VARCHAR(32),
+//	         插入默认值用 DEFAULT (datetime('now','localtime')),
+//	         自动更新由 AFTER UPDATE 触发器完成(见 touchTriggerStatements)。
+//
+// 为什么不把 SQLite 也声明成 DATETIME:SQLite 的类型只是亲和性提示,声明 DATETIME 后
+// 驱动会在**读取时**尝试把文本解析成 time.Time,遇到历史脏值(空串、'0000-00-00'、
+// 外部导入的异常格式)会直接报错中断查询;保持 VARCHAR 则脏值原样读出,由 dao.TS()
+// 统一折叠,更抗打。
+//
+// 时区:两端都取「本地时间」。SQLite 的 datetime('now','localtime') 用进程所在时区;
+// MySQL 的 CURRENT_TIMESTAMP 取会话时区,部署时需保证 MySQL 的 time_zone 与应用
+// 时区一致(见 docs/mysql-migration.md),否则会出现「应用写本地时间、DB 默认值写 UTC」
+// 两套时间混在同一列里。
+func tsTypeFor(d Dialect) string {
+	if d == DialectMySQL {
+		return "DATETIME"
+	}
+	return "VARCHAR(32)"
+}
+
+func tsNowDefaultFor(d Dialect) string {
+	if d == DialectMySQL {
+		return "CURRENT_TIMESTAMP"
+	}
+	return "(datetime('now','localtime'))"
+}
+
+func tsOnUpdateFor(d Dialect) string {
+	if d == DialectMySQL {
+		return " ON UPDATE CURRENT_TIMESTAMP"
+	}
+	return ""
+}
+
+// updateTimeTables 含 update_time 列的表(由 DDL 定义自动推导,不手工维护,避免漂移)。
+var updateTimeTables = func() []string {
+	out := []string{}
+	for _, tpl := range schemaTemplate {
+		name := tableNameOf(tpl)
+		if name == "" {
+			continue
+		}
+		if strings.Contains(tpl, "update_time") {
+			out = append(out, name)
+		}
+	}
+	return out
+}()
+
+// tableNameOf 从建表语句里取出表名。
+func tableNameOf(stmt string) string {
+	const prefix = "CREATE TABLE IF NOT EXISTS "
+	i := strings.Index(stmt, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := stmt[i+len(prefix):]
+	if j := strings.IndexAny(rest, " \n("); j > 0 {
+		return rest[:j]
+	}
+	return ""
+}
+
+// touchTriggerStatements 返回「行更新时自动推进 update_time」的触发器语句。
+//
+// 只有 SQLite 需要:MySQL 用列上的 ON UPDATE CURRENT_TIMESTAMP 实现同一效果。
+// 触发器体里的 UPDATE 不会递归触发自己 —— SQLite 默认关闭 recursive_triggers,
+// 且这里只改 update_time 一列,不涉及业务字段。
+//
+// 条件 NEW.update_time = OLD.update_time 的含义:应用显式写了新的 update_time(或
+// 业务上确实改了 update_time)时不覆盖调用方的值;只有「其他列变了但没带 update_time」
+// 才由数据库补当前时间 —— 与 MySQL 的 ON UPDATE 语义保持一致。
+func touchTriggerStatements(d Dialect) []string {
+	if d == DialectMySQL {
+		return nil
+	}
+	out := make([]string, 0, len(updateTimeTables))
+	for _, t := range updateTimeTables {
+		out = append(out, fmt.Sprintf(`CREATE TRIGGER IF NOT EXISTS trg_%s_touch
+		AFTER UPDATE ON %s FOR EACH ROW
+		WHEN NEW.update_time IS OLD.update_time
+		BEGIN
+			UPDATE %s SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
+		END`, t, t, t))
 	}
 	return out
 }
@@ -535,7 +659,11 @@ var indexDefs = []indexDef{
 	// 唯一性由应用层 EnsureUsernameAvailable / EnsureRoleKeyAvailable 保证。
 	{Name: "idx_user_username", Table: "tb_user", Columns: "username", Unique: true, Where: "del_flag='0'"},
 	{Name: "idx_user_role", Table: "tb_user", Columns: "role_id"},
-	{Name: "idx_role_key", Table: "tb_role", Columns: "role_key", Unique: true, Where: "del_flag='0'"},
+	// 角色标识全局唯一(含已删除行):SQLite 旧定义为带 WHERE 的部分唯一索引,
+	// MySQL 不支持部分索引会降级为普通索引,导致启动引导 INSERT IGNORE 形同虚设、
+	// 每次启动重复插入内置角色。改为两库统一的全局唯一后,由数据库层面兜底防并发;
+	// 被软删除的角色行仍占用标识,重建同名角色走「复活原行」语义(见 dao.InsertRole)。
+	{Name: "idx_role_key", Table: "tb_role", Columns: "role_key", Unique: true},
 	// 操作日志:按时间翻页(主查询)、按人追责、按对象倒查「谁动过这一单」、只看失败。
 	{Name: "idx_operlog_time", Table: "tb_oper_log", Columns: "create_time"},
 	{Name: "idx_operlog_operator", Table: "tb_oper_log", Columns: "operator_id, create_time"},
@@ -643,6 +771,37 @@ var alterCols = []alterCol{
 	{Table: "tb_dish", Name: "signature", Def: "INTEGER DEFAULT 0"},
 	// 规格库存（自动售罄）：-1 不限量，>=0 剩余份数。老库默认 -1。
 	{Table: "tb_spec", Name: "stock", Def: "INTEGER DEFAULT -1"},
+	// 用餐起止时间（落库）：老库历史行保持 NULL，由 incr 回填脚本按 create_time /
+	// finish_time 补齐；读侧一律 COALESCE 回落到这两列，保证升级前后统计口径一致。
+	{Table: "tb_order", Name: "meal_start_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_order", Name: "meal_end_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	// ---- 通用记录时间补齐 ----
+	// 早期只给「主数据表」(桌台/菜品/订单/员工/角色…)留了 create_time/update_time,
+	// 其余表按需加了单列甚至没有,排查问题时无从判断「这行什么时候进来的、最后动过没」。
+	// 这里统一补齐,由写入侧自动填写(见各 DAO),历史行为 NULL,不做回填 ——
+	// 老行的真实时间已无从得知,硬凑反而比留空误导性更强。
+	//
+	// 填写口径(全局约定,新表与存量表一致):
+	//   create_time —— 只在 INSERT 时写一次,此后任何 UPDATE 都不得改动;
+	//   update_time —— 只在 UPDATE 时推进,INSERT 时留 NULL(「从未被改过」与
+	//                  「刚创建」是两个可区分的状态,插入时填成同一时刻就把这份信息抹掉了)。
+	// 例外:tb_config 走 REPLACE 整行替换,只能推进 update_time 而写不了 create_time
+	//       (写了会把首次落库时间冲掉),首次时间由种子语句负责。
+	{Table: "tb_spec", Name: "create_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_spec", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_print_log", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_print_job", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_oper_log", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_config", Name: "create_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_config", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_day_seq", Name: "create_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_day_seq", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_order_item", Name: "create_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_order_item", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_order_urge", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_customer", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_remember_token", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	{Table: "tb_image", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 }
 
 // alterStatements 返回指定方言下的增量列 DDL。
@@ -689,6 +848,11 @@ func migrate(stmts []string) {
 		logger.Infof("[db] 已补列 %s.%s", c.Table, c.Name)
 	}
 
+	// 建唯一索引前先清理 tb_role 的历史重复行:老版本 MySQL 下 idx_role_key 退化为
+	// 普通索引 + 启动引导依赖唯一约束,导致每次启动重复插入内置角色。若带着重复
+	// 数据直接建唯一索引会失败,老库升级会卡死在启动阶段。
+	dedupeRoleKeys()
+
 	for _, ix := range indexDefs {
 		if indexExists(ix.Name) {
 			continue
@@ -698,14 +862,164 @@ func migrate(stmts []string) {
 			logger.Fatalf("建索引失败(%s): %v\n%s", dialect, err, stmt)
 		}
 	}
+	// idx_role_key 的定义从「部分唯一/普通索引」升级为全局唯一:同名索引已存在的
+	// 老库不会被上面的循环重建,这里检测旧定义并原地重建。
+	recreateRoleKeyIndex()
 
 	// 历史数据回填:老订单没有实收金额,按「已支付即全额实收」补齐,保证报表口径连续。
 	DB.Exec(`UPDATE tb_order SET paid_amount = total_amount - COALESCE(refund_amount,0)
 		WHERE pay_status=1 AND (paid_amount IS NULL OR paid_amount=0) AND (settle_type IS NULL OR settle_type='normal')`)
 	DB.Exec(`UPDATE tb_order SET settle_type='normal' WHERE settle_type IS NULL OR settle_type=''`)
 	backfillTableCodes()
+	backfillMealTimes()
 	migrateUploadPrefix()
 	migrateShopNameDot()
+
+	// 最后建「自动推进 update_time」的触发器:它引用 update_time 列,必须等上面的
+	// 补列跑完(老库的 tb_image/tb_print_job 等列是本次才补上的)。
+	// CREATE TRIGGER IF NOT EXISTS 幂等,已存在的老库直接跳过。
+	for _, trg := range touchTriggerStatements(dialect) {
+		if _, err := DB.Exec(trg); err != nil {
+			// 不 Fatalf:触发器只影响 update_time 是否自动刷新,不该让服务起不来;
+			// 应用层仍会显式写 update_time,降级后行为与改造前一致。
+			logger.Warnf("[db] 建 update_time 触发器失败: %v", err)
+			continue
+		}
+	}
+	logger.Infof("[db] update_time 自动维护就绪(方言 %s)", dialect)
+}
+
+// backfillMealTimes 把历史订单的用餐起止时间补齐到新列(幂等,只写 NULL 行)。
+//
+// 老列的语义正好对应:
+//   - meal_start_time ← create_time:下单即开台;
+//   - meal_end_time ← finish_time(已完成,哪怕为空也照原样写,读侧会回落)。
+//
+// 新列「有值优先、NULL 回落 create_time/finish_time」的读法让统计口径天然连续,
+// 但把老数据真正落下来,查询才不用常年带着 COALESCE,导出/对账也更直白。
+func backfillMealTimes() {
+	res, err := DB.Exec(`UPDATE tb_order SET meal_start_time = create_time
+		WHERE meal_start_time IS NULL AND COALESCE(create_time,'') <> ''`)
+	if err != nil {
+		logger.Warnf("[db] 回填用餐开始时间失败: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		logger.Infof("[db] 已回填 %d 条订单的用餐开始时间", n)
+	}
+	// 结束时间只在订单确已结束时才有意义,故限定已完成(4)/ 已取消(5)且 finish_time 有值。
+	if _, err := DB.Exec(`UPDATE tb_order SET meal_end_time = finish_time
+		WHERE meal_end_time IS NULL AND order_status IN (4,5) AND COALESCE(finish_time,'') <> ''`); err != nil {
+		logger.Warnf("[db] 回填用餐结束时间失败: %v", err)
+	}
+}
+
+// ============================================================================
+// tb_role 历史数据修复
+// ============================================================================
+
+// dedupeRoleKeys 清理 tb_role 中 role_key 重复的行(幂等,无重复时零写入)。
+//
+// 背景:老版本在 MySQL 下 idx_role_key 退化为普通索引(不支持带 WHERE 的部分
+// 索引),启动引导 SyncBuiltinRoles 依赖「INSERT IGNORE 撞唯一约束」保证幂等,
+// 于是每次启动都会重复插入 4 个内置角色。升级到全局唯一索引前必须先去重,否则
+// 建索引直接失败,老库升级会卡死在启动阶段。
+//
+// 保留策略:每个 role_key 保留一行 —— 优先保留未删除(del_flag='0')且 role_id
+// 最小的行;该 key 下全是已删除行时保留 role_id 最小的行。被丢弃行的员工引用
+// (tb_user.role_id)先改挂到保留行,再物理删除多余行。
+func dedupeRoleKeys() {
+	rows, err := DB.Query(`SELECT role_id, role_key, COALESCE(del_flag,'0') FROM tb_role ORDER BY role_id`)
+	if err != nil {
+		return
+	}
+	type roleRow struct {
+		id      int
+		key     string
+		deleted bool
+	}
+	var all []roleRow
+	for rows.Next() {
+		var r roleRow
+		var del string
+		if rows.Scan(&r.id, &r.key, &del) == nil {
+			r.deleted = del != "0"
+			all = append(all, r)
+		}
+	}
+	rows.Close()
+	if len(all) == 0 {
+		return
+	}
+
+	keep := make(map[string]int, len(all))
+	// 第一遍:优先保留未删除行中 role_id 最小的。
+	for _, r := range all {
+		if !r.deleted {
+			if _, ok := keep[r.key]; !ok {
+				keep[r.key] = r.id
+			}
+		}
+	}
+	// 第二遍:该 key 下全是已删除行时,保留 role_id 最小的。
+	for _, r := range all {
+		if _, ok := keep[r.key]; !ok {
+			keep[r.key] = r.id
+		}
+	}
+
+	dropped := 0
+	for _, r := range all {
+		if keep[r.key] == r.id {
+			continue
+		}
+		// 员工引用改挂到保留行(表间无外键约束,顺序敏感:必须先改后删)。
+		DB.Exec(`UPDATE tb_user SET role_id=? WHERE role_id=?`, keep[r.key], r.id)
+		if _, err := DB.Exec(`DELETE FROM tb_role WHERE role_id=?`, r.id); err == nil {
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		logger.Infof("[db] 已清理 tb_role 中重复的角色行 %d 条(每个 role_key 保留一行)", dropped)
+	}
+}
+
+// recreateRoleKeyIndex 检测 idx_role_key 的旧定义并原地重建为全局唯一索引。
+//
+// SQLite 旧定义是带 WHERE 的部分唯一索引、MySQL 旧定义是普通索引(部分索引
+// 降级产物);两者与新定义同名,migrate 的「索引已存在则跳过」逻辑不会自动
+// 升级,只能检测到旧定义后先删后建。
+func recreateRoleKeyIndex() {
+	if !indexExists("idx_role_key") {
+		return
+	}
+	needRebuild := false
+	if IsMySQL() {
+		var nonUnique int
+		err := DB.QueryRow(`SELECT NON_UNIQUE FROM information_schema.STATISTICS
+			WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tb_role' AND INDEX_NAME='idx_role_key'
+			LIMIT 1`).Scan(&nonUnique)
+		needRebuild = err == nil && nonUnique != 0
+	} else {
+		var def string
+		err := DB.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='index' AND name='idx_role_key'`).Scan(&def)
+		needRebuild = err == nil && strings.Contains(strings.ToUpper(def), "WHERE")
+	}
+	if !needRebuild {
+		return
+	}
+	drop := `DROP INDEX idx_role_key`
+	if IsMySQL() {
+		drop = `DROP INDEX idx_role_key ON tb_role`
+	}
+	if _, err := DB.Exec(drop); err != nil {
+		logger.Warnf("[db] 删除旧 idx_role_key 失败: %v", err)
+		return
+	}
+	if _, err := DB.Exec(`CREATE UNIQUE INDEX idx_role_key ON tb_role(role_key)`); err != nil {
+		logger.Fatalf("重建 idx_role_key 为唯一索引失败: %v", err)
+	}
+	logger.Infof("[db] idx_role_key 已重建为全局唯一索引")
 }
 
 // legacyShopNameWithSpace 出厂默认的店铺名曾用空格分隔「品牌 标语」,与全系统
@@ -724,8 +1038,8 @@ func migrateShopNameDot() {
 	if want == "" {
 		return
 	}
-	res, err := DB.Exec(`UPDATE tb_config SET cfg_value=? WHERE cfg_key='shop_name' AND cfg_value=?`,
-		want, legacyShopNameWithSpace)
+	res, err := DB.Exec(`UPDATE tb_config SET cfg_value=?, update_time=? WHERE cfg_key='shop_name' AND cfg_value=?`,
+		want, Now(), legacyShopNameWithSpace)
 	if err != nil {
 		// 不 Fatalf:店铺名只是展示口径,不该让服务起不来。
 		logger.Warnf("[db] 店铺名统一为「品牌 · 标语」失败: %v", err)
@@ -750,8 +1064,8 @@ func migrateUploadPrefix() {
 	updates := []string{
 		`UPDATE tb_dish SET dish_image = REPLACE(dish_image, '` + legacyUploadPrefix + `', '` + UploadURLPrefix + `')
 			WHERE dish_image LIKE '` + legacyUploadPrefix + `%'`,
-		`UPDATE tb_config SET cfg_value = REPLACE(cfg_value, '` + legacyUploadPrefix + `', '` + UploadURLPrefix + `')
-			WHERE cfg_value LIKE '` + legacyUploadPrefix + `%'`,
+		`UPDATE tb_config SET cfg_value = REPLACE(cfg_value, '` + legacyUploadPrefix + `', '` + UploadURLPrefix + `'),
+			update_time = '` + Now() + `' WHERE cfg_value LIKE '` + legacyUploadPrefix + `%'`,
 	}
 	for _, stmt := range updates {
 		res, err := DB.Exec(stmt)

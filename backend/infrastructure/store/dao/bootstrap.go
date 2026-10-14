@@ -23,15 +23,36 @@ func BootstrapRoles() {
 
 // SyncBuiltinRoles 补齐内置角色。
 //
-// 策略:已存在的角色保持商户改过的权限不动(INSERT OR IGNORE 语义),
-// 唯一例外是 admin —— 它的权限每次启动强制恢复为全量,防止有人误改/误清后
-// 把自己锁在系统外面。这是防锁死的最后一道保险,不可省略。
+// 策略:已存在的角色保持商户改过的权限不动,唯一例外是 admin —— 它的权限每次启动
+// 强制恢复为全量,防止有人误改/误清后把自己锁在系统外面。这是防锁死的最后一道
+// 保险,不可省略。
+//
+// 幂等保障分两层:
+//   - 数据库层:idx_role_key 已升级为两库统一的全局唯一索引,INSERT IGNORE 在
+//     并发启动时兜底(历史上 MySQL 下该索引曾退化为普通索引,导致每次启动重复
+//     插入 4 个内置角色,见 dedupeRoleKeys 的注释);
+//   - 应用层:先按 role_key 查重再插入。若行存在但被软删除(del_flag='1',正常
+//     业务删不掉内置角色,出现即说明数据被外部改过),先复活为出厂定义 —— 全局
+//     唯一约束下软删除行仍占用 role_key,只靠 INSERT IGNORE 会让角色永远缺失。
 func SyncBuiltinRoles() {
-	stmt := store.InsertIgnoreInto("tb_role",
-		"role_key", "role_name", "perms", "data_scope", "is_builtin", "sort_order", "status", "del_flag", "create_time", "update_time", "remark")
 	now := store.Now()
 	for _, s := range store.BuiltinRoleSeeds() {
 		perms := store.BuiltinRolePerms(s.Key)
+		var r po.Role
+		err := store.DB.QueryRow(`SELECT role_id, del_flag FROM tb_role WHERE role_key=?`, s.Key).Scan(&r.RoleID, &r.DelFlag)
+		if err == nil {
+			if r.DelFlag != "0" {
+				if _, err := store.DB.Exec(`UPDATE tb_role SET role_name=?, perms=?, sort_order=?, status=?, del_flag='0', update_time=? WHERE role_id=?`,
+					s.Name, perms, s.Sort, po.UserStatusEnabled, now, r.RoleID); err != nil {
+					logger.Warnf("[role] 恢复被软删除的内置角色 %s 失败: %v", s.Key, err)
+				} else {
+					logger.Infof("[role] 已恢复被软删除的内置角色 %s", s.Key)
+				}
+			}
+			continue
+		}
+		stmt := store.InsertIgnoreInto("tb_role",
+			"role_key", "role_name", "perms", "data_scope", "is_builtin", "sort_order", "status", "del_flag", "create_time", "update_time", "remark")
 		if _, err := store.DB.Exec(stmt, s.Key, s.Name, perms, "all", 1, s.Sort, po.UserStatusEnabled, "0", now, now, s.Remark); err != nil {
 			logger.Warnf("[role] 初始化内置角色 %s 失败: %v", s.Key, err)
 		}
@@ -39,9 +60,9 @@ func SyncBuiltinRoles() {
 	// admin 权限强制恢复为全量(幂等,每次都写;仅在值不一致时真正变更)。
 	if id := RoleIDByKey(store.RoleKeyAdmin); id > 0 {
 		full := store.JoinPerms(store.AllPermCodes())
-		var cur string
-		store.DB.QueryRow(`SELECT COALESCE(perms,'') FROM tb_role WHERE role_id=?`, id).Scan(&cur)
-		if cur != full {
+		var admin po.Role
+		store.DB.QueryRow(`SELECT COALESCE(perms,'') FROM tb_role WHERE role_id=?`, id).Scan(&admin.Perms)
+		if admin.Perms != full {
 			if _, err := store.DB.Exec(`UPDATE tb_role SET perms=?, is_builtin=1, update_time=? WHERE role_id=?`, full, now, id); err == nil {
 				logger.Infof("[role] 超级管理员角色权限已恢复为全量(%d 项)", len(store.AllPermCodes()))
 			}

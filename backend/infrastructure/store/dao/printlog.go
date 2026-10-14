@@ -21,7 +21,7 @@ func ScanPrintLog(rows interface{ Scan(...interface{}) error }) (po.PrintLog, er
 	var l po.PrintLog
 	err := rows.Scan(&l.PrintID, &l.OrderID, &l.OrderNo, &l.TableNo, &l.TableName,
 		&l.PrinterID, &l.PrinterName, &l.PrinterType, &l.Provider, &l.DocType, &l.Copies,
-		&l.Status, &l.RemoteID, &l.Detail, &l.TriggerBy, &l.Operator, &l.CostMs, &l.CreateTime)
+		&l.Status, &l.RemoteID, &l.Detail, &l.TriggerBy, &l.Operator, &l.CostMs, TS(&l.CreateTime))
 	if err != nil {
 		return l, err
 	}
@@ -225,9 +225,9 @@ func AttachItemCategories(items []po.OrderItem) []OrderItemRow {
 	defer rows.Close()
 	cat := map[int]int{}
 	for rows.Next() {
-		var dishID, categoryID int
-		if rows.Scan(&dishID, &categoryID) == nil {
-			cat[dishID] = categoryID
+		var d po.Dish
+		if rows.Scan(&d.DishID, &d.CategoryID) == nil {
+			cat[d.DishID] = d.CategoryID
 		}
 	}
 	for _, it := range items {

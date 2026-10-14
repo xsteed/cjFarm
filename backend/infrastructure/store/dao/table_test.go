@@ -82,12 +82,12 @@ func TestTableInsertUpdateDeleteRoundTrip(t *testing.T) {
 	if err := UpdateTable(po.Table{TableID: int(id), TableNo: "98", TableName: "测试桌-改", Capacity: 6, Status: 1, SortOrder: 888}); err != nil {
 		t.Fatalf("更新桌台失败: %v", err)
 	}
-	noName, name, err := GetTableNoName(int(id))
+	renamed, err := GetTableByID(int(id))
 	if err != nil {
-		t.Fatalf("查询桌号失败: %v", err)
+		t.Fatalf("按 ID 回读桌台失败: %v", err)
 	}
-	if noName != "98" || name != "测试桌-改" {
-		t.Fatalf("桌台更新未生效: no=%s name=%s", noName, name)
+	if renamed.TableNo != "98" || renamed.TableName != "测试桌-改" {
+		t.Fatalf("桌台更新未生效: no=%s name=%s", renamed.TableNo, renamed.TableName)
 	}
 
 	if err := DeleteTable(int(id)); err != nil {
@@ -100,7 +100,7 @@ func TestTableInsertUpdateDeleteRoundTrip(t *testing.T) {
 	if len(after) != len(baseline) {
 		t.Fatalf("软删除后应回到 %d 张, got %d", len(baseline), len(after))
 	}
-	if _, _, err := GetTableNoName(int(id)); err == nil {
+	if _, err := GetTableByID(int(id)); err == nil {
 		t.Fatal("删除后的桌台不应再被查询到")
 	}
 }
@@ -178,20 +178,20 @@ func TestSetTableLockRoundTrip(t *testing.T) {
 	if err := SetTableLock(int(id), po.TableLockReserved, "张先生 18:00"); err != nil {
 		t.Fatalf("设置桌台状态失败: %v", err)
 	}
-	lockStatus, remark, err := GetTableLock(int(id))
+	lock, err := GetTableByID(int(id))
 	if err != nil {
 		t.Fatalf("读取桌台状态失败: %v", err)
 	}
-	if lockStatus != po.TableLockReserved || remark != "张先生 18:00" {
-		t.Fatalf("桌台状态未生效: status=%d remark=%q", lockStatus, remark)
+	if lock.LockStatus != po.TableLockReserved || lock.LockRemark != "张先生 18:00" {
+		t.Fatalf("桌台状态未生效: status=%d remark=%q", lock.LockStatus, lock.LockRemark)
 	}
 
 	// 恢复正常后备注清空。
 	if err := SetTableLock(int(id), po.TableLockNormal, ""); err != nil {
 		t.Fatalf("恢复桌台失败: %v", err)
 	}
-	if lockStatus, _, _ := GetTableLock(int(id)); lockStatus != po.TableLockNormal {
-		t.Fatalf("恢复正常后状态应为 0, got %d", lockStatus)
+	if lock, _ := GetTableByID(int(id)); lock.LockStatus != po.TableLockNormal {
+		t.Fatalf("恢复正常后状态应为 0, got %d", lock.LockStatus)
 	}
 }
 

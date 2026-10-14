@@ -27,7 +27,7 @@ const PrintAgentCols = `agent_id, agent_name, token_hash, token_hint, printer_id
 func scanPrintAgent(rows interface{ Scan(...interface{}) error }) (po.PrintAgent, error) {
 	var a po.PrintAgent
 	err := rows.Scan(&a.AgentID, &a.AgentName, &a.TokenHash, &a.TokenHint, &a.PrinterIDs,
-		&a.Status, &a.LastSeen, &a.LastReport, &a.CreateTime, &a.UpdateTime)
+		&a.Status, TS(&a.LastSeen), &a.LastReport, TS(&a.CreateTime), TS(&a.UpdateTime))
 	if err != nil {
 		return a, err
 	}

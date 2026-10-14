@@ -18,35 +18,29 @@ import (
 // 渠道抽象仍留在 pay 包,由 handler 编排调用(service 不得 import pay)。
 // 配置读写复用 print_service.go 的 GetSetting/SetSetting。
 
-// PendingPayment 待关闭的在线支付流水(渠道侧关单由 handler 编排)。
-type PendingPayment struct {
-	ID      int
-	Channel string
-}
-
-// GetOrderAmount 按订单号查询订单支付金额与状态。
-func GetOrderAmount(orderNo string) (orderID, payStatus, orderStatus int, totalCents int64, err error) {
+// GetOrderAmount 按订单号查询订单支付金额与状态(仅填充 OrderID/PayStatus/OrderStatus/TotalAmount)。
+func GetOrderAmount(orderNo string) (po.Order, error) {
 	return dao.GetOrderAmount(orderNo)
 }
 
 // ValidateOrderPayable 校验订单是否可发起在线支付,返回订单ID与应收金额(分)。
 // 状态校验与金额异常判断下沉到 service,handler 不再散落业务判断。
 func ValidateOrderPayable(ctx context.Context, orderNo string) (orderID int, totalCents int64, err error) {
-	orderID, payStatus, orderStatus, totalCents, err := dao.GetOrderAmount(orderNo)
+	o, err := dao.GetOrderAmount(orderNo)
 	if err != nil {
 		return 0, 0, fmt.Errorf("订单不存在")
 	}
-	if payStatus == 1 {
+	if o.PayStatus == 1 {
 		return 0, 0, fmt.Errorf("订单已支付")
 	}
-	if !ActiveStatus(orderStatus) {
+	if !ActiveStatus(o.OrderStatus) {
 		return 0, 0, fmt.Errorf("当前订单状态不可支付")
 	}
-	if totalCents <= 0 {
-		logger.CtxWarnf(ctx, "[pay][告警] 订单金额异常 拒绝发起支付 订单%s 金额%d分", orderNo, totalCents)
+	if o.TotalAmount <= 0 {
+		logger.CtxWarnf(ctx, "[pay][告警] 订单金额异常 拒绝发起支付 订单%s 金额%d分", orderNo, o.TotalAmount)
 		return 0, 0, fmt.Errorf("订单金额异常，请联系收银员")
 	}
-	return orderID, totalCents, nil
+	return o.OrderID, o.TotalAmount, nil
 }
 
 // CreatePayment 写入一笔支付流水(待支付)。同一订单同一渠道重复发起时复用旧流水。
@@ -54,8 +48,8 @@ func CreatePayment(orderNo, channel string, amountCents int64, prepayID string) 
 	return dao.InsertPayment(orderNo, channel, amountCents, prepayID)
 }
 
-// GetPayment 查询某订单某渠道最近一条支付流水。
-func GetPayment(orderNo, channel string) (paymentID, status int, amountCents int64, err error) {
+// GetPayment 查询某订单某渠道最近一条支付流水(仅填充 PaymentID/Status/Amount)。
+func GetPayment(orderNo, channel string) (po.Payment, error) {
 	return dao.GetPayment(orderNo, channel)
 }
 
@@ -70,13 +64,8 @@ func GetOrderNoByID(orderID int) (string, error) {
 }
 
 // ListPendingPayments 查询订单除 exceptChannel 外所有渠道的待支付流水。
-func ListPendingPayments(orderNo, exceptChannel string) []PendingPayment {
-	list := dao.ListPendingPayments(orderNo, exceptChannel)
-	out := make([]PendingPayment, 0, len(list))
-	for _, p := range list {
-		out = append(out, PendingPayment{ID: p.ID, Channel: p.Channel})
-	}
-	return out
+func ListPendingPayments(orderNo, exceptChannel string) []po.Payment {
+	return dao.ListPendingPayments(orderNo, exceptChannel)
 }
 
 // MarkPaymentClosed 关闭支付流水(渠道关单成功后调用)。
@@ -112,12 +101,12 @@ func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, 
 	// 只凭流水判断会吞掉掉单 —— 上一轮若 MarkPaymentPaid 成功、MarkOrderPaidByChannel
 	// 失败(已应答 Failed),流水会停在已支付而订单 pay_status 仍为 0;渠道重试若在此
 	// 被短路成成功应答,渠道就停止重试,订单永远不入账。故订单未入账时不短路,继续往下补偿。
-	if _, flowStatus, _, err := dao.GetPayment(orderNo, channel); err == nil && flowStatus == dao.PayStatusPaid {
-		if _, orderPay, _, _, e := dao.GetOrderAmount(orderNo); e == nil && orderPay == 1 {
+	if p, err := dao.GetPayment(orderNo, channel); err == nil && p.Status == dao.PayStatusPaid {
+		if o, e := dao.GetOrderAmount(orderNo); e == nil && o.PayStatus == 1 {
 			return PaymentSuccessResult{}
 		}
 	}
-	_, payStatus, _, _, err := dao.GetOrderAmount(orderNo)
+	o, err := dao.GetOrderAmount(orderNo)
 	if err != nil {
 		// DB 故障与「订单不存在」不同:后者由 handlePayNotify 首读区分,这里只可能是
 		// 首读之后的瞬时故障,必须让渠道重试,不能折叠成成功应答。
@@ -125,7 +114,7 @@ func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, 
 		return PaymentSuccessResult{Failed: true}
 	}
 	// 订单已支付(其它渠道/线下先到):这笔是重复支付,由 handler 自动原路退回。
-	if payStatus == 1 {
+	if o.PayStatus == 1 {
 		// 先如实把本渠道流水置为已支付:同交易号通知重发时会命中上方的幂等短路,
 		// 不会再次登记退款 —— 否则微信退款受理中 ack 丢失,重发的通知会触发第二笔退款。
 		if _, e := dao.MarkPaymentPaid(orderNo, channel, channelTradeNo); e != nil {
@@ -155,14 +144,14 @@ func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, 
 		logger.CtxInfof(ctx, "[pay] 支付成功 订单%s 渠道%s 金额%d分 渠道流水号%s", orderNo, channel, amountCents, channelTradeNo)
 	} else {
 		// changed=false:本渠道流水未被「本次」置为已支付。
-		if _, fs, _, e := dao.GetPayment(orderNo, channel); e == nil && fs == dao.PayStatusPaid {
+		if p, e := dao.GetPayment(orderNo, channel); e == nil && p.Status == dao.PayStatusPaid {
 			// 流水已支付,有两种可能,唯一区别是「订单是否已入账」:
 			//   ① 同一笔支付的重复/并发通知(已完整入账)—— 成功应答;
 			//   ② 上一轮「流水已置已支付、订单回写失败」留下的掉单 —— 补做订单回写。
 			// 注意:这里绝不能返回 Duplicate。Duplicate 会让 handler 对同一笔已入账的支付
 			// 再发起一次自动原路退款。真正的「重复支付(另一渠道已收)」在上面的
 			// payStatus==1 分支就已判定,不会走到这里。
-			if _, orderPay, _, _, e2 := dao.GetOrderAmount(orderNo); e2 == nil && orderPay == 1 {
+			if cur, e2 := dao.GetOrderAmount(orderNo); e2 == nil && cur.PayStatus == 1 {
 				return PaymentSuccessResult{}
 			}
 			orderChanged, err := dao.MarkOrderPaidByChannel(orderNo, payType, channelTradeNo, channel)
@@ -172,7 +161,7 @@ func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, 
 			}
 			if !orderChanged {
 				// 补写未命中:订单已被并发入账。仍按「重复通知」成功应答,同样不标记 Duplicate。
-				if _, orderPay, _, _, e3 := dao.GetOrderAmount(orderNo); e3 == nil && orderPay == 1 {
+				if cur, e3 := dao.GetOrderAmount(orderNo); e3 == nil && cur.PayStatus == 1 {
 					return PaymentSuccessResult{}
 				}
 				logger.CtxErrorf(ctx, "[pay][告警] 掉单补偿未命中且订单仍未入账,应答失败待渠道重试(请人工核对) 订单%s 渠道%s 流水号%s", orderNo, channel, channelTradeNo)
@@ -207,12 +196,12 @@ func RecordMismatchedPayment(ctx context.Context, orderID int, orderNo, channel 
 // HasPendingDuplicateRefund 该订单某渠道是否已存在未终态的重复支付退款单。
 // 供 handler 在发起自动原路退回前查重,避免通知重发导致同一笔支付被退两次。
 func HasPendingDuplicateRefund(ctx context.Context, orderNo, channel string) (refundID int, refundNo string) {
-	refundID, refundNo, err := dao.GetPendingDuplicateRefund(orderNo, channel)
+	r, err := dao.GetPendingDuplicateRefund(orderNo, channel)
 	if err != nil {
 		logger.CtxWarnf(ctx, "[pay][告警] 重复退款查重失败,按无记录处理 订单%s 渠道%s: %v", orderNo, channel, err)
 		return 0, ""
 	}
-	return refundID, refundNo
+	return r.RefundID, r.RefundNo
 }
 
 // RecordDuplicateRefund 登记重复支付自动原路退回的退款单(处理中)。
@@ -220,15 +209,15 @@ func HasPendingDuplicateRefund(ctx context.Context, orderNo, channel string) (re
 func RecordDuplicateRefund(ctx context.Context, orderID int, orderNo, channel string, amountCents int64, channelTradeNo string) (refundNo string, refundID, paymentID int, totalCents int64, err error) {
 	// 支付流水 ID 与订单金额取不到时不中断:退款单仍要登记下来(唯一可追的凭据),
 	// 只是后续 channel 退款缺少 paymentID/金额依据。故留告警而非静默。
-	if id, _, _, e := dao.GetPayment(orderNo, channel); e != nil {
+	if p, e := dao.GetPayment(orderNo, channel); e != nil {
 		logger.CtxWarnf(ctx, "[pay][告警] 登记重复支付退款单时未找到支付流水,退款单将缺流水关联 订单%s 渠道%s: %v", orderNo, channel, e)
 	} else {
-		paymentID = id
+		paymentID = p.PaymentID
 	}
-	if _, _, _, cents, e := dao.GetOrderAmount(orderNo); e != nil {
+	if o, e := dao.GetOrderAmount(orderNo); e != nil {
 		logger.CtxWarnf(ctx, "[pay][告警] 登记重复支付退款单时读取订单金额失败,退款金额将以渠道返回为准 订单%s: %v", orderNo, e)
 	} else {
-		totalCents = cents
+		totalCents = o.TotalAmount
 	}
 	refundNo = GenRefundNo(RefundNoRefund)
 	refundID, err = dao.InsertRefund(po.Refund{
@@ -244,13 +233,13 @@ func RecordDuplicateRefund(ctx context.Context, orderID int, orderNo, channel st
 	return refundNo, refundID, paymentID, totalCents, nil
 }
 
-// GetRefundOrderInfo 查询退款所需的订单支付信息。
-func GetRefundOrderInfo(orderID int) (orderNo string, payStatus int, totalCents int64, err error) {
+// GetRefundOrderInfo 查询退款所需的订单支付信息(仅填充 OrderNo/PayStatus/TotalAmount)。
+func GetRefundOrderInfo(orderID int) (po.Order, error) {
 	return dao.GetRefundOrderInfo(orderID)
 }
 
-// LastPaidPayment 查询订单最近一条已支付或(部分)已退款的支付流水。
-func LastPaidPayment(orderNo string) (paymentID int, channel string, err error) {
+// LastPaidPayment 查询订单最近一条已支付或(部分)已退款的支付流水(仅填充 PaymentID/Channel)。
+func LastPaidPayment(orderNo string) (po.Payment, error) {
 	return dao.LastPaidPayment(orderNo)
 }
 
@@ -395,7 +384,8 @@ func ApplyRefundSuccess(ctx context.Context, refundID, paymentID int, orderNo st
 		return nil // 已入账过,幂等跳过
 	}
 	// 订单全额退完时,支付流水标记为已退款(非账务关键,放事务外)。
-	if _, _, _, totalCents, err := dao.GetOrderAmount(orderNo); err == nil {
+	if o, err := dao.GetOrderAmount(orderNo); err == nil {
+		totalCents := o.TotalAmount
 		refunded, sumErr := dao.SumRefundedWithErr(orderNo)
 		if sumErr != nil {
 			// 查询失败时宁可跳过置位,也不能误按 0 判断导致全退标记永不置位;留告警等下次重试。

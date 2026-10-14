@@ -26,7 +26,7 @@ type DishRow struct {
 func ScanDish(rows interface{ Scan(...interface{}) error }) (DishRow, error) {
 	var d DishRow
 	err := rows.Scan(&d.DishID, &d.CategoryID, &d.CategoryName, &d.DishName, &d.DishImage,
-		&d.Description, &d.Status, &d.SoldOut, &d.Signature, &d.SortOrder, &d.DelFlag, &d.CreateBy, &d.CreateTime, &d.UpdateBy, &d.UpdateTime, &d.Remark)
+		&d.Description, &d.Status, &d.SoldOut, &d.Signature, &d.SortOrder, &d.DelFlag, &d.CreateBy, TS(&d.CreateTime), &d.UpdateBy, TS(&d.UpdateTime), &d.Remark)
 	return d, err
 }
 
@@ -117,8 +117,8 @@ func CreateDish(d po.Dish, specs []po.Spec) (int64, error) {
 			return err
 		}
 		for _, s := range specs {
-			if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, stock) VALUES(?,?,?,?)`,
-				dishID, s.SpecName, s.Price, normalizeStock(s.Stock)); err != nil {
+			if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, stock, create_time) VALUES(?,?,?,?,?)`,
+				dishID, s.SpecName, s.Price, normalizeStock(s.Stock), store.Now()); err != nil {
 				return err
 			}
 		}
@@ -145,8 +145,8 @@ func UpdateDish(d po.Dish, specs []po.Spec) error {
 		for _, s := range specs {
 			if s.SpecID > 0 {
 				keep[s.SpecID] = true
-				if _, err := tx.Exec(`UPDATE tb_spec SET spec_name=?, price=?, stock=? WHERE spec_id=? AND dish_id=?`,
-					s.SpecName, s.Price, normalizeStock(s.Stock), s.SpecID, d.DishID); err != nil {
+				if _, err := tx.Exec(`UPDATE tb_spec SET spec_name=?, price=?, stock=?, update_time=? WHERE spec_id=? AND dish_id=?`,
+					s.SpecName, s.Price, normalizeStock(s.Stock), store.Now(), s.SpecID, d.DishID); err != nil {
 					return err
 				}
 			}
@@ -177,8 +177,8 @@ func UpdateDish(d po.Dish, specs []po.Spec) error {
 
 		for _, s := range specs {
 			if s.SpecID == 0 {
-				if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, stock) VALUES(?,?,?,?)`,
-					d.DishID, s.SpecName, s.Price, normalizeStock(s.Stock)); err != nil {
+				if _, err := tx.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, stock, create_time) VALUES(?,?,?,?,?)`,
+					d.DishID, s.SpecName, s.Price, normalizeStock(s.Stock), store.Now()); err != nil {
 					return err
 				}
 			}
@@ -193,16 +193,7 @@ func DeleteDish(id int) error {
 	return err
 }
 
-// GetSpecForOrder 查询订单明细对应的菜品与规格信息。
-func GetSpecForOrder(specID, dishID int) (dishName, specName, delFlag string, dishStatus int, priceCents int64, err error) {
-	err = store.DB.QueryRow(`SELECT d.dish_name, d.status, d.del_flag, s.spec_name, s.price
-		FROM tb_spec s JOIN tb_dish d ON d.dish_id = s.dish_id
-		WHERE s.spec_id=? AND s.dish_id=?`, specID, dishID).
-		Scan(&dishName, &dishStatus, &delFlag, &specName, &priceCents)
-	return
-}
-
-// SpecOrderInfo 订单明细校验所需的菜品与规格信息(与 GetSpecForOrder 返回内容一致)。
+// SpecOrderInfo 订单明细校验所需的菜品与规格信息。
 type SpecOrderInfo struct {
 	SpecID      int
 	DishID      int
@@ -217,8 +208,8 @@ type SpecOrderInfo struct {
 
 // LoadSpecsForOrder 按规格 ID 批量加载订单明细对应的菜品与规格信息,key 为 spec_id。
 // spec_id 是 tb_spec 主键,全局唯一,故可按 spec_id IN 一次查出;是否属于请求的
-// dish_id 由调用方在内存里比对(等价于 GetSpecForOrder 的 s.spec_id=? AND s.dish_id=?),
-// 避免逐条 GetSpecForOrder 在单次下单(最多 50 条)时退化成 50 次查询。
+// dish_id 由调用方在内存里比对(等价于原先逐条的 s.spec_id=? AND s.dish_id=?),
+// 避免单次下单(最多 50 条)退化成 50 次查询。
 func LoadSpecsForOrder(specIDs []int) (map[int]SpecOrderInfo, error) {
 	out := map[int]SpecOrderInfo{}
 	if len(specIDs) == 0 {
@@ -311,7 +302,7 @@ func DecrementSpecStockTx(tx *sql.Tx, specID int, qty int) error {
 	if stock < 0 {
 		return nil // 不限量
 	}
-	res, err := tx.Exec(`UPDATE tb_spec SET stock = stock - ? WHERE spec_id=? AND stock >= ?`, qty, specID, qty)
+	res, err := tx.Exec(`UPDATE tb_spec SET stock = stock - ?, update_time=? WHERE spec_id=? AND stock >= ?`, qty, store.Now(), specID, qty)
 	if err != nil {
 		return err
 	}
@@ -335,6 +326,6 @@ func RestoreSpecStockTx(tx *sql.Tx, specID int, qty int) error {
 	if stock < 0 {
 		return nil
 	}
-	_, err := tx.Exec(`UPDATE tb_spec SET stock = stock + ? WHERE spec_id=?`, qty, specID)
+	_, err := tx.Exec(`UPDATE tb_spec SET stock = stock + ?, update_time=? WHERE spec_id=?`, qty, store.Now(), specID)
 	return err
 }

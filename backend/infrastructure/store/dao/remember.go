@@ -134,7 +134,7 @@ func ConsumeRememberToken(token, uaFP string) (*AuthInfo, error) {
 		ua = uaFP
 	}
 	// 升级后 token 列已是哈希,此处也按哈希定位,避免再走明文路径。
-	store.DB.Exec(`UPDATE tb_remember_token SET last_used_time=?, ua=? WHERE token=?`, store.Now(), ua, hashed)
+	store.DB.Exec(`UPDATE tb_remember_token SET last_used_time=?, ua=?, update_time=? WHERE token=?`, store.Now(), ua, store.Now(), hashed)
 	return auth, nil
 }
 
@@ -142,8 +142,8 @@ func ConsumeRememberToken(token, uaFP string) (*AuthInfo, error) {
 // token 列带唯一索引;理论上 SHA-256 碰撞概率可忽略,若极端情况下 UPDATE 因冲突失败,
 // 本次消费仍按已读到的行继续(不因此拒绝用户),后续自然落到哈希或明文路径之一。
 func upgradeRememberTokenToHash(token, hashed string) {
-	store.DB.Exec(`UPDATE tb_remember_token SET token=?, token_prefix=? WHERE token=?`,
-		hashed, rememberPrefix(token), token)
+	store.DB.Exec(`UPDATE tb_remember_token SET token=?, token_prefix=?, update_time=? WHERE token=?`,
+		hashed, rememberPrefix(token), store.Now(), token)
 }
 
 // RememberSessionRow 「记住我」会话投影(store 内部使用,不带 json tag;
@@ -174,7 +174,7 @@ func ListRememberSessions(userID int) ([]RememberSessionRow, error) {
 	out := []RememberSessionRow{}
 	for rows.Next() {
 		var s RememberSessionRow
-		if err := rows.Scan(&s.TokenID, &s.TokenPrefix, &s.UA, &s.CreateTime, &s.LastUsedTime, &s.ExpireTime); err != nil {
+		if err := rows.Scan(&s.TokenID, &s.TokenPrefix, &s.UA, TS(&s.CreateTime), TS(&s.LastUsedTime), TS(&s.ExpireTime)); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

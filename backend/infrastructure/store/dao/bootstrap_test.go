@@ -71,6 +71,96 @@ func TestBootstrapRolesIdempotent(t *testing.T) {
 	}
 }
 
+// TestSyncBuiltinRolesWithoutUniqueIndex 模拟 MySQL 下 idx_role_key 的降级:
+// MySQL 不支持带 WHERE 的部分索引,唯一索引会退化为普通索引,INSERT IGNORE
+// 永远不会因 role_key 重复而忽略。幂等必须由应用层先查后插保证,否则每次
+// 启动都会重复插入 4 个内置角色(tb_role 数据随部署不断膨胀)。
+func TestSyncBuiltinRolesWithoutUniqueIndex(t *testing.T) {
+	bootDaoInitDB(t)
+	SyncBuiltinRoles()
+	before := bootDaoRoleCount(t)
+	if before != 4 {
+		t.Fatalf("应初始化 4 个内置角色, got %d", before)
+	}
+
+	// 模拟 MySQL 降级:删掉 role_key 的唯一索引,让 INSERT IGNORE 失去约束保护。
+	if _, err := store.DB.Exec(`DROP INDEX IF EXISTS idx_role_key`); err != nil {
+		t.Fatalf("删除唯一索引失败: %v", err)
+	}
+
+	SyncBuiltinRoles()
+	if got := bootDaoRoleCount(t); got != before {
+		t.Fatalf("唯一索引缺失时重复引导后角色数变化: %d -> %d", before, got)
+	}
+}
+
+// TestSyncBuiltinRolesRevivesDeletedBuiltin 内置角色被外部手段软删后(正常业务
+// 删不掉,出现即说明数据被外部改过),再次引导应复活原行而不是任其缺失。
+// 全局唯一索引下软删除行仍占用 role_key,只靠 INSERT IGNORE 会让角色永远缺位。
+func TestSyncBuiltinRolesRevivesDeletedBuiltin(t *testing.T) {
+	bootDaoInitDB(t)
+	SyncBuiltinRoles()
+	if _, err := store.DB.Exec(`UPDATE tb_role SET del_flag='1' WHERE role_key=?`, store.RoleKeyStaff); err != nil {
+		t.Fatalf("软删除 staff 角色失败: %v", err)
+	}
+
+	SyncBuiltinRoles()
+
+	if got := bootDaoRoleCount(t); got != 4 {
+		t.Fatalf("内置角色应被复活为 4 个, got %d", got)
+	}
+	if RoleIDByKey(store.RoleKeyStaff) == 0 {
+		t.Fatal("staff 角色应恢复为未删除状态")
+	}
+}
+
+// TestRoleKeyUniqueIndexGlobal role_key 全局唯一索引:任何路径(含多实例并发
+// 启动)插入重复标识都必须被数据库拒绝,应用层查重只是快速路径。
+func TestRoleKeyUniqueIndexGlobal(t *testing.T) {
+	bootDaoInitDB(t)
+	SyncBuiltinRoles()
+	_, err := store.DB.Exec(`INSERT INTO tb_role(role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark)
+		VALUES('manager','假店长','','all',0,99,1,'0',?,?,'')`, store.Now(), store.Now())
+	if err == nil {
+		t.Fatal("插入与内置角色重复的 role_key 应被唯一索引拒绝")
+	}
+}
+
+// TestInsertRoleRevivesSoftDeletedKey 删除自定义角色后重建同名角色:全局唯一
+// 索引下软删除行仍占用 role_key,应复活原行(role_id 不变、总数不变),而不是
+// 撞唯一约束报错或另插新行。
+func TestInsertRoleRevivesSoftDeletedKey(t *testing.T) {
+	bootDaoInitDB(t)
+	SyncBuiltinRoles()
+	id1, err := InsertRole(po.Role{RoleKey: "shift_lead", RoleName: "领班", SortOrder: 10}, []string{"order:view"}, "tester")
+	if err != nil {
+		t.Fatalf("创建角色失败: %v", err)
+	}
+	if err := SoftDeleteRole(int(id1), "tester"); err != nil {
+		t.Fatalf("删除角色失败: %v", err)
+	}
+	deletedCount := bootDaoRoleCount(t)
+
+	id2, err := InsertRole(po.Role{RoleKey: "shift_lead", RoleName: "值班领班", SortOrder: 11, Remark: "重建"}, []string{"order:view", "order:operate"}, "tester")
+	if err != nil {
+		t.Fatalf("重建同名角色应复活原行而不是报错: %v", err)
+	}
+	if id2 != id1 {
+		t.Fatalf("应复活原行(role_id=%d), got %d", id1, id2)
+	}
+	if got := bootDaoRoleCount(t); got != deletedCount+1 {
+		t.Fatalf("复活后角色总数应 +1: %d -> %d", deletedCount, got)
+	}
+	// 复活行的名称与权限应为重建时的新值。
+	r, err := GetRoleByID(int(id2))
+	if err != nil || r == nil {
+		t.Fatalf("查询复活角色失败: %v", err)
+	}
+	if r.RoleName != "值班领班" || r.Perms != "order:view,order:operate" {
+		t.Fatalf("复活行应为重建时的新值, got %+v", r)
+	}
+}
+
 func TestNormalizeRolePermsCleansDirtyPerms(t *testing.T) {
 	bootDaoInitDB(t)
 

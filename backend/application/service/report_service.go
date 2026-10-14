@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -410,4 +411,92 @@ func SettleMix(startStr, endStr, daysStr string) ([]SettleMixItem, error) {
 		})
 	}
 	return out, nil
+}
+
+// ---- 用餐时长分析 ----
+//
+// 「这桌客人一般坐多久」是排台与翻台预估的依据。口径:已完成订单(order_status=4)
+// 按 finish_time 归属区间,时长 = finish_time - create_time(下单到完成,含等餐,
+// 与桌台页「已用餐」的实时口径同源;强制清台归档的单也计入,它确实占用了那么久)。
+
+// diningBucketEdges 用餐时长分布的区间边界(分钟,左闭右开),最后一档为「及以上」。
+var diningBucketEdges = []struct{ min, max int }{
+	{0, 30}, {30, 60}, {60, 90}, {90, 120}, {120, -1},
+}
+
+// diningBucketLabels 与 diningBucketEdges 一一对应的展示文案。
+var diningBucketLabels = []string{"30分钟内", "30-60分钟", "1-1.5小时", "1.5-2小时", "2小时以上"}
+
+// DiningDurationBucket 用餐时长分布的一个区间。
+type DiningDurationBucket struct {
+	Label string
+	Count int
+}
+
+// DiningDurationStats 区间内已完成订单的用餐时长分析。
+type DiningDurationStats struct {
+	OrderCount    int                    // 参与统计的已完成订单数
+	AvgMinutes    int                    // 平均用餐时长(分钟)
+	MedianMinutes int                    // 中位时长(分钟):比均值更抗「跑到天亮的挂账单」拉偏
+	MaxMinutes    int                    // 最长一单(分钟)
+	GuestCount    int                    // 就餐人次合计(人均时长参考)
+	Buckets       []DiningDurationBucket // 时长分布(固定 5 档,缺失档为 0)
+}
+
+// DiningDuration 区间内「用户用餐时长」分析。区间口径与其他报表一致(start/end/days)。
+func DiningDuration(startStr, endStr, daysStr string) (DiningDurationStats, error) {
+	start, end := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays)
+	rows, err := dao.DiningDurationRows(start.Format(conf.TimeLayout), end.AddDate(0, 0, 1).Format(conf.TimeLayout))
+	if err != nil {
+		return DiningDurationStats{}, err
+	}
+
+	buckets := make([]DiningDurationBucket, len(diningBucketLabels))
+	for i, label := range diningBucketLabels {
+		buckets[i].Label = label
+	}
+	minutes := make([]int, 0, len(rows))
+	sum, maxM, guests := 0, 0, 0
+	for _, r := range rows {
+		startAt, e1 := time.ParseInLocation(conf.TimeLayout, r.MealStartTime, time.Local)
+		endAt, e2 := time.ParseInLocation(conf.TimeLayout, r.MealEndTime, time.Local)
+		if e1 != nil || e2 != nil {
+			continue // 时间字段异常的脏数据不参与统计,但也不让整个接口失败
+		}
+		m := int(endAt.Sub(startAt).Minutes())
+		if m < 0 {
+			continue // 用餐结束早于开始的历史脏数据,统计进去只会污染均值
+		}
+		if m > maxM {
+			maxM = m
+		}
+		sum += m
+		guests += r.PersonCount
+		minutes = append(minutes, m)
+		for i, b := range diningBucketEdges {
+			// 最后一档 max=-1 表示「不设上限」;其余左闭右开,60 分钟归「30-60」而非「1-1.5小时」。
+			if m >= b.min && (b.max < 0 || m < b.max) {
+				buckets[i].Count++
+				break
+			}
+		}
+	}
+
+	stats := DiningDurationStats{
+		OrderCount: len(minutes),
+		MaxMinutes: maxM,
+		GuestCount: guests,
+		Buckets:    buckets,
+	}
+	if len(minutes) > 0 {
+		stats.AvgMinutes = sum / len(minutes)
+		sort.Ints(minutes)
+		mid := len(minutes) / 2
+		if len(minutes)%2 == 1 {
+			stats.MedianMinutes = minutes[mid]
+		} else {
+			stats.MedianMinutes = (minutes[mid-1] + minutes[mid]) / 2
+		}
+	}
+	return stats, nil
 }

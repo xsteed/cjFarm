@@ -2,6 +2,7 @@ import { http } from './http';
 import type { PageQuery } from '@dining/types';
 import type {
   DailyTrendRow,
+  DiningDurationStats,
   DishRankRow,
   HourlyRow,
   MonthlyTrendRow,
@@ -25,3 +26,6 @@ export const getHourlyReport = (params?: PageQuery): Promise<HourlyRow[]> =>
 // 结算方式构成(正常收款/免单/挂账)
 export const getSettleMix = (params?: PageQuery): Promise<SettleMixRow[]> =>
   http.get<unknown, SettleMixRow[]>('/admin/report/settleMix', { params });
+// 用户用餐时长分析(翻台/排台参考)
+export const getDiningDuration = (params?: PageQuery): Promise<DiningDurationStats> =>
+  http.get<unknown, DiningDurationStats>('/admin/report/diningDuration', { params });

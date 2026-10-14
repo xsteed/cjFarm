@@ -490,13 +490,17 @@ func TestSvcSchemaIndexStatements(t *testing.T) {
 		t.Fatalf("MySQL 索引语句数=%d, 期望 %d", len(mysql), len(indexDefs))
 	}
 	// MySQL 不支持部分索引:退化为普通索引(无 UNIQUE、无 WHERE)。
-	for _, name := range []string{"idx_table_code", "idx_user_username", "idx_role_key"} {
+	// idx_role_key 例外:定义已去掉 WHERE,升级为两库统一的全局唯一索引
+	// (MySQL 下的部分索引降级正是历史重复插入 bug 的根源)。
+	for _, name := range []string{"idx_table_code", "idx_user_username"} {
 		if got := svcSchemaFind(t, mysql, name); strings.Contains(got, "UNIQUE") || strings.Contains(got, "WHERE") {
 			t.Errorf("MySQL 部分索引 %s 应退化为普通索引, got %q", name, got)
 		}
 	}
-	if got := svcSchemaFind(t, mysql, "idx_order_no"); !strings.Contains(got, "UNIQUE") {
-		t.Errorf("MySQL 普通唯一索引 idx_order_no 应保留 UNIQUE, got %q", got)
+	for _, name := range []string{"idx_role_key", "idx_order_no"} {
+		if got := svcSchemaFind(t, mysql, name); !strings.Contains(got, "UNIQUE") {
+			t.Errorf("MySQL 全局唯一索引 %s 应保留 UNIQUE, got %q", name, got)
+		}
 	}
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@dining/app-admin",
-  "version": "1.0.9",
+  "version": "1.0.14",
   "private": true,
   "type": "module",
   "main": "src/index.ts",

@@ -63,3 +63,22 @@ export function batchLabels<T extends BatchNoItem>(items: readonly T[] | null | 
     return seq <= 1 ? '首单' : `加菜${seq - 1}`;
   });
 }
+
+// ============================================================================
+// 用餐时长文案
+//
+// 后端各接口(桌台列表 diningMinutes / 超时告警 minutes)统一下发「已用餐分钟数」,
+// 前端只需把它说成人话。原先 Dashboard 里私有一份,桌台管理页接入后抽到这里共用。
+// ============================================================================
+
+/** 把分钟数说成人话:店员扫一眼就知道这桌开了多久(跨日遗留单会到几十小时,得说到天)。 */
+export function durationText(minutes?: number | null): string {
+  const m = Math.max(0, Number(minutes) || 0);
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  const restMin = m % 60;
+  if (h < 24) return restMin ? `${h} 小时 ${restMin} 分` : `${h} 小时`;
+  const days = Math.floor(h / 24);
+  const restHour = h % 24;
+  return restHour ? `${days} 天 ${restHour} 小时` : `${days} 天`;
+}

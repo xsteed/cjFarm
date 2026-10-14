@@ -145,10 +145,11 @@ func SettingDefault(key string) string {
 // EnsureSettingDefaults 补齐缺失的配置项(幂等,已存在的键保持原值)。
 // 语句由方言层生成:SQLite 为 INSERT OR IGNORE,MySQL 为 INSERT IGNORE。
 func EnsureSettingDefaults() {
-	stmt := InsertIgnoreInto("tb_config", "cfg_key", "cfg_value")
+	// 新插入的键记一次 create_time;已有键被 IGNORE 忽略,首次时间不被启动流程改写。
+	stmt := InsertIgnoreInto("tb_config", "cfg_key", "cfg_value", "create_time")
 	var added, existed int
 	for k, v := range settingDefaults {
-		res, err := DB.Exec(stmt, k, v)
+		res, err := DB.Exec(stmt, k, v, Now())
 		if err != nil {
 			logger.Warnf("[setting] 补全默认配置项 %s 失败: %v", k, err)
 			continue
@@ -325,7 +326,8 @@ func seedDishes() {
 			catID[s.cat], s.name, s.img, s.desc, 1, i+1, "0", seedSysCreateTime, seedSysCreateTime)
 		dishID, _ := res.LastInsertId()
 		for _, sp := range s.specs {
-			DB.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price) VALUES(?,?,?)`, dishID, sp.name, sp.price)
+			DB.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, create_time) VALUES(?,?,?,?)`,
+				dishID, sp.name, sp.price, seedSysCreateTime)
 		}
 	}
 }

@@ -196,6 +196,61 @@ func TestReportSvcTrendsAndStats(t *testing.T) {
 	}
 }
 
+func TestReportSvcDiningDuration(t *testing.T) {
+	reportSvcInit(t)
+	todayStr := store.Now()[:10]
+
+	// 两笔已完成订单:40 分钟与 100 分钟 → 落在「30-60」与「1.5-2小时」两档。
+	mk := func(orderNo, createAt, finishAt string, person int) {
+		t.Helper()
+		id := reportSvcInsertOrder(t, orderNo, OrderStatusFinished, 1, 5000, person)
+		reportSvcUpdateOrder(t, id,
+			"create_time='"+todayStr+" "+createAt+"'",
+			"finish_time='"+todayStr+" "+finishAt+"'")
+	}
+	mk("DD1", "11:00:00", "11:40:00", 2)
+	mk("DD2", "12:00:00", "13:40:00", 3)
+	// 取消单与脏数据(finish 早于 create)都不应计入。
+	reportSvcInsertOrder(t, "DD3", OrderStatusCanceled, 0, 1000, 2)
+	mk("DD4", "18:00:00", "17:00:00", 2)
+
+	s, err := DiningDuration(todayStr, todayStr, "")
+	if err != nil {
+		t.Fatalf("用餐时长统计失败: %v", err)
+	}
+	if s.OrderCount != 2 {
+		t.Fatalf("应只统计 2 笔有效已完成订单, got %d", s.OrderCount)
+	}
+	if s.AvgMinutes != 70 { // (40+100)/2
+		t.Fatalf("平均时长应为 70 分钟, got %d", s.AvgMinutes)
+	}
+	if s.MedianMinutes != 70 {
+		t.Fatalf("中位时长应为 70 分钟, got %d", s.MedianMinutes)
+	}
+	if s.MaxMinutes != 100 {
+		t.Fatalf("最长应为 100 分钟, got %d", s.MaxMinutes)
+	}
+	if s.GuestCount != 5 {
+		t.Fatalf("就餐人次应为 5, got %d", s.GuestCount)
+	}
+	if len(s.Buckets) != 5 {
+		t.Fatalf("分布应固定 5 档, got %d", len(s.Buckets))
+	}
+	if s.Buckets[1].Label != "30-60分钟" || s.Buckets[1].Count != 1 {
+		t.Fatalf("30-60 分钟档应为 1 笔, got %+v", s.Buckets[1])
+	}
+	if s.Buckets[3].Label != "1.5-2小时" || s.Buckets[3].Count != 1 {
+		t.Fatalf("1.5-2 小时档应为 1 笔, got %+v", s.Buckets[3])
+	}
+	total := 0
+	for _, b := range s.Buckets {
+		total += b.Count
+	}
+	if total != 2 {
+		t.Fatalf("各档合计应等于有效订单数 2, got %d", total)
+	}
+}
+
 func TestReportSvcDishRank(t *testing.T) {
 	reportSvcInit(t)
 

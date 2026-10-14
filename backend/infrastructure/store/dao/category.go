@@ -18,7 +18,7 @@ func ListCategories() ([]po.Category, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var ct po.Category
-		rows.Scan(&ct.CategoryID, &ct.CategoryName, &ct.SortOrder, &ct.DelFlag, &ct.CreateTime, &ct.UpdateTime)
+		rows.Scan(&ct.CategoryID, &ct.CategoryName, &ct.SortOrder, &ct.DelFlag, TS(&ct.CreateTime), TS(&ct.UpdateTime))
 		list = append(list, ct)
 	}
 	return list, nil
@@ -70,10 +70,9 @@ func CategoryNameMapByIDs(ids []int) map[int]string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id int
-		var name string
-		rows.Scan(&id, &name)
-		out[id] = name
+		var c po.Category
+		rows.Scan(&c.CategoryID, &c.CategoryName)
+		out[c.CategoryID] = c.CategoryName
 	}
 	return out
 }

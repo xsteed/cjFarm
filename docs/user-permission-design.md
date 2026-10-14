@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS tb_user (
 ```go
 {Name: "idx_user_username", Table: "tb_user", Columns: "username", Unique: true, Where: "del_flag='0'"},
 {Name: "idx_user_role",     Table: "tb_user", Columns: "role_id"},
-{Name: "idx_role_key",      Table: "tb_role", Columns: "role_key", Unique: true, Where: "del_flag='0'"},
+{Name: "idx_role_key",      Table: "tb_role", Columns: "role_key", Unique: true},
 ```
 
 > 全库索引清单以 `backend/migrations/README.md` 第五节为准（当前 18 个）。
@@ -141,6 +141,11 @@ CREATE TABLE IF NOT EXISTS tb_user (
 > 因此 MySQL 侧的「用户名唯一」由应用层 `EnsureUsernameAvailable()` 保证 ——
 > 与既有的 `store.NewUniqueTableCode()` 完全同构，属于项目已有做法，不是新引入的风险。
 > 新增用户时在读事务内先查重再插入。
+>
+> `idx_role_key` 曾也是部分唯一索引，但 MySQL 降级为普通索引后曾导致启动引导
+> 每次重复插入内置角色（详见 `migrations/README.md` 第五节），现已升级为两库
+> 统一的**全局唯一索引**（含已删除行）：软删除的角色行仍占用 `role_key`，
+> 重建同名角色时复活原行而非另插新行。
 
 ### 3.4 数据关系
 

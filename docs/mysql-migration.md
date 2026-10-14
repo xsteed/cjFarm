@@ -382,6 +382,7 @@ curl -s -X POST http://localhost:8080/api/auth/login \
 | **大图写入包大小** | `tb_image` 单条 `INSERT` 可达 64MB，MySQL 5.7 服务端默认 `max_allowed_packet=4MB` 会拒绝；需 `SET GLOBAL max_allowed_packet=128M`。客户端侧后端默认 DSN 已带 `maxAllowedPacket=134217728`，无需配置。 |
 | **加列脚本不幂等** | `ALTER TABLE ADD COLUMN` 两库都没有 `IF NOT EXISTS`，列已存在会报 `Duplicate column name`，同样可忽略。执行前用 `SHOW COLUMNS FROM 表名;` 自查。 |
 | **部分索引降级** | `idx_table_code` 在 SQLite 是部分唯一索引，MySQL 降级为普通索引；唯一性由 `store.NewUniqueTableCode()` 在应用层保证。 |
+| **角色标识全局唯一** | `idx_role_key` 已升级为两库统一的全局唯一索引（历史上 MySQL 降级曾导致启动引导重复插入内置角色）；老库升级时启动迁移 `dedupeRoleKeys()` 自动清理历史重复行（保留未删除行中 role_id 最小的一行、员工引用改挂后再删多余），无需人工干预。 |
 | **时区** | 时间统一存 `VARCHAR(32)` 本地时间字符串，不依赖数据库时区。连接参数 `loc=Local` 保证一致；若容器时区不对，改 `TZ` 环境变量而不是改数据库。 |
 | **大小写敏感** | Linux 上 MySQL 默认表名区分大小写。建表语句已统一小写，无需处理；但**库名**在 `DB_NAME` 里要与实际一致。 |
 

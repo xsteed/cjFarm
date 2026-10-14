@@ -14,14 +14,19 @@ func covDaoInit(t *testing.T) {
 	t.Cleanup(func() { _ = store.DB.Close() })
 }
 
+// covPickupSeq 测试订单的取餐号序列:(biz_date, pickup_no) 有唯一索引,
+// 同一营业日插多行必须各配一个号,否则第二行起违反唯一约束。
+var covPickupSeq int
+
 // covInsertOrder 插入一笔订单,可控订单状态/支付状态/营业日/创建时间。
 func covInsertOrder(t *testing.T, orderNo string, tableID, status, payStatus int, bizDate, createTime string) int {
 	t.Helper()
+	covPickupSeq++
 	now := store.Now()
 	res, err := store.DB.Exec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, person_count, order_status,
-		dish_amount, seat_fee, discount_amount, total_amount, pay_status, biz_date, create_time, update_time)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		orderNo, tableID, "T1", "桌", 2, status, 0, 0, 0, 0, payStatus, bizDate, createTime, now)
+		dish_amount, seat_fee, discount_amount, total_amount, pay_status, biz_date, pickup_no, create_time, update_time)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		orderNo, tableID, "T1", "桌", 2, status, 0, 0, 0, 0, payStatus, bizDate, covPickupSeq, createTime, now)
 	if err != nil {
 		t.Fatalf("插入订单失败: %v", err)
 	}
@@ -29,7 +34,7 @@ func covInsertOrder(t *testing.T, orderNo string, tableID, status, payStatus int
 	return int(id)
 }
 
-func covInsertItem(t *testing.T, orderID, dishID, specID int, batchNo, reqID string, amount int64) {
+func covInsertItem(t *testing.T, orderID, dishID, specID, batchNo int, reqID string, amount int64) {
 	t.Helper()
 	if _, err := store.DB.Exec(`INSERT INTO tb_order_item(order_id, dish_id, dish_name, spec_id, spec_name, price, quantity, amount, remark, batch_no, client_request_id, is_gift, gift_reason)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,0,'')`,
@@ -124,8 +129,8 @@ func TestListActiveOrders(t *testing.T) {
 func TestLoadOrderItemsByOrderIDs(t *testing.T) {
 	covDaoInit(t)
 	oid := covInsertOrder(t, "OI1", 1, 2, 0, "2026-10-13", store.Now())
-	covInsertItem(t, oid, 1, 1, "B1", "req-1", 100)
-	covInsertItem(t, oid, 1, 2, "B1", "req-1", 200)
+	covInsertItem(t, oid, 1, 1, 1, "req-1", 100)
+	covInsertItem(t, oid, 1, 2, 1, "req-1", 200)
 
 	m, err := LoadOrderItemsByOrderIDs([]int{oid})
 	if err != nil {
@@ -143,9 +148,9 @@ func TestLoadOrderItemsByOrderIDs(t *testing.T) {
 func TestCountOrderBatches(t *testing.T) {
 	covDaoInit(t)
 	oid := covInsertOrder(t, "CB1", 1, 2, 0, "2026-10-13", store.Now())
-	covInsertItem(t, oid, 1, 1, "B1", "r1", 100)
-	covInsertItem(t, oid, 1, 2, "B2", "r2", 100)
-	covInsertItem(t, oid, 1, 3, "B1", "r3", 100) // 与第一条同批次
+	covInsertItem(t, oid, 1, 1, 1, "r1", 100)
+	covInsertItem(t, oid, 1, 2, 2, "r2", 100)
+	covInsertItem(t, oid, 1, 3, 1, "r3", 100) // 与第一条同批次
 
 	m := CountOrderBatches([]int{oid})
 	if m[oid] != 2 {
@@ -185,7 +190,7 @@ func TestCountActiveUnpaidUnfinishedTx(t *testing.T) {
 func TestOrderItemRequestTx(t *testing.T) {
 	covDaoInit(t)
 	oid := covInsertOrder(t, "R1", 1, 2, 0, "2026-10-13", store.Now())
-	covInsertItem(t, oid, 1, 1, "B1", "req-dedup", 100)
+	covInsertItem(t, oid, 1, 1, 1, "req-dedup", 100)
 
 	tx, _ := store.DB.Begin()
 	defer tx.Rollback()
@@ -246,9 +251,9 @@ func TestRefundTxFlow(t *testing.T) {
 	})
 
 	// GetPendingDuplicateRefund 应查到处理中的重复退款单。
-	gotID, gotNo, err := GetPendingDuplicateRefund("RF1", "wxpay")
-	if err != nil || gotID != dupID || gotNo != "RN1" {
-		t.Fatalf("查重退款单失败: id=%d no=%q err=%v", gotID, gotNo, err)
+	got, err := GetPendingDuplicateRefund("RF1", "wxpay")
+	if err != nil || got.RefundID != dupID || got.RefundNo != "RN1" {
+		t.Fatalf("查重退款单失败: id=%d no=%q err=%v", got.RefundID, got.RefundNo, err)
 	}
 
 	// MarkRefundSuccessOnceTx 首次成功、二次幂等返回 false。
@@ -263,22 +268,23 @@ func TestRefundTxFlow(t *testing.T) {
 		t.Fatal("二次置成功应幂等返回 false")
 	}
 
-	// SumRefundedInclPendingTx 含处理中(此时 dup 已成功)与成功。
+	// SumRefundedInclPendingTx 含处理中与成功,但不含重复支付退回(is_duplicate=1,
+	// 与退款额度口径一致):dup(100) 已成功但不计入,只统计正常成功的 50。
 	sum, err := func() (int64, error) {
 		tx2, _ := store.DB.Begin()
 		defer tx2.Rollback()
 		return SumRefundedInclPendingTx(tx2, "RF1")
 	}()
-	if err != nil || sum != 150 {
-		t.Fatalf("已退含处理中应为 150, got %d err=%v", sum, err)
+	if err != nil || sum != 50 {
+		t.Fatalf("已退含处理中(不含重复支付退回)应为 50, got %d err=%v", sum, err)
 	}
 }
 
 func TestRefundingAmountsAndSum(t *testing.T) {
 	covDaoInit(t)
 	oid := covInsertOrder(t, "RA1", 1, 4, 1, "2026-10-13", store.Now())
-	covInsertRefund(t, po.Refund{OrderID: oid, OrderNo: "RA1", Channel: "wxpay", Amount: 30, Status: po.RefundStatusProcessing})
-	covInsertRefund(t, po.Refund{OrderID: oid, OrderNo: "RA1", Channel: "wxpay", Amount: 20, Status: po.RefundStatusSuccess})
+	covInsertRefund(t, po.Refund{OrderID: oid, OrderNo: "RA1", Channel: "wxpay", RefundNo: "RA-RN1", ChannelRefundNo: "ch-ra-1", Amount: 30, Status: po.RefundStatusProcessing})
+	covInsertRefund(t, po.Refund{OrderID: oid, OrderNo: "RA1", Channel: "wxpay", RefundNo: "RA-RN2", ChannelRefundNo: "ch-ra-2", Amount: 20, Status: po.RefundStatusSuccess})
 
 	m := RefundingAmounts([]int{oid})
 	if m[oid] != 30 {

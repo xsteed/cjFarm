@@ -115,6 +115,27 @@ func ReportHourly(c *gin.Context) {
 	ok(c, out)
 }
 
+// ReportDiningDuration 区间内「用户用餐时长」分析(均值/中位/最长 + 分布)。
+func ReportDiningDuration(c *gin.Context) {
+	s, err := service.DiningDuration(c.Query("start"), c.Query("end"), c.Query("days"))
+	if err != nil {
+		fail(c, err.Error())
+		return
+	}
+	buckets := make([]gin.H, 0, len(s.Buckets))
+	for _, b := range s.Buckets {
+		buckets = append(buckets, gin.H{"label": b.Label, "count": b.Count})
+	}
+	ok(c, gin.H{
+		"orderCount":    s.OrderCount,
+		"avgMinutes":    s.AvgMinutes,
+		"medianMinutes": s.MedianMinutes,
+		"maxMinutes":    s.MaxMinutes,
+		"guestCount":    s.GuestCount,
+		"buckets":       buckets,
+	})
+}
+
 // ReportSettleMix 区间内「结算方式构成」。
 func ReportSettleMix(c *gin.Context) {
 	items, err := service.SettleMix(c.Query("start"), c.Query("end"), c.Query("days"))

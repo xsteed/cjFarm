@@ -205,20 +205,21 @@ func TestOrderAppendUrgeAndSettleInfo(t *testing.T) {
 	orderDaoInitDB(t)
 	id := orderDaoCreate(t, "D-INFO-0001", 7)
 
-	orderID, tableID, personCount, orderStatus, payStatus, err := GetOrderAppendInfo("D-INFO-0001")
+	appendInfo, err := GetOrderAppendInfo("D-INFO-0001")
 	if err != nil {
 		t.Fatalf("查询加菜信息失败: %v", err)
 	}
-	if orderID != id || tableID != 7 || personCount != 4 || orderStatus != 1 || payStatus != 0 {
-		t.Fatalf("加菜信息异常: %+v", []int{orderID, tableID, personCount, orderStatus, payStatus})
+	if appendInfo.OrderID != id || appendInfo.TableID != 7 || appendInfo.PersonCount != 4 ||
+		appendInfo.OrderStatus != 1 || appendInfo.PayStatus != 0 {
+		t.Fatalf("加菜信息异常: %+v", appendInfo)
 	}
 
-	uid, utableID, ustatus, uno, uname, err := GetUrgeTarget("D-INFO-0001")
+	urge, err := GetUrgeTarget("D-INFO-0001")
 	if err != nil {
 		t.Fatalf("查询催菜目标失败: %v", err)
 	}
-	if uid != id || utableID != 7 || ustatus != 1 || uno != "01" || uname != "测试桌" {
-		t.Fatalf("催菜目标异常: %+v", []interface{}{uid, utableID, ustatus, uno, uname})
+	if urge.OrderID != id || urge.TableID != 7 || urge.OrderStatus != 1 || urge.TableNo != "01" || urge.TableName != "测试桌" {
+		t.Fatalf("催菜目标异常: %+v", urge)
 	}
 
 	info, err := GetOrderSettleInfo(id)
@@ -237,12 +238,12 @@ func TestOrderStateTableAndTotal(t *testing.T) {
 	orderDaoInitDB(t)
 	id := orderDaoCreate(t, "D-STATE-0001", 1)
 
-	status, payStatus, err := GetOrderState(id)
+	state, err := GetOrderState(id)
 	if err != nil {
 		t.Fatalf("查询订单状态失败: %v", err)
 	}
-	if status != 1 || payStatus != 0 {
-		t.Fatalf("订单状态异常: status=%d pay=%d", status, payStatus)
+	if state.OrderStatus != 1 || state.PayStatus != 0 {
+		t.Fatalf("订单状态异常: status=%d pay=%d", state.OrderStatus, state.PayStatus)
 	}
 
 	tableID, err := GetOrderTable(id)
@@ -265,12 +266,12 @@ func TestOrderStateTableAndTotal(t *testing.T) {
 
 	// 事务版状态读取。
 	if err := store.WithTx(func(tx *sql.Tx) error {
-		s, p, c, err := GetOrderStateTx(tx, id)
+		cur, err := GetOrderStateTx(tx, id)
 		if err != nil {
 			return err
 		}
-		if s != 1 || p != 0 || c != 4 {
-			t.Fatalf("事务内订单状态异常: %+v", []int{s, p, c})
+		if cur.OrderStatus != 1 || cur.PayStatus != 0 || cur.PersonCount != 4 {
+			t.Fatalf("事务内订单状态异常: %+v", cur)
 		}
 		return nil
 	}); err != nil {
@@ -361,12 +362,12 @@ func TestOrderStatusTransitionsTx(t *testing.T) {
 		t.Fatalf("订单状态流转失败: %v", err)
 	}
 
-	s, p, err := GetOrderState(id)
+	st, err := GetOrderState(id)
 	if err != nil {
 		t.Fatalf("查询订单状态失败: %v", err)
 	}
-	if s != 4 || p != 0 {
-		t.Fatalf("归档后状态应为 4, got status=%d pay=%d", s, p)
+	if st.OrderStatus != 4 || st.PayStatus != 0 {
+		t.Fatalf("归档后状态应为 4, got status=%d pay=%d", st.OrderStatus, st.PayStatus)
 	}
 
 	// 取消未支付订单(新建另一笔)。
@@ -572,6 +573,91 @@ func TestUpdateOrderStatusTxWritesFinishTime(t *testing.T) {
 	}
 	if o.FinishTime == nil || *o.FinishTime == "" {
 		t.Fatalf("置为已完成应写 finish_time, got %v", o.FinishTime)
+	}
+}
+
+// TestDiningTimePersisted 用餐起止时间必须落库:
+// 下单写 meal_start_time,结账/归档/取消写 meal_end_time,撤销结算时与
+// finish_time 一并清空 —— 报表不再靠 create_time/finish_time 现算。
+func TestDiningTimePersisted(t *testing.T) {
+	orderDaoInitDB(t)
+	// 下单:写入用餐开始时间。
+	id := orderDaoCreate(t, "D-DINE-1", 1)
+	o, err := GetOrderByID(id)
+	if err != nil {
+		t.Fatalf("回读订单失败: %v", err)
+	}
+	if o.MealStartTime == nil || *o.MealStartTime == "" {
+		t.Fatalf("下单应写 meal_start_time, got %v", o.MealStartTime)
+	}
+	if *o.MealStartTime != o.CreateTime {
+		t.Fatalf("用餐开始时间应与 create_time 一致, got %q vs %q", *o.MealStartTime, o.CreateTime)
+	}
+	if o.MealEndTime != nil {
+		t.Fatalf("进行中订单的 meal_end_time 应为 NULL, got %v", *o.MealEndTime)
+	}
+
+	// 结账(走到终态 4):写入用餐结束时间。
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		_, err := SettleOrderTx(tx, id, SettleOrderParams{
+			SettleType: "normal", PayType: "现金", Operator: "boss", Now: store.Now(), PreStatus: 1, PaidCents: 2900,
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("结账失败: %v", err)
+	}
+	o, err = GetOrderByID(id)
+	if err != nil {
+		t.Fatalf("回读订单失败: %v", err)
+	}
+	if o.MealEndTime == nil || *o.MealEndTime == "" {
+		t.Fatal("结账应写 meal_end_time")
+	}
+
+	// 撤销结算:订单回到进行中,结束时间必须与 finish_time 同步清空。
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		_, err := CancelSettleTx(tx, id, "normal", "误结账", 3, "boss", store.Now())
+		return err
+	}); err != nil {
+		t.Fatalf("撤销结算失败: %v", err)
+	}
+	o, err = GetOrderByID(id)
+	if err != nil {
+		t.Fatalf("回读订单失败: %v", err)
+	}
+	if o.MealEndTime != nil {
+		t.Fatalf("撤销结算后 meal_end_time 应清空, got %q", *o.MealEndTime)
+	}
+
+	// 归档 / 取消两条终止路径同样要留结束时间。
+	id2 := orderDaoCreate(t, "D-DINE-2", 1)
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		_, err := FinishOrderTx(tx, id2, "boss", 1)
+		return err
+	}); err != nil {
+		t.Fatalf("归档失败: %v", err)
+	}
+	o2, err := GetOrderByID(id2)
+	if err != nil {
+		t.Fatalf("回读订单失败: %v", err)
+	}
+	if o2.MealEndTime == nil || *o2.MealEndTime == "" {
+		t.Fatal("归档应写 meal_end_time")
+	}
+
+	id3 := orderDaoCreate(t, "D-DINE-3", 1)
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		_, err := CancelOrderTx(tx, id3, "客人取消", "boss", 1)
+		return err
+	}); err != nil {
+		t.Fatalf("取消失败: %v", err)
+	}
+	o3, err := GetOrderByID(id3)
+	if err != nil {
+		t.Fatalf("回读订单失败: %v", err)
+	}
+	if o3.MealEndTime == nil || *o3.MealEndTime == "" {
+		t.Fatal("取消应写 meal_end_time(这段占用到此为止)")
 	}
 }
 

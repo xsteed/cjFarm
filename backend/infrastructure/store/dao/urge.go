@@ -21,7 +21,7 @@ func ScanUrge(rows interface{ Scan(...interface{}) error }) (po.OrderUrge, error
 	var u po.OrderUrge
 	var handleTime sql.NullString
 	err := rows.Scan(&u.UrgeID, &u.OrderID, &u.OrderNo, &u.TableID, &u.TableNo, &u.TableName,
-		&u.UrgeType, &u.Status, &u.Remark, &u.CreateTime, &handleTime, &u.HandleBy)
+		&u.UrgeType, &u.Status, &u.Remark, TS(&u.CreateTime), TS(&handleTime), &u.HandleBy)
 	if err != nil {
 		return u, err
 	}
@@ -79,9 +79,9 @@ func HasPendingUrge(orderID int) bool {
 // HandleUrgesByOrder 把某订单下所有待处理催菜标记为已处理。
 // 与订单状态流转配合:上菜(状态3)或完成时自动消解,避免残留陈旧催菜。
 func HandleUrgesByOrder(orderID int, operator string) {
-	store.DB.Exec(`UPDATE tb_order_urge SET status=?, handle_time=?, handle_by=?
+	store.DB.Exec(`UPDATE tb_order_urge SET status=?, handle_time=?, handle_by=?, update_time=?
 		WHERE order_id=? AND status=?`,
-		po.UrgeStatusHandled, store.Now(), operator, orderID, po.UrgeStatusPending)
+		po.UrgeStatusHandled, store.Now(), operator, store.Now(), orderID, po.UrgeStatusPending)
 }
 
 // UrgeQuery 催菜列表筛选条件;零值字段表示不限。
@@ -130,8 +130,8 @@ func ListUrges(q UrgeQuery, pageNum, pageSize int) (total int, list []po.OrderUr
 
 // HandleUrge 处理单条待处理催菜,返回影响行数。
 func HandleUrge(urgeID int, operator string) (int64, error) {
-	res, err := store.DB.Exec(`UPDATE tb_order_urge SET status=?, handle_time=?, handle_by=? WHERE urge_id=? AND status=?`,
-		po.UrgeStatusHandled, store.Now(), operator, urgeID, po.UrgeStatusPending)
+	res, err := store.DB.Exec(`UPDATE tb_order_urge SET status=?, handle_time=?, handle_by=?, update_time=? WHERE urge_id=? AND status=?`,
+		po.UrgeStatusHandled, store.Now(), operator, store.Now(), urgeID, po.UrgeStatusPending)
 	if err != nil {
 		return 0, err
 	}

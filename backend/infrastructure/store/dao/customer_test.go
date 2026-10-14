@@ -63,6 +63,42 @@ func TestCustomerInsertAndGet(t *testing.T) {
 	}
 }
 
+// TestCustomerTimestampColumns 通用记录时间的填写口径:
+// create_time 仅 INSERT 时写一次,update_time 仅 UPDATE 时推进 —— INSERT 时为 NULL。
+// 「从未被改过」与「刚创建」因此可区分,插入时把两者填成同一时刻就丢掉了这份信息。
+func TestCustomerTimestampColumns(t *testing.T) {
+	custDaoInitDB(t)
+	id, err := InsertCustomer(po.Customer{OpenID: "openid-T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ct, ut *string
+	if err := store.DB.QueryRow(`SELECT create_time, update_time FROM tb_customer WHERE customer_id=?`, id).Scan(&ct, &ut); err != nil {
+		t.Fatalf("读取时间列失败: %v", err)
+	}
+	if ct == nil || *ct == "" {
+		t.Fatal("INSERT 应写 create_time")
+	}
+	if ut != nil {
+		t.Fatalf("INSERT 不应写 update_time, got %q", *ut)
+	}
+
+	// UPDATE 后:update_time 被推进,create_time 必须原地不动。
+	if err := UpdateCustomerProfile(int(id), "改名", "http://x.png"); err != nil {
+		t.Fatal(err)
+	}
+	var ct2, ut2 *string
+	if err := store.DB.QueryRow(`SELECT create_time, update_time FROM tb_customer WHERE customer_id=?`, id).Scan(&ct2, &ut2); err != nil {
+		t.Fatalf("读取时间列失败: %v", err)
+	}
+	if ct2 == nil || *ct2 != *ct {
+		t.Fatalf("UPDATE 不得改动 create_time, got %v(原 %v)", ct2, *ct)
+	}
+	if ut2 == nil || *ut2 == "" {
+		t.Fatal("UPDATE 应推进 update_time")
+	}
+}
+
 // TestCustomerUpdateProfile 完善资料(昵称/头像)生效。
 func TestCustomerUpdateProfile(t *testing.T) {
 	custDaoInitDB(t)

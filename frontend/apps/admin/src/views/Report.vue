@@ -36,7 +36,7 @@
           @click="exportCsv"
         >
           <template #icon>
-            <FileIcon />
+            <DownloadIcon />
           </template>
           导出明细
         </Button>
@@ -75,6 +75,7 @@
         :mix="mixRows"
         :mix-total="mixTotal"
       />
+      <DiningDurationChart :stats="durationStats" />
       <MonthlyChart :rows="monthlyRows" />
       <DishRankChart
         v-model:sort="rankSort"
@@ -101,6 +102,7 @@ import {
 } from '@dining/api';
 import type {
   DailyTrendRow,
+  DiningDurationStats,
   DishRankRow,
   HourlyRow,
   MonthlyTrendRow,
@@ -119,6 +121,7 @@ import TrendChart from './report/TrendChart.vue';
 import HourlyMixCharts from './report/HourlyMixCharts.vue';
 import MonthlyChart from './report/MonthlyChart.vue';
 import DishRankChart from './report/DishRankChart.vue';
+import DiningDurationChart from './report/DiningDurationChart.vue';
 
 // ---------- 日期工具 ----------
 function fmtDay(d: Date): string {
@@ -138,6 +141,7 @@ const hourlyRows = ref<HourlyRow[]>([]);
 const mixRows = ref<SettleMixRow[]>([]);
 const monthlyRows = ref<MonthlyTrendRow[]>([]);
 const rankRows = ref<DishRankRow[]>([]);
+const durationStats = ref<DiningDurationStats>({});
 const loading = ref(false);
 const updatedAt = ref('');
 const rankSort = ref<'qty' | 'amount'>('qty');
@@ -212,14 +216,15 @@ const mixTotal = computed(() => (mixRows.value || []).reduce((sum, m) => sum + N
 async function loadAll(): Promise<void> {
   loading.value = true;
   try {
-    // 六个接口互不依赖，并行拉取；任一失败由 axios 拦截器统一提示
-    const [s, d, h, m, mo, r] = await Promise.all([
+    // 各接口互不依赖，并行拉取；任一失败由 axios 拦截器统一提示
+    const [s, d, h, m, mo, r, du] = await Promise.all([
       getReportSummary(),
       getDailyTrend(rangeParams()),
       getHourlyReport(rangeParams()),
       getSettleMix(rangeParams()),
       getMonthlyTrend(),
-      getDishRank({ limit: 10, sort: rankSort.value })
+      getDishRank({ limit: 10, sort: rankSort.value }),
+      getDiningDuration(rangeParams())
     ]);
     summary.value = s || {};
     dailyRows.value = d || [];
@@ -227,6 +232,7 @@ async function loadAll(): Promise<void> {
     mixRows.value = m || [];
     monthlyRows.value = mo || [];
     rankRows.value = r || [];
+    durationStats.value = du || {};
     updatedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false });
   } catch {
     // 错误提示已由请求层统一处理，这里只需保证 loading 收尾
@@ -235,17 +241,19 @@ async function loadAll(): Promise<void> {
   }
 }
 
-/** 切换区间只重取三个「区间相关」的接口，汇总与月度、排行不受影响。 */
+/** 切换区间只重取「区间相关」的接口，汇总与月度、排行不受影响。 */
 async function loadRange(): Promise<void> {
   try {
-    const [d, h, m] = await Promise.all([
+    const [d, h, m, du] = await Promise.all([
       getDailyTrend(rangeParams()),
       getHourlyReport(rangeParams()),
-      getSettleMix(rangeParams())
+      getSettleMix(rangeParams()),
+      getDiningDuration(rangeParams())
     ]);
     dailyRows.value = d || [];
     hourlyRows.value = h || [];
     mixRows.value = m || [];
+    durationStats.value = du || {};
   } catch {
     /* 同上 */
   }

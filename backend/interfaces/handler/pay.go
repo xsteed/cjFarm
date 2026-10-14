@@ -196,7 +196,7 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 		// 非成功通知(如关闭/退款通知)无需处理订单支付状态,直接应答成功。
 		return true
 	}
-	orderID, _, _, totalCents, err := service.GetOrderAmount(notify.OrderNo)
+	o, err := service.GetOrderAmount(notify.OrderNo)
 	if err != nil {
 		// 必须区分「订单不存在」与「DB 瞬时故障」:
 		// 前者是脏数据/历史回调,应答成功避免平台无谓重试;
@@ -208,6 +208,7 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 		logger.CtxErrorf(ctx, "[pay][告警] 回调查询订单失败,应答失败待渠道重试 订单%s: %v", notify.OrderNo, err)
 		return false
 	}
+	orderID, totalCents := o.OrderID, o.TotalAmount
 	// 金额一致性:回调金额必须与订单金额一致,否则挂起人工处理,绝不自动入账。
 	// 同时落一条退款流水标记(状态=失败、原因写明差额),让「钱收到了但入不了账」
 	// 在退款记录里可见、可追 —— 只留日志的话,事后根本发现不了顾客多付/少付。
@@ -300,11 +301,12 @@ func autoRefundDuplicatePayment(ctx context.Context, orderID int, orderNo, chann
 // 需 mock 渠道不易走 handler 级测试,抽成独立函数便于单测钉住「少付入账」防线。
 func settleQueryResult(ctx context.Context, orderID int, orderNo, channel string, q pay.PayQuery) {
 	// 补单前重读订单最新应收金额,覆盖查单请求发出到返回之间的改价窗口。
-	_, _, _, totalCents, err := service.GetOrderAmount(orderNo)
+	o, err := service.GetOrderAmount(orderNo)
 	if err != nil {
 		logger.CtxWarnf(ctx, "[pay][告警] 主动查单确认已支付但读取订单金额失败,暂不补单 订单%s: %v", orderNo, err)
 		return
 	}
+	totalCents := o.TotalAmount
 	// 金额不一致(含 <=0,如支付宝金额解析失败返回 0)绝不入账,只留痕人工核对,
 	// 否则「生成旧码→加菜涨价→用旧码付旧金额→前端轮询补单」会造成少付入账。
 	if q.PaidAmount <= 0 || q.PaidAmount != totalCents {
@@ -347,7 +349,7 @@ func PayQuery(c *gin.Context) {
 	// 带上 requestID 才能区分「哪一次轮询走到了补单分支」。
 	ctx := c.Request.Context()
 	// 优先返回订单当前支付状态。
-	orderID, payStatus, _, _, err := service.GetOrderAmount(orderNo)
+	o, err := service.GetOrderAmount(orderNo)
 	if err != nil {
 		// 不能只回「订单不存在」:数据库故障与真的没这个订单表现一样,
 		// 但前者是全站故障、后者是用户输错单号,排查方向完全不同。
@@ -355,6 +357,7 @@ func PayQuery(c *gin.Context) {
 		fail(c, "订单不存在")
 		return
 	}
+	orderID, payStatus := o.OrderID, o.PayStatus
 	// 未支付时尝试主动查单补单。
 	if payStatus == 0 {
 		// 找出该订单最近的支付渠道。
@@ -378,10 +381,10 @@ func PayQuery(c *gin.Context) {
 				}
 				if qErr == nil && q.Success {
 					settleQueryResult(ctx, orderID, orderNo, ch, q)
-					if _, s, _, _, e2 := service.GetOrderAmount(orderNo); e2 != nil {
+					if cur, e2 := service.GetOrderAmount(orderNo); e2 != nil {
 						logger.CtxWarnf(ctx, "[pay] 补单后重读订单支付状态失败,返回补单前状态 订单%s: %v", orderNo, e2)
 					} else {
-						payStatus = s
+						payStatus = cur.PayStatus
 					}
 				}
 			}
@@ -403,21 +406,23 @@ func PayRefund(c *gin.Context) {
 		return
 	}
 	// 查询订单支付信息。
-	orderNo, payStatus, totalCents, err := service.GetRefundOrderInfo(p.OrderID)
+	o, err := service.GetRefundOrderInfo(p.OrderID)
 	if err != nil {
 		fail(c, "订单不存在")
 		return
 	}
+	orderNo, payStatus, totalCents := o.OrderNo, o.PayStatus, o.TotalAmount
 	if payStatus != 1 {
 		fail(c, "订单未支付，无法在线退款")
 		return
 	}
 	// 找支付流水:已支付或(部分)已退款的流水都可用于继续退款,避免部分退款后剩余金额退不掉。
-	paymentID, channel, err := service.LastPaidPayment(orderNo)
-	if err != nil {
+	flow, flowErr := service.LastPaidPayment(orderNo)
+	if flowErr != nil {
 		fail(c, "未找到在线支付流水，该订单为线下收款，请人工退款")
 		return
 	}
+	paymentID, channel := flow.PaymentID, flow.Channel
 	provider, err := pay.Get(channel)
 	if err != nil || !provider.Enabled() {
 		fail(c, "支付渠道未配置，无法在线退款")
@@ -640,8 +645,8 @@ func closePendingPayments(ctx context.Context, orderNo, exceptChannel string) {
 		}
 		// 渠道已关单但本地流水仍标「待支付」:关单动作会在每次查单时被重复执行,
 		// 且前端可能据此继续展示收款码。
-		if err := service.MarkPaymentClosed(p.ID); err != nil {
-			log.Errorf("[pay][告警] 渠道已关单但支付流水置已关闭失败,请人工核对 流水%d: %v", p.ID, err)
+		if err := service.MarkPaymentClosed(p.PaymentID); err != nil {
+			log.Errorf("[pay][告警] 渠道已关单但支付流水置已关闭失败,请人工核对 流水%d: %v", p.PaymentID, err)
 		}
 	}
 }

@@ -294,8 +294,8 @@ func TestSettleQueryResultAmountGuard(t *testing.T) {
 
 	// 少付(9000 分):拒绝入账,留痕一条失败退款,订单保持未支付。
 	settleQueryResult(context.Background(), id, "PAYQSET1", "wxpay", pay.PayQuery{Success: true, PaidAmount: 9000, ChannelTradeNo: "TXN9000"})
-	if _, ps, _, _, _ := service.GetOrderAmount("PAYQSET1"); ps != 0 {
-		t.Fatalf("少付补单不应入账, payStatus=%d", ps)
+	if o, _ := service.GetOrderAmount("PAYQSET1"); o.PayStatus != 0 {
+		t.Fatalf("少付补单不应入账, payStatus=%d", o.PayStatus)
 	}
 	if n := payCountRefunds(t, "PAYQSET1"); n != 1 {
 		t.Fatalf("少付应留痕 1 条失败退款, got %d", n)
@@ -303,8 +303,8 @@ func TestSettleQueryResultAmountGuard(t *testing.T) {
 
 	// 0 元(如支付宝金额解析失败):拒绝入账并留痕。
 	settleQueryResult(context.Background(), id, "PAYQSET1", "wxpay", pay.PayQuery{Success: true, PaidAmount: 0, ChannelTradeNo: "TXN0"})
-	if _, ps, _, _, _ := service.GetOrderAmount("PAYQSET1"); ps != 0 {
-		t.Fatalf("0 元补单不应入账, payStatus=%d", ps)
+	if o, _ := service.GetOrderAmount("PAYQSET1"); o.PayStatus != 0 {
+		t.Fatalf("0 元补单不应入账, payStatus=%d", o.PayStatus)
 	}
 	if n := payCountRefunds(t, "PAYQSET1"); n != 2 {
 		t.Fatalf("0 元应再留痕 1 条失败退款, got %d", n)
@@ -312,8 +312,8 @@ func TestSettleQueryResultAmountGuard(t *testing.T) {
 
 	// 金额一致(10000 分):正常补单入账,不再新增留痕。
 	settleQueryResult(context.Background(), id, "PAYQSET1", "wxpay", pay.PayQuery{Success: true, PaidAmount: 10000, ChannelTradeNo: "TXN10000"})
-	if _, ps, _, _, _ := service.GetOrderAmount("PAYQSET1"); ps != 1 {
-		t.Fatalf("金额一致应补单入账, payStatus=%d", ps)
+	if o, _ := service.GetOrderAmount("PAYQSET1"); o.PayStatus != 1 {
+		t.Fatalf("金额一致应补单入账, payStatus=%d", o.PayStatus)
 	}
 	if n := payCountRefunds(t, "PAYQSET1"); n != 2 {
 		t.Fatalf("金额一致补单不应新增留痕, got %d", n)

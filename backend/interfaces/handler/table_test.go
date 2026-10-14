@@ -199,12 +199,12 @@ func TestTableLock(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("设置桌台状态应返回 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	lockStatus, remark, err := dao.GetTableLock(id)
+	lock, err := dao.GetTableByID(id)
 	if err != nil {
 		t.Fatalf("读取桌台状态失败: %v", err)
 	}
-	if lockStatus != po.TableLockReserved || remark != "李女士 19:00" {
-		t.Fatalf("桌台状态未生效: status=%d remark=%q", lockStatus, remark)
+	if lock.LockStatus != po.TableLockReserved || lock.LockRemark != "李女士 19:00" {
+		t.Fatalf("桌台状态未生效: status=%d remark=%q", lock.LockStatus, lock.LockRemark)
 	}
 
 	// 恢复「正常」。
@@ -213,8 +213,8 @@ func TestTableLock(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("恢复桌台应返回 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	if lockStatus, _, _ := dao.GetTableLock(id); lockStatus != po.TableLockNormal {
-		t.Fatalf("恢复正常后状态应为 0, got %d", lockStatus)
+	if lock, _ := dao.GetTableByID(id); lock.LockStatus != po.TableLockNormal {
+		t.Fatalf("恢复正常后状态应为 0, got %d", lock.LockStatus)
 	}
 }
 

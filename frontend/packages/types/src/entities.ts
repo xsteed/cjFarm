@@ -32,6 +32,10 @@ export interface TableInfo extends Extensible {
   currentOrder?: OrderSummary | OrderDetail | null;
   // 顾客扫码时,该桌「已付款但出餐未完成」的订单,用于查看出餐进度。
   servingOrders?: OrderSummary[] | null;
+  // 用餐耗时(桌台列表接口实时计算,不落库):openTime 该桌最早一笔进行中订单的
+  // 开台时间;diningMinutes 距现在的分钟数。空闲桌台两个字段都不出现。
+  openTime?: string;
+  diningMinutes?: number;
 }
 
 // 桌台小程序码:图片由微信生成(后端换 access_token 取回),前端只负责展示与排版。
@@ -359,6 +363,21 @@ export interface SettleMixRow extends Extensible {
   amount?: number;
   paidAmount?: number;
   orderCount?: number;
+}
+
+// 用户用餐时长分析(报表页):已完成订单按完成时间归属,时长 = 完成时间 - 下单时间。
+export interface DiningDurationBucket {
+  label?: string;
+  count?: number;
+}
+
+export interface DiningDurationStats extends Extensible {
+  orderCount?: number; // 参与统计的已完成订单数
+  avgMinutes?: number; // 平均用餐时长(分钟)
+  medianMinutes?: number; // 中位时长(分钟)
+  maxMinutes?: number; // 最长一单(分钟)
+  guestCount?: number; // 就餐人次合计
+  buckets?: DiningDurationBucket[]; // 时长分布(固定 5 档)
 }
 
 export interface PublicConfig extends Extensible {

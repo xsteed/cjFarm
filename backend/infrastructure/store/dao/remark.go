@@ -18,7 +18,7 @@ func ListRemarks() ([]po.Remark, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var r po.Remark
-		rows.Scan(&r.RemarkID, &r.OptionName, &r.SortOrder, &r.DelFlag, &r.CreateTime, &r.UpdateTime)
+		rows.Scan(&r.RemarkID, &r.OptionName, &r.SortOrder, &r.DelFlag, TS(&r.CreateTime), TS(&r.UpdateTime))
 		list = append(list, r)
 	}
 	return list, nil

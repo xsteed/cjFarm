@@ -43,7 +43,7 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('promotion_threshold', '
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee', '6');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('seat_fee_enabled', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_logo', '');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农场 · 柴火农家土菜');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_hours', '4');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_release_enabled', '0');

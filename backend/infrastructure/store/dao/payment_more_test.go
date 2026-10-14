@@ -65,14 +65,14 @@ func TestSvcPayGetOrderAmount(t *testing.T) {
 	svcPayInit(t)
 	svcPaySeedOrder(t, "P2", 1, 3, 8800, 8800)
 
-	orderID, payStatus, orderStatus, totalCents, err := GetOrderAmount("P2")
+	o, err := GetOrderAmount("P2")
 	if err != nil {
 		t.Fatalf("GetOrderAmount 失败: %v", err)
 	}
-	if orderID == 0 || payStatus != 1 || orderStatus != 3 || totalCents != 8800 {
-		t.Fatalf("结果异常: orderID=%d payStatus=%d orderStatus=%d total=%d", orderID, payStatus, orderStatus, totalCents)
+	if o.OrderID == 0 || o.PayStatus != 1 || o.OrderStatus != 3 || o.TotalAmount != 8800 {
+		t.Fatalf("结果异常: orderID=%d payStatus=%d orderStatus=%d total=%d", o.OrderID, o.PayStatus, o.OrderStatus, o.TotalAmount)
 	}
-	if _, _, _, _, err := GetOrderAmount("不存在的订单"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := GetOrderAmount("不存在的订单"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("不存在订单应返回 sql.ErrNoRows, got %v", err)
 	}
 }
@@ -94,14 +94,14 @@ func TestSvcPayGetRefundOrderInfo(t *testing.T) {
 	svcPayInit(t)
 	id := svcPaySeedOrder(t, "P4", 1, 4, 6600, 6600)
 
-	orderNo, payStatus, totalCents, err := GetRefundOrderInfo(id)
+	o, err := GetRefundOrderInfo(id)
 	if err != nil {
 		t.Fatalf("GetRefundOrderInfo 失败: %v", err)
 	}
-	if orderNo != "P4" || payStatus != 1 || totalCents != 6600 {
-		t.Fatalf("结果异常: orderNo=%q payStatus=%d total=%d", orderNo, payStatus, totalCents)
+	if o.OrderNo != "P4" || o.PayStatus != 1 || o.TotalAmount != 6600 {
+		t.Fatalf("结果异常: orderNo=%q payStatus=%d total=%d", o.OrderNo, o.PayStatus, o.TotalAmount)
 	}
-	if _, _, _, err := GetRefundOrderInfo(999999); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := GetRefundOrderInfo(999999); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("不存在订单应返回 sql.ErrNoRows, got %v", err)
 	}
 }
@@ -112,19 +112,19 @@ func TestSvcPayLastPaidPayment(t *testing.T) {
 	svcPaySeedPayment(t, "P5", "wxpay", "T-paid", PayStatusPaid, 2000)
 	refundedID := svcPaySeedPayment(t, "P5", "alipay", "T-refunded", PayStatusRefunded, 3000)
 
-	id, channel, err := LastPaidPayment("P5")
+	flow, err := LastPaidPayment("P5")
 	if err != nil {
 		t.Fatalf("LastPaidPayment 失败: %v", err)
 	}
-	if id != refundedID || channel != "alipay" {
-		t.Fatalf("应返回最近已支付/已退款流水, got id=%d channel=%q(期望 id=%d alipay)", id, channel, refundedID)
+	if flow.PaymentID != refundedID || flow.Channel != "alipay" {
+		t.Fatalf("应返回最近已支付/已退款流水, got id=%d channel=%q(期望 id=%d alipay)", flow.PaymentID, flow.Channel, refundedID)
 	}
 }
 
 func TestSvcPayLastPaidPaymentOnlyPending(t *testing.T) {
 	svcPayInit(t)
 	svcPaySeedPayment(t, "P6", "wxpay", "T-only-pending", PayStatusPending, 1000)
-	if _, _, err := LastPaidPayment("P6"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := LastPaidPayment("P6"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("仅待支付流水应返回 sql.ErrNoRows, got %v", err)
 	}
 }

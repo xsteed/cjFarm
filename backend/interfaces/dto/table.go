@@ -22,6 +22,11 @@ type Table struct {
 	UpdateTime string  `json:"updateTime"`
 	Remark     *string `json:"remark"`
 	TableCode  string  `json:"tableCode"`
+	// ---- 展示用,不落库(ToPO 不搬运这两个字段) ----
+	// 用餐耗时:该桌最早一笔进行中订单的开台时间与距现在的分钟数,由 TableList
+	// 实时计算(见 service.tableDiningByTable);空闲桌台两值均为零值。
+	OpenTime      string `json:"openTime,omitempty"`
+	DiningMinutes int    `json:"diningMinutes,omitempty"`
 }
 
 // FromTable 将持久化对象转为 API 出参。

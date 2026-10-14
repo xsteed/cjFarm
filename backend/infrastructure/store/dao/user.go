@@ -197,9 +197,9 @@ const userCols = `u.user_id, u.username, COALESCE(u.real_name,''), COALESCE(u.ro
 func scanUser(rows *sql.Rows) (*UserRow, error) {
 	var u UserRow
 	err := rows.Scan(&u.UserID, &u.Username, &u.RealName, &u.RoleID, &u.Phone, &u.Status,
-		&u.LastLoginTime, &u.LastLoginIP, &u.LoginCount,
-		&u.PwdUpdateTime, &u.CreateBy, &u.CreateTime,
-		&u.UpdateBy, &u.UpdateTime, &u.Remark,
+		TS(&u.LastLoginTime), &u.LastLoginIP, &u.LoginCount,
+		TS(&u.PwdUpdateTime), &u.CreateBy, TS(&u.CreateTime),
+		&u.UpdateBy, TS(&u.UpdateTime), &u.Remark,
 		&u.RoleKey, &u.RoleName)
 	if err != nil {
 		return nil, err
@@ -282,21 +282,29 @@ func InsertUser(u po.User, passwordHash, operatorName string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// LoadUserGuardTx 读取「防锁死校验」所需的员工角色与当前状态(仅填充 po.User 的 RoleID/Status)。
+// 改资料 / 启停用 / 删除三处共用同一条查询,避免同一份校验在三处漂移。
+func LoadUserGuardTx(tx *sql.Tx, userID int) (po.User, error) {
+	var u po.User
+	err := tx.QueryRow(`SELECT COALESCE(role_id,0), status FROM tb_user
+		WHERE user_id=? AND del_flag='0'`, userID).Scan(&u.RoleID, &u.Status)
+	return u, err
+}
+
 // UpdateUserProfile 修改员工资料(姓名/角色/手机/备注)。
 //
 // 防锁死校验:不允许改自己的角色;不允许把「最后一个启用的超级管理员」改成别的角色。
 func UpdateUserProfile(u po.User, operatorID int, operatorName string) error {
 	return store.WithTx(func(tx *sql.Tx) error {
-		var oldRoleID, oldStatus int
-		if err := tx.QueryRow(`SELECT COALESCE(role_id,0), status FROM tb_user
-			WHERE user_id=? AND del_flag='0'`, u.UserID).Scan(&oldRoleID, &oldStatus); err != nil {
+		old, err := LoadUserGuardTx(tx, u.UserID)
+		if err != nil {
 			return ruleErr("账号不存在")
 		}
-		if u.UserID == operatorID && u.RoleID != oldRoleID {
+		if u.UserID == operatorID && u.RoleID != old.RoleID {
 			return ruleErr("不能修改自己的角色")
 		}
 		// 若把「启用中的超级管理员」移出 admin 角色,需保证还有别人在管。
-		if oldRoleID != u.RoleID && oldStatus == po.UserStatusEnabled && isAdminRoleID(oldRoleID) {
+		if old.RoleID != u.RoleID && old.Status == po.UserStatusEnabled && isAdminRoleID(old.RoleID) {
 			// 先锁目标用户行再计数:避免「查数量→改行」之间的 check-then-act 竞态(见 TouchUserTx)。
 			if err := TouchUserTx(tx, u.UserID); err != nil {
 				return err
@@ -309,7 +317,7 @@ func UpdateUserProfile(u po.User, operatorID int, operatorName string) error {
 				return ruleErr("系统必须保留至少一个启用的超级管理员")
 			}
 		}
-		_, err := tx.Exec(`UPDATE tb_user SET real_name=?, role_id=?, phone=?, remark=?, update_by=?, update_time=?
+		_, err = tx.Exec(`UPDATE tb_user SET real_name=?, role_id=?, phone=?, remark=?, update_by=?, update_time=?
 			WHERE user_id=? AND del_flag='0'`,
 			u.RealName, u.RoleID, u.Phone, u.Remark, operatorName, store.Now(), u.UserID)
 		return err
@@ -341,12 +349,11 @@ func SetUserStatus(userID, status, operatorID int, operatorName string) error {
 		return ruleErr("不能停用当前登录账号")
 	}
 	return store.WithTx(func(tx *sql.Tx) error {
-		var roleID, oldStatus int
-		if err := tx.QueryRow(`SELECT COALESCE(role_id,0), status FROM tb_user
-			WHERE user_id=? AND del_flag='0'`, userID).Scan(&roleID, &oldStatus); err != nil {
+		old, err := LoadUserGuardTx(tx, userID)
+		if err != nil {
 			return ruleErr("账号不存在")
 		}
-		if status == po.UserStatusDisabled && oldStatus == po.UserStatusEnabled && isAdminRoleID(roleID) {
+		if status == po.UserStatusDisabled && old.Status == po.UserStatusEnabled && isAdminRoleID(old.RoleID) {
 			// 先锁目标用户行再计数:避免「查数量→停用」之间的 check-then-act 竞态(见 TouchUserTx)。
 			if err := TouchUserTx(tx, userID); err != nil {
 				return err
@@ -359,7 +366,7 @@ func SetUserStatus(userID, status, operatorID int, operatorName string) error {
 				return ruleErr("系统必须保留至少一个启用的超级管理员,无法停用该账号")
 			}
 		}
-		_, err := tx.Exec(`UPDATE tb_user SET status=?, update_by=?, update_time=? WHERE user_id=? AND del_flag='0'`,
+		_, err = tx.Exec(`UPDATE tb_user SET status=?, update_by=?, update_time=? WHERE user_id=? AND del_flag='0'`,
 			status, operatorName, store.Now(), userID)
 		if err != nil {
 			return err
@@ -381,12 +388,11 @@ func SoftDeleteUser(userID, operatorID int, operatorName string) error {
 		return ruleErr("不能删除当前登录账号")
 	}
 	return store.WithTx(func(tx *sql.Tx) error {
-		var roleID, status int
-		if err := tx.QueryRow(`SELECT COALESCE(role_id,0), status FROM tb_user
-			WHERE user_id=? AND del_flag='0'`, userID).Scan(&roleID, &status); err != nil {
+		old, err := LoadUserGuardTx(tx, userID)
+		if err != nil {
 			return ruleErr("账号不存在")
 		}
-		if status == po.UserStatusEnabled && isAdminRoleID(roleID) {
+		if old.Status == po.UserStatusEnabled && isAdminRoleID(old.RoleID) {
 			// 先锁目标用户行再计数:避免「查数量→删除」之间的 check-then-act 竞态(见 TouchUserTx)。
 			if err := TouchUserTx(tx, userID); err != nil {
 				return err
@@ -399,7 +405,7 @@ func SoftDeleteUser(userID, operatorID int, operatorName string) error {
 				return ruleErr("系统必须保留至少一个启用的超级管理员,无法删除该账号")
 			}
 		}
-		_, err := tx.Exec(`UPDATE tb_user SET del_flag='1', update_by=?, update_time=? WHERE user_id=?`,
+		_, err = tx.Exec(`UPDATE tb_user SET del_flag='1', update_by=?, update_time=? WHERE user_id=?`,
 			operatorName, store.Now(), userID)
 		if err != nil {
 			return err
@@ -431,7 +437,7 @@ const roleCols = `role_id, role_key, role_name, COALESCE(perms,''), COALESCE(dat
 func scanRole(rows *sql.Rows) (*RoleRow, error) {
 	var r RoleRow
 	err := rows.Scan(&r.RoleID, &r.RoleKey, &r.RoleName, &r.Perms, &r.DataScope, &r.IsBuiltin,
-		&r.SortOrder, &r.Status, &r.CreateTime, &r.UpdateTime, &r.Remark)
+		&r.SortOrder, &r.Status, TS(&r.CreateTime), TS(&r.UpdateTime), &r.Remark)
 	if err != nil {
 		return nil, err
 	}
@@ -593,6 +599,17 @@ func InsertRole(r po.Role, permList []string, operatorName string) (int64, error
 		return 0, ruleErr("角色标识【%s】已存在", key)
 	}
 	now := store.Now()
+	// idx_role_key 是全局唯一索引(含已删除行):软删除的角色行仍占用 role_key,
+	// 重建同名角色时复活原行而非插入新行,否则会撞唯一约束。
+	var revivedID int
+	if err := store.DB.QueryRow(`SELECT role_id FROM tb_role WHERE role_key=? AND del_flag='1'`, key).Scan(&revivedID); err == nil && revivedID > 0 {
+		if _, err := store.DB.Exec(`UPDATE tb_role SET role_name=?, perms=?, data_scope='all', sort_order=?, status=?, del_flag='0', update_time=?, remark=? WHERE role_id=?`,
+			r.RoleName, store.JoinPerms(permList), r.SortOrder, po.UserStatusEnabled, now, r.Remark, revivedID); err != nil {
+			return 0, err
+		}
+		logger.Infof("[role] 角色【%s】重建时复活了历史已删除行(role_id=%d)", key, revivedID)
+		return int64(revivedID), nil
+	}
 	res, err := store.DB.Exec(`INSERT INTO tb_role
 		(role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark)
 		VALUES(?,?,?,?,0,?,?, '0',?,?,?)`,

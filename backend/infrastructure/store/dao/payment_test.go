@@ -65,14 +65,14 @@ func TestRefundAfterPartialRefund(t *testing.T) {
 	if err := InsertPayment(orderNo, "wxpay", 10000, "pre"); err != nil {
 		t.Fatalf("写入流水失败: %v", err)
 	}
-	paymentID, status, _, err := GetPayment(orderNo, "wxpay")
+	flow, err := GetPayment(orderNo, "wxpay")
 	if err != nil {
 		t.Fatalf("查询流水失败: %v", err)
 	}
-	if status != PayStatusPending {
-		t.Fatalf("新流水状态=%d 期望待支付", status)
+	if flow.Status != PayStatusPending {
+		t.Fatalf("新流水状态=%d 期望待支付", flow.Status)
 	}
-	if _, err := store.DB.Exec(`UPDATE tb_payment SET status=? WHERE payment_id=?`, PayStatusRefunded, paymentID); err != nil {
+	if _, err := store.DB.Exec(`UPDATE tb_payment SET status=? WHERE payment_id=?`, PayStatusRefunded, flow.PaymentID); err != nil {
 		t.Fatalf("模拟部分退款后状态失败: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestRefundAfterPartialRefund(t *testing.T) {
 		orderNo, PayStatusPaid, PayStatusRefunded).Scan(&id); err != nil {
 		t.Fatalf("部分退款后找不到可继续退款的流水: %v", err)
 	}
-	if id != paymentID {
+	if id != flow.PaymentID {
 		t.Fatalf("匹配到错误流水: %d", id)
 	}
 }

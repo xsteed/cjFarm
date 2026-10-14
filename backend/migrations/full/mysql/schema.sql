@@ -38,19 +38,19 @@ CREATE TABLE IF NOT EXISTS tb_table (
         sort_order  INTEGER      DEFAULT 0,
         del_flag    VARCHAR(2)   DEFAULT '0',
         create_by   VARCHAR(64)  DEFAULT '',
-        create_time VARCHAR(32),
         update_by   VARCHAR(64)  DEFAULT '',
-        update_time VARCHAR(32),
         remark      VARCHAR(500),
-        table_code  VARCHAR(16)  DEFAULT ''
+        table_code  VARCHAR(16)  DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_category (
         category_id   INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         category_name VARCHAR(64) NOT NULL,
         sort_order    INTEGER     DEFAULT 0,
         del_flag      VARCHAR(2)  DEFAULT '0',
-        create_time   VARCHAR(32),
-        update_time   VARCHAR(32)
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_dish (
         dish_id     INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -64,25 +64,27 @@ CREATE TABLE IF NOT EXISTS tb_dish (
         sort_order  INTEGER      DEFAULT 0,
         del_flag    VARCHAR(2)   DEFAULT '0',
         create_by   VARCHAR(64)  DEFAULT '',
-        create_time VARCHAR(32),
         update_by   VARCHAR(64)  DEFAULT '',
-        update_time VARCHAR(32),
-        remark      VARCHAR(500)
+        remark      VARCHAR(500),
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_spec (
         spec_id   INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         dish_id   INTEGER      NOT NULL,
         spec_name VARCHAR(64)  NOT NULL,
         price     INTEGER      DEFAULT 0,
-        stock     INTEGER      DEFAULT -1
+        stock     INTEGER      DEFAULT -1,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_remark (
         remark_id   INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         option_name VARCHAR(64) NOT NULL,
         sort_order  INTEGER     DEFAULT 0,
         del_flag    VARCHAR(2)  DEFAULT '0',
-        create_time VARCHAR(32),
-        update_time VARCHAR(32)
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_printer (
         printer_id   INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -97,8 +99,8 @@ CREATE TABLE IF NOT EXISTS tb_printer (
         category_ids VARCHAR(255) DEFAULT '',
         status       INTEGER     DEFAULT 1,
         del_flag     VARCHAR(2)  DEFAULT '0',
-        create_time  VARCHAR(32),
-        update_time  VARCHAR(32)
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_print_log (
         print_id     INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -118,7 +120,8 @@ CREATE TABLE IF NOT EXISTS tb_print_log (
         trigger_by   VARCHAR(16)  DEFAULT '',
         operator     VARCHAR(64)  DEFAULT '',
         cost_ms      INTEGER      DEFAULT 0,
-        create_time  VARCHAR(32)
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_print_job (
         job_id       INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -139,12 +142,13 @@ CREATE TABLE IF NOT EXISTS tb_print_job (
         attempts     INTEGER       DEFAULT 0,
         last_error   VARCHAR(500)  DEFAULT '',
         claimed_by   VARCHAR(64)   DEFAULT '',
-        claim_time   VARCHAR(32),
-        next_try_time VARCHAR(32),
+        claim_time VARCHAR(32) DEFAULT NULL,
+        next_try_time VARCHAR(32) DEFAULT NULL,
         trigger_by   VARCHAR(16)   DEFAULT '',
         operator     VARCHAR(64)   DEFAULT '',
-        create_time  VARCHAR(32),
-        done_time    VARCHAR(32)
+        done_time VARCHAR(32) DEFAULT NULL,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_print_agent (
         agent_id    INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -153,10 +157,10 @@ CREATE TABLE IF NOT EXISTS tb_print_agent (
         token_hint  VARCHAR(8)   DEFAULT '',
         printer_ids VARCHAR(255) DEFAULT '',
         status      INTEGER      DEFAULT 1,
-        last_seen   VARCHAR(32),
+        last_seen VARCHAR(32) DEFAULT NULL,
         last_report VARCHAR(64)  DEFAULT '',
-        create_time VARCHAR(32),
-        update_time VARCHAR(32)
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_oper_log (
         log_id        INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -176,15 +180,20 @@ CREATE TABLE IF NOT EXISTS tb_oper_log (
         status        INTEGER       DEFAULT 0,
         error_msg     VARCHAR(500)  DEFAULT '',
         cost_ms       INTEGER       DEFAULT 0,
-        create_time   VARCHAR(32)
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_config (
         cfg_key   VARCHAR(64)   PRIMARY KEY,
-        cfg_value VARCHAR(4000) DEFAULT ''
+        cfg_value VARCHAR(4000) DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_day_seq (
         biz_date VARCHAR(10) PRIMARY KEY,
-        next_val INTEGER      DEFAULT 0
+        next_val INTEGER      DEFAULT 0,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_order (
         order_id        INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -200,28 +209,26 @@ CREATE TABLE IF NOT EXISTS tb_order (
         total_amount    INTEGER      DEFAULT 0,
         pay_status      INTEGER      DEFAULT 0,
         pay_type        VARCHAR(16),
-        pay_time        VARCHAR(32),
+        pay_time VARCHAR(32) DEFAULT NULL,
         transaction_id  VARCHAR(64)  DEFAULT '',
         pay_channel     VARCHAR(16)  DEFAULT '',
         refund_amount   INTEGER      DEFAULT 0,
-        refund_time     VARCHAR(32),
-        finish_time     VARCHAR(32),
+        refund_time VARCHAR(32) DEFAULT NULL,
+        finish_time VARCHAR(32) DEFAULT NULL,
         order_remark    VARCHAR(500) DEFAULT '',
         cancel_reason   VARCHAR(255) DEFAULT '',
-        begin_time      VARCHAR(32),
-        end_time        VARCHAR(32),
+        begin_time VARCHAR(32) DEFAULT NULL,
+        end_time VARCHAR(32) DEFAULT NULL,
         create_by       VARCHAR(64)  DEFAULT '',
-        create_time     VARCHAR(32),
         update_by       VARCHAR(64)  DEFAULT '',
-        update_time     VARCHAR(32),
         remark          VARCHAR(500),
         settle_type     VARCHAR(16)  DEFAULT 'normal',
-        settle_time     VARCHAR(32),
+        settle_time VARCHAR(32) DEFAULT NULL,
         settle_operator VARCHAR(64)  DEFAULT '',
         settle_remark   VARCHAR(255) DEFAULT '',
         credit_status   INTEGER      DEFAULT 0,
         credit_amount   INTEGER      DEFAULT 0,
-        credit_settle_time VARCHAR(32),
+        credit_settle_time VARCHAR(32) DEFAULT NULL,
         credit_settle_by   VARCHAR(64) DEFAULT '',
         paid_amount     INTEGER      DEFAULT 0,
         -- 赠送金额(分):赠送菜品按原价计的金额合计,不计入应收金额(让利口径)。
@@ -238,7 +245,15 @@ CREATE TABLE IF NOT EXISTS tb_order (
         -- biz_date 缺省 NULL 而非空串的用意:让「非下单写入的行」不参与下面
         -- (biz_date, pickup_no) 的唯一判定 —— 两种数据库对含 NULL 的组合都不判重复。
         biz_date   VARCHAR(10) DEFAULT NULL,
-        pickup_no  INTEGER     DEFAULT 0
+        pickup_no  INTEGER     DEFAULT 0,
+        -- 用餐起止时间(落库值):
+        --   meal_start_time —— 下单时写入(用餐开始);
+        --   meal_end_time   —— 订单走到终态(4 已完成 / 5 已取消)时写入(用餐结束)。
+        -- 默认 NULL 而非空串:区分「还没结束」与「时间未知」,回填脚本与报警 SQL 一眼明了。
+        meal_start_time VARCHAR(32) DEFAULT NULL,
+        meal_end_time VARCHAR(32) DEFAULT NULL,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_order_item (
         item_id   INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -257,7 +272,9 @@ CREATE TABLE IF NOT EXISTS tb_order_item (
         client_request_id VARCHAR(64) DEFAULT '',
         -- 是否赠送:0 正常计费 1 赠送(商家改单标记,amount 记 0,原价计入订单 gift_amount)。
         is_gift   INTEGER      DEFAULT 0,
-        gift_reason VARCHAR(255) DEFAULT ''
+        gift_reason VARCHAR(255) DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_order_urge (
         urge_id     INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -269,9 +286,10 @@ CREATE TABLE IF NOT EXISTS tb_order_urge (
         urge_type   VARCHAR(16)  DEFAULT 'urge',
         status      INTEGER      DEFAULT 0,
         remark      VARCHAR(255) DEFAULT '',
-        create_time VARCHAR(32),
-        handle_time VARCHAR(32),
-        handle_by   VARCHAR(64)  DEFAULT ''
+        handle_time VARCHAR(32) DEFAULT NULL,
+        handle_by   VARCHAR(64)  DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_payment (
         payment_id       INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -281,9 +299,9 @@ CREATE TABLE IF NOT EXISTS tb_payment (
         amount           INTEGER      DEFAULT 0,
         status           INTEGER      DEFAULT 0,
         prepay_id        VARCHAR(128) DEFAULT '',
-        notify_time      VARCHAR(32),
-        create_time      VARCHAR(32),
-        update_time      VARCHAR(32)
+        notify_time VARCHAR(32) DEFAULT NULL,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_refund (
         refund_id         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -298,12 +316,12 @@ CREATE TABLE IF NOT EXISTS tb_refund (
         reason            VARCHAR(255) DEFAULT '',
         operator          VARCHAR(64)  DEFAULT '',
         fail_reason       VARCHAR(255) DEFAULT '',
-        create_time       VARCHAR(32),
-        update_time       VARCHAR(32),
         -- 1 = 重复支付自动退回(顾客在两个渠道各付了一笔,后到的一笔原路退回)。
         -- 这类退款的金额从未计入订单营收(paid_amount),因此不计入订单退款额度、
         -- 也不扣减订单实收 —— 与普通退款(SumRefunded/applyRefundSuccess)严格区分。
-        is_duplicate      INTEGER      DEFAULT 0
+        is_duplicate      INTEGER      DEFAULT 0,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_role (
         role_id     INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -315,9 +333,9 @@ CREATE TABLE IF NOT EXISTS tb_role (
         sort_order  INTEGER       DEFAULT 0,
         status      INTEGER       DEFAULT 1,
         del_flag    VARCHAR(2)    DEFAULT '0',
-        create_time VARCHAR(32),
-        update_time VARCHAR(32),
-        remark      VARCHAR(500)  DEFAULT ''
+        remark      VARCHAR(500)  DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_user (
         user_id         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -327,17 +345,17 @@ CREATE TABLE IF NOT EXISTS tb_user (
         role_id         INTEGER      NOT NULL DEFAULT 0,
         phone           VARCHAR(32)  DEFAULT '',
         status          INTEGER      DEFAULT 1,
-        last_login_time VARCHAR(32),
+        last_login_time VARCHAR(32) DEFAULT NULL,
         last_login_ip   VARCHAR(64)  DEFAULT '',
         login_count     INTEGER      DEFAULT 0,
-        pwd_update_time VARCHAR(32),
+        pwd_update_time VARCHAR(32) DEFAULT NULL,
         token_version   INTEGER      DEFAULT 0,
         del_flag        VARCHAR(2)   DEFAULT '0',
         create_by       VARCHAR(64)  DEFAULT '',
-        create_time     VARCHAR(32),
         update_by       VARCHAR(64)  DEFAULT '',
-        update_time     VARCHAR(32),
-        remark          VARCHAR(500) DEFAULT ''
+        remark          VARCHAR(500) DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_customer (
         customer_id      INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -346,20 +364,22 @@ CREATE TABLE IF NOT EXISTS tb_customer (
         avatar_url       VARCHAR(255) DEFAULT '',
         status           INTEGER      DEFAULT 1,
         order_count      INTEGER      DEFAULT 0,
-        last_order_time  VARCHAR(32)  DEFAULT '',
-        create_time      VARCHAR(32),
-        last_login_time  VARCHAR(32)  DEFAULT '',
-        remark           VARCHAR(255) DEFAULT ''
+        last_order_time VARCHAR(32) DEFAULT NULL,
+        last_login_time VARCHAR(32) DEFAULT NULL,
+        remark           VARCHAR(255) DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_remember_token (
         token_id       INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         user_id        INTEGER      NOT NULL,
         token          VARCHAR(64)  NOT NULL,
         token_prefix   VARCHAR(8)   DEFAULT '',
-        expire_time    VARCHAR(32)  NOT NULL,
-        create_time    VARCHAR(32),
-        last_used_time VARCHAR(32),
-        ua             VARCHAR(255) DEFAULT ''
+        expire_time VARCHAR(32) DEFAULT NULL,
+        last_used_time VARCHAR(32) DEFAULT NULL,
+        ua             VARCHAR(255) DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE TABLE IF NOT EXISTS tb_image (
         img_id       INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -367,7 +387,8 @@ CREATE TABLE IF NOT EXISTS tb_image (
         content_type VARCHAR(32)  DEFAULT '',
         img_data     LONGBLOB,
         file_size    INTEGER      DEFAULT 0,
-        create_time  VARCHAR(32)
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE UNIQUE INDEX idx_order_no ON tb_order(order_no);
 CREATE UNIQUE INDEX idx_order_pickup ON tb_order(biz_date, pickup_no);
@@ -396,7 +417,7 @@ CREATE INDEX idx_print_agent_token ON tb_print_agent(token_hash, status);
 CREATE INDEX idx_table_code ON tb_table(table_code);
 CREATE INDEX idx_user_username ON tb_user(username);
 CREATE INDEX idx_user_role ON tb_user(role_id);
-CREATE INDEX idx_role_key ON tb_role(role_key);
+CREATE UNIQUE INDEX idx_role_key ON tb_role(role_key);
 CREATE INDEX idx_operlog_time ON tb_oper_log(create_time);
 CREATE INDEX idx_operlog_operator ON tb_oper_log(operator_id, create_time);
 CREATE INDEX idx_operlog_target ON tb_oper_log(target_type, target_id);

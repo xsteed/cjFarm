@@ -264,8 +264,13 @@
     >
       <template #orderNo="{ row }">
         <span
-          class="ono"
+          class="ono ono-link"
           :title="'完整订单号 ' + row.orderNo"
+          role="button"
+          tabindex="0"
+          @click="openDetail(row)"
+          @keydown.enter="openDetail(row)"
+          @keydown.space.prevent="openDetail(row)"
           >{{ row.shortNo || row.orderNo.slice(-6) }}</span
         >
         <t-tag
@@ -833,6 +838,16 @@ onMounted(load);
   font-weight: 600;
   color: var(--ink, #1a1a1a);
   letter-spacing: 0.4px;
+}
+
+/* 桌面端短号可点开详情:与「详情」按钮同能力 */
+.ono-link {
+  cursor: pointer;
+}
+
+.ono-link:hover,
+.ono-link:focus-visible {
+  color: var(--td-brand-color, #0052d9);
 }
 
 /* 移动端卡片里的催菜角标:贴住短号右侧,不另起一行 */

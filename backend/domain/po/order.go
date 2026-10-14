@@ -38,6 +38,7 @@ func DisplayNo(pickupNo int, orderNo string) string {
 // OrderItem 对应 tb_order_item 表。
 type OrderItem struct {
 	ItemID          int
+	OrderID         int
 	DishID          int
 	DishName        string
 	SpecID          int
@@ -86,13 +87,20 @@ type Order struct {
 	PaidAmount       int64   // 实收金额(分):免单=0,挂账核销前=0
 	GiftAmount       int64   // 赠送金额(分):赠送菜品按原价计的金额合计,不计入应收
 	FinishTime       *string
-	OrderRemark      string
-	CancelReason     string
-	BeginTime        *string
-	EndTime          *string
-	CreateBy         string
-	CreateTime       string
-	UpdateBy         string
-	UpdateTime       string
-	Remark           *string
+	// 用餐起止时间(落地值,而非实时推算):
+	//   meal_start_time —— 下单(开台)时写入,与 create_time 同值,单独成列是为了
+	//     让「用餐时长」有独立于下单时间列的语义(将来排队的预订局、换桌续局不改下单时间);
+	//   meal_end_time —— 订单走到终态(4 已完成 / 5 已取消)时写入,即「这桌坐到了什么时候」。
+	// 历史行与进行中订单为 NULL,读取方回落到 create_time / finish_time。
+	MealStartTime *string
+	MealEndTime   *string
+	OrderRemark   string
+	CancelReason  string
+	BeginTime     *string
+	EndTime       *string
+	CreateBy      string
+	CreateTime    string
+	UpdateBy      string
+	UpdateTime    string
+	Remark        *string
 }

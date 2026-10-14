@@ -65,6 +65,9 @@ backend/migrations/
 - 常用动作词：`create`（建表/建索引）、`add_xxx_columns`（加列）、`drop_xxx`（删列/删表）、
   `backfill`（历史数据回填）、`fix_xxx`（数据修正）。
 - 一次变更涉及多张表时，表名部分用下划线连接（如 `tb_payment_refund_create`）。
+- 本仓库从 **26 号（`20261015000000`）起** 才真正落 `incr/` 文件；此前 01~25 号只在
+  下表的历史演进清单里出现，实际升级一直依赖后端启动时 `store.alterCols` 自动补列。
+  已收录的两条脚本说明见 [`incr/README.md`](./incr/README.md)。
 
 > **脚本是生成的，不是手写的**：`full/` 下 4 个文件由
 > `go run ./cmd/gensql` 从 `internal/store` 的表结构与种子数据定义自动生成
@@ -138,7 +141,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 5 | `tb_remark` | 备注选项 | 6 项 | full |
 | 6 | `tb_printer` | 打印机（ESC/POS 网络 + 飞鹅云） | 2 台（停用） | full |
 | 7 | `tb_config` | 系统配置（键值对） | 39 项 | full |
-| 8 | `tb_order` | 订单主表（42 列） | 运行时产生 | full + incr 03/04/10/14/16/21/22 |
+| 8 | `tb_order` | 订单主表（46 列） | 运行时产生 | full + incr 03/04/10/14/16/21/22/26（`meal_start_time`/`meal_end_time`） |
 | 9 | `tb_order_item` | 订单明细 | 运行时产生 | full + incr 15/19 |
 | 10 | `tb_order_urge` | 催菜/加菜记录 | 运行时产生 | incr 01 |
 | 11 | `tb_payment` | 支付流水（在线支付） | 运行时产生 | incr 02/10/14 |
@@ -195,7 +198,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_table_code` | tb_table | 部分唯一 | 桌台点餐码唯一 |
 | `idx_user_username` | tb_user | 部分唯一 | 登录名唯一（仅未删除行） |
 | `idx_user_role` | tb_user | 普通 | 员工按角色统计 |
-| `idx_role_key` | tb_role | 部分唯一 | 角色标识唯一（仅未删除行） |
+| `idx_role_key` | tb_role | UNIQUE | 角色标识全局唯一（含已删除行，重建同名角色走「复活原行」） |
 | `idx_operlog_time` | tb_oper_log | 普通 | 操作日志按时间翻页（主查询） |
 | `idx_operlog_operator` | tb_oper_log | 普通（2 列） | 按人追责「谁今天干了什么」 |
 | `idx_operlog_target` | tb_oper_log | 普通（2 列） | 按对象倒查「这张单被谁动过」 |
@@ -203,12 +206,19 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_remember_token` | tb_remember_token | 部分唯一 | 记住我令牌唯一，查库裁决是否过期 |
 | `idx_image_name` | tb_image | UNIQUE | 图片文件名唯一 |
 
-> **部分唯一索引的差异**：`idx_table_code` / `idx_user_username` / `idx_role_key`
+> **部分唯一索引的差异**：`idx_table_code` / `idx_user_username`
 > 在 SQLite 下是**部分唯一索引**（带 `WHERE` 条件，分别只约束非空桌台码、
 > `del_flag='0'` 的未删除行）；MySQL 不支持部分索引，会降级为普通索引。
 > 为此代码在应用层补了存在性校验 —— `store.NewUniqueTableCode()`、
 > `store.EnsureUsernameAvailable()` / `EnsureRoleKeyAvailable()`，
 > 保证两种后端下的唯一性语义一致（员工/角色软删除后同名可复用）。
+>
+> `idx_role_key` **不再**是部分唯一索引：历史上 MySQL 降级为普通索引后，
+> 启动引导 `SyncBuiltinRoles()` 依赖「INSERT IGNORE 撞唯一约束」的幂等失效，
+> 每次启动都会重复插入 4 个内置角色。现已升级为两库统一的全局唯一索引，
+> 软删除的角色行仍占用 `role_key`，重建同名角色时由 `dao.InsertRole` 复活原行；
+> 老库升级时由启动迁移 `dedupeRoleKeys()` 先清理历史重复行（保留未删除行中
+> role_id 最小的一行，员工引用改挂后物理删除其余），再原地重建唯一索引。
 
 
 ## 六、两套数据库的差异与同步维护
@@ -244,8 +254,34 @@ go test ./...
 
 1. **金额单位**：所有金额字段一律以「**分**」存 INTEGER（如 `2800` = 28.00 元）。
    API 层由 `po.ToYuan / ToCents` 在边界换算，脚本中不要写元。
-2. **时间字段**：统一存 `VARCHAR(32)` 的 `YYYY-MM-DD HH:MM:SS` 本地时间字符串，
-   两库行为一致，便于跨库搬迁（MySQL 侧无需处理时区类型差异）。
+2. **时间字段**：统一以 `YYYY-MM-DD HH:MM:SS` 的本地时间文本呈现，两库对外行为一致
+   （便于跨库搬迁，MySQL 侧无需处理时区类型差异）。**物理类型按方言分叉**：
+
+   | | MySQL | SQLite |
+   |---|---|---|
+   | 物理类型 | `DATETIME` | `VARCHAR(32)`（SQLite 的类型只是亲和性提示） |
+   | `create_time` | `DEFAULT CURRENT_TIMESTAMP` | `DEFAULT (datetime('now','localtime'))` |
+   | `update_time` | `DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP` | `AFTER UPDATE` 触发器（共 22 个） |
+   | 自动更新实现 | 列定义原生支持 | `trg_<表>_touch` 触发器 |
+
+   MySQL 用时间类型是**必须**的 —— `DEFAULT CURRENT_TIMESTAMP` / `ON UPDATE` 只对
+   DATETIME/TIMESTAMP 生效，VARCHAR 给不出这种语义。读取侧由 `dao.TS()` 统一折算
+   （MySQL 在 `parseTime=true` 下返回 `time.Time`，SQLite 返回字符串），
+   因此 service / handler / 前端 JSON 拿到的仍是同一格式的字符串。
+
+   填写口径：**`create_time` 只在 INSERT 时产生，`update_time` 只在行更新时产生**
+   （插入时留 NULL，便于区分「创建后没动过」与「刚创建」）。应用层仍会显式写入
+   这两个值（保证老库、跨方言、批量写入下都确定），数据库层的默认值与触发器是
+   **第二道保证**：任何绕过应用层的写入（运维手工 SQL、外部导入、脚本）同样拿到
+   正确时间。触发器带 `WHEN NEW.update_time IS OLD.update_time` 守卫，
+   不会覆盖应用显式写入的值 —— 与 MySQL 的 `ON UPDATE` 语义一致。
+
+   例外：走 REPLACE 写入的 `tb_config` 写不了 `create_time`（整行替换会冲掉首次
+   落库时间），详见 [`incr/README.md`](./incr/README.md)。
+   用餐时长对应的两个落库列是 `tb_order` 的 `meal_start_time` / `meal_end_time`
+   （下单写起点、走到终态即 4 已完成 / 5 已取消写终点；撤销结算时终点清空）。
+   老库由 `store.alterCols` 自动补列 + `backfillMealTimes()` 按 `create_time` /
+   `finish_time` 幂等回填，读侧 `COALESCE` 回落旧列，升级前后统计口径一致。
 3. **图片/收款码**：图片内容存于 `tb_image` 表；出厂图片内嵌在后端二进制中、
    首次启动自动写入数据库，`seed.sql` 不含图片数据；老版本升级时旧 `uploads` 目录中的
    存量图片由后端启动时自动导入。业务表仍保存 `/uploads/<文件名>` 虚拟路径（该前缀由
@@ -292,5 +328,6 @@ SET GLOBAL max_allowed_packet=128M;
   改单重算 → 状态流转 → 结账 → 报表」全链路。
 - `scripts/sqlite2mysql.py` 搬运实测：与源库逐表一致，中文无乱码。
 - ⚠️ **待补测**：员工/角色两表、打印日志/代理表与图片表加入后（现为 22 表 / 34 索引），尚未在 MySQL 上
-  重跑一次全量建库。注意 `tb_user` / `tb_role` 的部分唯一索引在 MySQL 下会
-  降级为普通索引，唯一性改由应用层保证（见第五节说明）。
+  重跑一次全量建库。注意 `tb_user` 的部分唯一索引在 MySQL 下会降级为普通索引，
+  唯一性改由应用层保证（见第五节说明）；`tb_role` 的 `idx_role_key` 已升级为
+  两库统一的全局唯一索引，不受此问题影响。

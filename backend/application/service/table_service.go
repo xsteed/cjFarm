@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"dining-system/domain/po"
+	"dining-system/infrastructure/conf"
 	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/store"
 	"dining-system/infrastructure/store/dao"
@@ -20,11 +22,14 @@ import (
 // handler 只负责参数解析与响应组装。
 
 // TableList 分页查询桌台列表,并对缺失稳定码的历史数据即时补发。
+// 占用中的桌台附带用餐耗时(openTime/diningMinutes),一次 ListActiveOrders 覆盖
+// 全部桌台,不引入 N+1;耗时统计失败不阻断桌台列表本身。
 func TableList(keyword string, pageNum, pageSize int) (int, []dto.Table, error) {
 	total, rows, err := dao.ListTables(dao.TableQuery{Keyword: keyword}, pageNum, pageSize)
 	if err != nil {
 		return 0, nil, err
 	}
+	dining := tableDiningByTable()
 	out := make([]dto.Table, 0, len(rows))
 	for _, t := range rows {
 		// 兜底:历史数据若缺稳定码则即时补发,保证二维码可生成。
@@ -33,9 +38,56 @@ func TableList(keyword string, pageNum, pageSize int) (int, []dto.Table, error) 
 				t.TableCode = code
 			}
 		}
-		out = append(out, dto.FromTable(t))
+		item := dto.FromTable(t)
+		if d, ok := dining[t.TableID]; ok {
+			item.OpenTime = d.openTime
+			item.DiningMinutes = d.minutes
+		}
+		out = append(out, item)
 	}
 	return total, out, nil
+}
+
+// tableDining 某桌当前的用餐耗时快照:openTime 为该桌最早一笔进行中订单的开台时间,
+// minutes 为距现在的分钟数。
+type tableDining struct {
+	openTime string
+	minutes  int
+}
+
+// tableDiningByTable 统计每桌已用餐分钟数。
+// 开台口径与「未结账超时告警」一致(stale_service 的 staleAlertOf):取订单
+// CreateTime,换算 now-CreateTime。一桌可有多笔进行中订单(付款后再开新单),
+// 取最早一笔 —— 客人坐下的时刻才是用餐起点。
+// guardBizDate 带营业日隔离:跨日遗留单不算正在用餐,与桌台占用状态同口径,
+// 避免给已被自动清台、只剩遗留账的桌台显示几十小时的离谱时长。
+func tableDiningByTable() map[int]tableDining {
+	out := map[int]tableDining{}
+	orders, err := dao.ListActiveOrders(StaleGuardBizDate())
+	if err != nil {
+		// 查询失败只损失耗时展示,桌台列表照常返回。
+		logger.CtxWarnf(context.Background(), "[table] 统计桌台用餐耗时失败: %v", err)
+		return out
+	}
+	now := time.Now()
+	for _, o := range orders {
+		// 起点优先取落库的用餐开始时间(下单写入),历史行回落到 create_time。
+		startAt := o.CreateTime
+		if o.MealStartTime != nil && *o.MealStartTime != "" {
+			startAt = *o.MealStartTime
+		}
+		d, ok := out[o.TableID]
+		// 时间均为 conf.TimeLayout 同格式字符串,可直接按字典序取最早。
+		if ok && startAt >= d.openTime {
+			continue
+		}
+		d = tableDining{openTime: startAt}
+		if t, err := time.ParseInLocation(conf.TimeLayout, startAt, time.Local); err == nil {
+			d.minutes = int(now.Sub(t).Minutes())
+		}
+		out[o.TableID] = d
+	}
+	return out
 }
 
 // SaveTable 校验并新增桌台,返回桌台 ID;插入后补发稳定桌台码。
@@ -152,10 +204,11 @@ func ReleaseTable(ctx context.Context, tableID int, action, operator string) (Re
 	if action != ReleaseActionSettle && action != ReleaseActionCancel {
 		return ReleaseOutcome{}, errors.New("请选择清台方式：补结账或作废订单")
 	}
-	tableNo, tableName, err := dao.GetTableNoName(tableID)
+	table, err := dao.GetTableByID(tableID)
 	if err != nil {
 		return ReleaseOutcome{}, errors.New("桌台不存在")
 	}
+	tableNo, tableName := table.TableNo, table.TableName
 	out := ReleaseOutcome{TableID: tableID, TableName: tableName}
 
 	// 收走哪些单,口径必须与顾客端看到的完全一致(StaleGuardBizDate):

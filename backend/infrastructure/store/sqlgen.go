@@ -16,12 +16,17 @@ import (
 // 运行期并不读取这些文件 —— 后端始终用同一份 Go 定义建表。
 // ============================================================================
 
-// SchemaSQL 返回指定方言的完整建表 + 建索引语句(每条以分号结尾,可直接执行)。
+// SchemaSQL 返回指定方言的完整建表 + 建索引 + 建触发器语句(每条以分号结尾,可直接执行)。
 func SchemaSQL(d Dialect) []string {
 	raw := schemaStatements(d)
-	out := make([]string, 0, len(raw)+len(indexDefs))
+	out := make([]string, 0, len(raw)+len(indexDefs)+len(updateTimeTables))
 	for _, s := range raw {
 		out = append(out, withSemicolon(s))
+	}
+	// SQLite 没有 ON UPDATE CURRENT_TIMESTAMP,自动维护 update_time 只能靠触发器;
+	// MySQL 用列定义上的 ON UPDATE,不需要触发器(见 schema.go 的 {{ONUPD}} 令牌)。
+	for _, trg := range touchTriggerStatements(d) {
+		out = append(out, withSemicolon(trg))
 	}
 	for _, ix := range indexDefs {
 		stmt := indexStatement(d, ix)

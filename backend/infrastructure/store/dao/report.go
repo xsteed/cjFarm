@@ -329,3 +329,41 @@ func SettleMixStats(start, end string) ([]SettleMixRow, error) {
 	}
 	return out, rows.Err()
 }
+
+// DiningDurationRow 一笔已完成订单的用餐起止时间(含就餐人数,供人均口径参考)。
+// MealStartTime/MealEndTime 均为 conf.TimeLayout 字符串,时长换算放在 service 内存里做,
+// 不依赖数据库时间函数,MySQL / SQLite 双方言通用。
+//
+// 字段名按「用餐」语义命名:取的是 meal_start_time / meal_end_time,
+// 历史行才 COALESCE 回落到 create_time / finish_time,故不再叫 CreateTime/FinishTime。
+type DiningDurationRow struct {
+	MealStartTime string
+	MealEndTime   string
+	PersonCount   int
+}
+
+// DiningDurationRows 取区间内按完成时间归属的已完成订单的用餐起止时间。
+//
+// 口径与 CountFinishedIn 一致(order_status=4,finish_time∈[start,end))。
+// 起止时间优先取落库的 meal_start_time / meal_end_time(下单与结账时写入),
+// 历史行为 NULL,故 COALESCE 回落到 create_time / finish_time —— 升级前后口径不变。
+func DiningDurationRows(start, end string) ([]DiningDurationRow, error) {
+	rows, err := store.DB.Query(`SELECT COALESCE(meal_start_time, create_time), COALESCE(meal_end_time, finish_time),
+			COALESCE(person_count,0)
+		FROM tb_order
+		WHERE order_status=4 AND finish_time>=? AND finish_time<?`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []DiningDurationRow{}
+	for rows.Next() {
+		var row DiningDurationRow
+		if err := rows.Scan(TS(&row.MealStartTime), TS(&row.MealEndTime), &row.PersonCount); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}

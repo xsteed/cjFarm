@@ -33,7 +33,7 @@ func ScanOperLog(rows interface{ Scan(...interface{}) error }) (po.OperLog, erro
 	var l po.OperLog
 	err := rows.Scan(&l.LogID, &l.Module, &l.BusinessType, &l.Action, &l.Method, &l.RequestURL,
 		&l.OperatorID, &l.Operator, &l.OperatorRole, &l.OperIP, &l.TargetType, &l.TargetID,
-		&l.OperParam, &l.Detail, &l.Status, &l.ErrorMsg, &l.CostMs, &l.CreateTime)
+		&l.OperParam, &l.Detail, &l.Status, &l.ErrorMsg, &l.CostMs, TS(&l.CreateTime))
 	return l, err
 }
 

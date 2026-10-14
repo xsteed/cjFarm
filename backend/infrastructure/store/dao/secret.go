@@ -16,11 +16,16 @@ import (
 
 // SetSetting 写入单个配置项,敏感项自动加密。
 // 语句由方言层生成:SQLite 为 INSERT OR REPLACE,MySQL 为 REPLACE(按主键整体替换)。
+//
+// 只记 update_time 而不写 create_time:REPLACE 是「整行替换」,写上会把配置项首次落库的
+// 时间冲掉(每次改配置都变成「刚创建」)。首次写入的时间由 EnsureSettingDefaults 的种子
+// 语句负责,改配置只推进 update_time。
 func SetSetting(key, value string) error {
 	if infrastructure.IsSensitiveKey(key) {
 		value = infrastructure.EncryptSecret(value)
 	}
-	_, err := store.DB.Exec(store.InsertReplaceInto("tb_config", "cfg_key", "cfg_value"), key, value)
+	_, err := store.DB.Exec(store.InsertReplaceInto("tb_config", "cfg_key", "cfg_value", "update_time"),
+		key, value, store.Now())
 	return err
 }
 
@@ -62,7 +67,7 @@ func RotateSecrets(oldKey []byte) {
 			logger.Warnf("[secret] 配置 %s 无法用旧密钥解密,保留原值(密文可能已损坏或旧密钥不符)", k)
 			continue
 		}
-		if _, err := store.DB.Exec(`UPDATE tb_config SET cfg_value=? WHERE cfg_key=?`, infrastructure.EncryptSecret(plain), k); err != nil {
+		if _, err := store.DB.Exec(`UPDATE tb_config SET cfg_value=?, update_time=? WHERE cfg_key=?`, infrastructure.EncryptSecret(plain), store.Now(), k); err != nil {
 			logger.Warnf("[secret] 配置 %s 轮换重写失败: %v", k, err)
 			continue
 		}
@@ -86,7 +91,7 @@ func MigrateSecrets() {
 		if v == "" || infrastructure.IsEncrypted(v) {
 			continue
 		}
-		if _, err := store.DB.Exec(`UPDATE tb_config SET cfg_value=? WHERE cfg_key=?`, infrastructure.EncryptSecret(v), k); err != nil {
+		if _, err := store.DB.Exec(`UPDATE tb_config SET cfg_value=?, update_time=? WHERE cfg_key=?`, infrastructure.EncryptSecret(v), store.Now(), k); err != nil {
 			logger.Warnf("[secret] 配置 %s 加密迁移失败: %v", k, err)
 			continue
 		}

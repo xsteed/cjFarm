@@ -3,6 +3,7 @@ package dao
 import (
 	"database/sql"
 
+	"dining-system/domain/po"
 	"dining-system/infrastructure/store"
 )
 
@@ -47,10 +48,14 @@ func InsertPayment(orderNo, channel string, amountCents int64, prepayID string) 
 }
 
 // GetPayment 查询某订单某渠道最近一条支付流水。
-func GetPayment(orderNo, channel string) (paymentID int, status int, amountCents int64, err error) {
-	err = store.DB.QueryRow(`SELECT payment_id, status, amount FROM tb_payment WHERE order_no=? AND channel=? ORDER BY payment_id DESC LIMIT 1`,
-		orderNo, channel).Scan(&paymentID, &status, &amountCents)
-	return
+//
+// 只填充 po.Payment 的 PaymentID/Status/Amount 三列(调用方只需要这三项),
+// 其余字段为零值,请勿按整行使用。
+func GetPayment(orderNo, channel string) (po.Payment, error) {
+	var p po.Payment
+	err := store.DB.QueryRow(`SELECT payment_id, status, amount FROM tb_payment WHERE order_no=? AND channel=? ORDER BY payment_id DESC LIMIT 1`,
+		orderNo, channel).Scan(&p.PaymentID, &p.Status, &p.Amount)
+	return p, err
 }
 
 // MarkPaymentPaid 支付成功:回写渠道交易号与状态(幂等:仅当仍为待支付时更新)。
@@ -87,10 +92,13 @@ func MarkPaymentStatus(paymentID, status int) error {
 }
 
 // GetOrderAmount 按订单号查询订单的支付金额(分)与状态。
-func GetOrderAmount(orderNo string) (orderID, payStatus, orderStatus int, totalCents int64, err error) {
-	err = store.DB.QueryRow(`SELECT order_id, pay_status, order_status, total_amount FROM tb_order WHERE order_no=?`,
-		orderNo).Scan(&orderID, &payStatus, &orderStatus, &totalCents)
-	return
+//
+// 只填充 po.Order 的 OrderID/PayStatus/OrderStatus/TotalAmount 四列,其余为零值。
+func GetOrderAmount(orderNo string) (po.Order, error) {
+	var o po.Order
+	err := store.DB.QueryRow(`SELECT order_id, pay_status, order_status, total_amount FROM tb_order WHERE order_no=?`,
+		orderNo).Scan(&o.OrderID, &o.PayStatus, &o.OrderStatus, &o.TotalAmount)
+	return o, err
 }
 
 // LastPaymentChannel 查询订单最近一条支付流水的渠道。
@@ -101,18 +109,24 @@ func LastPaymentChannel(orderNo string) (string, error) {
 }
 
 // GetRefundOrderInfo 查询退款所需的订单支付信息。
-func GetRefundOrderInfo(orderID int) (orderNo string, payStatus int, totalCents int64, err error) {
-	err = store.DB.QueryRow(`SELECT order_no, pay_status, total_amount FROM tb_order WHERE order_id=?`, orderID).
-		Scan(&orderNo, &payStatus, &totalCents)
-	return
+//
+// 只填充 po.Order 的 OrderNo/PayStatus/TotalAmount 三列,其余为零值。
+func GetRefundOrderInfo(orderID int) (po.Order, error) {
+	var o po.Order
+	err := store.DB.QueryRow(`SELECT order_no, pay_status, total_amount FROM tb_order WHERE order_id=?`, orderID).
+		Scan(&o.OrderNo, &o.PayStatus, &o.TotalAmount)
+	return o, err
 }
 
 // LastPaidPayment 查询订单最近一条已支付或(部分)已退款的支付流水。
-func LastPaidPayment(orderNo string) (paymentID int, channel string, err error) {
-	err = store.DB.QueryRow(`SELECT payment_id, channel FROM tb_payment
+//
+// 只填充 po.Payment 的 PaymentID/Channel 两列,其余为零值。
+func LastPaidPayment(orderNo string) (po.Payment, error) {
+	var p po.Payment
+	err := store.DB.QueryRow(`SELECT payment_id, channel FROM tb_payment
 		WHERE order_no=? AND status IN (?,?) ORDER BY payment_id DESC LIMIT 1`,
-		orderNo, PayStatusPaid, PayStatusRefunded).Scan(&paymentID, &channel)
-	return
+		orderNo, PayStatusPaid, PayStatusRefunded).Scan(&p.PaymentID, &p.Channel)
+	return p, err
 }
 
 // DeductPaidAmount 扣减订单实收金额(退款入账),下限为 0 避免超额扣成负数。
@@ -138,15 +152,11 @@ func GetOrderNoByID(orderID int) (string, error) {
 	return orderNo, err
 }
 
-// PendingPayment 待支付流水(用于关闭渠道单)。
-type PendingPayment struct {
-	ID      int
-	Channel string
-}
-
 // ListPendingPayments 查询订单除 exceptChannel 外所有渠道的待支付流水
 // (exceptChannel 为空串时返回全部渠道)。
-func ListPendingPayments(orderNo, exceptChannel string) []PendingPayment {
+//
+// 只填充 po.Payment 的 PaymentID/Channel 两列(关闭渠道单只需要这两项),其余为零值。
+func ListPendingPayments(orderNo, exceptChannel string) []po.Payment {
 	rows, err := store.DB.Query(`SELECT payment_id, channel FROM tb_payment
 		WHERE order_no=? AND status=? AND channel<>?`,
 		orderNo, PayStatusPending, exceptChannel)
@@ -154,10 +164,10 @@ func ListPendingPayments(orderNo, exceptChannel string) []PendingPayment {
 		return nil
 	}
 	defer rows.Close()
-	list := []PendingPayment{}
+	list := []po.Payment{}
 	for rows.Next() {
-		var p PendingPayment
-		if rows.Scan(&p.ID, &p.Channel) == nil {
+		var p po.Payment
+		if rows.Scan(&p.PaymentID, &p.Channel) == nil {
 			list = append(list, p)
 		}
 	}

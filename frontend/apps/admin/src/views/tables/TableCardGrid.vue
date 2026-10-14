@@ -28,7 +28,7 @@
         class="m-tile-sub m-tile-meta"
         :title="row.lockRemark || undefined"
       >
-        <span class="m-tile-meta-text">{{ row.status === 1 ? '占用中' : '空闲' }} · {{ row.capacity }} 人</span>
+        <span class="m-tile-meta-text">{{ tileMetaText(row) }}</span>
         <span
           v-if="lockLabel(row)"
           class="m-tile-lock"
@@ -114,6 +114,10 @@
           <div class="v">
             <span class="code-chip">{{ row.tableCode || '-' }}</span>
           </div>
+        </div>
+        <div class="mcard-cell">
+          <div class="k">已用餐</div>
+          <div class="v">{{ row.status === 1 ? durationText(row.diningMinutes) : '—' }}</div>
         </div>
         <div class="mcard-cell">
           <div class="k">容纳人数 / 排序</div>
@@ -225,6 +229,9 @@
       <template #tableCode="{ row }">
         <span class="code-chip">{{ row.tableCode || '-' }}</span>
       </template>
+      <template #diningMinutes="{ row }">
+        {{ row.status === 1 ? durationText(row.diningMinutes) : '—' }}
+      </template>
       <template #status="{ row }">
         <t-space size="4">
           <t-tag
@@ -323,6 +330,7 @@
 import { computed, ref } from 'vue';
 import type { DropdownOption, PageInfo, RowEventContext } from 'tdesign-vue-next';
 import type { TableInfo } from '@dining/types';
+import { durationText } from '@dining/shared';
 import { useIsMobile } from '../../utils/useMobile';
 import ActionSheet from '../../components/ActionSheet.vue';
 import type { SheetAction } from '../../components/ActionSheet.vue';
@@ -369,6 +377,12 @@ function lockClass(row: TableInfo): string {
 
 function lockTheme(row: TableInfo): 'danger' | 'primary' {
   return lockStatusOf(row) === 1 ? 'danger' : 'primary';
+}
+
+// 移动端瓦片第三行文案:占用桌台带上用餐时长,店员扫一眼知道这桌坐了多久。
+function tileMetaText(row: TableInfo): string {
+  if (row.status === 1) return `占用中 · ${row.capacity} 人 · 已 ${durationText(row.diningMinutes)}`;
+  return `空闲 · ${row.capacity} 人`;
 }
 
 // ---- 桌面端「更多」下拉:收纳低频(二维码)与危险(删除)操作,
@@ -489,6 +503,8 @@ const columns = computed(() => {
     { colKey: 'capacity', title: '容纳人数', width: 100 },
     // 状态列要容得下「占用/空闲 + 停用/预约」两枚标签
     { colKey: 'status', title: '状态', width: 112 },
+    // 已用餐:后端按该桌最早一笔进行中订单实时算的分钟数,空闲桌显示占位符
+    { colKey: 'diningMinutes', title: '已用餐', width: 118 },
     { colKey: 'sortOrder', title: '排序', width: 80 }
   ];
   // 只读时操作列只剩「二维码」,宽度收窄;占用中的桌台会多一个「详情」按钮。

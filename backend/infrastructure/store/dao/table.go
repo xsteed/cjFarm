@@ -20,7 +20,7 @@ const TableCols = `table_id, table_no, table_name, capacity, status, lock_status
 func ScanTable(rows interface{ Scan(...interface{}) error }) (po.Table, error) {
 	var t po.Table
 	err := rows.Scan(&t.TableID, &t.TableNo, &t.TableName, &t.Capacity, &t.Status, &t.LockStatus, &t.LockRemark, &t.SortOrder, &t.DelFlag,
-		&t.CreateBy, &t.CreateTime, &t.UpdateBy, &t.UpdateTime, &t.Remark, &t.TableCode)
+		&t.CreateBy, TS(&t.CreateTime), &t.UpdateBy, TS(&t.UpdateTime), &t.Remark, &t.TableCode)
 	return t, err
 }
 
@@ -148,18 +148,12 @@ func ListTables(q TableQuery, pageNum, pageSize int) (total int, list []po.Table
 	return total, list, nil
 }
 
-// GetTableNoName 查询桌号和桌台名称。
-func GetTableNoName(tableID int) (tableNo, tableName string, err error) {
-	err = store.DB.QueryRow(`SELECT table_no, table_name FROM tb_table WHERE table_id=? AND del_flag='0'`, tableID).
-		Scan(&tableNo, &tableName)
-	return
-}
-
-// GetTableLock 查询桌台人工状态(lock_status)与备注;桌台不存在时返回 sql.ErrNoRows。
-func GetTableLock(tableID int) (lockStatus int, lockRemark string, err error) {
-	err = store.DB.QueryRow(`SELECT lock_status, COALESCE(lock_remark,'') FROM tb_table WHERE table_id=? AND del_flag='0'`, tableID).
-		Scan(&lockStatus, &lockRemark)
-	return
+// GetTableByID 按主键读取整张桌台记录(已删除视为不存在,返回 sql.ErrNoRows)。
+//
+// 需要同时用上桌号/桌名/人工状态等多个字段的调用方走这里,避免对同一行连查数次
+// (如顾客下单前的「桌台存在 + 人工状态可用」校验)。
+func GetTableByID(tableID int) (po.Table, error) {
+	return ScanTable(store.DB.QueryRow(`SELECT `+TableCols+` FROM tb_table WHERE table_id=? AND del_flag='0'`, tableID))
 }
 
 // InsertTable 新增桌台并返回主键 ID。
