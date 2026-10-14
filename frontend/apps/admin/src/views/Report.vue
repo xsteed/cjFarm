@@ -89,9 +89,10 @@
 import { computed, onMounted, ref } from 'vue';
 import { Button, DateRangePicker, Loading } from 'tdesign-vue-next';
 import type { DateRangeValue } from 'tdesign-vue-next';
-import { FileIcon, RefreshIcon } from 'tdesign-icons-vue-next';
+import { DownloadIcon, RefreshIcon } from 'tdesign-icons-vue-next';
 import {
   getDailyTrend,
+  getDiningDuration,
   getDishRank,
   getHourlyReport,
   getMonthlyTrend,

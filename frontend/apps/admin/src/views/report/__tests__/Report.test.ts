@@ -96,9 +96,9 @@ vi.mock('vue-router', () => ({
 }));
 
 vi.mock('tdesign-icons-vue-next', () => ({
-  FileIcon: defineComponent({
-    name: 'FileIcon',
-    setup: () => () => h('i', { class: 'file-icon' })
+  DownloadIcon: defineComponent({
+    name: 'DownloadIcon',
+    setup: () => () => h('i', { class: 'download-icon' })
   }),
   RefreshIcon: defineComponent({
     name: 'RefreshIcon',
