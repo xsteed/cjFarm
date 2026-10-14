@@ -57,7 +57,7 @@
         <span class="t">有 {{ stale.items.length }} 笔订单还没结账，去核对一下</span>
         <router-link
           class="l"
-          to="/dining/orders"
+          to="/orders"
         >
           订单管理 →
         </router-link>
@@ -91,7 +91,7 @@
           <div class="t">桌台看板</div>
           <router-link
             class="l"
-            to="/dining/tables"
+            to="/tables"
           >
             全部桌台 →
           </router-link>
@@ -134,7 +134,7 @@
           <div class="t">进行中订单</div>
           <router-link
             class="l"
-            to="/dining/orders"
+            to="/orders"
           >
             订单管理 →
           </router-link>
@@ -177,7 +177,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { getReportSummary, getOrderBoard, getStaleOrders } from '@dining/api';
 import { hasPerm } from '@dining/auth';
-import { money } from '@dining/shared';
+import { durationText, money } from '@dining/shared';
 import type { OrderSummary, ReportSummary, StaleOrderAlert, TableInfo } from '@dining/types';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
@@ -194,11 +194,11 @@ const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refre
 
 // 看板上的桌台 / 订单点一下直达对应管理页,减少一级查找
 function goTables(): void {
-  router.push('/dining/tables');
+  router.push('/tables');
 }
 
 function goOrders(): void {
-  router.push('/dining/orders');
+  router.push('/orders');
 }
 
 // 报表类 KPI(营业额/客单价/订单数)属 report:view;没有就只展示桌台看板。
@@ -211,17 +211,7 @@ const board = ref<TableInfo[]>([]);
 type StaleState = { enabled: boolean; hours: number; items: StaleOrderAlert[] };
 const stale = ref<StaleState>({ enabled: false, hours: 0, items: [] });
 
-/** 把分钟数说成人话:店员扫一眼就知道这桌开了多久(跨日遗留单会到几十小时,得说到天)。 */
-function durationText(minutes?: number): string {
-  const m = Math.max(0, Number(minutes) || 0);
-  if (m < 60) return `${m} 分钟`;
-  const h = Math.floor(m / 60);
-  const restMin = m % 60;
-  if (h < 24) return restMin ? `${h} 小时 ${restMin} 分` : `${h} 小时`;
-  const days = Math.floor(h / 24);
-  const restHour = h % 24;
-  return restHour ? `${days} 天 ${restHour} 小时` : `${days} 天`;
-}
+// durationText 已抽到 @dining/shared(桌台管理页也用),此处直接导入。
 
 const busyCount = computed(() => board.value.filter(t => t.status === 1).length);
 

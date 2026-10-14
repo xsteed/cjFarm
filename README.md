@@ -366,7 +366,7 @@ sudo bash deploy/setup-nginx.sh --domain 你的域名 \
   --cert /etc/nginx/ssl/dining.crt --key /etc/nginx/ssl/dining.key
 ```
 
-部署完成后访问 `http://服务器IP/` 即进入前端，管理后台 `/dining/dashboard`。
+部署完成后访问 `http://服务器IP/` 即进入前端，管理后台 `/dashboard`。
 
 > Nginx 与 Go 后端的分工：Nginx 托管前端静态资源并做 SPA 回退，将 `/api`、`/uploads` 反向代理到 Go 后端（`127.0.0.1:8080`）。
 
@@ -397,7 +397,7 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 | 入口 | 地址 | 说明 |
 |---|---|---|
 | 管理登录 | `/login` | 默认账号 `admin` / `admin123` |
-| 管理后台 | `/dining/dashboard` | 仪表盘、桌台/分类/菜品/订单/打印机/备注/配置/报表 |
+| 管理后台 | `/dashboard` | 仪表盘、桌台/分类/菜品/订单/打印机/备注/配置/报表 |
 | 顾客点餐页 | `/order/:tableId` | `/order/1`（兼容旧数字 ID）或 `/order/K7M3PQ9X`（桌台稳定码），扫码点餐（无需登录） |
 | 打印票据 | `/printTicket?orderNo=Dxxx` | 订单小票打印（无需登录） |
 

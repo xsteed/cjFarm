@@ -96,7 +96,7 @@
       <div class="kpi-value credit">¥{{ money(summary.creditPendingAmount) }}</div>
       <div class="kpi-sub">
         {{ summary.creditPendingCount || 0 }} 笔未结清 ·
-        <RouterLink to="/dining/credit"> 去核销 → </RouterLink>
+        <RouterLink to="/credit"> 去核销 → </RouterLink>
       </div>
     </div>
 

@@ -58,7 +58,7 @@ router.beforeEach(async to => {
     // 本地令牌已过期时别送去 dashboard —— 那里第一次请求就会 401,
     // 被拦截器整页弹回登录页,白绕一圈;留在登录页让「记住我」静默换发
     // (若令牌仍有效)或手动登录接手。
-    return hasToken() && !tokenExpired() ? '/dining/dashboard' : true;
+    return hasToken() && !tokenExpired() ? '/dashboard' : true;
   }
   if (!requiresAuth) {
     return true;

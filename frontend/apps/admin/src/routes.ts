@@ -13,13 +13,9 @@ import type { RouteRecordRaw } from 'vue-router';
 //   menuOrder 排序号;不填表示不进侧栏(分组行序取组内最小值)
 
 /** 账号一个可用菜单都没有时的兜底页路径(见 menu.ts 的 firstAccessiblePath)。 */
-export const NO_PERMISSION_PATH = '/dining/no-permission';
+export const NO_PERMISSION_PATH = '/no-permission';
 
 export const adminRoutes: RouteRecordRaw[] = [
-  {
-    path: '/',
-    redirect: '/dining/dashboard'
-  },
   {
     path: '/login',
     name: 'Login',
@@ -27,9 +23,9 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '登录' }
   },
   {
-    path: '/dining',
+    path: '/',
     component: () => import('./layout/AdminLayout.vue'),
-    redirect: '/dining/dashboard',
+    redirect: '/dashboard',
     meta: { requiresAuth: true },
     children: [
       {
@@ -144,5 +140,15 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '无可用功能' }
       }
     ]
+  },
+  {
+    // 旧版管理端带 /dining 前缀(如 /dining/dashboard)。发版后旧收藏/分享地址
+    // 在这里重定向到新路径,避免直接 404。query/hash 一并保留:
+    // 守卫跳登录页带的 ?redirect= 里可能是旧路径,登录后回跳也能正确落位。
+    path: '/dining/:path(.*)',
+    redirect: to => {
+      const path = Array.isArray(to.params.path) ? to.params.path.join('/') : (to.params.path ?? '');
+      return { path: `/${path}`, query: to.query, hash: to.hash };
+    }
   }
 ];

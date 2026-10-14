@@ -446,7 +446,7 @@ cat <<EOF
   配置文件   : $CONF_DST
   server_name: $SERVER_NAME
   访问地址   : $SCHEME://$SERVER_NAME/
-  管理后台   : $SCHEME://$SERVER_NAME/dining/dashboard
+  管理后台   : $SCHEME://$SERVER_NAME/dashboard
   后端反代   : /api/ -> 127.0.0.1:$BACKEND_PORT
 
 后续操作:

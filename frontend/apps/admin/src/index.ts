@@ -1,4 +1,4 @@
-// @dining/app-admin —— 管理端(登录 + /dining/* 后台)。
+// @dining/app-admin —— 管理端(登录 + 后台)。
 //
 // 对外只暴露 shell 组合路由时需要的两样东西:
 //   - 路由表(adminRoutes / NO_PERMISSION_PATH)

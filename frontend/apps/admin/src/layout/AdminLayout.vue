@@ -293,11 +293,11 @@ function groupActive(n: MenuNode): boolean {
 // 15 个菜单全塞进去会挤成图标条,反而找不到东西。
 // 顺序即「餐厅店员掏手机最常看的东西」的顺序,「设置」(系统配置)作为常驻的第 5 个拇指位。
 const TAB_ITEMS = [
-  { path: '/dining/dashboard', title: '看板', icon: 'DashboardIcon' },
-  { path: '/dining/orders', title: '订单', icon: 'OrderAdjustmentColumnIcon' },
-  { path: '/dining/tables', title: '桌台', icon: 'GridViewIcon' },
-  { path: '/dining/dishes', title: '菜品', icon: 'RiceIcon' },
-  { path: '/dining/config', title: '设置', icon: 'SettingIcon' }
+  { path: '/dashboard', title: '看板', icon: 'DashboardIcon' },
+  { path: '/orders', title: '订单', icon: 'OrderAdjustmentColumnIcon' },
+  { path: '/tables', title: '桌台', icon: 'GridViewIcon' },
+  { path: '/dishes', title: '菜品', icon: 'RiceIcon' },
+  { path: '/config', title: '设置', icon: 'SettingIcon' }
 ];
 // 复用 accessibleMenus() 的权限过滤结果,保证无权限的入口不会出现在 tabbar 上
 // (否则点进去会被路由守卫弹回,像个坏按钮)。
