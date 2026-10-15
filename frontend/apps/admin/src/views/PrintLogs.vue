@@ -116,6 +116,14 @@
             <div class="mcard-no">
               {{ row.shortNo || row.orderNo || '—' }}
             </div>
+            <!-- 桌面端表格是「短号 + 完整单号」两行,移动端补齐同样的完整单号行,
+                 否则手机上无法凭卡片对回订单(短号只够口头报读)。 -->
+            <div
+              v-if="row.shortNo && row.orderNo"
+              class="mcard-sub tip mono"
+            >
+              {{ row.orderNo }}
+            </div>
             <div class="mcard-sub">
               {{ row.createTime }}
             </div>
@@ -208,16 +216,16 @@
           >
         </div>
       </div>
-      <div
-        v-if="total > query.pageSize"
-        class="m-pager"
-      >
+      <!-- 单页时也显示:给出「共 N 项」与每页条数选择,不再按 total>pageSize 隐藏 -->
+      <div class="m-pager">
         <t-pagination
           v-model="query.pageNum"
+          v-model:page-size="query.pageSize"
           :total="total"
-          :page-size="query.pageSize"
+          :page-size-options="[10, 20, 50]"
           size="small"
           @change="load"
+          @page-size-change="reload"
         />
       </div>
     </div>
@@ -556,19 +564,22 @@ const columns = computed(() => {
   // 三列原本都在折行,已按内容实宽重新标定(与 OperLogs 同口径):
   //   时间 176:后端 TimeLayout = "2006-01-02 15:04:05",19 个半角字符 14px 下约 145px,
   //             加单元格左右各 16px 内边距约 177px —— 原 152px 会折成两行。
-  //   订单 168:orderNo 是 18 位雪花号(Courier 12px 约 135px)+ 内边距 —— 原 150px 折行。
+  //   订单 184:列名改「短号/订单号」后再放宽一档;orderNo 是 18 位雪花号
+  //            (Courier 12px 约 135px)+ 内边距 —— 原 150px 折行。
   //   桌台 124:「7 · 包间牡丹厅」这类「桌号 · 名称」—— 原 104px 折成两行。
   // 「打印机 / 份数」从 158 压到 146:8 字名称(后厨厨房单打印机)仍能完整显示,
   // 更长的省略号 + hover 看全(比折行整齐),省下的宽度留给「说明」——
   // 失败原因才是这页最要读的内容,列里只放一行,完整文案由 hover 浮层给出。
+  // 「说明」列 minWidth 200:失败原因可多显示约一行,完整文案仍由 hover 浮层兜底。
+  // 代价:1440 屏(内容区约 1107px)下固定列 992 + 200 会略超,出现少量横向滚动。
   const cols = [
-    { colKey: 'orderNo', title: '订单', width: 168 },
+    { colKey: 'orderNo', title: '短号/订单号', width: 184 },
     { colKey: 'table', title: '桌台', width: 124 },
     { colKey: 'docType', title: '单据', width: 94 },
     { colKey: 'printer', title: '打印机 / 份数', width: 146 },
     { colKey: 'triggerBy', title: '触发', width: 88 },
     { colKey: 'status', title: '结果', width: 84 },
-    { colKey: 'detail', title: '说明', minWidth: 116 },
+    { colKey: 'detail', title: '说明', minWidth: 200 },
     { colKey: 'createTime', title: '时间', width: 176 }
   ];
   // 操作列(补打/预览)只对 printer:edit 展示:预览返回完整票据(含金额),

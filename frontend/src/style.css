@@ -325,6 +325,9 @@ svg.ic-svg {
   color: var(--ink-3);
   margin-top: 3px;
   line-height: 1.5;
+
+  /* 长说明/订单号等无空格长串在窄屏上按字断行,不撑破卡片 */
+  overflow-wrap: anywhere;
 }
 
 .mcard-grid {
