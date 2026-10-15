@@ -23,7 +23,7 @@
       @keydown.space.prevent="onTileKey(row)"
     >
       <div class="m-tile-no">{{ row.tableNo }}</div>
-      <div class="m-tile-sub">{{ row.tableName }}</div>
+      <div class="m-tile-sub">{{ row.tableName }} · {{ row.capacity }}人</div>
       <div
         class="m-tile-sub m-tile-meta"
         :title="row.lockRemark || undefined"
@@ -380,9 +380,10 @@ function lockTheme(row: TableInfo): 'danger' | 'primary' {
 }
 
 // 移动端瓦片第三行文案:占用桌台带上用餐时长,店员扫一眼知道这桌坐了多久。
+// 容纳人数已移到桌名右侧,此行不再重复显示。
 function tileMetaText(row: TableInfo): string {
-  if (row.status === 1) return `占用中 · ${row.capacity} 人 · 已 ${durationText(row.diningMinutes)}`;
-  return `空闲 · ${row.capacity} 人`;
+  if (row.status === 1) return `占用中 · 已 ${durationText(row.diningMinutes)}`;
+  return '空闲';
 }
 
 // ---- 桌面端「更多」下拉:收纳低频(二维码)与危险(删除)操作,
