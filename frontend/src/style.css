@@ -391,6 +391,8 @@ svg.ic-svg {
 .m-pager .t-pagination__total {
   flex: 0 0 auto;
   white-space: nowrap;
+  /* 「共 N 项」右侧留出与页码/条数选择器的间距,顶到边不好看 */
+  margin-right: 12px;
 }
 
 /* ============================================================
