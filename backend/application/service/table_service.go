@@ -161,9 +161,9 @@ type ReleaseOutcome struct {
 
 // finishPaidOrder 把「已收款但仍在进行中」的订单直接归档为已完成(4)。
 //
-// 刻意不走 FinishOrder:它遵循线性状态机,只认「已上齐(3) → 已完成(4)」,而强制
-// 清台要处理的恰恰是卡在 1/2 的订单(店家漏点收款,后厨流程也未必走完)。钱已经收
-// 了,这里只是补上收尾归档,因此直接用带当前状态守卫的 dao 写入。
+// 不用 FinishOrder:强制清台在调用前已经批量读过各单的当前状态(curStatus),
+// 这里沿用那次快照 + 带状态守卫的 dao 写入,一次清台里的多张单不会被中间的并发
+// 操作插进来;FinishOrder 会各自重读状态并单开事务,不适合在同一个循环里批量走。
 func finishPaidOrder(orderID, curStatus int, operator string) error {
 	tableID, err := dao.GetOrderTable(orderID)
 	if err != nil {

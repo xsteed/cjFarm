@@ -165,6 +165,17 @@ func CustomerAppendOrder(c *gin.Context) {
 		return
 	}
 
+	// 加菜重算了应收金额:顾客此前若已生成收款码,那张码对应的还是旧金额。不关单的话
+	// 顾客可以扫旧码按旧金额付款,回调金额与订单当前总额不符,会被金额防线拒之门外,
+	// 留下一笔「顾客已付、订单未入账」要人工捞的挂起单。因此与改单/收款/取消同一口径:
+	// 加菜后关掉待支付的在线渠道单。顾客回到支付页时 PayCreate 会按新金额重新出码
+	// (InsertPayment 把关单占位行复活为待支付)。
+	//
+	// 幂等命中(Duplicated,同一 clientRequestId 的重放)金额没有再变,不动顾客手里的码。
+	if !res.Duplicated {
+		closeOnlinePayment(c.Request.Context(), res.OrderID)
+	}
+
 	// 打印:厨房机出「加菜单」(只列新菜),小票机重出一张整单最新金额的食客小票
 	// (print_guest_on_append 可关);幂等命中不重复打印。
 	//

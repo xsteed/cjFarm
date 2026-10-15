@@ -53,9 +53,10 @@ export function useOrderActions(detail: Ref<OrderDetail | null>): OrderActions {
   // 取消仅对「未支付」订单开放:已收款订单必须先退款,后端 CancelOrder 同样拒绝
   // (少了 unpaid 这道条件,按钮可点但点了必然报错)。
   const canCancelOrder = computed(() => canCancelPerm.value && active.value && unpaid.value);
-  const canFinish = computed(
-    () => canOperate.value && detail.value?.orderStatus === ORDER_STATUS_CODE.SERVED && detail.value?.payStatus === 1
-  );
+  // 完成(归档收尾)对「任意进行中状态 + 已支付」开放,不再要求先点到「已上齐」。
+  // 门店实际很少逐级点中间状态;先付模式下付款后单子停在「已下单」时更是没有出口。
+  // 未支付订单点了仍会被后端拒绝(先收款/结账),所以这里只管状态与收款两道。
+  const canFinish = computed(() => canOperate.value && active.value && detail.value?.payStatus === 1);
   const canCreditSettleOrder = computed(
     () => canCreditSettle.value && detail.value?.settleType === 'credit' && detail.value?.creditStatus === 1
   );

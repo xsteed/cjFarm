@@ -122,12 +122,30 @@ const (
 )
 
 // orderTransitions 合法状态跳转表:key 为当前状态,value 为允许跳转到的目标状态。
-// 采用严格线性流转 1→2→3→4,任意进行中状态可取消(5);
-// 已完成(4)/已取消(5)为终态,不可再跳转。禁止跳级(如 1 直接到 4),避免误操作跳过制作/上齐。
+//
+// 两类跳转的口径不同:
+//   - 制作进度 1→2→3:仍按顺序,不允许 1→3 跳级(「制作中」是后厨看板/催菜口径的一拍);
+//   - 收尾归档 4(完成)/5(取消):任意进行中状态都能直接到。门店实际很少逐级点中间状态,
+//     强制「先点制作中、再点上齐」只会逼服务员补点两下,还会在时间线上留下假的中间记录;
+//     先付模式下「付款后单子卡在已下单/制作中」时,更会因为没有出口而无法收尾。
+//
+// 资金约束不在本表:完成要求已支付、取消要求未支付,由 ChangeOrderStatus/FinishOrder/
+// CancelOrder 各自把关。
 var orderTransitions = map[int]map[int]bool{
-	OrderStatusPlaced:   {OrderStatusCooking: true, OrderStatusCanceled: true},
-	OrderStatusCooking:  {OrderStatusDining: true, OrderStatusCanceled: true},
-	OrderStatusDining:   {OrderStatusFinished: true, OrderStatusCanceled: true},
+	OrderStatusPlaced: {
+		OrderStatusCooking:  true,
+		OrderStatusFinished: true,
+		OrderStatusCanceled: true,
+	},
+	OrderStatusCooking: {
+		OrderStatusDining:   true,
+		OrderStatusFinished: true,
+		OrderStatusCanceled: true,
+	},
+	OrderStatusDining: {
+		OrderStatusFinished: true,
+		OrderStatusCanceled: true,
+	},
 	OrderStatusFinished: {},
 	OrderStatusCanceled: {},
 }

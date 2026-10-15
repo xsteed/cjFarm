@@ -229,6 +229,18 @@ func TestOrderSvcSettleOrder(t *testing.T) {
 		}
 	})
 
+	// 结账这条路径一直允许跳过中间状态(WHERE order_status IN (1,2,3)):门店下完单
+	// 客人吃完直接结账是常态,不能逼人先点「制作中→上齐」。这里钉住,防止后续收紧。
+	t.Run("已下单可直接结账", func(t *testing.T) {
+		id := orderSvcInsertOrder(t, "OSL8", OrderStatusPlaced, 0, 5000)
+		if _, err := SettleOrder(id, SettleTypeNormal, "现金", "", "tester"); err != nil {
+			t.Fatalf("未上齐也应可直接结账, got %v", err)
+		}
+		if s, p := orderSvcState(t, id); s != OrderStatusFinished || p != 1 {
+			t.Fatalf("结账后期望(状态4,已支付), got (%d,%d)", s, p)
+		}
+	})
+
 	t.Run("挂账", func(t *testing.T) {
 		id := orderSvcInsertOrder(t, "OSL7", OrderStatusDining, 0, 5000)
 		out, err := SettleOrder(id, SettleTypeCredit, "", "某公司", "tester")
@@ -245,6 +257,53 @@ func TestOrderSvcSettleOrder(t *testing.T) {
 			t.Fatalf("挂账落库异常: status=%d amount=%d", creditStatus, creditAmount)
 		}
 	})
+}
+
+// TestOrderSvcPayThenFinish 后付模式的收尾链路:先「只标记收款」,再「完成」归档。
+//
+// 收款不归档(见 dao.MarkOrderPaid 注释):order_status 仍是 1/2/3,订单形态与先付
+// 模式付款后完全一样。此前「完成」只认 3→4,店家收款后若没逐级点过制作中/上齐,
+// 这单就只能去点「强制清台」—— 本次放宽状态机解决的正是这个出口缺失。
+func TestOrderSvcPayThenFinish(t *testing.T) {
+	orderSvcInit(t)
+	id := orderSvcInsertOrder(t, "OPF1", OrderStatusPlaced, 0, 5000)
+	// 真实链路里桌台由下单占用;这里直接种订单,手动置占用以便验证完成时确实释放。
+	if _, err := store.DB.Exec(`UPDATE tb_table SET status=1 WHERE table_id=1`); err != nil {
+		t.Fatalf("置桌台占用失败: %v", err)
+	}
+
+	if _, err := PayOrder(id, "现金", "tester"); err != nil {
+		t.Fatalf("收款应成功, got %v", err)
+	}
+	if s, p := orderSvcState(t, id); s != OrderStatusPlaced || p != 1 {
+		t.Fatalf("收款后应停在(状态1,已支付), got (%d,%d)", s, p)
+	}
+
+	if err := FinishOrder(id, "tester"); err != nil {
+		t.Fatalf("收款后应可直接完成, got %v", err)
+	}
+	if s, _ := orderSvcState(t, id); s != OrderStatusFinished {
+		t.Fatalf("完成后期望状态 4, got %d", s)
+	}
+
+	// 跳过中间状态也要写全归档字段:报表的用餐时长口径不能因路径不同而缺数据。
+	var finishTime, mealEnd string
+	if err := store.DB.QueryRow(`SELECT COALESCE(finish_time,''), COALESCE(meal_end_time,'') FROM tb_order WHERE order_id=?`, id).
+		Scan(&finishTime, &mealEnd); err != nil {
+		t.Fatalf("查询归档时间失败: %v", err)
+	}
+	if finishTime == "" || mealEnd == "" {
+		t.Fatalf("完成应写入 finish_time / meal_end_time, got %q / %q", finishTime, mealEnd)
+	}
+
+	// 该桌已无进行中订单 → 释放为空闲。
+	var tableStatus int
+	if err := store.DB.QueryRow(`SELECT status FROM tb_table WHERE table_id=1`).Scan(&tableStatus); err != nil {
+		t.Fatalf("查询桌台状态失败: %v", err)
+	}
+	if tableStatus != 0 {
+		t.Fatalf("完成后桌台应释放为空闲, got %d", tableStatus)
+	}
 }
 
 func TestOrderSvcSettleCreditOrder(t *testing.T) {
@@ -352,6 +411,33 @@ func TestOrderSvcFinishAndCancelOrder(t *testing.T) {
 		}
 		if s, _ := orderSvcState(t, id); s != OrderStatusFinished {
 			t.Fatalf("完成后期望状态 4, got %d", s)
+		}
+	})
+
+	// 门店实际很少逐级点「制作中→上齐」再收尾;先付模式下付款后单子停在 1/2,
+	// 若完成只认 3→4,这些单就没有出口(只能走强制清台)。这里钉住可直接完成。
+	t.Run("已支付·已下单可直接完成", func(t *testing.T) {
+		id := orderSvcInsertOrder(t, "OF5", OrderStatusPlaced, 1, 5000)
+		if err := FinishOrder(id, "tester"); err != nil {
+			t.Fatalf("已支付的已下单订单应可直接完成, got %v", err)
+		}
+		if s, _ := orderSvcState(t, id); s != OrderStatusFinished {
+			t.Fatalf("完成后期望状态 4, got %d", s)
+		}
+	})
+
+	t.Run("已支付·制作中可直接完成", func(t *testing.T) {
+		id := orderSvcInsertOrder(t, "OF6", OrderStatusCooking, 1, 5000)
+		if err := FinishOrder(id, "tester"); err != nil {
+			t.Fatalf("已支付的制作中订单应可直接完成, got %v", err)
+		}
+	})
+
+	// 放宽的是「跳过中间状态」,不是「可以先完成再收钱」——漏收防线不能跟着松掉
+	t.Run("未支付不可直接完成", func(t *testing.T) {
+		id := orderSvcInsertOrder(t, "OF7", OrderStatusPlaced, 0, 5000)
+		if err := FinishOrder(id, "tester"); err == nil || !strings.Contains(err.Error(), "未支付") {
+			t.Fatalf("未支付订单不可完成, got %v", err)
 		}
 	})
 

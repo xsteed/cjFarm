@@ -51,13 +51,15 @@ func TestCoreCanTransition(t *testing.T) {
 	}{
 		{"下单→制作中", OrderStatusPlaced, OrderStatusCooking, true},
 		{"下单→取消", OrderStatusPlaced, OrderStatusCanceled, true},
+		// 制作进度仍按顺序:跳级会给后厨看板造出假的「已上齐」
 		{"下单→上齐(跳级)", OrderStatusPlaced, OrderStatusDining, false},
-		{"下单→完成(跳级)", OrderStatusPlaced, OrderStatusFinished, false},
+		// 收尾归档不要求逐级点:门店常常直接完成,先付模式下付款后更常卡在 1/2
+		{"下单→完成", OrderStatusPlaced, OrderStatusFinished, true},
 		{"下单→自己", OrderStatusPlaced, OrderStatusPlaced, false},
 		{"制作中→上齐", OrderStatusCooking, OrderStatusDining, true},
 		{"制作中→取消", OrderStatusCooking, OrderStatusCanceled, true},
 		{"制作中→回退下单", OrderStatusCooking, OrderStatusPlaced, false},
-		{"制作中→完成(跳级)", OrderStatusCooking, OrderStatusFinished, false},
+		{"制作中→完成", OrderStatusCooking, OrderStatusFinished, true},
 		{"上齐→完成", OrderStatusDining, OrderStatusFinished, true},
 		{"上齐→取消", OrderStatusDining, OrderStatusCanceled, true},
 		{"上齐→回退下单", OrderStatusDining, OrderStatusPlaced, false},
