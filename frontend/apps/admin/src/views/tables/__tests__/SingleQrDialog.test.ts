@@ -40,7 +40,9 @@ vi.mock('../../../utils/tableQr', () => ({
   ],
   renderCardDataUrl: vi.fn(),
   renderQrDataUrl: vi.fn(),
-  openPrintWindow: vi.fn()
+  openPrintWindow: vi.fn(),
+  buildPrintToolbar: vi.fn(() => '<div class="toolbar"></div>'),
+  PRINT_TOOLBAR_CSS: '.toolbar{}'
 }));
 
 const renderCardDataUrlMock = vi.mocked(renderCardDataUrl);

@@ -550,6 +550,43 @@ const HTML_ESCAPE: Record<string, string> = {
 
 const esc = (s: unknown): string => String(s == null ? '' : s).replace(/[&<>"]/g, c => HTML_ESCAPE[c]);
 
+/**
+ * 打印页顶栏样式(A4 单据、桌台码两种打印页共用,避免多处各自漂移)。
+ *
+ * 顶栏高度必须稳定在 .spacer 的 52px:button/span 的 flex 属性是为此服务的 ——
+ * button 不收缩(否则「打印 / 另存为 PDF」被挤成竖排),span 可收缩并省略超长文案
+ * (Windows 微软雅黑下文案更长)。顶栏一旦换行变高就会盖住首页内容。
+ */
+export const PRINT_TOOLBAR_CSS = `
+  .toolbar { position:fixed; left:0; right:0; top:0; background:#fff; border-bottom:1px solid #e6e8eb; padding:10px 16px;
+    display:flex; align-items:center; gap:12px; z-index:9; box-shadow:0 2px 8px rgba(0,0,0,.06); }
+  .toolbar b { flex:0 0 auto; font-size:14px; color:#1f2329; }
+  .toolbar span { flex:1 1 auto; min-width:0; font-size:12px; color:#8a919f;
+    overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .toolbar button { flex:0 0 auto; white-space:nowrap; background:#F0481F; color:#fff; border:0;
+    border-radius:6px; padding:8px 18px; font-size:13px; cursor:pointer; }
+  .spacer { height:52px; }
+  @media print { .toolbar, .spacer { display:none !important; } }
+`;
+
+/**
+ * 打印页顶栏。按钮只带 data-print —— 绑定由 opener 完成(见 openPrintWindow):
+ * 生产 CSP 是 script-src 'self'(无 'unsafe-inline'),内联 onclick 会被拦掉。
+ */
+export function buildPrintToolbar(title: string, hint: string): string {
+  return `<div class="toolbar">
+    <b>${esc(title)}</b>
+    <span>${esc(hint)}</span>
+    <button
+      type="button"
+      data-print
+    >
+      打印 / 另存为 PDF
+    </button>
+  </div>
+  <div class="spacer"></div>`;
+}
+
 function cardInner(card: QrCard, o: Required<PrintSheetOptions>): string {
   const horizontal = o.cardW > o.cardH;
   const qrSize = horizontal ? Math.round(o.cardH * 0.68) : Math.round(Math.min(o.cardW, o.cardH) * 0.64);
@@ -588,6 +625,12 @@ function cardHtml(card: QrCard, o: Required<PrintSheetOptions>): string {
   </div>`;
 }
 
+/**
+ * A4 网格模式每页顶部那行页眉(「XX店 每页 N × M / 第 x/y 页」)占用的高度(mm)。
+ * 9pt 正文约 3.8mm + .phead 的 4mm 下边距,取 8 留余量。
+ */
+const SHEET_HEAD_H = 8;
+
 /** 计算 A4 / 单页下卡片的行列与间距,供两种打印排版复用。 */
 function computeGrid(
   mode: string,
@@ -600,7 +643,10 @@ function computeGrid(
   const A4H = 297;
   const MARGIN = 10;
   const usableW = A4W - MARGIN * 2;
-  const usableH = A4H - MARGIN * 2;
+  // 网格模式每页都带一行页眉,必须从可用高里扣掉:否则网格刚好顶满 277mm 时
+  // (如 50×50 排 5 行 = 274mm + 页眉 ≈ 282mm)会溢出纸张,Chrome 会在每页后面
+  // 多打一张空白页。单页(label)模式不渲染页眉,且行数恒为 1,不受影响。
+  const usableH = A4H - MARGIN * 2 - SHEET_HEAD_H;
   let cols: number;
   let rows: number;
   let g = gap;
@@ -681,34 +727,18 @@ export function buildPrintSheetHtml(cards: QrCard[], opts: PrintSheetOptions = {
   .page.last { break-after:auto; page-break-after:auto; }
   .phead { display:flex; justify-content:space-between; font-size:9pt; color:#9299a6; margin-bottom:4mm; }
   .grid { display:grid; justify-content:center; align-content:start; }
-  .toolbar { position:fixed; left:0; right:0; top:0; background:#fff; border-bottom:1px solid #e6e8eb; padding:10px 16px;
-    display:flex; align-items:center; gap:12px; z-index:9; box-shadow:0 2px 8px rgba(0,0,0,.06); }
-  .toolbar b { font-size:14px; color:#1f2329; }
-  .toolbar span { font-size:12px; color:#8a919f; }
-  .toolbar button { margin-left:auto; background:#F0481F; color:#fff; border:0; border-radius:6px; padding:8px 18px; font-size:13px; cursor:pointer; }
-  .spacer { height:52px; }
+  ${PRINT_TOOLBAR_CSS}
   @media print {
     html,body { background:#fff; }
-    .toolbar, .spacer { display:none !important; }
     ${o.mode === 'label' ? '.page { padding:0 }' : '.page { padding:0 }'}
   }
 </style></head>
 <body>
-  <div class="toolbar">
-    <b>桌台点餐码 · 共 ${cards.length} 张</b>
-    <span>打印时请关闭「页眉页脚」并选择实际纸张（${o.mode === 'label' ? o.cardW + '×' + o.cardH + 'mm' : 'A4'}）</span>
-    <button onclick="window.print()">打印 / 另存为 PDF</button>
-  </div>
-  <div class="spacer"></div>
+  ${buildPrintToolbar(
+    `桌台点餐码 · 共 ${cards.length} 张`,
+    `打印时请关闭「页眉页脚」并选择实际纸张（${o.mode === 'label' ? o.cardW + '×' + o.cardH + 'mm' : 'A4'}）`
+  )}
   ${pageHtml}
-  <script>
-    // 等图片解码完再唤起打印,避免打出空白二维码
-    window.addEventListener('load', function () {
-      var imgs = Array.prototype.slice.call(document.images);
-      Promise.all(imgs.map(function (i) { return i.decode ? i.decode().catch(function(){}) : Promise.resolve(); }))
-        .then(function () { setTimeout(function () { window.print(); }, 350); });
-    });
-  </script>
 </body></html>`;
 }
 
@@ -787,42 +817,120 @@ export function buildCardImagesSheetHtml(images: CardImage[], opts: CardSheetOpt
   .page.last { break-after:auto; page-break-after:auto; }
   .phead { display:flex; justify-content:space-between; font-size:9pt; color:#9299a6; margin-bottom:4mm; }
   .grid { display:grid; justify-content:center; align-content:start; }
-  .toolbar { position:fixed; left:0; right:0; top:0; background:#fff; border-bottom:1px solid #e6e8eb; padding:10px 16px;
-    display:flex; align-items:center; gap:12px; z-index:9; box-shadow:0 2px 8px rgba(0,0,0,.06); }
-  .toolbar b { font-size:14px; color:#1f2329; }
-  .toolbar span { font-size:12px; color:#8a919f; }
-  .toolbar button { margin-left:auto; background:#F0481F; color:#fff; border:0; border-radius:6px; padding:8px 18px; font-size:13px; cursor:pointer; }
-  .spacer { height:52px; }
+  ${PRINT_TOOLBAR_CSS}
   @media print {
     html,body { background:#fff; }
-    .toolbar, .spacer { display:none !important; }
     .page { padding:0; }
   }
 </style></head>
 <body>
-  <div class="toolbar">
-    <b>桌台点餐码 · 共 ${images.length} 张</b>
-    <span>打印时请关闭「页眉页脚」并选择实际纸张（${o.mode === 'label' ? o.cardW + '×' + o.cardH + 'mm' : 'A4'}）</span>
-    <button onclick="window.print()">打印 / 另存为 PDF</button>
-  </div>
-  <div class="spacer"></div>
+  ${buildPrintToolbar(
+    `桌台点餐码 · 共 ${images.length} 张`,
+    `打印时请关闭「页眉页脚」并选择实际纸张（${o.mode === 'label' ? o.cardW + '×' + o.cardH + 'mm' : 'A4'}）`
+  )}
   ${pageHtml}
-  <script>
-    // 等图片解码完再唤起打印,避免打出空白二维码
-    window.addEventListener('load', function () {
-      var imgs = Array.prototype.slice.call(document.images);
-      Promise.all(imgs.map(function (i) { return i.decode ? i.decode().catch(function(){}) : Promise.resolve(); }))
-        .then(function () { setTimeout(function () { window.print(); }, 350); });
-    });
-  </script>
 </body></html>`;
 }
 
-/** 在新窗口打开打印页。返回是否成功打开(被拦截返回 false)。 */
+/** 打印页里打印按钮的统一钩子:HTML 只写 data-print,绑定由 opener 完成(见 openPrintWindow)。 */
+const PRINT_BTN_SELECTOR = '[data-print]';
+/** 等图片解码的上限:桌台多时解码很慢,超时直接打,不能让用户干等。 */
+const IMAGE_DECODE_TIMEOUT = 8000;
+
+/**
+ * 在新窗口打开打印页。返回是否成功打开(被拦截返回 false)。
+ *
+ * 打印页里刻意不放任何脚本(既不内联 <script>、也不用 onclick):
+ * 生产 CSP 是 `script-src 'self'`(没有 'unsafe-inline'),而 about:blank 会继承
+ * opener 的 CSP,Chromium(Chrome / Edge)因此会拦掉内联脚本与内联事件处理器,
+ * 表现为「页面渲染正常,但右上角『打印 / 另存为 PDF』点了没反应」。
+ * 绑定与自动打印改由 opener(受信的管理端 JS)执行:addEventListener 传入的是
+ * opener realm 里的函数,不受弹窗继承来的 CSP 约束。
+ */
 export function openPrintWindow(html: string): boolean {
   const w = window.open('', '_blank');
   if (!w) return false;
+  focusWindow(w);
   w.document.write(html);
   w.document.close();
+  attachPrintActions(w);
   return true;
+}
+
+/**
+ * 点击时同步把打印窗口开出来,内容稍后再由 writePrintWindow 写入。返回 null 表示被拦截。
+ *
+ * 渲染几百张二维码要几十秒,而 Chrome 的 transient activation 只保留 5 秒 ——
+ * 等渲染完再 window.open 会被当成「非用户触发的弹窗」直接拦掉,根本不会有打印页。
+ * 所以必须在仍带用户激活的点击任务里先开窗。
+ */
+export function preparePrintWindow(pendingText = '正在生成打印页，请稍候…'): Window | null {
+  const w = window.open('', '_blank');
+  if (!w) return null;
+  focusWindow(w);
+  // 先写一页占位,否则窗口一片空白,用户会以为卡死
+  w.document.write(
+    `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>正在生成打印页</title>
+<style>html,body{margin:0;height:100%;background:#f3f4f6;display:flex;align-items:center;justify-content:center;
+font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;color:#5b6270}</style></head>
+<body>${esc(pendingText)}</body></html>`
+  );
+  w.document.close();
+  return w;
+}
+
+/** 把真正的内容写进 preparePrintWindow 开出来的窗口(会覆盖占位页)并挂上打印动作。 */
+export function writePrintWindow(w: Window, html: string): void {
+  if (w.closed) return;
+  // 占位页已经 close 过,重新 open 会清空文档并重置解析器
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  attachPrintActions(w);
+}
+
+/** 抢一下焦点:若浏览器在后台标签打开,打印预览会开在后面,用户会以为没反应。 */
+function focusWindow(w: Window): void {
+  try {
+    w.focus();
+  } catch {
+    /* 部分环境不允许抢焦点,忽略 */
+  }
+}
+
+function attachPrintActions(w: Window): void {
+  const bind = (): void => {
+    if (w.closed) return;
+    // 打印页里的按钮只带 data-print;点击行为在这里挂,避免内联 onclick 被 CSP 拦。
+    const btn = w.document.querySelector<HTMLElement>(PRINT_BTN_SELECTOR);
+    btn?.addEventListener('click', () => w.print());
+    void autoPrintWhenReady(w);
+  };
+  // document.write + close 之后通常还没到 complete,统一等 load 再动手。
+  if (w.document.readyState === 'complete') bind();
+  else w.addEventListener('load', bind, { once: true });
+}
+
+/** 等图片解码完再唤起打印,避免打出空白二维码。 */
+async function autoPrintWhenReady(w: Window): Promise<void> {
+  try {
+    // 图片是 dataURL,load 时已在 DOM 里;decode() 保证位图就绪后再进打印预览。
+    await withTimeout(
+      Promise.all(
+        Array.from(w.document.images).map(img =>
+          typeof img.decode === 'function' ? img.decode().catch(() => undefined) : Promise.resolve()
+        )
+      ),
+      IMAGE_DECODE_TIMEOUT
+    );
+    // 再给一帧让版面稳定,否则打印预览偶尔会漏掉刚解码的图。
+    await new Promise<void>(r => setTimeout(r, 300));
+    if (!w.closed) w.print();
+  } catch {
+    /* 窗口已关闭或解码异常:放弃自动打印,用户仍可点工具栏按钮 */
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | void> {
+  return Promise.race([p, new Promise<void>(r => setTimeout(r, ms))]);
 }

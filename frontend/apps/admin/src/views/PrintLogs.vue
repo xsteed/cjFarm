@@ -253,8 +253,14 @@
           </t-tag>
         </template>
         <template #printer="{ row }">
-          <div>{{ row.printerName }}</div>
-          <div class="tip">{{ providerLabel(row.provider) }} · {{ row.copies }} 份</div>
+          <t-tooltip
+            :content="row.printerName || ''"
+            :disabled="!row.printerName"
+            placement="top-left"
+          >
+            <div class="ell">{{ row.printerName }}</div>
+          </t-tooltip>
+          <div class="tip ell">{{ providerLabel(row.provider) }} · {{ row.copies }} 份</div>
         </template>
         <template #triggerBy="{ row }">
           <span>{{ PRINT_TRIGGER[row.triggerBy] || row.triggerBy }}</span>
@@ -277,20 +283,25 @@
           </t-tag>
         </template>
         <template #detail="{ row }">
-          <div>
-            <span
-              class="tip ell"
-              :title="row.detail"
-              >{{ row.detail || '—' }}</span
-            >
-            <div
-              v-if="row.provider === 'agent' && queueCostText(row.costMs)"
-              class="tip queue-cost"
-              :class="{ 'queue-warn': Number(row.costMs) > 60000 }"
-            >
-              排队耗时 {{ queueCostText(row.costMs) }}
+          <!-- 说明只够放一行:列宽让给订单/桌台/时间,全文(含失败原因)靠 hover 看。
+               maxWidth + pre-wrap 让长文案在浮层里换行,不会又被截一次。 -->
+          <t-tooltip
+            :content="detailTip(row)"
+            :disabled="!detailTip(row)"
+            :overlay-inner-style="tipOverlayStyle"
+            placement="top-left"
+          >
+            <div class="detail-cell">
+              <span class="tip ell">{{ row.detail || '—' }}</span>
+              <div
+                v-if="row.provider === 'agent' && queueCostText(row.costMs)"
+                class="tip queue-cost"
+                :class="{ 'queue-warn': Number(row.costMs) > 60000 }"
+              >
+                排队耗时 {{ queueCostText(row.costMs) }}
+              </div>
             </div>
-          </div>
+          </t-tooltip>
         </template>
         <template #op="{ row }">
           <t-button
@@ -332,7 +343,8 @@
       </div>
     </template>
 
-    <!-- 票据预览:后端同一份渲染代码重放,等宽展示即与出纸 1:1 -->
+    <!-- 票据预览:回放这条记录当时存下的票面快照,等宽展示即与出纸 1:1
+         (升级前的老记录没有快照,后端回落重渲染并由 fromSnapshot=false 标出) -->
     <TicketPreviewDialog
       v-model:visible="previewVisible"
       :title="previewTitle"
@@ -340,6 +352,7 @@
       :chunks="previewData?.chunks"
       :line-width="previewData?.lineWidth ?? 48"
       :copies="previewData?.copies"
+      :from-snapshot="previewData?.fromSnapshot"
       :approximate="previewData?.approximate"
     />
 
@@ -477,6 +490,14 @@ function isExpired(row: PrintLogRow): boolean {
   return row.status === 0 && (row.detail || '').includes('已过期');
 }
 
+// 说明列只放得下一行,全文交给 hover 浮层;浮层限宽并允许换行,
+// 长失败原因不会被再截一次。空说明不弹浮层。
+const tipOverlayStyle = { maxWidth: '420px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' };
+
+function detailTip(row: PrintLogRow): string {
+  return (row.detail || '').trim();
+}
+
 const statusOptions = [
   { label: '已送出', value: '1' },
   { label: '排队中', value: '2' },
@@ -495,17 +516,27 @@ const providerOptions = [
 ];
 
 const columns = computed(() => {
-  // 列宽按「1440 屏内容区实测约 1107px」标定。原先合计 1170px 会把最右边的
+  // 列宽按「1440 屏内容区实测约 1107px」标定:除「说明」外的固定列合计 992px
+  // (含操作列),余下全给「说明」(minWidth)。原先合计 1170px 会把最右边的
   // 「操作/补打」挤出可视区 —— 1440 屏下也要横向拖才能补打,等于功能被藏起来。
+  //
+  // 三列原本都在折行,已按内容实宽重新标定(与 OperLogs 同口径):
+  //   时间 176:后端 TimeLayout = "2006-01-02 15:04:05",19 个半角字符 14px 下约 145px,
+  //             加单元格左右各 16px 内边距约 177px —— 原 152px 会折成两行。
+  //   订单 168:orderNo 是 18 位雪花号(Courier 12px 约 135px)+ 内边距 —— 原 150px 折行。
+  //   桌台 124:「7 · 包间牡丹厅」这类「桌号 · 名称」—— 原 104px 折成两行。
+  // 「打印机 / 份数」从 158 压到 146:8 字名称(后厨厨房单打印机)仍能完整显示,
+  // 更长的省略号 + hover 看全(比折行整齐),省下的宽度留给「说明」——
+  // 失败原因才是这页最要读的内容,列里只放一行,完整文案由 hover 浮层给出。
   const cols = [
-    { colKey: 'orderNo', title: '订单', width: 150 },
-    { colKey: 'table', title: '桌台', width: 104 },
+    { colKey: 'orderNo', title: '订单', width: 168 },
+    { colKey: 'table', title: '桌台', width: 124 },
     { colKey: 'docType', title: '单据', width: 94 },
-    { colKey: 'printer', title: '打印机 / 份数', width: 158 },
+    { colKey: 'printer', title: '打印机 / 份数', width: 146 },
     { colKey: 'triggerBy', title: '触发', width: 88 },
     { colKey: 'status', title: '结果', width: 84 },
-    { colKey: 'detail', title: '说明', minWidth: 150 },
-    { colKey: 'createTime', title: '时间', width: 152 }
+    { colKey: 'detail', title: '说明', minWidth: 116 },
+    { colKey: 'createTime', title: '时间', width: 176 }
   ];
   // 操作列(补打/预览)只对 printer:edit 展示:预览返回完整票据(含金额),
   // 与补打同为写权限级别;printer:view 的只读用户看列表与失败原因即可。
@@ -619,13 +650,18 @@ onMounted(load);
   flex-shrink: 0;
 }
 
+/* 说明列:撑满整列后单行截断,不再写死 max-width —— 写死会在宽屏下留白、
+   窄屏下溢出。全文由 t-tooltip 在 hover 时给出。 */
+.detail-cell {
+  min-width: 0;
+}
+
 .ell {
-  display: inline-block;
-  max-width: 260px;
+  display: block;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: bottom;
 }
 
 .queue-cost {

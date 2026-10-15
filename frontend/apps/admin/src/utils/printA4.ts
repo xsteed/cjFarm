@@ -8,7 +8,7 @@
 //
 // 版式复刻同目录 tableQr.ts 的做法：拼 HTML 字符串 -> 新窗口 write -> @page A4 -> window.print()。
 
-import { openPrintWindow } from './tableQr';
+import { buildPrintToolbar, openPrintWindow, PRINT_TOOLBAR_CSS } from './tableQr';
 import { ORDER_STATUS } from '@dining/shared';
 import type { OrderDetail, PublicConfig } from '@dining/types';
 
@@ -128,12 +128,7 @@ export function buildA4Html(order: OrderDetail, docType: 'kitchen' | 'guest', op
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
   @page { size: A4; margin: 12mm; }
   html,body { margin:0; padding:0; background:#f3f4f6; font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif; color:#1f2329; }
-  .toolbar { position:fixed; left:0; right:0; top:0; background:#fff; border-bottom:1px solid #e6e8eb; padding:10px 16px;
-    display:flex; align-items:center; gap:12px; z-index:9; box-shadow:0 2px 8px rgba(0,0,0,.06); }
-  .toolbar b { font-size:14px; }
-  .toolbar span { font-size:12px; color:#8a919f; }
-  .toolbar button { margin-left:auto; background:#F0481F; color:#fff; border:0; border-radius:6px; padding:8px 18px; font-size:13px; cursor:pointer; }
-  .spacer { height:52px; }
+  ${PRINT_TOOLBAR_CSS}
   .sheet { width:186mm; margin:0 auto; background:#fff; padding:14mm 12mm; box-shadow:0 2px 10px rgba(0,0,0,.06); }
   .shop { text-align:center; font-size:20pt; font-weight:700; letter-spacing:1px; }
   .doctitle { text-align:center; margin-top:4mm; }
@@ -163,17 +158,15 @@ export function buildA4Html(order: OrderDetail, docType: 'kitchen' | 'guest', op
   .foot .sign span { border-top:1px solid #9299a6; padding-top:2mm; min-width:50mm; text-align:center; }
   @media print {
     html,body { background:#fff; }
-    .toolbar, .spacer { display:none !important; }
     .sheet { box-shadow:none; width:auto; padding:0; }
   }
 </style></head>
 <body>
-  <div class="toolbar">
-    <b>${meta.title} · ${esc(order.orderNo || '')}</b>
-    <span>${opt.reprint ? '补打件' : ''} 请关闭「页眉页脚」，纸张选择 A4</span>
-    <button onclick="window.print()">打印 / 另存为 PDF</button>
-  </div>
-  <div class="spacer"></div>
+  ${buildPrintToolbar(
+    // buildPrintToolbar 内部会 esc,这里传原文,别二次转义
+    `${meta.title} · ${order.orderNo || ''}`,
+    `${opt.reprint ? '补打件' : ''} 请关闭「页眉页脚」，纸张选择 A4`
+  )}
   <section class="sheet">
     <div class="shop">${esc(opt.shopName || '')}</div>
     <div class="doctitle"><b>${meta.title}</b><small>${meta.subtitle}${opt.reprint ? ' · REPRINT' : ''}</small></div>
@@ -203,9 +196,6 @@ export function buildA4Html(order: OrderDetail, docType: 'kitchen' | 'guest', op
       ${withPrice ? '<div class="sign"><span>收银签字</span><span>顾客签字</span></div>' : '<div class="sign"><span>划单确认</span><span>传菜确认</span></div>'}
     </div>
   </section>
-  <script>
-    window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });
-  </script>
 </body></html>`;
 }
 

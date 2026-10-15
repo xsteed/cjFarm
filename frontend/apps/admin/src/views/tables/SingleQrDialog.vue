@@ -141,11 +141,13 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import {
+  buildPrintToolbar,
   openPrintWindow,
   renderCardDataUrl,
   renderQrDataUrl,
   QR_PIXEL_PRESETS,
-  CARD_PRESETS
+  CARD_PRESETS,
+  PRINT_TOOLBAR_CSS
 } from '../../utils/tableQr';
 import { getTableWeappCode } from '@dining/api';
 import type { TableInfo } from '@dining/types';
@@ -343,10 +345,15 @@ function printSingle(): void {
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   @page { size: A4; margin: 0; }
   html, body { margin: 0; height: 100%; }
-  body { display: flex; align-items: center; justify-content: center; background: #fff; }
+  body { display: flex; align-items: center; justify-content: center; background: #fff;
+    font-family: "PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
   img { width: auto; height: auto; max-width: 88%; max-height: 88%; }
+  ${PRINT_TOOLBAR_CSS}
 </style></head>
-<body><img src="${qrDataUrl.value}" alt="桌台码"></body></html>`;
+<body>
+  ${buildPrintToolbar(`桌台码 · ${row.tableName || ''}`, '打印时请关闭「页眉页脚」，纸张选择 A4')}
+  <img src="${qrDataUrl.value}" alt="桌台码">
+</body></html>`;
   if (!openPrintWindow(html)) {
     MessagePlugin.warning('浏览器拦截了弹窗，请改用「下载 PNG」后自行打印');
   }

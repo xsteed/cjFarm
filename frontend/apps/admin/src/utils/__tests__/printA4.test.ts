@@ -62,6 +62,14 @@ describe('printA4 A4 票据排版', () => {
     expect(buildA4Html(makeOrder({ orderStatus: 99 }), 'guest')).toContain('99');
   });
 
+  it('打印按钮只输出 data-print 钩子，不含内联 onclick', () => {
+    const html = buildA4Html(makeOrder(), 'guest');
+
+    expect(html).toContain('data-print');
+    expect(html).not.toContain('onclick');
+    expect(html).not.toContain('<script');
+  });
+
   it('转义 HTML 特殊字符', () => {
     const html = buildA4Html(makeOrder({ orderNo: '<NO&">' }), 'guest', { shopName: '店<script>' });
     expect(html).toContain('&lt;NO&amp;&quot;&gt;');

@@ -53,11 +53,12 @@
                   >{{ line.text }}</span
                 >
               </div>
-              <!-- 放大行(夹单桌号):出纸时是倍宽倍高 + 居中,字符网格已失效,
-                   这里直接用大字居中渲染,不按格拆分 -->
+              <!-- 放大行(店名/夹单桌号/菜品行):出纸时是倍宽倍高,字符网格已失效,
+                   这里直接用大字渲染、不按格拆分;对齐按 bigLeft 区分 -->
               <div
                 v-else-if="line.big"
                 class="ticket-line big"
+                :class="{ left: line.bigLeft }"
               >
                 {{ line.text }}
               </div>
@@ -83,16 +84,25 @@
         v-if="copiesHint || approximate"
         class="preview-note"
       >
-        <div v-if="copiesHint">该打印机一次打印 {{ copiesHint }},预览只展示其中一张。</div>
+        <div v-if="copiesHint">该打印机一次打印 {{ copiesHint }},预览只展示其中一份(上面这几张纸)。</div>
         <div v-if="approximate">
           加菜小票只能还原票据形态:<b>当时新增了哪些菜</b>已无从追溯(订单只增不减、打印日志不存渲染快照),
           此处菜品区按订单<b>当前全部菜品</b>渲染,金额是当前整单合计。
         </div>
       </div>
-      <div class="preview-tip paper-meta">
+      <div
+        class="preview-tip paper-meta"
+        :class="{ 'paper-meta-stale': metaState === 'replayed' }"
+      >
         <slot name="meta">
-          由后端「出纸同一份渲染代码」生成,与实际小票 1:1;纸宽
-          {{ lineWidth === 32 ? '58mm' : '80mm' }}。
+          <template v-if="metaState === 'snapshot'">
+            由后端存下的票面快照回放,与当时实际出纸 1:1;纸宽 {{ paperSize }}。
+          </template>
+          <template v-else-if="metaState === 'replayed'">
+            这条记录是升级前打的,没有存下票面快照;内容按当前订单与配置重新渲染,可能与当时不同。纸宽
+            {{ paperSize }}。
+          </template>
+          <template v-else> 由后端「出纸同一份渲染代码」生成,与实际小票 1:1;纸宽 {{ paperSize }}。 </template>
         </slot>
       </div>
     </template>
@@ -118,11 +128,20 @@ const props = defineProps<{
   lineWidth?: number;
   /** 打印机配置的打印份数;>1 时提示「预览只展示其中一张」 */
   copies?: number;
+  /**
+   * 内容是否来自台账存下的票面快照。
+   * 为真(常态):回放,与实际出纸一字不差,底部文案据实说明「快照回放」;
+   * 为假:升级前的老记录没有快照,按当前数据重渲染,文案要明确提示可能已与当时不同。
+   */
+  fromSnapshot?: boolean;
   /** 为 true 表示形态还原而非内容复现(加菜小票),需要显式说明 */
   approximate?: boolean;
 }>();
 
 defineEmits<{ 'update:visible': [v: boolean] }>();
+
+// 纸宽文案:58mm 与 80mm 的行宽唯一确定,不给调用方再传一个「58mm/80mm」参数的口子。
+const paperSize = computed(() => (props.lineWidth === 32 ? '58mm' : '80mm'));
 
 // 份数提示只在真的会多打时才出现(配 1 份时说它是废话)。
 const copiesHint = computed(() => {
@@ -271,8 +290,8 @@ watch(
   font-weight: 700;
 }
 
-/* 放大行:夹单桌号。出纸走 GS ! 倍宽倍高 + 居中(飞鹅通道 <C><B>),
-   预览按同样观感放大居中,不再参与字符网格对齐。 */
+/* 放大行:店名/夹单桌号/菜品行。出纸走 GS ! 倍宽倍高(飞鹅 <C><B> 或 <B>),
+   预览按同样观感放大,不再参与字符网格对齐。 */
 .ticket-line.big {
   font-weight: 700;
   font-size: 1.7em;
@@ -281,6 +300,12 @@ watch(
   padding: 2px 0;
   text-align: center;
   white-space: normal;
+}
+
+/* 左对齐放大:整单厨房单的菜品清单(逐条编号)。出纸时编号在行首对齐,
+   预览若跟着居中,后厨按预览核对的观感就和出纸对不上了。 */
+.ticket-line.big.left {
+  text-align: left;
 }
 
 /* 二维码行:热敏机在票尾居中出一枚二维码,预览里同样居中放图。 */
@@ -330,5 +355,11 @@ watch(
 .paper-meta {
   margin-top: 10px;
   text-align: center;
+}
+
+/* 没有票面快照的老记录:重渲染的结果可能已与当时不同,这句提示必须被看见,
+   不能和「与当时实际出纸 1:1」的常态文案长一个颜色。 */
+.paper-meta-stale {
+  color: #ed7b2f;
 }
 </style>
