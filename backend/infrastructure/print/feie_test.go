@@ -4,7 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"dining-system/application/service"
 	"dining-system/domain/po"
 	"dining-system/infrastructure/adapter/feie"
 	"dining-system/infrastructure/store"
@@ -24,6 +26,10 @@ func setupTestDB(t *testing.T) {
 			_ = store.DB.Close()
 		}
 	})
+	// 出纸确认的回执等待在生产是秒级(见 feieConfirmFirstDelay);这里拉到「不可能触发」:
+	// 否则各用例派发出的确认协程会在用例结束后醒来,把失败回执写进**下一个用例**的
+	// 临时库,造成与用例内容无关的偶发失败。专门的确认用例会把等待压到毫秒级并自行恢复。
+	feieConfirmFirstDelay, feieConfirmRetryDelay = time.Hour, time.Hour
 }
 
 // ============================================================================
@@ -91,28 +97,29 @@ func sampleOrder() (po.Order, []po.OrderItem) {
 	return o, items
 }
 
-// TestRenderTicketPickupNo 取餐号应印在客用小票与厨房单上,
-// 未分配(历史订单/手工补录)时不应打印出一行无意义的 "0"。
+// TestRenderTicketPickupNo 取餐号只印在厨房单上(后厨据此叫号);
+// 顾客小票不打印 —— 取餐号是「当面对号」用的,顾客把票拿走后再报号无从对应。
+// 未分配(历史订单/手工补录)时两票都不打印,避免露出无意义的 "0"。
 func TestRenderTicketPickupNo(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 
-	t.Run("已分配取餐号则打印", func(t *testing.T) {
+	t.Run("已分配取餐号:厨房单打印、顾客小票不打印", func(t *testing.T) {
 		o.PickupNo = 12
-		for name, lines := range map[string][]string{
-			"食客小票": RenderGuestTicket(o, items, 48),
-			"厨房单":  RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"}),
-		} {
-			if !strings.Contains(strings.Join(lines, "\n"), "取餐号: 12") {
-				t.Errorf("%s 应包含取餐号行, 实际:\n%s", name, strings.Join(lines, "\n"))
-			}
+		kitchen := strings.Join(RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"}), "\n")
+		if !strings.Contains(kitchen, "取餐号: 12") {
+			t.Errorf("厨房单应包含取餐号行, 实际:\n%s", kitchen)
+		}
+		guest := strings.Join(RenderGuestTicket(o, items, 48), "\n")
+		if strings.Contains(guest, "取餐号") {
+			t.Errorf("顾客小票不应打印取餐号, 实际:\n%s", guest)
 		}
 	})
 
-	t.Run("未分配则不打印该行", func(t *testing.T) {
+	t.Run("未分配则两票都不打印该行", func(t *testing.T) {
 		o.PickupNo = 0
 		for name, lines := range map[string][]string{
-			"食客小票": RenderGuestTicket(o, items, 48),
+			"顾客小票": RenderGuestTicket(o, items, 48),
 			"厨房单":  RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"}),
 		} {
 			if strings.Contains(strings.Join(lines, "\n"), "取餐号") {
@@ -120,6 +127,65 @@ func TestRenderTicketPickupNo(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestGuestTicketHeaderLayout 票头版式:各票种店名统一放大居中加粗;顾客小票单据名
+// 居中弱化(不加粗)且不含取餐号,厨房单单据名保持左对齐、照常打印取餐号。
+func TestGuestTicketHeaderLayout(t *testing.T) {
+	setupTestDB(t)
+	o, items := sampleOrder()
+	o.PickupNo = 7
+	shop := strings.TrimSpace(service.GetSetting("shop_name"))
+
+	// 结账形态(trigger=settle):单据名是「【结账小票】」。
+	guest := RenderGuestTicket(o, items, 48)
+	// 80mm(48 格)下默认店名 23 格 ≤ 24,应作为放大行居中输出。
+	if big := bigLinesOf(guest); len(big) != 1 || big[0] != shop {
+		t.Fatalf("结账小票店名应为唯一放大行 %q, got %v:\n%s", shop, big, strings.Join(guest, "\n"))
+	}
+	// 单据名副标题:居中(左侧有缩进)且不加粗。
+	titleLine := ""
+	for _, l := range guest {
+		if strings.TrimSpace(l) == "【结账小票】" {
+			titleLine = l
+		}
+	}
+	if titleLine == "" {
+		t.Fatalf("结账小票应保留单据名副标题:\n%s", strings.Join(guest, "\n"))
+	}
+	if !strings.HasPrefix(titleLine, " ") {
+		t.Fatalf("单据名副标题应居中(左侧留白), got %q", titleLine)
+	}
+	if BoldLine(titleLine) {
+		t.Fatalf("单据名副标题应弱化(不加粗), got %q", titleLine)
+	}
+
+	// 点菜单形态(trigger=order):单据名换成「【顾客小票】」,同样弱化居中。
+	order := RenderGuestOrderTicket(o, items, 48)
+	orderTitle := ""
+	for _, l := range order {
+		if strings.TrimSpace(l) == "【顾客小票】" {
+			orderTitle = l
+		}
+	}
+	if orderTitle == "" {
+		t.Fatalf("点菜单应保留单据名副标题:\n%s", strings.Join(order, "\n"))
+	}
+	if !strings.HasPrefix(orderTitle, " ") || BoldLine(orderTitle) {
+		t.Fatalf("点菜单单据名应弱化居中, got %q", orderTitle)
+	}
+
+	// 厨房单:店名同样放大居中(与顾客小票一致),单据名保持左对齐,取餐号照常打印。
+	kitchen := RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"})
+	if big := bigLinesOf(kitchen); len(big) != 2 || big[0] != shop {
+		t.Fatalf("厨房单店名应为放大行(各票种统一), got %v:\n%s", big, strings.Join(kitchen, "\n"))
+	}
+	if len(kitchen) < 2 || kitchen[1] != pad("【厨房单】", 48) {
+		t.Fatalf("厨房单单据名应保持左对齐原样, got %q", kitchen[1])
+	}
+	if !strings.Contains(strings.Join(kitchen, "\n"), "取餐号: 7") {
+		t.Fatalf("厨房单应照常打印取餐号:\n%s", strings.Join(kitchen, "\n"))
+	}
 }
 
 // sampleRows 返回带分类 ID 的订单明细(分单逻辑与 buildJobs 使用)。
@@ -199,9 +265,9 @@ func TestRenderGuestTicket(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 	joined := strings.Join(RenderGuestTicket(o, items, 48), "\n")
-	for _, want := range []string{"【食客小票】", "订单号: D20260921120000abcdef", "凉拌青瓜 (份) x2", "茶位费(4人)", "优惠", "合计", "84.00", "谢谢惠顾"} {
+	for _, want := range []string{"【结账小票】", "订单号: D20260921120000abcdef", "凉拌青瓜 (份) x2", "茶位费(4人)", "优惠", "合计", "84.00", "谢谢惠顾"} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("食客小票缺少 %q\n实际内容:\n%s", want, joined)
+			t.Errorf("结账小票缺少 %q\n实际内容:\n%s", want, joined)
 		}
 	}
 	for _, l := range RenderGuestTicket(o, items, 48) {
@@ -335,3 +401,67 @@ func TestIsRetryable(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// TestGuestTicketFormFollowsTrigger 顾客小票的形态跟着触发场景走:
+//   - 下单触发(trigger=order)→ 点菜单形态「【顾客小票】」:金额一行「当前合计」,
+//     不出优惠与结算块;
+//   - 结账触发(trigger=settle)→ 结账形态「【结账小票】」:优惠行与结算块齐全。
+//
+// 先付模式的「首次收款成功」走的就是 settle 触发(见 handler.printKitchenOnPaid),
+// 那张纸点菜单与付款凭证合一,不会再出第二张点菜单。
+func TestGuestTicketFormFollowsTrigger(t *testing.T) {
+	setupTestDB(t)
+	o, items := sampleOrder()
+
+	order := strings.Join(RenderGuestOrderTicket(o, items, 48), "\n")
+	if !strings.Contains(order, "【顾客小票】") || !strings.Contains(order, "当前合计") {
+		t.Fatalf("点菜单形态缺要素:\n%s", order)
+	}
+	// 「\n合计」匹配顶格的金额行,不会撞上「当前合计」。
+	for _, bad := range []string{"【结账小票】", "优惠", "支付方式", "结账时间", "\n合计"} {
+		if strings.Contains(order, bad) {
+			t.Fatalf("点菜单不应包含结账要素 %q:\n%s", bad, order)
+		}
+	}
+
+	settle := strings.Join(RenderGuestTicket(o, items, 48), "\n")
+	if !strings.Contains(settle, "【结账小票】") || !strings.Contains(settle, "优惠") || !strings.Contains(settle, "\n合计") {
+		t.Fatalf("结账小票形态缺要素:\n%s", settle)
+	}
+	if strings.Contains(settle, "当前合计") {
+		t.Fatalf("结账小票金额行应为「合计」:\n%s", settle)
+	}
+}
+
+// TestGuestJobFormFollowsTrigger 作业层同源:docType=guest 的作业按 triggerBy
+// 分发到对应渲染函数,label 也与票面标题对得上 —— 台账里「顾客小票/结账小票」
+// 要能一眼分清,排障时才不用点开快照猜。
+func TestGuestJobFormFollowsTrigger(t *testing.T) {
+	setupTestDB(t)
+	o, _ := settledOrder()
+	printers := []po.Printer{
+		{PrinterName: "前台小票机", PrinterType: po.PrinterTypeGuest, PaperWidth: 48},
+	}
+
+	orderJobs := buildJobs(nil, nil, printers, o, sampleRows(), po.PrintDocGuest, "", po.PrintTriggerOrder, "")
+	if len(orderJobs) != 1 {
+		t.Fatalf("点菜单只应发给小票机, got %d 个作业", len(orderJobs))
+	}
+	if got := strings.Join(orderJobs[0].render(), "\n"); !strings.Contains(got, "【顾客小票】") {
+		t.Fatalf("下单作业应渲染点菜单形态:\n%s", got)
+	}
+	if got := orderJobs[0].label(); got != "顾客小票" {
+		t.Fatalf("下单作业标识应为「顾客小票」, got %q", got)
+	}
+
+	settleJobs := buildJobs(nil, nil, printers, o, sampleRows(), po.PrintDocGuest, "", po.PrintTriggerSettle, "")
+	if len(settleJobs) != 1 {
+		t.Fatalf("结账小票只应发给小票机, got %d 个作业", len(settleJobs))
+	}
+	if got := strings.Join(settleJobs[0].render(), "\n"); !strings.Contains(got, "【结账小票】") {
+		t.Fatalf("结账作业应渲染结账小票形态:\n%s", got)
+	}
+	if got := settleJobs[0].label(); got != "结账小票" {
+		t.Fatalf("结账作业标识应为「结账小票」, got %q", got)
+	}
+}

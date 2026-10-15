@@ -72,11 +72,11 @@ func TestNormalizePrinter(t *testing.T) {
 		t.Fatalf("份数应收敛到 5, got %d", p.Copies)
 	}
 
-	// 食客小票不保留分类分单。
+	// 顾客小票不保留分类分单。
 	p = dto.Printer{PrinterType: po.PrinterTypeGuest, CategoryIDList: []int{1, 2}, CategoryIDs: "1,2"}
 	normalizePrinter(&p)
 	if p.CategoryIDs != "" || len(p.CategoryIDList) != 0 {
-		t.Fatalf("食客小票应清空分类分单, got %+v", p)
+		t.Fatalf("顾客小票应清空分类分单, got %+v", p)
 	}
 
 	// 厨房单按分类 ID 列表生成 CSV。
@@ -311,4 +311,29 @@ func TestPrinterTarget(t *testing.T) {
 // itoa 避免在测试里反复写 strconv.Itoa。
 func itoa(n int) string {
 	return strconv.Itoa(n)
+}
+
+// TestPrinterSaveNormalizesFeieSN 保存时剥掉 SN 标签前缀;仍带分隔符的脏值必须明确报错,
+// 不能悄悄存进去(否则会变成「日志成功、纸没出来」的隐形丢单)。
+// (NormalizeFeieSN/IsFeieSN 本身的行为在 domain/po 包内单测。)
+func TestPrinterSaveNormalizesFeieSN(t *testing.T) {
+	initAgentTestDB(t)
+	code, res := prtCall(t, PrinterSave, http.MethodPost, "/test",
+		`{"printerName":"飞鹅机","provider":"feie","feieSn":"SN 961828266","paperWidth":48,"copies":1,"status":1}`, nil)
+	if code != http.StatusOK || res["code"] != float64(200) {
+		t.Fatalf("带标签前缀的 SN 应规范化后保存成功, got %d(%v)", code, res)
+	}
+	var sn string
+	if err := store.DB.QueryRow(`SELECT feie_sn FROM tb_printer WHERE printer_name='飞鹅机'`).Scan(&sn); err != nil {
+		t.Fatal(err)
+	}
+	if sn != "961828266" {
+		t.Fatalf("入库 SN 应为规范化后的纯编号, got %q", sn)
+	}
+
+	_, bad := prtCall(t, PrinterSave, http.MethodPost, "/test",
+		`{"printerName":"飞鹅机2","provider":"feie","feieSn":"9618 28266"}`, nil)
+	if !strings.Contains(bad["msg"].(string), "只能是数字或字母") {
+		t.Fatalf("含空格的非法 SN 应被拒绝, got %v", bad)
+	}
 }

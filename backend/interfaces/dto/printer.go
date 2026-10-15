@@ -6,7 +6,7 @@ import "dining-system/domain/po"
 type Printer struct {
 	PrinterID   int    `json:"printerId"`
 	PrinterName string `json:"printerName"`
-	PrinterType int    `json:"printerType"` // 1=厨房单 2=食客小票
+	PrinterType int    `json:"printerType"` // 1=厨房单 2=顾客小票
 	Provider    string `json:"provider"`    // tcp=网络直连 / feie=飞鹅云
 	IP          string `json:"ip"`
 	Port        int    `json:"port"`

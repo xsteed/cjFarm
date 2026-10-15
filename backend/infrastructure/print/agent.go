@@ -304,18 +304,20 @@ func notifyAgentJob() {
 
 // enqueueAgentJob 把一张订单票据写入代理队列(替代直连的「立刻发出去」)。
 func enqueueAgentJob(j job) error {
-	return enqueueAgentTicket(j.jobAgentLog(), j.p, j.render(), j.docType, j.o, j.triggerBy, j.operator)
+	return enqueueAgentTicket(j.jobAgentLog(), j)
 }
 
-// enqueueAgentTicket 渲染结果入队的公共实现(订单票据与测试页共用)。
+// enqueueAgentTicket 单张票据入队的公共实现(订单票据与测试页共用)。
 //
 // 顺序很重要:先记打印日志拿到 log_id,再带着 log_id 入队。
 // 这样即便入队那步失败,商家在「打印日志」里也能看到一条失败记录,
 // 而不是「下单了、什么都没发生、日志里也查不到」。
-func enqueueAgentTicket(log *zap.SugaredLogger, p po.Printer, lines []string, docType string,
-	o po.Order, triggerBy, operator string) error {
+func enqueueAgentTicket(log *zap.SugaredLogger, j job) error {
+	p, o := j.p, j.o
+	lines := j.render()
 
 	copies := p.EffectiveCopies()
+	label := j.label()
 	logID, err := service.InsertPrintLogReturningID(po.PrintLog{
 		OrderID:     o.OrderID,
 		OrderNo:     o.OrderNo,
@@ -325,13 +327,20 @@ func enqueueAgentTicket(log *zap.SugaredLogger, p po.Printer, lines []string, do
 		PrinterName: p.PrinterName,
 		PrinterType: p.PrinterType,
 		Provider:    po.PrinterProviderAgent,
-		DocType:     docType,
+		DocType:     j.docType,
 		Copies:      copies,
 		Status:      po.PrintStatusQueued,
-		Detail:      "已入队,等待门店打印代理取单",
-		TriggerBy:   triggerBy,
-		Operator:    operator,
-		CreateTime:  service.Now(),
+		// 票据标识走独立列:后续的回执/重试/作废都会整段改写 detail
+		// (见 dao.UpdatePrintLogResult),拼进 detail 的标识留不住。
+		Label:  label,
+		Detail: "已入队,等待门店打印代理取单",
+		// 票面快照与其它通道一致:入队时内容就已定稿(见 snapshot.go),
+		// 存下来后这条记录的预览/补打才是回放,而不是拿现在的订单重算。
+		Content:    EncodeTicketContent(TicketContent{Label: label, Lines: lines}),
+		PaperWidth: p.PaperWidth,
+		TriggerBy:  j.triggerBy,
+		Operator:   j.operator,
+		CreateTime: service.Now(),
 	})
 	if err != nil {
 		log.Warnf("打印代理: 写打印日志失败(仍继续入队): %v", err)
@@ -345,15 +354,15 @@ func enqueueAgentTicket(log *zap.SugaredLogger, p po.Printer, lines []string, do
 			PrinterType: p.PrinterType,
 			IP:          strings.TrimSpace(p.IP),
 			Port:        effectivePort(p.Port),
-			DocType:     docType,
+			DocType:     j.docType,
 			OrderID:     o.OrderID,
 			OrderNo:     o.OrderNo,
 			TableNo:     o.TableNo,
 			Copies:      copies,
 			PrintLogID:  logID,
 			Payload:     chunk,
-			TriggerBy:   triggerBy,
-			Operator:    operator,
+			TriggerBy:   j.triggerBy,
+			Operator:    j.operator,
 			CreateTime:  service.Now(),
 		}); err != nil {
 			log.Warnf("打印代理: 入队失败(第 %d/%d 段): %v", i+1, len(chunks), err)
@@ -369,7 +378,7 @@ func enqueueAgentTicket(log *zap.SugaredLogger, p po.Printer, lines []string, do
 	}
 	notifyAgentJob()
 	log.Infof("打印代理: 已入队 %d 段,等待代理取单 -> 打印机[%s](%s) 单据 %s(%s)",
-		len(chunks), p.PrinterName, providerAddr(p), o.OrderNo, docType)
+		len(chunks), p.PrinterName, providerAddr(p), o.OrderNo, j.docType)
 	return nil
 }
 

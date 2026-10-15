@@ -571,6 +571,7 @@ function onLogout() {
 }
 
 /* ---------- 侧栏折叠(仅桌面端使用) ---------- */
+
 /* 顶栏的折叠/展开开关按钮 */
 .collapse-btn {
   width: 32px;
@@ -598,7 +599,7 @@ function onLogout() {
    没有「折叠成图标列」的概念。下面的 .side.collapsed 规则必须用
    @media (min-width: 1025px) 限定,否则桌面端折叠后若视口缩到移动端,
    collapsed 类仍在,会覆盖移动端抽屉样式(侧栏变 64px 破图)。 */
-@media (min-width: 1025px) {
+@media (width >= 1025px) {
 /* 折叠后侧栏收成 64px 图标列;overflow 放开,让 hover 浮层能溢出到侧栏外面 */
 .side.collapsed {
   width: 64px;

@@ -49,8 +49,10 @@ func PrintLogList(c *gin.Context) {
 
 // PrintLogReprint 按日志重打:同订单、同打印机、同单据类型再送一次。
 //
-// 走 PrintLog 而不是让前端自己拼参数,是因为日志里同时存了打印机与单据类型,
-// 一条记录就能唯一确定「重打什么」,前端不必回查订单明细。
+// 走 PrintLog 而不是让前端自己拼参数,是因为日志里同时存了打印机、单据类型与票面快照,
+// 一条记录就能唯一确定「重打哪一张纸」,前端不必回查订单明细。
+// 带快照的记录发出的就是当时那张(内容、抬头、纸宽都不重算),与同一条记录的预览一致;
+// 升级前没有快照的老记录回落到按当前订单重渲染。
 func PrintLogReprint(c *gin.Context) {
 	var p struct {
 		PrintID int `json:"printId"`
@@ -68,7 +70,7 @@ func PrintLogReprint(c *gin.Context) {
 		fail(c, "该记录不是订单单据(如测试打印),无法重打")
 		return
 	}
-	if err := print.Reprint(entry.PrinterID, entry.OrderID, entry.DocType, entry.TriggerBy, adminName(c)); err != nil {
+	if err := print.ReprintLog(entry, adminName(c)); err != nil {
 		fail(c, "补打失败:"+err.Error())
 		return
 	}
@@ -83,9 +85,12 @@ type previewLine struct {
 	// QR 非空表示这一行实际出的是二维码:前端按该内容渲染真实二维码图形,
 	// Text 只是占位提示。等宽文本网格画不出二维码,只能这样保住「预览即所得」。
 	QR string `json:"qr,omitempty"`
-	// Big 为真表示这一行按「放大居中」出纸(夹单桌号,见 print.SplitBigLine):
-	// 前端用大字居中渲染,与 ESC/POS 的 GS ! 倍宽倍高、飞鹅的 <C><B> 一致。
+	// Big 为真表示这一行按「放大」出纸:飞鹅 <C><B>/<B>、ESC/POS GS ! 倍宽倍高,
+	// 前端用大字渲染(见 print.SplitBigLine / SplitBigLeftLine)。
 	Big bool `json:"big,omitempty"`
+	// BigLeft 为真时那个放大行是左对齐的(整单菜品清单,见 print.SplitBigLeftLine):
+	// 前端不能再居中渲染 —— 出纸上编号在行首对齐,预览居中了就失去「预览即所得」。
+	BigLeft bool `json:"bigLeft,omitempty"`
 }
 
 // qrPlaceholder 预览里二维码行的占位文本。
@@ -95,6 +100,11 @@ const qrPlaceholder = "[二维码]"
 func toPreviewLines(lines []string) []previewLine {
 	out := make([]previewLine, 0, len(lines))
 	for _, l := range lines {
+		// 切纸控制行只在飞鹅「同机多张合并推送」时产生,预览的是单张票、不会走到;
+		// 防御性跳过,免得控制字符被当正文渲染出来。
+		if print.SplitCutLine(l) {
+			continue
+		}
 		if qr, ok := print.SplitQRLine(l); ok {
 			out = append(out, previewLine{Text: qrPlaceholder, QR: qr})
 			continue
@@ -104,7 +114,13 @@ func toPreviewLines(lines []string) []previewLine {
 			out = append(out, previewLine{Text: big, Big: true})
 			continue
 		}
-		out = append(out, previewLine{Text: l, Bold: print.BoldLine(l)})
+		if bigL, ok := print.SplitBigLeftLine(l); ok {
+			out = append(out, previewLine{Text: bigL, Big: true, BigLeft: true})
+			continue
+		}
+		// 加粗判定走唯一入口:显式标记优先(备注折行的续行靠它),形态反推兜底。
+		text, bold := print.BoldText(l)
+		out = append(out, previewLine{Text: text, Bold: bold})
 	}
 	return out
 }
@@ -115,11 +131,10 @@ func toPreviewLines(lines []string) []previewLine {
 // (未保存)可通过请求体覆盖,所见即所改。不出纸、不记日志。
 func PrintPreviewSample(c *gin.Context) {
 	var p struct {
-		DocType          string  `json:"docType"`          // guest(默认)/kitchen/guest_append
+		DocType          string  `json:"docType"`          // guest(默认,点菜单)/guest_settle(结账小票)/kitchen/guest_append
 		PaperWidth       int     `json:"paperWidth"`       // 32(58mm)/48(80mm,默认)
 		Footer           *string `json:"footer"`           // 页脚文案覆盖
 		ShowDiscount     *bool   `json:"showDiscount"`     // 优惠行开关覆盖
-		QR               *bool   `json:"qr"`               // 小票二维码开关覆盖
 		KitchenShowPrice *bool   `json:"kitchenShowPrice"` // 厨房单带金额覆盖
 		KitchenSplit     *string `json:"kitchenSplit"`     // 厨房单打印粒度覆盖(whole/item/portion)
 	}
@@ -127,7 +142,6 @@ func PrintPreviewSample(c *gin.Context) {
 	chunks, lineWidth := print.PreviewTicketSample(p.DocType, p.PaperWidth, print.SampleOverrides{
 		Footer:           p.Footer,
 		ShowDiscount:     p.ShowDiscount,
-		QR:               p.QR,
 		KitchenShowPrice: p.KitchenShowPrice,
 		KitchenSplit:     p.KitchenSplit,
 	})
@@ -142,9 +156,10 @@ func PrintPreviewSample(c *gin.Context) {
 	})
 }
 
-// PrintPreview 票据预览:按打印日志重放渲染,不出纸、不记日志。
+// PrintPreview 票据预览:优先回放台账里存的票面快照,没有快照才按当前数据重渲染。
+// 不出纸、不记日志。
 //
-// 与「补打」对称 —— 一条日志记录唯一确定「预览什么」,前端拿文本行按等宽字体
+// 与「补打」对称 —— 一条日志记录唯一确定「预览哪一张纸」,前端拿文本行按等宽字体
 // 渲染即可得到与 9100 出纸 1:1 的版式(渲染发生在后端,与出纸同一份代码)。
 func PrintPreview(c *gin.Context) {
 	printID := 0
@@ -164,29 +179,36 @@ func PrintPreview(c *gin.Context) {
 		fail(c, "该记录不是订单单据(如测试打印);测试页样式可到「打印机管理」的「票据预览」查看")
 		return
 	}
-	chunks, lineWidth, err := print.PreviewTicket(entry.PrinterID, entry.OrderID, entry.DocType, entry.TriggerBy)
+	res, err := print.PreviewLog(entry)
 	if err != nil {
 		fail(c, "生成预览失败:"+err.Error())
 		return
 	}
-	previewChunks := make([][]previewLine, 0, len(chunks))
-	for _, ck := range chunks {
+	previewChunks := make([][]previewLine, 0, len(res.Chunks))
+	for _, ck := range res.Chunks {
 		previewChunks = append(previewChunks, toPreviewLines(ck))
 	}
 	ok(c, gin.H{
 		// chunks 与该打印机实际出纸的分段一一对应:受单条上限约束的通道
 		// (代理/飞鹅)会把超长票据拆成多段依次送出,直连则是整张一次写完。
 		// 每行带 bold 标记(与 ESC/POS 出纸的强调一致)。
-		"chunks":      previewChunks,
-		"lineWidth":   lineWidth,
-		"docType":     entry.DocType,
+		"chunks":    previewChunks,
+		"lineWidth": res.LineWidth,
+		"docType":   entry.DocType,
+		// triggerBy 供前端把 guest 的两种形态分开显示(顾客小票/结账小票),
+		// 与 printDocLabel 同一套口径。
+		"triggerBy":   entry.TriggerBy,
 		"orderNo":     entry.OrderNo,
 		"printerName": entry.PrinterName,
 		"copies":      entry.Copies,
-		// 加菜小票的票据形态可以还原,但「当时新增了哪些菜」无从还原
-		// (订单只增不减、日志不存渲染快照),菜品区退化为订单当前整单 ——
-		// 由前端显式标注,避免商家把它当成原始加菜内容的复现。
-		"approximate": entry.DocType == po.PrintDocGuestAppend,
+		// fromSnapshot:内容来自这张票当时存下来的快照(回放,一字不差),
+		// 前端据此说明「与实际小票 1:1」。
+		"fromSnapshot": res.FromSnapshot,
+		// approximate:没有快照(升级前的老记录),按当前订单与配置重渲染 ——
+		// 内容可能与当时不同,由前端显式标注,别让商家当成原始内容的复现。
+		// 加菜小票尤其明显:当时新增了哪些菜无从追溯,菜品区退化为订单当前整单。
+		"approximate": !res.FromSnapshot &&
+			entry.DocType == po.PrintDocGuestAppend,
 	})
 }
 
@@ -228,7 +250,7 @@ func OrderReprint(c *gin.Context) {
 // printerTypeLabel 打印机类型中文名(错误提示用)。
 func printerTypeLabel(t int) string {
 	if t == po.PrinterTypeGuest {
-		return "食客小票"
+		return "顾客小票"
 	}
 	return "厨房单"
 }

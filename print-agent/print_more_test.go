@@ -74,7 +74,7 @@ func TestPrDocLabel(t *testing.T) {
 		want string
 	}{
 		{name: "厨房单", doc: "kitchen", want: "厨房单"},
-		{name: "食客小票", doc: "guest", want: "食客小票"},
+		{name: "顾客小票", doc: "guest", want: "顾客小票"},
 		{name: "测试页", doc: "test", want: "测试页"},
 		{name: "空类型", doc: "", want: "单据"},
 		{name: "未知类型原样", doc: "custom", want: "custom"},

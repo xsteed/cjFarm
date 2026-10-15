@@ -204,7 +204,7 @@ bit5=缺纸；n=4 的 bit2/bit5=纸将尽、bit3/bit6=纸尽），**机型实现
 | 单据类型 | TTL 默认 | 环境变量 | 理由 |
 |---|---|---|---|
 | kitchen（厨房单/加菜单） | 2 小时 | `AGENT_JOB_TTL_KITCHEN_MIN` | 过了饭口的厨房单没有出纸价值 |
-| guest（食客小票） | 24 小时 | `AGENT_JOB_TTL_GUEST_MIN` | 隔夜的小票仅剩对账价值，保留久一点 |
+| guest（顾客小票） | 24 小时 | `AGENT_JOB_TTL_GUEST_MIN` | 隔夜的小票仅剩对账价值，保留久一点 |
 | test / 其它 | 30 分钟 | `AGENT_JOB_TTL_TEST_MIN` | 测试页过期即废 |
 
 - **零表结构变更**：以 `create_time` 推算过期，不新增列、不迁移；
@@ -409,7 +409,7 @@ macOS 的 LaunchAgent 场景下同目录约定同样有效。
 | 名 | 默认 | 作用 |
 |---|---|---|
 | `AGENT_JOB_TTL_KITCHEN_MIN` | 120 | 厨房单 TTL（分钟，≤0 视为不过期） |
-| `AGENT_JOB_TTL_GUEST_MIN` | 1440 | 食客小票 TTL |
+| `AGENT_JOB_TTL_GUEST_MIN` | 1440 | 顾客小票 TTL |
 | `AGENT_JOB_TTL_TEST_MIN` | 30 | 测试页 TTL |
 | `PRINT_AGENT_WAIT`（代理侧） | 25 | pull 长轮询秒数，0 = 退回纯轮询 |
 | cfg `agent_token`（已有） | — | legacy 全局令牌，长期保留 |

@@ -98,38 +98,19 @@ func TestGuestTicketCreditSettled(t *testing.T) {
 	}
 }
 
-// TestGuestTicketQRDefaultOff 二维码默认关闭,开启后落在票据最末且带 H5 地址。
-func TestGuestTicketQRDefaultOff(t *testing.T) {
+// TestGuestTicketNeverPrintsQR 小票不再打二维码:桌台上已有桌台点餐码(同一 H5 入口),
+// 票上再打一枚是重复入口。此前由 print_guest_qr 控制,已随该配置一并下线 ——
+// 这里把旧配置键与 H5 地址都设成「曾会出码」的状态,证明是功能下线而非默认关闭。
+func TestGuestTicketNeverPrintsQR(t *testing.T) {
 	setupTestDB(t)
-
-	// 1) 默认关:票上不应有任何二维码标记行。
-	o, items := settledOrder()
-	if got := RenderGuestTicket(o, items, 48); hasQRLine(got) {
-		t.Fatalf("默认不应打印二维码:\n%s", strings.Join(got, "\n"))
-	}
-
-	// 2) 开启:末行为二维码标记,内容指向顾客端小票页。
 	setPrintSetting(t, "h5_base_url", "https://dining.example.com")
 	setPrintSetting(t, "print_guest_qr", "1")
-	lines := RenderGuestTicket(o, items, 48)
-	last := lines[len(lines)-1]
-	content, ok := SplitQRLine(last)
-	if !ok {
-		t.Fatalf("开启后末行应为二维码标记行, got %q", last)
-	}
-	if want := "https://dining.example.com/printTicket?orderNo=D20260921120000abcdef"; content != want {
-		t.Fatalf("二维码内容 = %q, want %q", content, want)
-	}
-}
-
-// TestGuestTicketQROffWithoutH5Base H5 地址未配置时不出码:打一个手机扫不通的码更糟。
-func TestGuestTicketQROffWithoutH5Base(t *testing.T) {
-	setupTestDB(t)
-	setPrintSetting(t, "h5_base_url", "")
-	setPrintSetting(t, "print_guest_qr", "1")
 	o, items := settledOrder()
 	if got := RenderGuestTicket(o, items, 48); hasQRLine(got) {
-		t.Fatalf("H5 地址为空时不应出码:\n%s", strings.Join(got, "\n"))
+		t.Fatalf("结账小票不应再打二维码:\n%s", strings.Join(got, "\n"))
+	}
+	if got := RenderGuestOrderTicket(o, items, 48); hasQRLine(got) {
+		t.Fatalf("点菜单不应再打二维码:\n%s", strings.Join(got, "\n"))
 	}
 }
 
@@ -147,7 +128,7 @@ func hasQRLine(lines []string) bool {
 func TestEncodeESCPOSQR(t *testing.T) {
 	setupTestDB(t)
 	content := "https://dining.example.com/printTicket?orderNo=D1"
-	data := encodeESCPOS([]string{"【食客小票】", qrMarkLine(content)})
+	data := encodeESCPOS([]string{"【结账小票】", qrMarkLine(content)})
 
 	// 1) 标记前缀绝不能出现在字节流里(否则会打出一串乱码)。
 	if bytes.Contains(data, []byte(qrMarkPrefix)) {
@@ -191,33 +172,12 @@ func TestEncodeESCPOSQRTooLong(t *testing.T) {
 func TestSplitFeieContentQR(t *testing.T) {
 	setupTestDB(t)
 	content := "https://dining.example.com/printTicket?orderNo=D1"
-	chunks := splitFeieContent([]string{"【食客小票】", qrMarkLine(content)})
+	chunks := splitFeieContent([]string{"【结账小票】", qrMarkLine(content)})
 	got := strings.Join(chunks, "")
 	if !strings.Contains(got, "<QR>"+content+"</QR>") {
 		t.Fatalf("飞鹅内容缺少 <QR> 标签: %q", got)
 	}
 	if strings.Contains(got, qrMarkPrefix) {
 		t.Fatalf("飞鹅内容不应残留二维码标记前缀: %q", got)
-	}
-}
-
-// TestGuestTicketQROverride 示例预览能用未保存的表单值覆盖二维码开关(所见即所改)。
-func TestGuestTicketQROverride(t *testing.T) {
-	setupTestDB(t)
-	setPrintSetting(t, "h5_base_url", "https://dining.example.com")
-
-	on := true
-	off := false
-
-	// 库里是关的,但表单勾上了 → 预览里要出码。
-	chunks, _ := PreviewTicketSample(po.PrintDocGuest, 48, SampleOverrides{QR: &on})
-	if !hasQRLine(chunks[0]) {
-		t.Fatal("覆盖为开启时预览应含二维码行")
-	}
-	// 库里是开的,但表单取消了 → 预览里不该出码。
-	setPrintSetting(t, "print_guest_qr", "1")
-	chunks, _ = PreviewTicketSample(po.PrintDocGuest, 48, SampleOverrides{QR: &off})
-	if hasQRLine(chunks[0]) {
-		t.Fatal("覆盖为关闭时预览不应含二维码行")
 	}
 }

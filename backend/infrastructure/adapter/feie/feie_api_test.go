@@ -178,6 +178,108 @@ func TestPrintMsg(t *testing.T) {
 	}
 }
 
+// TestCallRawLogsEveryResponse 飞鹅所有接口(打印/状态查询/清队列/绑定…)的返回原文
+// 都必须经 logRawResponse 落日志:只要收到过响应(ret=0、ret!=0、甚至非 JSON 的维护页)
+// 就一定有痕。「请求飞鹅后返回了什么」不能只留在调用方手里。
+func TestCallRawLogsEveryResponse(t *testing.T) {
+	orig := logRawResponse
+	t.Cleanup(func() { logRawResponse = orig })
+
+	type rec struct{ apiname, sn, raw string }
+	var got []rec
+	logRawResponse = func(apiname, sn, raw string) { got = append(got, rec{apiname, sn, raw}) }
+
+	srv := feieStub(t, func(apiname string, _ map[string]string) []byte {
+		if apiname == "Open_printMsg" {
+			return okResp(`"FEIE-1"`)
+		}
+		return []byte(`{"ret":-3,"msg":"bad"}`)
+	})
+	c := NewClient(Config{User: "u", Ukey: "k", APIURL: srv.URL})
+
+	if _, err := c.PrintMsg("sn1", "c", 1); err != nil {
+		t.Fatalf("PrintMsg 失败: %v", err)
+	}
+	if _, err := c.PrinterStatus("sn2"); err == nil {
+		t.Fatal("ret!=0 应返回错误")
+	}
+	if err := c.ClearQueue("sn3"); err == nil {
+		t.Fatal("ret!=0 应返回错误")
+	}
+	if len(got) != 3 {
+		t.Fatalf("三次调用都应记录返回原文, got %d 条: %+v", len(got), got)
+	}
+	if got[0].apiname != "Open_printMsg" || got[0].sn != "sn1" || !strings.Contains(got[0].raw, "FEIE-1") {
+		t.Fatalf("打印接口返回未记录: %+v", got[0])
+	}
+	if got[1].apiname != "Open_queryPrinterStatus" || got[1].sn != "sn2" || !strings.Contains(got[1].raw, "bad") {
+		t.Fatalf("状态查询返回未记录: %+v", got[1])
+	}
+	if got[2].apiname != "Open_delPrinterSqs" || !strings.Contains(got[2].raw, `"ret":-3`) {
+		t.Fatalf("清队列返回未记录: %+v", got[2])
+	}
+
+	// 非 JSON 异常响应(飞鹅维护页 / 网关错误页)同样留痕。
+	got = nil
+	badSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html>maintenance</html>"))
+	}))
+	t.Cleanup(badSrv.Close)
+	c2 := NewClient(Config{User: "u", Ukey: "k", APIURL: badSrv.URL})
+	if err := c2.ClearQueue("sn9"); err == nil {
+		t.Fatal("非 JSON 响应应报错")
+	}
+	if len(got) != 1 || !strings.Contains(got[0].raw, "maintenance") {
+		t.Fatalf("异常响应也应留痕, got %+v", got)
+	}
+}
+
+// TestPrintMsgRawReturnsRaw 成功时必须把云端返回原文交回调用方 ——
+// 排查「台账记成功、纸却没出来」时,这是唯一能确认飞鹅到底回了什么的证据。
+func TestPrintMsgRawReturnsRaw(t *testing.T) {
+	srv := feieStub(t, func(_ string, _ map[string]string) []byte { return okResp(`"FEIE-1"`) })
+	c := NewClient(Config{User: "u", Ukey: "k", APIURL: srv.URL})
+
+	id, raw, err := c.PrintMsgRaw("sn1", "content", 1)
+	if err != nil || id != "FEIE-1" {
+		t.Fatalf("PrintMsgRaw 失败: id=%q err=%v", id, err)
+	}
+	if !strings.Contains(raw, "FEIE-1") || !strings.Contains(raw, `"ret":0`) {
+		t.Fatalf("应原样返回云端响应, got %q", raw)
+	}
+}
+
+// TestPrintMsgRawRejectsBadOrderID ret=0 但 data 不是订单号时必须判失败并带回原文。
+// 飞鹅偶尔用「ret=0 + 空/异常 data」表达「本次没真正受理」,盲信 ret 会记成成功,
+// 最终表现为「台账成功、纸没出来」这种最难排查的丢单。
+func TestPrintMsgRawRejectsBadOrderID(t *testing.T) {
+	for _, dataJSON := range []string{`""`, `null`, `{"x":1}`, `[]`} {
+		srv := feieStub(t, func(_ string, _ map[string]string) []byte {
+			return []byte(`{"ret":0,"msg":"ok","data":` + dataJSON + `}`)
+		})
+		c := NewClient(Config{User: "u", Ukey: "k", APIURL: srv.URL})
+
+		id, raw, err := c.PrintMsgRaw("sn1", "content", 1)
+		if err == nil {
+			t.Fatalf("data=%s 应判失败, got id=%q", dataJSON, id)
+		}
+		if id != "" {
+			t.Fatalf("失败时订单号应为空, got %q", id)
+		}
+		if raw == "" {
+			t.Fatalf("data=%s 失败时也应带回云端原文", dataJSON)
+		}
+	}
+	// 数字订单号(个别接口版本)仍应放行。
+	srvNum := feieStub(t, func(_ string, _ map[string]string) []byte {
+		return []byte(`{"ret":0,"msg":"ok","data":12345}`)
+	})
+	c := NewClient(Config{User: "u", Ukey: "k", APIURL: srvNum.URL})
+	if id, _, err := c.PrintMsgRaw("sn1", "content", 1); err != nil || id != "12345" {
+		t.Fatalf("数字订单号应可用: id=%q err=%v", id, err)
+	}
+}
+
 func TestPrinterStatus(t *testing.T) {
 	srv := feieStub(t, func(_ string, _ map[string]string) []byte {
 		return okResp(`"在线，工作状态正常"`)
@@ -197,12 +299,40 @@ func TestClearQueue(t *testing.T) {
 	}
 }
 
+// TestQueryOrderState data 的形态随接口版本不同:布尔 true/false 或文本
+// 「已打印」/「未打印」,两种都要认 —— 只按单一形态解析,会把另一种当成
+// 「未打印」,从而误报丢单、误导商户补打。原文必须一并带回供台账留痕。
 func TestQueryOrderState(t *testing.T) {
-	srv := feieStub(t, func(_ string, _ map[string]string) []byte { return okResp(`true`) })
+	for _, dataJSON := range []string{`true`, `"已打印"`} {
+		srv := feieStub(t, func(_ string, _ map[string]string) []byte { return okResp(dataJSON) })
+		c := NewClient(Config{User: "u", Ukey: "k", APIURL: srv.URL})
+		ok, raw, err := c.QueryOrderState("sn1", "FEIE-ORDER-1")
+		if err != nil || !ok {
+			t.Fatalf("data=%s 应判定已打印: ok=%v err=%v", dataJSON, ok, err)
+		}
+		if !strings.Contains(raw, `"ret":0`) {
+			t.Fatalf("应带回云端原文, got %q", raw)
+		}
+	}
+	for _, dataJSON := range []string{`false`, `"未打印"`, `null`} {
+		srv := feieStub(t, func(_ string, _ map[string]string) []byte { return okResp(dataJSON) })
+		c := NewClient(Config{User: "u", Ukey: "k", APIURL: srv.URL})
+		if ok, _, err := c.QueryOrderState("sn1", "FEIE-ORDER-1"); err != nil || ok {
+			t.Fatalf("data=%s 应判定未打印: ok=%v err=%v", dataJSON, ok, err)
+		}
+	}
+	// sn 必须随请求携带(官方参数表同时列出 sn 与 orderid)。
+	var gotSN, gotOrder string
+	srv := feieStub(t, func(_ string, form map[string]string) []byte {
+		gotSN, gotOrder = form["sn"], form["orderid"]
+		return okResp(`true`)
+	})
 	c := NewClient(Config{User: "u", Ukey: "k", APIURL: srv.URL})
-	ok, err := c.QueryOrderState("FEIE-ORDER-1")
-	if err != nil || !ok {
-		t.Fatalf("QueryOrderState 失败: ok=%v err=%v", ok, err)
+	if _, _, err := c.QueryOrderState("snX", "FEIE-ORDER-9"); err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if gotSN != "snX" || gotOrder != "FEIE-ORDER-9" {
+		t.Fatalf("请求参数错误: sn=%q orderid=%q", gotSN, gotOrder)
 	}
 }
 
@@ -265,7 +395,7 @@ func TestAllApisPropagateAPIError(t *testing.T) {
 		func() error { _, e := c.PrintMsg("s", "c", 1); return e },
 		func() error { _, e := c.PrinterStatus("s"); return e },
 		func() error { return c.ClearQueue("s") },
-		func() error { _, e := c.QueryOrderState("o"); return e },
+		func() error { _, _, e := c.QueryOrderState("s", "o"); return e },
 		func() error { _, _, e := c.QueryOrderInfoByDate("s", "2026-10-13"); return e },
 		func() error { _, e := c.GetModel("s", "k"); return e },
 		func() error { _, _, e := c.AddPrinter("s#k"); return e },

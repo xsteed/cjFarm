@@ -308,29 +308,36 @@ onMounted(load);
   margin-bottom: 14px;
   line-height: 1.7;
 }
+
 .dev-count {
   font-size: 13px;
   color: var(--ink-2);
 }
+
 .dev-name {
   font-weight: 600;
   color: var(--ink);
 }
+
 .dev-cur {
   margin-left: 8px;
 }
+
 .dev-confirm {
   font-size: 13.5px;
   line-height: 1.8;
 }
+
 .dev-confirm b {
   color: var(--brand-deep);
 }
+
 .empty {
   padding: 32px 0;
   color: var(--ink-3);
   font-size: 13px;
 }
+
 .m-empty {
   padding: 32px 0;
   color: var(--ink-3);

@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"dining-system/domain/po"
 )
 
 // TestDedupeRoleKeys 老库升级去重:MySQL 时代 idx_role_key 退化为普通索引 +
@@ -128,5 +130,54 @@ func TestRecreateRoleKeyIndex(t *testing.T) {
 	if _, err := DB.Exec(`INSERT INTO tb_role(role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark)
 		VALUES('old_key','撞已删除行','','all',0,1,1,'0',?,?,'')`, Now(), Now()); err == nil {
 		t.Fatal("全局唯一索引下,与已删除行同 role_key 的新插入应被拒绝")
+	}
+}
+
+// TestNormalizeFeieSNs 老库里带着机身标签前缀的飞鹅 SN(「SN 961828266」)必须被收敛成
+// 纯编号:飞鹅按 SN 精确匹配,带前缀等于推给一台不存在的机器,而它很可能仍回 ret=0。
+// 剥离前缀后仍含非法字符的值不擅自改写(留给商户核对重存)。
+func TestNormalizeFeieSNs(t *testing.T) {
+	Init(filepath.Join(t.TempDir(), "feiesn.db"))
+	defer func() { _ = DB.Close() }()
+
+	seed := func(name, sn string) int {
+		t.Helper()
+		res, err := DB.Exec(`INSERT INTO tb_printer(printer_name, printer_type, provider, ip, port,
+			feie_sn, paper_width, copies, category_ids, status, del_flag, create_time, update_time)
+			VALUES(?,?,?,?,?,?,?,?,?,?,'0',?,?)`,
+			name, 1, po.PrinterProviderFeie, "", 9100, sn, 48, 1, "", 1, Now(), Now())
+		if err != nil {
+			t.Fatalf("插入打印机失败: %v", err)
+		}
+		id, _ := res.LastInsertId()
+		return int(id)
+	}
+	prefixed := seed("带前缀", "SN 961828266")
+	clean := seed("已规范", "888888888")
+	dirty := seed("含空格", "9618 28266")
+
+	normalizeFeieSNs()
+
+	snOf := func(id int) string {
+		var sn string
+		if err := DB.QueryRow(`SELECT COALESCE(feie_sn,'') FROM tb_printer WHERE printer_id=?`, id).Scan(&sn); err != nil {
+			t.Fatalf("读取 SN 失败: %v", err)
+		}
+		return sn
+	}
+	if got := snOf(prefixed); got != "961828266" {
+		t.Fatalf("标签前缀应被剥离, got %q", got)
+	}
+	if got := snOf(clean); got != "888888888" {
+		t.Fatalf("已规范的 SN 不应被改动, got %q", got)
+	}
+	if got := snOf(dirty); got != "9618 28266" {
+		t.Fatalf("仍含非法字符的 SN 不应被擅自改写, got %q", got)
+	}
+
+	// 幂等:再跑一次零变更。
+	normalizeFeieSNs()
+	if got := snOf(prefixed); got != "961828266" {
+		t.Fatalf("重复执行应保持规范化结果, got %q", got)
 	}
 }

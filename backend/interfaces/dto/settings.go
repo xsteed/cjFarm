@@ -40,11 +40,10 @@ type Settings struct {
 	PrintKitchenShowPrice string `json:"print_kitchen_show_price"` // 厨房单是否带单价金额
 	// 厨房单打印粒度:whole=整单一张(默认)/ item=一菜一单 / portion=一菜一单且按份数拆
 	PrintKitchenSplitMode string `json:"print_kitchen_split_mode"`
-	// 食客小票模板配置(方案A:高频变化点做成设置项,后端渲染实时读取)
+	// 顾客小票模板配置(方案A:高频变化点做成设置项,后端渲染实时读取)
 	// 金额区按「有才打」渲染(茶位费/优惠/赠送),没有对应的展示开关。
 	PrintGuestFooter       string `json:"print_guest_footer"`        // 页脚文案,清空则不打印页脚
 	PrintGuestShowDiscount string `json:"print_guest_show_discount"` // 是否显示优惠行("1"=显示)
-	PrintGuestQR           string `json:"print_guest_qr"`            // 小票末尾是否打印二维码("1"=打印)
 	PrintGuestOnAppend     string `json:"print_guest_on_append"`     // 加菜后是否出加菜小票("1"=打印)
 	PrintGuestOnOrder      string `json:"print_guest_on_order"`      // 下单后是否出点菜单("1"=打印)
 	// 飞鹅云打印(feie_ukey 为敏感项:已配置回显 ****** 占位,原样带回或留空均表示不修改)

@@ -48,7 +48,7 @@ func ListPrinters() ([]po.Printer, error) {
 }
 
 // ListEnabledPrinters 查询启用的打印机;printerType 传 0 表示全部,
-// 否则按类型过滤(1=厨房单 2=食客小票)。
+// 否则按类型过滤(1=厨房单 2=顾客小票)。
 func ListEnabledPrinters(printerType int) ([]po.Printer, error) {
 	query := `SELECT ` + PrinterCols + ` FROM tb_printer WHERE del_flag='0' AND status=1`
 	args := []interface{}{}

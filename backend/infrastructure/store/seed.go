@@ -63,10 +63,8 @@ var settingDefaults = map[string]string{
 	// 小票打印(默认开启:没有打印机时下单也不会报错,只是日志里记一条「无可用打印机」)。
 	//   print_enabled             打印总开关,关闭后所有自动打印一律跳过(手动补打仍可用);
 	//   print_kitchen_show_price  厨房单是否带单价与金额(默认不打,后厨只看菜名和数量);
-	//   print_guest_footer        食客小票页脚文案,清空则不打印页脚(门店可改成自己的口号);
-	//   print_guest_show_discount 食客小票是否显示优惠行(默认显示,有优惠时才出现该行);
-	//   print_guest_qr            小票末尾是否打印二维码(默认关:需先确认 H5 地址手机可访问、
-	//                             且打印机支持 GS ( k 二维码指令,否则会在票尾留一块空白或乱码);
+	//   print_guest_footer        顾客小票页脚文案,清空则不打印页脚(门店可改成自己的口号);
+	//   print_guest_show_discount 结账小票是否显示优惠行(默认显示,有优惠时才出现该行;点菜单不出优惠行);
 	//   print_guest_on_append     加菜后是否向小票机出「加菜小票」(只列本次新菜,默认开);
 	//   print_guest_on_order      下单后是否向小票机出「点菜单」(默认开,嫌与结账小票重复可关)。
 	//   print_kitchen_split_mode  厨房单打印粒度:whole=整单一张(默认)/ item=一菜一单 /
@@ -78,7 +76,6 @@ var settingDefaults = map[string]string{
 	"print_kitchen_split_mode":  "whole",
 	"print_guest_footer":        "谢谢惠顾,欢迎再次光临",
 	"print_guest_show_discount": "1",
-	"print_guest_qr":            "0",
 	"print_guest_on_append":     "1",
 	"print_guest_on_order":      "1",
 	// 飞鹅云打印(provider=feie 的打印机使用)。
@@ -238,7 +235,7 @@ var seedRemarkRows = []string{"加辣", "微辣", "免辣", "少盐", "少油", 
 // printerSeed 打印机种子。
 type printerSeed struct {
 	Name  string
-	PType int // 1 厨房单 / 2 食客小票
+	PType int // 1 厨房单 / 2 顾客小票
 	IP    string
 	Port  int
 	Width int // 48=80mm
@@ -246,12 +243,12 @@ type printerSeed struct {
 
 // seedPrinterRows 打印机(2 台,默认停用)。
 //
-// 与目标站一致:1=厨房单, 2=食客小票; paper_width 48=80mm; status 0=停用。
+// 与目标站一致:1=厨房单, 2=顾客小票; paper_width 48=80mm; status 0=停用。
 // 种子打印机默认「停用」(status=0):IP 为占位地址,若默认启用,每次下单都会异步尝试
 // 连接不存在的打印机(2×3s 超时),由商户录入真实 IP 后自行启用。
 var seedPrinterRows = []printerSeed{
 	{"后厨厨房单打印机", 1, "192.168.1.8", 9100, 48},
-	{"前台食客小票打印机", 2, "192.168.1.201", 9100, 48},
+	{"前台顾客小票打印机", 2, "192.168.1.201", 9100, 48},
 }
 
 // dishSeed 菜品及其规格。

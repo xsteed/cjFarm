@@ -6,7 +6,8 @@ package print
 // 验证三件事:
 //   1. 示例数据渲染出完整票据(店名/标题/菜品/金额/页脚齐全),金额自洽;
 //   2. 表单覆盖值生效(未保存的页脚/开关也能预览到,所见即所改);
-//   3. 与实际打印同一条渲染路径 —— 覆盖为零值时与 RenderGuestTicket 完全一致。
+//   3. 与实际打印同一条渲染路径 —— 覆盖为零值时与出纸渲染函数完全一致。
+// 顾客小票两种形态分开验证:guest=点菜单(trigger=order),guest_settle=结账小票。
 // ============================================================================
 
 import (
@@ -16,6 +17,8 @@ import (
 	"dining-system/domain/po"
 )
 
+// TestPreviewTicketSampleGuest 点菜单样例(trigger=order,未结算):
+// 标题【顾客小票】、金额只有一行「当前合计」、不出优惠与结算块。
 func TestPreviewTicketSampleGuest(t *testing.T) {
 	setupTestDB(t)
 
@@ -25,15 +28,18 @@ func TestPreviewTicketSampleGuest(t *testing.T) {
 	}
 	got := chunks[0]
 	joined := strings.Join(got, "\n")
-	// 完整票据要素:标题、示例菜、金额区(茶位费/优惠/合计)、默认页脚(由 seed 补齐)。
-	for _, want := range []string{"【食客小票】", "凉拌青瓜", "柴火土鸡", "茶位费(3人)", "优惠", "合计", "谢谢惠顾"} {
+	// 点菜单要素:标题、示例菜、茶位费、预估合计、默认页脚(由 seed 补齐)。
+	for _, want := range []string{"【顾客小票】", "凉拌青瓜", "柴火土鸡", "茶位费(3人)", "当前合计", "谢谢惠顾"} {
 		if !strings.Contains(joined, want) {
-			t.Fatalf("示例小票缺少 %q:\n%s", want, joined)
+			t.Fatalf("点菜单样例缺少 %q:\n%s", want, joined)
 		}
 	}
-	// 菜品金额不单列:逐道菜已带金额,再列小计只会与合计对不上账。
-	if strings.Contains(joined, "菜品金额") {
-		t.Fatalf("金额区不应单列菜品金额:\n%s", joined)
+	// 结账形态的要素不该出现在点菜单上:优惠行与结算块都属于结账小票。
+	// 「合计」不进黑名单 —— 「当前合计」本身含该子串,措辞断言放在 want 里。
+	for _, bad := range []string{"【结账小票】", "优惠", "支付方式", "结账时间"} {
+		if strings.Contains(joined, bad) {
+			t.Fatalf("点菜单不应包含结账要素 %q:\n%s", bad, joined)
+		}
 	}
 	// 金额自洽:8600+1800-600=9800(元显示为 98.00)。
 	if !strings.Contains(joined, "98.00") {
@@ -46,12 +52,30 @@ func TestPreviewTicketSampleGuest(t *testing.T) {
 	}
 }
 
+// TestPreviewTicketSampleGuestSettle 结账小票样例(trigger=settle,已结算):
+// 标题【结账小票】、优惠行、结算信息块齐全。
+func TestPreviewTicketSampleGuestSettle(t *testing.T) {
+	setupTestDB(t)
+
+	chunks, _ := sampleRender(t, po.PrintDocGuestSettle, 48, nil)
+	joined := strings.Join(chunks[0], "\n")
+	for _, want := range []string{"【结账小票】", "凉拌青瓜", "茶位费(3人)", "优惠", "合计", "支付方式", "结账时间", "谢谢惠顾"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("结账小票样例缺少 %q:\n%s", want, joined)
+		}
+	}
+	// 点菜单措辞不该回出现在结账小票上。
+	if strings.Contains(joined, "当前合计") {
+		t.Fatalf("结账小票金额行应是「合计」:\n%s", joined)
+	}
+}
+
 func TestPreviewTicketSampleOverrides(t *testing.T) {
 	setupTestDB(t)
 
 	footer := "未保存的口号"
 	showDiscount := false
-	chunks, _ := sampleRender(t, po.PrintDocGuest, 48, &SampleOverrides{Footer: &footer, ShowDiscount: &showDiscount})
+	chunks, _ := sampleRender(t, po.PrintDocGuestSettle, 48, &SampleOverrides{Footer: &footer, ShowDiscount: &showDiscount})
 	joined := strings.Join(chunks[0], "\n")
 
 	if !strings.Contains(joined, "未保存的口号") {
@@ -72,12 +96,22 @@ func TestPreviewTicketSampleOverrides(t *testing.T) {
 func TestPreviewTicketSampleMatchesSavedConfig(t *testing.T) {
 	setupTestDB(t)
 
-	// 不传任何覆盖(全 nil):与实际打印路径(RenderGuestTicket 读库配置)完全一致。
-	chunks, _ := sampleRender(t, po.PrintDocGuest, 48, &SampleOverrides{})
+	// 不传任何覆盖(全 nil):与实际打印路径(出纸渲染函数读库配置)完全一致。
+	// 结账形态对应 RenderGuestTicket(trigger=settle 出的那张)。
+	chunks, _ := sampleRender(t, po.PrintDocGuestSettle, 48, &SampleOverrides{})
 	o, items := samplePreviewOrder()
 	want := RenderGuestTicket(o, items, 48)
 	if strings.Join(chunks[0], "\n") != strings.Join(want, "\n") {
 		t.Fatalf("示例预览(无覆盖)应与实际打印渲染一致:\n预览:\n%s\n实际:\n%s",
+			strings.Join(chunks[0], "\n"), strings.Join(want, "\n"))
+	}
+	// 点菜单形态对应 RenderGuestOrderTicket(trigger=order 出的那张),
+	// 样例需把支付信息清掉才与「下单那一刻」的订单状态一致。
+	chunks, _ = sampleRender(t, po.PrintDocGuest, 48, &SampleOverrides{})
+	o.PayType, o.SettleTime = nil, nil
+	want = RenderGuestOrderTicket(o, items, 48)
+	if strings.Join(chunks[0], "\n") != strings.Join(want, "\n") {
+		t.Fatalf("点菜单样例(无覆盖)应与实际打印渲染一致:\n预览:\n%s\n实际:\n%s",
 			strings.Join(chunks[0], "\n"), strings.Join(want, "\n"))
 	}
 }
@@ -119,7 +153,7 @@ func sampleKitchen(t *testing.T, paperWidth int, showPrice bool) ([][]string, in
 }
 
 // TestPreviewTicketSampleAppend 加菜小票示例:必须按加菜形态渲染,
-// 而不是退化成一张整单食客小票(那样配置页就看不见这类票据长什么样)。
+// 而不是退化成一张整单顾客小票(那样配置页就看不见这类票据长什么样)。
 func TestPreviewTicketSampleAppend(t *testing.T) {
 	setupTestDB(t)
 
@@ -134,7 +168,7 @@ func TestPreviewTicketSampleAppend(t *testing.T) {
 		}
 	}
 	// 整单口径的内容不该出现在加菜小票示例上。
-	for _, bad := range []string{"【食客小票】", "茶位费", "优惠"} {
+	for _, bad := range []string{"【顾客小票】", "【结账小票】", "茶位费", "优惠"} {
 		if strings.Contains(joined, bad) {
 			t.Fatalf("加菜小票示例不应包含整单要素 %q:\n%s", bad, joined)
 		}

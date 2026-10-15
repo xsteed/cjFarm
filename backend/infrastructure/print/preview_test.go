@@ -76,7 +76,7 @@ func appendDishes(t *testing.T, orderID, n int) {
 	}
 }
 
-// previewChunksOf 取一台打印机上某订单的食客小票预览分段。
+// previewChunksOf 取一台打印机上某订单的顾客小票预览分段。
 func previewChunksOf(t *testing.T, printerID, orderID int) [][]string {
 	t.Helper()
 	chunks, _, err := PreviewTicket(printerID, orderID, po.PrintDocGuest, po.PrintTriggerOrder)
@@ -113,6 +113,7 @@ func flattenPreview(chunks [][]string) string {
 }
 
 // TestPreviewTicketMatchesGuestRender 预览输出必须与出纸渲染函数完全一致(预览即所得)。
+// trigger=order 出点菜单形态,与 RenderGuestOrderTicket 同源比对。
 func TestPreviewTicketMatchesGuestRender(t *testing.T) {
 	setupTestDB(t)
 	orderID := insertPreviewOrder(t)
@@ -130,9 +131,9 @@ func TestPreviewTicketMatchesGuestRender(t *testing.T) {
 		t.Fatalf("常规单据应只有 1 段, got %d", len(chunks))
 	}
 
-	// 同源断言:分段拼接后与直接调用 RenderGuestTicket(同一订单数据、同一纸宽)逐行一致。
+	// 同源断言:分段拼接后与直接调用 RenderGuestOrderTicket(同一订单数据、同一纸宽)逐行一致。
 	o, items := previewOrderItems(t, orderID)
-	want := strings.Join(RenderGuestTicket(o, items, 48), "\n")
+	want := strings.Join(RenderGuestOrderTicket(o, items, 48), "\n")
 	if flattenPreview(chunks) != want {
 		t.Fatalf("预览与出纸渲染不一致:\n预览:\n%s\n出纸:\n%s", flattenPreview(chunks), want)
 	}
@@ -174,7 +175,7 @@ func TestPreviewTicketSplitByChannel(t *testing.T) {
 
 	// 段数与逐段内容都必须与实际发送所用函数一致:预览的每一段就是一张纸。
 	o, items := previewOrderItems(t, orderID)
-	lines := RenderGuestTicket(o, items, 48)
+	lines := RenderGuestOrderTicket(o, items, 48)
 	assertChunksEqualSent(t, "代理", agentChunks, splitJobPayload(lines), "\n")
 	assertChunksEqualSent(t, "飞鹅", feieChunks, splitFeieContent(lines), "<BR>")
 }
@@ -205,7 +206,7 @@ func TestPreviewTicketAgentSplitKeepsEveryLine(t *testing.T) {
 
 	chunks := previewChunksOf(t, printerID, orderID)
 	o, items := previewOrderItems(t, orderID)
-	want := strings.Join(RenderGuestTicket(o, items, 48), "\n")
+	want := strings.Join(RenderGuestOrderTicket(o, items, 48), "\n")
 	if got := flattenPreview(chunks); got != want {
 		t.Fatalf("分段后预览与整张渲染不一致:\n预览:\n%s\n渲染:\n%s", got, want)
 	}
@@ -235,6 +236,75 @@ func TestPreviewTicketKitchenLineWidth58(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestPreviewTicketKitchenFollowsSplitMode 厨房单预览必须按 print_kitchen_split_mode
+// 拆成与出纸同样的几张。
+//
+// 「一菜一单 / 按份拆」下后厨手里是一叠带序号的夹单,而预览此前恒渲染整单一张:
+// 菜品带编号、末尾还有「共 N 道 M 份」—— 与后厨手里的任何一张都对不上,
+// 「预览即所得」当场失效。预览的段数必须等于后厨实际收到的纸张数。
+func TestPreviewTicketKitchenFollowsSplitMode(t *testing.T) {
+	setupTestDB(t)
+	orderID := insertPreviewOrder(t) // 凉拌青瓜 x2(分类 1) + 海鲜炒饭 x1(分类 6)
+	printerID := insertPreviewPrinter(t, po.PrinterTypeKitchen, "", 48)
+
+	previewKitchen := func(t *testing.T) [][]string {
+		t.Helper()
+		chunks, _, err := PreviewTicket(printerID, orderID, po.PrintDocKitchen, po.PrintTriggerOrder)
+		if err != nil {
+			t.Fatalf("PreviewTicket 失败: %v", err)
+		}
+		return chunks
+	}
+
+	t.Run("整单:仍是一张,带份数汇总", func(t *testing.T) {
+		setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitWhole)
+		chunks := previewKitchen(t)
+		if len(chunks) != 1 {
+			t.Fatalf("整单档预览应只有 1 段, got %d", len(chunks))
+		}
+		if got := flattenPreview(chunks); !strings.Contains(got, "共 2 道 3 份") {
+			t.Fatalf("整单应带份数汇总:\n%s", got)
+		}
+	})
+
+	t.Run("一菜一单:2 段,各含一道菜且带序号与放大菜名", func(t *testing.T) {
+		setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitItem)
+		chunks := previewKitchen(t)
+		if len(chunks) != 2 {
+			t.Fatalf("两道菜应预览出 2 段, got %d", len(chunks))
+		}
+		first := strings.Join(chunks[0], "\n")
+		if !strings.Contains(first, "【厨房单】1/2") {
+			t.Fatalf("第 1 段应带序号标题:\n%s", first)
+		}
+		if !strings.Contains(first, "凉拌青瓜") || strings.Contains(first, "海鲜炒饭") {
+			t.Fatalf("第 1 段只应含凉拌青瓜:\n%s", first)
+		}
+		if !hasBigLine(chunks[0], "凉拌青瓜 (份) x2") {
+			t.Fatalf("拆单应放大菜名, got %v:\n%s", bigLinesOf(chunks[0]), first)
+		}
+		if strings.Contains(first, "共 2 道") {
+			t.Fatalf("拆单不应出份数汇总:\n%s", first)
+		}
+		if second := strings.Join(chunks[1], "\n"); !strings.Contains(second, "【厨房单】2/2") {
+			t.Fatalf("第 2 段应带序号标题:\n%s", second)
+		}
+	})
+
+	t.Run("按份拆:2 份 + 1 份 → 3 段,每张 x1", func(t *testing.T) {
+		setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitPortion)
+		chunks := previewKitchen(t)
+		if len(chunks) != 3 {
+			t.Fatalf("2 份 + 1 份应预览出 3 段, got %d", len(chunks))
+		}
+		for i, c := range chunks {
+			if got := strings.Join(c, "\n"); !strings.Contains(got, "x1") {
+				t.Fatalf("第 %d 段应是单份:\n%s", i+1, got)
+			}
+		}
+	})
 }
 
 // TestPreviewTicketCategoryScopeError 分类分单过滤后无菜可打时报可理解的错误。

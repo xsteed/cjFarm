@@ -147,7 +147,7 @@
           <div class="mcard-cell">
             <div class="k">单据</div>
             <div class="v">
-              {{ PRINT_DOC_TYPE[row.docType]?.label || row.docType }}
+              {{ printDocLabel(row.docType, row.triggerBy) || row.docType }}
             </div>
           </div>
           <div class="mcard-cell">
@@ -164,7 +164,11 @@
           class="mcard-sub"
           style="margin-top: 8px"
         >
-          {{ row.status === 0 ? '失败原因' : '说明' }}：{{ row.detail || '—' }}
+          {{ row.status === 0 ? '失败原因' : '说明' }}：<span
+            v-if="ticketLabel(row)"
+            class="ticket-label"
+            >{{ ticketLabel(row) }}</span
+          >{{ row.detail || '—' }}
         </div>
         <div
           v-if="row.provider === 'agent' && queueCostText(row.costMs)"
@@ -249,7 +253,7 @@
             :theme="PRINT_DOC_TYPE[row.docType]?.theme || 'default'"
             variant="light"
           >
-            {{ PRINT_DOC_TYPE[row.docType]?.label || row.docType }}
+            {{ printDocLabel(row.docType, row.triggerBy) || row.docType }}
           </t-tag>
         </template>
         <template #printer="{ row }">
@@ -292,7 +296,13 @@
             placement="top-left"
           >
             <div class="detail-cell">
-              <span class="tip ell">{{ row.detail || '—' }}</span>
+              <span class="tip ell"
+                ><span
+                  v-if="ticketLabel(row)"
+                  class="ticket-label"
+                  >{{ ticketLabel(row) }}</span
+                >{{ row.detail || '—' }}</span
+              >
               <div
                 v-if="row.provider === 'agent' && queueCostText(row.costMs)"
                 class="tip ell queue-cost"
@@ -421,7 +431,8 @@ import {
   PRINT_DOC_TYPE,
   PRINT_STATUS,
   PRINT_TRIGGER,
-  PRINTER_PROVIDER
+  PRINTER_PROVIDER,
+  printDocLabel
 } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
@@ -490,13 +501,28 @@ function isExpired(row: PrintLogRow): boolean {
   return row.status === 0 && (row.detail || '').includes('已过期');
 }
 
+// 说明列要补显示的票据标识。
+//
+// 只在它比「单据」列多带信息时返回:拆单厨房单的「【厨房单】1/4」必须看得见 ——
+// 「一菜一单」一次下单会写多条台账,不写第几张就分不清丢的是哪一张;
+// 而顾客小票的标识就是票种名本身,再打一遍纯属噪音。
+// 后端把它放在独立字段(label)而非拼进 detail,因为代理通道的回执/重试/作废
+// 会整段改写 detail,拼进去的标识留不住。
+function ticketLabel(row: PrintLogRow): string {
+  const label = (row.label || '').trim();
+  if (!label) return '';
+  return label === (printDocLabel(row.docType, row.triggerBy) || row.docType) ? '' : label;
+}
+
 // 说明列只放得下一行,全文交给 hover 浮层;浮层限宽并允许换行,
 // 长失败原因不会被再截一次。空说明不弹浮层。
 const tipOverlayStyle = { maxWidth: '420px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' };
 
-// 浮层正文 = 说明 + 排队耗时(两者在列里都可能被省略/折行)。
+// 浮层正文 = 票据标识 + 说明 + 排队耗时(前两者在列里都可能被省略/折行)。
 function detailTip(row: PrintLogRow): string {
   const parts: string[] = [];
+  const label = ticketLabel(row);
+  if (label) parts.push(label);
   const detail = (row.detail || '').trim();
   if (detail) parts.push(detail);
   const cost = queueCostText(row.costMs);
@@ -511,7 +537,8 @@ const statusOptions = [
 ];
 const docOptions = [
   { label: '厨房单', value: 'kitchen' },
-  { label: '食客小票', value: 'guest' },
+  // guest 单据按触发分两种形态(点菜单/结账小票),台账里同为一个 doc_type,筛选用。
+  { label: '顾客小票', value: 'guest' },
   { label: '加菜小票', value: 'guest_append' },
   { label: '测试页', value: 'test' }
 ];
@@ -606,7 +633,7 @@ const previewData = ref<TicketPreview | null>(null);
 const previewTitle = computed(() => {
   const d = previewData.value;
   if (!d) return '票据预览';
-  const doc = PRINT_DOC_TYPE[d.docType || '']?.label || d.docType || '单据';
+  const doc = printDocLabel(d.docType, d.triggerBy) || d.docType || '单据';
   return `票据预览 · ${doc}${d.orderNo ? ` · ${d.orderNo}` : ''}`;
 });
 
@@ -672,6 +699,13 @@ onMounted(load);
 
 .queue-cost {
   margin-top: 2px;
+}
+
+/* 说明列里的票据标识(【厨房单】1/4):一条订单会出多张时,它是唯一能区分
+   这几条记录的字段,颜色上要与后面的结果文案区分开。 */
+.ticket-label {
+  color: #0052d9;
+  margin-right: 4px;
 }
 
 .queue-warn {

@@ -7,7 +7,7 @@ package print
 //   - whole   整单一张(默认,与历史行为一致);
 //   - item    一菜一单,同一道菜合并为一张(标 xN);
 //   - portion 一菜一单且按份数拆,点 3 份出 3 张(每张 x1,金额折算单份)。
-// 拆成多张时标题带序号,后厨据此确认出纸是否齐全;食客小票任何档位下都整单一张。
+// 拆成多张时标题带序号,后厨据此确认出纸是否齐全;顾客小票任何档位下都整单一张。
 // ============================================================================
 
 import (
@@ -130,8 +130,8 @@ func TestKitchenTicketRemarkBold(t *testing.T) {
 
 	bold := map[string]bool{}
 	for _, l := range lines {
-		if BoldLine(l) {
-			bold[strings.TrimSpace(l)] = true
+		if text, ok := BoldText(l); ok {
+			bold[strings.TrimSpace(text)] = true
 		}
 	}
 	if !bold["* 加辣"] {
@@ -144,6 +144,63 @@ func TestKitchenTicketRemarkBold(t *testing.T) {
 	if bold["1. 凉拌青瓜 (份) x2"] || bold["共 2 道 3 份"] {
 		t.Fatalf("菜名/汇总行不应加粗:\n%v", bold)
 	}
+}
+
+// TestKitchenWholeTicketDishRowEnlarged 整单(一张清单)的菜品行要左对齐放大:
+//   - 逐条编号是给后厨划单用的,居中了编号就不在行首,故用 bigL(左对齐放大)而非 big(居中放大);
+//   - 放大后每字符占两格,宽度减半,放不下时必须回退成正常字号(与店名行同一套保护)。
+func TestKitchenWholeTicketDishRowEnlarged(t *testing.T) {
+	setupTestDB(t)
+	o, items := sampleOrder()
+
+	// 80mm(48 格):放大后可用 24 格,"1. 凉拌青瓜 (份) x2" 19 格放得下。
+	lines := RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"})
+	enlarged := map[string]bool{}
+	for _, l := range lines {
+		if text, ok := SplitBigLeftLine(l); ok {
+			enlarged[text] = true
+			if _, isCentered := SplitBigLine(l); isCentered {
+				t.Fatalf("整单菜品行不应同时被判为居中放大行: %q", text)
+			}
+		}
+	}
+	if !enlarged["1. 凉拌青瓜 (份) x2"] || !enlarged["2. 海鲜炒饭 x1"] {
+		t.Fatalf("80mm 下整单菜品行应左对齐放大, got %v:\n%s", enlarged, strings.Join(lines, "\n"))
+	}
+	// 每行仍不得超宽:放大行按「占两格」算,店名/桌号之外的正文行保持正常字号。
+	for _, l := range lines {
+		text, isBig := SplitBigLine(l)
+		if bigL, ok := SplitBigLeftLine(l); ok {
+			text, isBig = bigL, true
+		}
+		if isBig && displayWidth(text) > 24 {
+			t.Fatalf("放大行超宽(放大后 %d 格 > 24): %q", displayWidth(text)*2, text)
+		}
+	}
+
+	// 58mm(32 格):放大后只剩 16 格 —— 逐行判断,放得下照旧放大、放不下回退正常字号。
+	small := RenderKitchenTicket(o, items, 32, KitchenTicketOptions{Title: "【厨房单】"})
+	if !containsLine(small, "1. 凉拌青瓜 (份) x2") { // 19 格 > 16,放不下
+		t.Fatalf("58mm 下放不下的菜品行应以正常字号整行输出(而非折行):\n%s", strings.Join(small, "\n"))
+	}
+	for _, l := range small {
+		if bigL, ok := SplitBigLeftLine(l); ok && displayWidth(bigL) > 16 {
+			t.Fatalf("58mm 放大行超宽(放大后 %d 格 > 32): %q", displayWidth(bigL)*2, bigL)
+		}
+	}
+}
+
+// containsLine 报告渲染结果里是否存在与 text 完全相同的正文行(用于确认回退成正常字号)。
+func containsLine(lines []string, text string) bool {
+	for _, l := range lines {
+		if t, ok := BoldText(l); ok {
+			l = t
+		}
+		if strings.TrimSpace(l) == text {
+			return true
+		}
+	}
+	return false
 }
 
 // TestKitchenSplitItemOnePerDishWithSeq 一菜一单:每道菜一张,标题带序号,每张只含自己那道菜。
@@ -214,7 +271,7 @@ func TestKitchenSplitPortionExpandsQuantity(t *testing.T) {
 	}
 }
 
-// TestKitchenSplitGuestNeverSplit 食客小票任何粒度下都整单一张 —— 金额合计必须完整。
+// TestKitchenSplitGuestNeverSplit 顾客小票任何粒度下都整单一张 —— 金额合计必须完整。
 func TestKitchenSplitGuestNeverSplit(t *testing.T) {
 	setupTestDB(t)
 	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitPortion)
@@ -255,14 +312,25 @@ func TestKitchenSplitSeqScopedPerPrinter(t *testing.T) {
 }
 
 // TestKitchenTableNoBigLine 桌号行按放大行输出;台名与桌号重复时不另起一行,
-// 台名不含桌号时仍打印(信息不丢)。食客小票桌号行保持原样。
+// 台名不含桌号时仍打印(信息不丢)。放大行同时含票头店名(各票种统一)。
 func TestKitchenTableNoBigLine(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 
 	lines := RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"})
-	if big := bigLinesOf(lines); len(big) != 1 || big[0] != "桌号 03" {
-		t.Fatalf("整单厨房单应只有桌号一行放大, got %v:\n%s", big, strings.Join(lines, "\n"))
+	// 票头店名 + 桌号共两行放大,桌号必须是其中之一。
+	big := bigLinesOf(lines)
+	if len(big) != 2 {
+		t.Fatalf("整单厨房单应有两行放大(店名 + 桌号), got %v:\n%s", big, strings.Join(lines, "\n"))
+	}
+	hasTable := false
+	for _, b := range big {
+		if b == "桌号 03" {
+			hasTable = true
+		}
+	}
+	if !hasTable {
+		t.Fatalf("厨房单桌号行应为放大行, got %v:\n%s", big, strings.Join(lines, "\n"))
 	}
 	// 台名「大厅03桌」已含桌号,不再另起一行重复桌号。
 	if got := strings.Join(lines, "\n"); strings.Contains(got, "大厅03桌") {
@@ -274,13 +342,15 @@ func TestKitchenTableNoBigLine(t *testing.T) {
 	if got := strings.Join(RenderKitchenTicket(packed, items, 48, KitchenTicketOptions{Title: "【厨房单】"}), "\n"); !strings.Contains(got, "前台打包") {
 		t.Fatalf("台名不含桌号时应打印台名:\n%s", got)
 	}
-	// 食客小票保持原有等宽桌号行,不动排版。
-	guest := strings.Join(RenderGuestTicket(o, items, 48), "\n")
-	if big := bigLinesOf(RenderGuestTicket(o, items, 48)); len(big) != 0 {
-		t.Fatalf("食客小票不应出现放大行, got %v", big)
+	// 顾客小票桌号保持原有等宽行、不放大(票头店名另行放大,不计入此断言)。
+	guestLines := RenderGuestTicket(o, items, 48)
+	for _, b := range bigLinesOf(guestLines) {
+		if strings.Contains(b, "桌号") {
+			t.Fatalf("顾客小票桌号行不应放大, got %v", bigLinesOf(guestLines))
+		}
 	}
-	if !strings.Contains(guest, "桌号: 03  大厅03桌") {
-		t.Fatalf("食客小票桌号行应保持原样:\n%s", guest)
+	if guest := strings.Join(guestLines, "\n"); !strings.Contains(guest, "桌号: 03  大厅03桌") {
+		t.Fatalf("顾客小票桌号行应保持原样:\n%s", guest)
 	}
 }
 
@@ -311,6 +381,52 @@ func TestBigLineConsumedBySenders(t *testing.T) {
 	chunks := splitFeieContent([]string{line})
 	if len(chunks) != 1 || chunks[0] != "<C><B>桌号 03</B></C>" {
 		t.Fatalf("飞鹅通道应转成居中放大标签, got %v", chunks)
+	}
+}
+
+// TestBigLeftLineConsumedBySenders 左对齐放大行(整单菜品清单)也是控制行,两通道都要消费:
+// 飞鹅落地成 <B> 而非 <C><B>(<C> 是居中,居中了编号就不在行首),ESC/POS 同样倍宽倍高
+// 但必须保持左对齐。两种放大前缀还不能互相误判。
+func TestBigLeftLineConsumedBySenders(t *testing.T) {
+	setupTestDB(t)
+	line := bigLeftMarkLine("1. 凉拌青瓜 (份) x2")
+
+	if text, ok := SplitBigLeftLine(line); !ok || text != "1. 凉拌青瓜 (份) x2" {
+		t.Fatalf("SplitBigLeftLine 解析失败: %q %v", text, ok)
+	}
+	if _, ok := SplitBigLeftLine("1. 凉拌青瓜 (份) x2"); ok {
+		t.Fatal("普通文本行不应被判为左对齐放大行")
+	}
+	if _, ok := SplitBigLine(line); ok {
+		t.Fatal("左对齐放大行不应被判为居中放大行")
+	}
+	if _, ok := SplitBigLeftLine(bigMarkLine("桌号 03")); ok {
+		t.Fatal("居中放大行不应被判为左对齐放大行")
+	}
+
+	raw := encodeESCPOS([]string{line})
+	if !bytes.Contains(raw, []byte{0x1D, 0x21, 0x11}) {
+		t.Fatalf("ESC/POS 应带 GS ! 倍宽倍高指令, bytes=%v", raw)
+	}
+	if bytes.Contains(raw, []byte{0x1B, 0x61, 0x01}) {
+		t.Fatal("左对齐放大不得发居中指令 ESC a 1")
+	}
+	if !bytes.Contains(raw, []byte{0x1B, 0x61, 0x00}) {
+		t.Fatal("左对齐放大应显式声明 ESC a 0,不依赖上一条指令留下的对齐状态")
+	}
+	if !bytes.Contains(raw, []byte{0x1D, 0x21, 0x00}) {
+		t.Fatal("放大后必须还原字号,否则后续行全变双倍宽")
+	}
+	if bytes.Contains(raw, []byte{0x02}) {
+		t.Fatalf("控制前缀不应出现在出纸字节里, bytes=%v", raw)
+	}
+
+	chunks := splitFeieContent([]string{line})
+	if len(chunks) != 1 || chunks[0] != "<B>1. 凉拌青瓜 (份) x2</B>" {
+		t.Fatalf("飞鹅通道应转成左对齐放大标签 <B>, got %v", chunks)
+	}
+	if strings.Contains(chunks[0], "<C>") {
+		t.Fatalf("左对齐放大不得带居中标签: %q", chunks[0])
 	}
 }
 

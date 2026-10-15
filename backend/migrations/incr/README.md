@@ -8,6 +8,7 @@
 | 26 | `20261015000000_tb_order_add_meal_time_columns.sql` | 订单用餐起止时间落库（`meal_start_time` / `meal_end_time`）并回填历史行 |
 | 27 | `20261015010000_tables_add_timestamp_columns.sql` | 11 张缺 `create_time` / `update_time` 的表补齐这两个列 |
 | 28 | `20261015020000_times_*_autofill*.sql` | 时间列改由数据库自动维护：MySQL 换 `DATETIME` + `DEFAULT`/`ON UPDATE`；SQLite 建 22 个 `update_time` 触发器 |
+| 29 | `20261016000000_tb_print_log_add_snapshot_columns.sql` | 打印台账补「票据标识 + 票面快照」三列（`label` / `content` / `paper_width`），老记录留空、读侧回落重算 |
 
 > 更早的 01~25 号脚本仅存在于 README 的历史演进记录里，本仓库实际未收录这些文件；
 > 老库补列主要由后端启动时 `store.alterCols` 自动完成（等价且幂等），

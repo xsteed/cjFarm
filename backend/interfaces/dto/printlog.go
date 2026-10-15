@@ -18,11 +18,14 @@ type PrintLog struct {
 	Copies      int    `json:"copies"`
 	Status      int    `json:"status"`
 	RemoteID    string `json:"remoteId"` // 飞鹅返回的云端订单号(可用于追问打印状态)
-	Detail      string `json:"detail"`   // TCP: 地址 / 失败原因;飞鹅: 云端订单号或错误信息
-	TriggerBy   string `json:"triggerBy"`
-	Operator    string `json:"operator"`
-	CostMs      int    `json:"costMs"`
-	CreateTime  string `json:"createTime"`
+	// Label 这张票的可读标识(拆单厨房单为「【厨房单】1/4」,其余为票种名,测试页为空)。
+	// 独立字段而非拼在 detail 里:代理通道的回执/重试/作废会整段改写 detail。
+	Label      string `json:"label"`
+	Detail     string `json:"detail"` // TCP: 地址 / 失败原因;飞鹅: 云端订单号或错误信息
+	TriggerBy  string `json:"triggerBy"`
+	Operator   string `json:"operator"`
+	CostMs     int    `json:"costMs"`
+	CreateTime string `json:"createTime"`
 }
 
 // FromPrintLog 将持久化对象转为 API 出参,ShortNo 由 OrderNo 派生。
@@ -42,6 +45,7 @@ func FromPrintLog(p po.PrintLog) PrintLog {
 		Copies:      p.Copies,
 		Status:      p.Status,
 		RemoteID:    p.RemoteID,
+		Label:       p.Label,
 		Detail:      p.Detail,
 		TriggerBy:   p.TriggerBy,
 		Operator:    p.Operator,
@@ -66,6 +70,7 @@ func (l PrintLog) ToPO() po.PrintLog {
 		Copies:      l.Copies,
 		Status:      l.Status,
 		RemoteID:    l.RemoteID,
+		Label:       l.Label,
 		Detail:      l.Detail,
 		TriggerBy:   l.TriggerBy,
 		Operator:    l.Operator,

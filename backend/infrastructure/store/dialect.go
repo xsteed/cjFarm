@@ -86,6 +86,19 @@ func blobTypeFor(d Dialect) string {
 	return "BLOB"
 }
 
+// textTypeFor 返回「大文本列」的类型定义(票据内容快照用)。
+// SQLite: TEXT(无长度限制)
+// MySQL : LONGTEXT(单张 80mm 小票约 2KB,但超长整单可到数十 KB;VARCHAR 必须预判
+// 上限,而内容快照一旦写不进去就等于没有快照 —— 宁可给足,不做截断)。
+// 刻意不带 DEFAULT:MySQL 对 TEXT/BLOB 系列加默认值有版本限制(8.0.13 之前直接报错),
+// 无默认值 + 读侧 COALESCE 的写法两库通吃。
+func textTypeFor(d Dialect) string {
+	if d == DialectMySQL {
+		return "LONGTEXT"
+	}
+	return "TEXT"
+}
+
 // InsertIgnoreInto 生成「插入,遇主键/唯一键冲突则忽略」的语句。
 //
 //	SQLite: INSERT OR IGNORE INTO t(a,b) VALUES(?,?)

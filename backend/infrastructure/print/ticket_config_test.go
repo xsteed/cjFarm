@@ -1,7 +1,7 @@
 package print
 
 // ============================================================================
-// 食客小票模板配置测试(方案A)
+// 顾客小票模板配置测试(方案A)
 //
 // 可配置项:页脚文案(print_guest_footer)、优惠行(print_guest_show_discount)。
 // 渲染函数实时读取配置,预览(PreviewTicket)与出纸走同一函数,改配置后预览立即反映
@@ -24,7 +24,7 @@ func setPrintSetting(t *testing.T, key, val string) {
 	}
 }
 
-// renderGuest 用样例订单渲染食客小票(空分类打印机=不过滤菜品)。
+// renderGuest 用样例订单渲染顾客小票(空分类打印机=不过滤菜品)。
 func renderGuest(t *testing.T) string {
 	t.Helper()
 	o, items := sampleOrder()

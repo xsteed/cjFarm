@@ -24,6 +24,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dining-system/infrastructure/logger"
 )
 
 // DefaultAPI 飞鹅开放平台默认接口地址(海外/私有云可在系统配置里改)。
@@ -134,6 +137,29 @@ type resp struct {
 
 // call 发起一次接口调用。ret != 0 时返回 *APIError(已是中文可读文案)。
 func (c *Client) call(apiname string, params map[string]string) (*resp, error) {
+	r, _, err := c.callRaw(apiname, params)
+	return r, err
+}
+
+// logRawResponse 记录一次接口调用的返回原文(默认写主日志)。
+//
+// 声明为变量是为了让测试能断言「返回原文确实进了日志」。放在适配器层而不是各调用方:
+// 这里是飞鹅所有接口的唯一出口,无论成功、失败、还是重试中的某一次,只要收到过响应就
+// 一定留痕 —— 排查「台账记成功、纸却没出来」「状态查询为什么判离线」时,这是唯一证据,
+// 不能只留在调用方手里(调用方常常只透出翻译过的错误文案,把原文丢掉)。
+var logRawResponse = func(apiname, sn, raw string) {
+	if strings.TrimSpace(raw) == "" {
+		return // 网络层失败时没有响应可记
+	}
+	logger.Infof("飞鹅接口返回: apiname=%s sn=%s raw=%s", apiname, sn, truncateRunes(raw, 500))
+}
+
+// callRaw 与 call 相同,额外返回云端返回的 JSON 原文。
+//
+// 为什么要把「原文」交给调用方:打印接口的调用方需要把它写进日志/台账 ——
+// 排查「台账记成功、纸却没出来」时,「飞鹅到底回了什么」是唯一的证据。此前
+// 无论成功失败原文都被丢弃,商户与运维在日志里只能看到自家拼的一句话。
+func (c *Client) callRaw(apiname string, params map[string]string) (*resp, string, error) {
 	stime := strconv.FormatInt(time.Now().Unix(), 10)
 	form := url.Values{}
 	form.Set("user", c.user)
@@ -146,33 +172,37 @@ func (c *Client) call(apiname string, params map[string]string) (*resp, error) {
 
 	req, err := http.NewRequest(http.MethodPost, c.apiURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	respHTTP, err := c.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("连接飞鹅云失败: %v", err)
+		return nil, "", fmt.Errorf("连接飞鹅云失败: %v", err)
 	}
 	defer respHTTP.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(respHTTP.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("读取飞鹅云响应失败: %v", err)
+		return nil, "", fmt.Errorf("读取飞鹅云响应失败: %v", err)
 	}
+	// 原文按字符截断:非 JSON(维护页/网关错误页)时也要能安全进日志。
+	raw := truncateRunes(string(body), 500)
+	// 先落日志再解析:只要收到了响应(HTTP 非 200、非 JSON、ret!=0 全都算),原文都留痕。
+	logRawResponse(apiname, params["sn"], raw)
 	if respHTTP.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("飞鹅云返回 HTTP %d", respHTTP.StatusCode)
+		return nil, raw, fmt.Errorf("飞鹅云返回 HTTP %d", respHTTP.StatusCode)
 	}
 
 	var r resp
 	if err := json.Unmarshal(body, &r); err != nil {
 		// 飞鹅在维护或网关异常时可能返回非 JSON,把前 200 个字符带上便于排查
 		// (按字符而非字节截断,避免多字节响应被切出乱码)。
-		return nil, fmt.Errorf("飞鹅云响应格式异常: %s", truncateRunes(string(body), 200))
+		return nil, raw, fmt.Errorf("飞鹅云响应格式异常: %s", truncateRunes(string(body), 200))
 	}
 	if r.Ret != 0 {
-		return &r, &APIError{Ret: r.Ret, Msg: errorMessage(r.Ret, r.Msg)}
+		return &r, raw, &APIError{Ret: r.Ret, Msg: errorMessage(r.Ret, r.Msg)}
 	}
-	return &r, nil
+	return &r, raw, nil
 }
 
 // Sign 计算签名:sha1(user + UKEY + stime),40 位小写十六进制。
@@ -209,22 +239,72 @@ func (r *resp) dataBool() bool {
 
 func (r *resp) dataObject(v interface{}) error { return json.Unmarshal(r.Data, v) }
 
+// orderPrinted 解出 Open_queryOrderState 的「是否已打印」。
+// 布尔(true/false)与文本(「已打印」/「未打印」)两种 data 形态都接受,见 QueryOrderState。
+func (r *resp) orderPrinted() bool {
+	var b bool
+	if err := json.Unmarshal(r.Data, &b); err == nil {
+		return b
+	}
+	var s string
+	if err := json.Unmarshal(r.Data, &s); err == nil {
+		return strings.Contains(s, "已打印")
+	}
+	return false
+}
+
+// printOrderID 解出 Open_printMsg 成功时的云端订单号(飞鹅把它放在 data 里)。
+//
+// 必须严格校验:ret=0 只代表「任务已被飞鹅云受理」,订单号才是「这条真的进了队列」的凭据。
+// data 为空 / null / 非订单号形态,都说明云端这一次没有真正受理(飞鹅偶尔用这种形态表达
+// 失败),此时要当失败抛出交给上层重试 —— 否则会出现「台账记成功、纸却没出来」的丢单,
+// 而这种丢单在事后几乎无法从日志里区分出来。
+func (r *resp) printOrderID() (string, error) {
+	raw := strings.TrimSpace(string(r.Data))
+	if raw == "" || raw == "null" {
+		return "", errors.New("飞鹅未返回订单号(data 为空),本次任务可能未被受理")
+	}
+	var s string
+	if err := json.Unmarshal(r.Data, &s); err == nil {
+		if id := strings.TrimSpace(s); id != "" {
+			return id, nil
+		}
+		return "", errors.New("飞鹅返回的订单号为空,本次任务可能未被受理")
+	}
+	// 少数接口版本把订单号返回成数字。
+	var n json.Number
+	if err := json.Unmarshal(r.Data, &n); err == nil && strings.TrimSpace(n.String()) != "" {
+		return n.String(), nil
+	}
+	return "", fmt.Errorf("飞鹅返回的订单号格式异常: %s", truncateRunes(raw, 120))
+}
+
 // ============================================================================
 // 开放平台接口
 // ============================================================================
 
 // PrintMsg 打印订单(Open_printMsg,仅小票机)。返回飞鹅云端订单号。
 func (c *Client) PrintMsg(sn, content string, times int) (string, error) {
+	id, _, err := c.PrintMsgRaw(sn, content, times)
+	return id, err
+}
+
+// PrintMsgRaw 同 PrintMsg,额外返回云端返回的 JSON 原文(调用方据此写日志/台账)。
+func (c *Client) PrintMsgRaw(sn, content string, times int) (orderID, raw string, err error) {
 	if times < 1 {
 		times = 1
 	}
-	r, err := c.call("Open_printMsg", map[string]string{
+	r, raw, err := c.callRaw("Open_printMsg", map[string]string{
 		"sn": sn, "content": content, "times": strconv.Itoa(times),
 	})
 	if err != nil {
-		return "", err
+		return "", raw, err
 	}
-	return r.dataString(), nil
+	id, derr := r.printOrderID()
+	if derr != nil {
+		return "", raw, derr
+	}
+	return id, raw, nil
 }
 
 // PrinterStatus 查询打印机状态(Open_queryPrinterStatus)。
@@ -245,13 +325,21 @@ func (c *Client) ClearQueue(sn string) error {
 }
 
 // QueryOrderState 查询某次推送是否真的打出来了(Open_queryOrderState)。
-// orderID 取自 PrintMsg 的返回值。
-func (c *Client) QueryOrderState(orderID string) (bool, error) {
-	r, err := c.call("Open_queryOrderState", map[string]string{"orderid": orderID})
+// orderID 取自 PrintMsgRaw 的返回值;sn 一并携带(官方参数表同时列出两者)。
+//
+// data 的形态随接口版本不同:布尔 true/false 或文本「已打印」/「未打印」,两种都要认 ——
+// 只按单一形态解析,会把另一种当成「未打印」,从而误报丢单、误导商户补打。
+// 另返回云端 JSON 原文供日志/台账留痕(与其它接口同一约定)。
+//
+// 注意:该接口有约 5 秒状态缓存,推送后立刻查询拿到的是旧状态,调用方需要先等一会儿。
+func (c *Client) QueryOrderState(sn, orderID string) (printed bool, raw string, err error) {
+	r, raw, err := c.callRaw("Open_queryOrderState", map[string]string{
+		"sn": sn, "orderid": orderID,
+	})
 	if err != nil {
-		return false, err
+		return false, raw, err
 	}
-	return r.dataBool(), nil
+	return r.orderPrinted(), raw, nil
 }
 
 // QueryOrderInfoByDate 查询某台打印机某天的打印统计(Open_queryOrderInfoByDate)。

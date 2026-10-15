@@ -78,7 +78,7 @@ func TestAgentJobTTLDefaultsAndDocTypeMapping(t *testing.T) {
 		t.Fatalf("厨房单默认 TTL = %v, want %v", got, 120*time.Minute)
 	}
 	if got := agentJobTTL(po.PrintDocGuest); got != 24*time.Hour {
-		t.Fatalf("食客小票默认 TTL = %v, want %v", got, 24*time.Hour)
+		t.Fatalf("顾客小票默认 TTL = %v, want %v", got, 24*time.Hour)
 	}
 	if got := agentJobTTL("test"); got != 30*time.Minute {
 		t.Fatalf("测试/其它单默认 TTL = %v, want %v", got, 30*time.Minute)
@@ -97,7 +97,7 @@ func TestAgentJobTTLEnvOverride(t *testing.T) {
 		t.Fatalf("厨房单 env TTL = %v, want %v", got, 5*time.Minute)
 	}
 	if got := agentJobTTL(po.PrintDocGuest); got != 6*time.Minute {
-		t.Fatalf("食客小票 env TTL = %v, want %v", got, 6*time.Minute)
+		t.Fatalf("顾客小票 env TTL = %v, want %v", got, 6*time.Minute)
 	}
 	if got := agentJobTTL("test"); got != 7*time.Minute {
 		t.Fatalf("测试单 env TTL = %v, want %v", got, 7*time.Minute)
@@ -113,7 +113,7 @@ func TestAgentJobTTLDisableWhenNonPositive(t *testing.T) {
 		t.Fatalf("厨房单 TTL=0 应关闭过期, got %v", got)
 	}
 	if got := agentJobTTL(po.PrintDocGuest); got != 0 {
-		t.Fatalf("食客小票 TTL<=0 应关闭过期, got %v", got)
+		t.Fatalf("顾客小票 TTL<=0 应关闭过期, got %v", got)
 	}
 	if got := agentJobTTL("test"); got != 0 {
 		t.Fatalf("测试单 TTL=0 应关闭过期, got %v", got)

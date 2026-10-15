@@ -28,6 +28,12 @@ func normalizePrinter(p *dto.Printer) {
 	if p.Provider != po.PrinterProviderFeie && p.Provider != po.PrinterProviderAgent {
 		p.Provider = po.PrinterProviderTCP
 	}
+	// 飞鹅 SN 规范化:机身标签印的是「SN 961828266」,商户很容易把 "SN " 一起抄进输入框。
+	// 飞鹅接口按 SN 精确匹配,带着前缀推过去等于推给一台不存在的机器,而飞鹅很可能仍回
+	// ret=0 —— 表现就是「日志显示成功、纸却没出来」,极难排查。口径见 po.NormalizeFeieSN。
+	if p.Provider == po.PrinterProviderFeie {
+		p.FeieSN = po.NormalizeFeieSN(p.FeieSN)
+	}
 	if p.Port == 0 {
 		p.Port = 9100
 	}
@@ -43,7 +49,7 @@ func normalizePrinter(p *dto.Printer) {
 	if p.Status != 0 {
 		p.Status = 1
 	}
-	// 分类分单只对厨房单有意义 —— 食客小票必须含全部菜品,否则金额合计对不上。
+	// 分类分单只对厨房单有意义 —— 顾客小票必须含全部菜品,否则金额合计对不上。
 	if p.PrinterType == po.PrinterTypeGuest {
 		p.CategoryIDList = nil
 		p.CategoryIDs = ""
@@ -55,6 +61,9 @@ func normalizePrinter(p *dto.Printer) {
 		p.CategoryIDs = service.JoinIDList(service.ParseIDList(p.CategoryIDs))
 	}
 }
+
+// 飞鹅 SN 的规范化与校验规则收敛在领域层(po.NormalizeFeieSN / po.IsFeieSN),
+// 保存路径与老库升级共用同一套口径,避免两处判定漂移。
 
 // validatePrinter 按接入方式分别校验,失败时已写入错误响应。
 //
@@ -72,6 +81,10 @@ func validatePrinter(c *gin.Context, p *dto.Printer) bool {
 	if p.Provider == po.PrinterProviderFeie {
 		if strings.TrimSpace(p.FeieSN) == "" {
 			fail(c, "请填写飞鹅打印机编号(SN),机身标签上有")
+			return false
+		}
+		if !po.IsFeieSN(p.FeieSN) {
+			fail(c, "飞鹅打印机编号只能是数字或字母(机身标签形如 SN 961828266,只填 961828266 即可),当前填的是:"+p.FeieSN)
 			return false
 		}
 		return true

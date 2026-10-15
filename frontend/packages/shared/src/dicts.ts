@@ -55,17 +55,30 @@ export const PRINTER_PROVIDER: Record<string, DictOption> = {
 // 打印机类型
 export const PRINTER_TYPE: Record<number, DictOption> = {
   1: { label: '厨房单', theme: 'danger' },
-  2: { label: '食客小票', theme: 'primary' }
+  2: { label: '顾客小票', theme: 'primary' }
 };
 
 // 打印单据类型
+// guest(顾客小票)按触发场景分两种形态,共用同一个 doc_type(台账兼容):
+//   order=点菜单「【顾客小票】」;settle=结账小票「【结账小票】」;先付模式的
+//   「首次收款成功」走 settle,那张票点菜单与付款凭证合一(见后端 printKitchenOnPaid)。
 // guest_append(加菜小票)的补打/预览按 guest 重放整单,见后端 po.PrintDocGuestAppend 注释
+// guest_settle 仅用于「小票打印」配置页的结账形态样张,不落台账。
 export const PRINT_DOC_TYPE: Record<string, DictOption> = {
   kitchen: { label: '厨房单', theme: 'danger' },
-  guest: { label: '食客小票', theme: 'primary' },
+  guest: { label: '顾客小票', theme: 'primary' },
   guest_append: { label: '加菜小票', theme: 'warning' },
+  guest_settle: { label: '结账小票', theme: 'primary' },
   test: { label: '测试页', theme: 'default' }
 };
+
+// printDocLabel 单据的展示名:guest 要结合触发场景区分「顾客小票/结账小票」,
+// 其余单据一种类型一个名字。展示(打印记录/预览标题)统一走这里,
+// 避免各页面各自映射后口径漂移。
+export function printDocLabel(docType?: string, triggerBy?: string): string {
+  if (docType === 'guest') return triggerBy === 'settle' ? '结账小票' : '顾客小票';
+  return (docType && PRINT_DOC_TYPE[docType]?.label) || docType || '';
+}
 
 // 打印结果:0 失败 / 1 已送出 / 2 排队中(仅本地代理通道:已入队、等待门店代理取单)
 export const PRINT_STATUS: Record<number, DictOption> = {

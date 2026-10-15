@@ -418,7 +418,7 @@
                 :custom-value="['1', '0']"
               />
               <span class="tip">
-                开启后顾客每次加菜，小票机会重出一张整单最新金额的食客小票（后厨的「加菜单」不受影响，仍只列新菜）。
+                开启后顾客每次加菜，小票机会重出一张整单最新金额的加菜小票（后厨的「加菜单」不受影响，仍只列新菜）。
                 加菜频繁、觉得费纸的门店可关闭，金额以结账小票为准。
               </span>
             </t-space>
@@ -437,7 +437,7 @@
                 style="width: 320px"
               />
               <span class="tip">
-                打印在食客小票末尾的文案，可改成店铺口号。保存后到「打印记录 → 预览」即可看到效果，无需真实出纸。
+                打印在顾客小票末尾的文案，可改成店铺口号。保存后到「打印记录 → 预览」即可看到效果，无需真实出纸。
               </span>
             </t-space>
           </t-form-item>
@@ -450,7 +450,7 @@
                 v-model="form.print_guest_show_discount"
                 :custom-value="['1', '0']"
               />
-              <span class="tip">关闭后食客小票不再单列优惠行；有优惠金额时才出现该行。</span>
+              <span class="tip">关闭后结账小票不再单列优惠行；有优惠金额时才出现该行。点菜单（下单时那张）不出优惠行。</span>
             </t-space>
           </t-form-item>
           <t-form-item label="下单出点菜单">
@@ -463,25 +463,9 @@
                 :custom-value="['1', '0']"
               />
               <span class="tip">
-                开启后顾客每次下单，小票机会出一张「点菜单」（已点菜品 + 当前合计），作为点菜凭证当场可核对。
+                开启后顾客每次下单（后付模式），小票机会出一张「点菜单」（已点菜品 + 当前合计），作为点菜凭证当场可核对。
                 嫌它与结账小票重复、想省纸的门店可关闭；关闭后下单只打厨房单，加菜小票与结账小票不受影响。
-              </span>
-            </t-space>
-          </t-form-item>
-          <t-form-item label="小票打印二维码">
-            <t-space
-              direction="vertical"
-              style="align-items: flex-start"
-            >
-              <t-switch
-                v-model="form.print_guest_qr"
-                :custom-value="['1', '0']"
-              />
-              <span class="tip">
-                开启后食客小票末尾会打一枚二维码，顾客扫码可自助查看 / 重打这张小票（内容指向「H5
-                访问地址」下的小票页）。
-                <b>两个前提</b>：H5 地址必须是手机能访问到的真实地址（不能是 localhost），且打印机支持 GS ( k
-                二维码指令——老机型可能不支持，建议先在「打印机管理」打一张测试页确认。
+                先付模式下下单不出单，收款成功直接出结账小票（点菜单与付款凭证合一），不受本开关影响。
               </span>
             </t-space>
           </t-form-item>
@@ -496,7 +480,8 @@
                   variant="default-filled"
                   size="small"
                 >
-                  <t-radio-button value="guest">食客小票</t-radio-button>
+                  <t-radio-button value="guest">顾客小票</t-radio-button>
+                  <t-radio-button value="guest_settle">结账小票</t-radio-button>
                   <t-radio-button value="guest_append">加菜小票</t-radio-button>
                   <t-radio-button value="kitchen">厨房单</t-radio-button>
                 </t-radio-group>
@@ -1192,7 +1177,6 @@ interface ConfigForm {
   print_kitchen_split_mode: string;
   print_guest_footer: string;
   print_guest_show_discount: string;
-  print_guest_qr: string;
   print_guest_on_append: string;
   print_guest_on_order: string;
   feie_user: string;
@@ -1233,7 +1217,6 @@ type ConfigPayloadFull = ConfigData & {
   print_kitchen_split_mode?: string;
   print_guest_footer?: string;
   print_guest_show_discount?: string;
-  print_guest_qr?: string;
   print_guest_on_append?: string;
   print_guest_on_order?: string;
   feie_user?: string;
@@ -1286,7 +1269,6 @@ const form = reactive<ConfigForm>({
   print_kitchen_split_mode: 'whole',
   print_guest_footer: '谢谢惠顾,欢迎再次光临',
   print_guest_show_discount: '1',
-  print_guest_qr: '0',
   print_guest_on_append: '1',
   print_guest_on_order: '1',
   feie_user: '',
@@ -1337,7 +1319,6 @@ const FLAG_KEYS = [
   'print_enabled',
   'print_kitchen_show_price',
   'print_guest_show_discount',
-  'print_guest_qr',
   'print_guest_on_append',
   'print_guest_on_order',
   'stale_release_enabled',
@@ -1535,10 +1516,13 @@ function onClearAgentToken(): void {
 const sampleVisible = ref(false);
 const sampleLoading = ref(false);
 const sampleData = ref<TicketPreview | null>(null);
-type SampleDoc = 'guest' | 'guest_append' | 'kitchen';
+// guest_settle 是「结账小票」的样张(docType=guest 的点菜单形态之外的第二种形态),
+// 仅用于示例预览,不落台账,见后端 po.PrintDocGuestSettle。
+type SampleDoc = 'guest' | 'guest_settle' | 'guest_append' | 'kitchen';
 
 const SAMPLE_DOC_LABEL: Record<SampleDoc, string> = {
-  guest: '食客小票',
+  guest: '顾客小票',
+  guest_settle: '结账小票',
   guest_append: '加菜小票',
   kitchen: '厨房单'
 };
@@ -1560,7 +1544,6 @@ async function loadSamplePreview(): Promise<void> {
       paperWidth: samplePaperWidth.value,
       footer: form.print_guest_footer,
       showDiscount: form.print_guest_show_discount === '1',
-      qr: form.print_guest_qr === '1',
       kitchenShowPrice: form.print_kitchen_show_price === '1',
       kitchenSplit: sampleDocType.value === 'kitchen' ? sampleKitchenSplit.value : undefined
     });

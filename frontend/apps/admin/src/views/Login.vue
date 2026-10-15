@@ -254,6 +254,7 @@ onMounted(() => {
   background: radial-gradient(circle, rgb(255 107 53 / 18%), transparent 70%);
   top: -140px;
   left: -100px;
+
   /* 纯装饰的背景圆:必须放行指针事件,否则窄屏(手机)上它会盖住下半张登录卡,
      点击登录按钮实际命中的是 .login-wrap,表现为「点了登录没反应」。 */
   pointer-events: none;

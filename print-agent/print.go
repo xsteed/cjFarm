@@ -434,7 +434,9 @@ func docLabel(j agentJob) string {
 	case "kitchen":
 		return "厨房单"
 	case "guest":
-		return "食客小票"
+		// guest 单据按触发分两种形态(点菜单/结账小票),任务里不带触发场景,
+		// 这里只给通用名;具体形态看 payload 里的票面标题。
+		return "顾客小票"
 	case "test":
 		return "测试页"
 	}

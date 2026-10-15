@@ -11,17 +11,39 @@ import (
 
 // ==================== 打印日志 ====================
 
-// PrintLogCols 打印日志完整列(与 ScanPrintLog 顺序一一对应)。
+// PrintLogCols 打印日志列表列(与 ScanPrintLog 顺序一一对应)。
+//
+// 刻意不含 content:票面快照体积大,列表一页几十行全读出来纯属浪费。
+// 需要快照的单条读取走 printLogFullCols(见 LoadPrintLog)。
+// label 则在列表列里 —— 记录页要一眼看出「这是第几张」,不读它这一列就没意义。
 const PrintLogCols = `print_id, order_id, order_no, table_no, table_name,
 	printer_id, printer_name, printer_type, provider, doc_type, copies,
-	status, remote_id, detail, trigger_by, operator, cost_ms, create_time`
+	status, remote_id, COALESCE(label, ''), detail, trigger_by, operator, cost_ms, create_time`
 
-// ScanPrintLog 扫描一行打印日志记录。
+// printLogFullCols 单条读取用的列:列表列 + 票面快照。
+// content 无默认值(见建表语句注释),老记录与手工插入的行为 NULL,统一折叠成空串。
+const printLogFullCols = PrintLogCols + `,
+	COALESCE(content, ''), COALESCE(paper_width, 48)`
+
+// ScanPrintLog 扫描一行打印日志记录(列表列)。
 func ScanPrintLog(rows interface{ Scan(...interface{}) error }) (po.PrintLog, error) {
 	var l po.PrintLog
 	err := rows.Scan(&l.PrintID, &l.OrderID, &l.OrderNo, &l.TableNo, &l.TableName,
 		&l.PrinterID, &l.PrinterName, &l.PrinterType, &l.Provider, &l.DocType, &l.Copies,
-		&l.Status, &l.RemoteID, &l.Detail, &l.TriggerBy, &l.Operator, &l.CostMs, TS(&l.CreateTime))
+		&l.Status, &l.RemoteID, &l.Label, &l.Detail, &l.TriggerBy, &l.Operator, &l.CostMs, TS(&l.CreateTime))
+	if err != nil {
+		return l, err
+	}
+	return l, nil
+}
+
+// scanPrintLogFull 扫描一行含票面快照的打印日志记录。
+func scanPrintLogFull(rows interface{ Scan(...interface{}) error }) (po.PrintLog, error) {
+	var l po.PrintLog
+	err := rows.Scan(&l.PrintID, &l.OrderID, &l.OrderNo, &l.TableNo, &l.TableName,
+		&l.PrinterID, &l.PrinterName, &l.PrinterType, &l.Provider, &l.DocType, &l.Copies,
+		&l.Status, &l.RemoteID, &l.Label, &l.Detail, &l.TriggerBy, &l.Operator, &l.CostMs, TS(&l.CreateTime),
+		&l.Content, &l.PaperWidth)
 	if err != nil {
 		return l, err
 	}
@@ -55,11 +77,12 @@ func InsertPrintLogReturningID(l po.PrintLog) (int, error) {
 func insertPrintLog(l po.PrintLog) (sql.Result, error) {
 	return store.DB.Exec(`INSERT INTO tb_print_log(order_id, order_no, table_no, table_name,
 		printer_id, printer_name, printer_type, provider, doc_type, copies,
-		status, remote_id, detail, trigger_by, operator, cost_ms, create_time)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		status, remote_id, label, detail, content, paper_width, trigger_by, operator, cost_ms, create_time)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.OrderID, l.OrderNo, l.TableNo, l.TableName,
 		l.PrinterID, l.PrinterName, l.PrinterType, l.Provider, l.DocType, l.Copies,
-		l.Status, l.RemoteID, l.Detail, l.TriggerBy, l.Operator, l.CostMs, l.CreateTime)
+		l.Status, l.RemoteID, l.Label, l.Detail, l.Content, l.PaperWidth,
+		l.TriggerBy, l.Operator, l.CostMs, l.CreateTime)
 }
 
 // LoadPrinter 按 ID 读取一台打印机(含已停用/已删除 — 补打历史单据时仍需要它)。
@@ -76,9 +99,11 @@ func LoadPrinter(printerID int) (po.Printer, error) {
 	return p, nil
 }
 
-// LoadPrintLog 按 ID 读取一条打印日志。
+// LoadPrintLog 按 ID 读取一条打印日志(含票面快照)。
+//
+// 预览与补打都要用 content,所以这里取全列;列表查询另有 PrintLogCols,不取快照。
 func LoadPrintLog(printID int) (po.PrintLog, error) {
-	return ScanPrintLog(store.DB.QueryRow(`SELECT `+PrintLogCols+` FROM tb_print_log WHERE print_id=?`, printID))
+	return scanPrintLogFull(store.DB.QueryRow(`SELECT `+printLogFullCols+` FROM tb_print_log WHERE print_id=?`, printID))
 }
 
 // PrintLogQuery 打印日志列表筛选条件;零值字段表示不限。

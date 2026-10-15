@@ -177,6 +177,39 @@ func TestPoPrinterEffectiveCopies(t *testing.T) {
 	}
 }
 
+// TestNormalizeFeieSN 机身标签印的是「SN 961828266」,商户照抄进输入框必须被剥成纯编号:
+// 带着前缀推给飞鹅等于推给一台不存在的机器,而飞鹅很可能仍回 ret=0
+// —— 表现就是「日志显示成功、纸却没出来」。
+func TestNormalizeFeieSN(t *testing.T) {
+	cases := map[string]string{
+		"961828266":     "961828266",
+		"  961828266  ": "961828266",
+		"SN 961828266":  "961828266",
+		"SN:961828266":  "961828266",
+		"SN：961828266":  "961828266",
+		"sn961828266":   "961828266",
+		"":              "",
+	}
+	for in, want := range cases {
+		if got := NormalizeFeieSN(in); got != want {
+			t.Errorf("NormalizeFeieSN(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIsFeieSN(t *testing.T) {
+	for _, ok := range []string{"961828266", "SN9", "abc123"} {
+		if !IsFeieSN(ok) {
+			t.Errorf("%q 应视为合法 SN", ok)
+		}
+	}
+	for _, bad := range []string{"", "9618 28266", "SN 961828266", "编号961828266", "9618-28266"} {
+		if IsFeieSN(bad) {
+			t.Errorf("%q 应视为非法 SN", bad)
+		}
+	}
+}
+
 // TestPoConstants 守护领域常量取值,防止无意识改动破坏落库/展示约定。
 func TestPoConstants(t *testing.T) {
 	if DelFlagOK != "0" || DelFlagDeleted != "1" {

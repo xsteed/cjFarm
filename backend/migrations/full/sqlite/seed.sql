@@ -5,7 +5,7 @@
 -- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 44 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 内容:系统配置 43 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
 -- 执行方式:sqlite3 data/dining.db < seed.sql
 -- 幂等性  :全部使用 INSERT OR IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
@@ -32,7 +32,6 @@ INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_enabled', '1')
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_footer', '谢谢惠顾,欢迎再次光临');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_on_append', '1');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_on_order', '1');
-INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_qr', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_discount', '1');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_show_price', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_kitchen_split_mode', 'whole');
@@ -144,7 +143,7 @@ INSERT OR IGNORE INTO tb_remark(remark_id, option_name, sort_order, del_flag, cr
 
 -- 打印机(默认停用,录入真实 IP 后再启用)
 INSERT OR IGNORE INTO tb_printer(printer_id, printer_name, printer_type, ip, port, paper_width, status, del_flag, create_time, update_time) VALUES(1, '后厨厨房单打印机', 1, '192.168.1.8', 9100, 48, 0, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
-INSERT OR IGNORE INTO tb_printer(printer_id, printer_name, printer_type, ip, port, paper_width, status, del_flag, create_time, update_time) VALUES(2, '前台食客小票打印机', 2, '192.168.1.201', 9100, 48, 0, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
+INSERT OR IGNORE INTO tb_printer(printer_id, printer_name, printer_type, ip, port, paper_width, status, del_flag, create_time, update_time) VALUES(2, '前台顾客小票打印机', 2, '192.168.1.201', 9100, 48, 0, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43');
 
 -- 内置角色(4 个):admin 为全量权限,权限矩阵见 infrastructure/store/permission.go
 -- 员工账号(tb_user)由后端启动引导自动创建,不在此脚本中预置。

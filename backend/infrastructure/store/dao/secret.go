@@ -26,6 +26,10 @@ func SetSetting(key, value string) error {
 	}
 	_, err := store.DB.Exec(store.InsertReplaceInto("tb_config", "cfg_key", "cfg_value", "update_time"),
 		key, value, store.Now())
+	if err == nil {
+		// 写穿失效:管理后台保存的配置立即对同进程的后续读取可见。
+		InvalidateSettingCache()
+	}
 	return err
 }
 
@@ -74,6 +78,9 @@ func RotateSecrets(oldKey []byte) {
 		rotated++
 	}
 	if rotated > 0 {
+		// 密文变了,明文不变 —— 但缓存里存的是明文,理论上无需失效;
+		// 这里仍清一次,让「轮换后」的读取重新对账,不为省这一次查询留隐患。
+		InvalidateSettingCache()
 		logger.Infof("[secret] 已用新主密钥重加密 %d 项敏感配置,请移除 MASTER_KEY_OLD", rotated)
 	}
 }

@@ -86,8 +86,8 @@
       >
         <div v-if="copiesHint">该打印机一次打印 {{ copiesHint }},预览只展示其中一份(上面这几张纸)。</div>
         <div v-if="approximate">
-          加菜小票只能还原票据形态:<b>当时新增了哪些菜</b>已无从追溯(订单只增不减、打印日志不存渲染快照),
-          此处菜品区按订单<b>当前全部菜品</b>渲染,金额是当前整单合计。
+          这条记录没有存下票面快照(升级前打的),加菜小票只能还原票据形态:
+          <b>当时新增了哪些菜</b>已无从追溯,此处菜品区按订单<b>当前全部菜品</b>渲染, 金额是当前整单合计。
         </div>
       </div>
       <div
@@ -113,7 +113,7 @@
 // 纸带式票据预览:逐字符按「字符网格」渲染,精确复刻热敏机的对齐模型
 // (全角字符占 2 格、半角占 1 格),浏览器字体宽度差异不会造成两列错位。
 // 加粗行(店名/标题/合计)与 ESC/POS 出纸的 ESC E 强调一致。
-// 打印记录页(重放某条记录)与系统配置页(示例模板预览)共用。
+// 打印记录页(回放某条记录当时存下的票面快照)与系统配置页(示例模板预览)共用。
 import { computed, ref, watch } from 'vue';
 import { renderQrDataUrl } from '../utils/tableQr';
 import type { TicketLine } from '@dining/types';
@@ -142,6 +142,17 @@ defineEmits<{ 'update:visible': [v: boolean] }>();
 
 // 纸宽文案:58mm 与 80mm 的行宽唯一确定,不给调用方再传一个「58mm/80mm」参数的口子。
 const paperSize = computed(() => (props.lineWidth === 32 ? '58mm' : '80mm'));
+
+// 底部说明的三种口径,由 fromSnapshot 区分:
+//   true    —— 按台账存下的票面快照回放,与当时出纸一字不差;
+//   false   —— 升级前的老记录没有快照,按当前订单与配置重渲染,必须显式提示可能不同;
+//   undefined —— 调用方不涉及历史记录(示例模板 / 测试页预览),用中性文案。
+// 不用「默认当成老记录」:那样示例预览会莫名背上「升级前」的告示。
+const metaState = computed<'snapshot' | 'replayed' | 'plain'>(() => {
+  if (props.fromSnapshot === true) return 'snapshot';
+  if (props.fromSnapshot === false) return 'replayed';
+  return 'plain';
+});
 
 // 份数提示只在真的会多打时才出现(配 1 份时说它是废话)。
 const copiesHint = computed(() => {
@@ -239,9 +250,9 @@ watch(
 
 .paper-scroll {
   max-height: 70vh;
-  overflow-y: auto;
+  overflow: auto;
+
   /* 手机弹窗被 92vw 压窄时,纸面按真实宽度渲染并横向滚动,保证与热敏小票 1:1 不被裁切 */
-  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -259,20 +270,23 @@ watch(
 .ticket-paper {
   --cols: 48;
   --cell: 0.62em; /* 半角格宽;中文占 2 格,字形在格子内居中 */
-  font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+
+  font-family: Menlo, Consolas, 'Courier New', monospace;
   font-size: 14px;
   line-height: 1.5;
   margin: 0;
   padding: 16px 18px 18px;
-  background: linear-gradient(180deg, #fdfdfd 0%, #ffffff 12%);
+  background: linear-gradient(180deg, #fdfdfd 0%, #fff 12%);
   color: #1a1a1a;
   border: 1px solid #e4e4e4;
   border-radius: 3px;
+
   /* 双层阴影:贴近感 + 环境光,更像一张平放的纸 */
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.08),
-    0 6px 20px rgba(0, 0, 0, 0.07);
+    0 1px 2px rgb(0 0 0 / 8%),
+    0 6px 20px rgb(0 0 0 / 7%);
   width: calc(var(--cell) * var(--cols) + 36px);
+
   /* 不被弹窗宽度压窄:保持真实纸宽,由外层 .paper-scroll 横向滚动查看 */
   max-width: none;
   min-width: max-content;
@@ -345,7 +359,7 @@ watch(
 }
 
 /* 小屏(手机)上缩字号让 80mm 票整行可见,避免横向滚动。 */
-@media (max-width: 520px) {
+@media (width <= 520px) {
   .ticket-paper {
     font-size: 11px;
     padding: 10px 12px 12px;

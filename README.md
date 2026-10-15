@@ -409,7 +409,7 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
   - 分类 `category/list|save|update|delete/:id`
   - 菜品 `dish/list|get/:id|save|update|delete/:id`
   - 备注 `remark/list|save|update|delete/:id`
-  - 打印机 `printer/list|save|update|delete/:id|test/:id|probe/:id|status/:id|clear/:id|bind|feie/info|agent/info`（字段对齐目标站：`printerType` 1厨房单/2食客小票、`provider` tcp 直连/feie 飞鹅云/agent 本地代理、`paperWidth` 32/48、`status` 启停；测试打印真实走对应通道）
+  - 打印机 `printer/list|save|update|delete/:id|test/:id|probe/:id|status/:id|clear/:id|bind|feie/info|agent/info`（字段对齐目标站：`printerType` 1厨房单/2顾客小票、`provider` tcp 直连/feie 飞鹅云/agent 本地代理、`paperWidth` 32/48、`status` 启停；测试打印真实走对应通道）
   - 打印日志 `print/log/list`、`print/log/reprint`、`print/log/clear`（飞鹅云清空队列）
   - 配置 `config/list|save`
   - 订单 `order/list|get/:id|board|status|pay|settle|settle/cancel|credit/settle|finish|cancel|edit`
@@ -495,7 +495,7 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 
 - 顾客下单金额由**后端以数据库价格为准重新计算**，不信任前端传入的价格，防止篡改。
 - 订单创建/改单/菜品规格等涉及多表写入的操作均使用**数据库事务**，保证数据一致性。
-- 食客下单成功后**自动触发网络打印机打印**：向启用的厨房单打印机打印厨房单、向食客小票打印机打印食客小票（ESC/POS，GBK 编码，异步执行，打印失败仅记录日志不影响下单）。
+- 顾客下单成功后**自动触发网络打印机打印**：向启用的厨房单打印机打印厨房单、向顾客小票打印机打印点菜单（ESC/POS，GBK 编码，异步执行，打印失败仅记录日志不影响下单）；结账时向小票机打印结账小票（含支付方式与实收等结算信息）。
 - 上传接口限制**仅图片、单文件 ≤ 64MB**（按实际读入字节数校验，伪造 multipart 大小头无效），并对文件内容做**图片魔数嗅探**（防止伪造扩展名）；需登录且具备「菜品管理」或「系统配置修改」权限。
 - 员工口令以 **bcrypt**（自适应成本 + 内置随机盐）保存，不存明文，兼容校验历史「加盐 SHA-256」旧哈希并在登录成功后自动升级；账号不存在时也走一次等价耗时的校验（`WastePasswordVerify`），**防止用户名枚举**。
 - 登录接口内置**防暴力破解限流**（IP 与账号双维度：同一 IP 连续 5 次失败锁定 15 分钟；同一真实账号累计 5 次失败也锁定 15 分钟，防止攻击者换 IP 慢速爆破同一账号）；登录令牌为 HMAC-SHA256 签名（含过期时间），服务重启后旧令牌自动失效。启动时会探测引导管理员是否仍在使用默认口令 `admin123` 并打高可见度告警。

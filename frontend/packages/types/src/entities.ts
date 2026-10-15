@@ -200,6 +200,12 @@ export interface PrintLog extends Extensible {
   copies?: number;
   status?: number;
   remoteId?: string;
+  /**
+   * 这张票的可读标识:拆单厨房单为「【厨房单】1/4」,其余为票种名,测试页为空。
+   * 独立字段而非拼进 detail —— 代理通道的回执/重试/作废会整段改写 detail。
+   * 「一菜一单」下一次下单有多条记录,靠它才分得清是哪一张。
+   */
+  label?: string;
   detail?: string;
   triggerBy?: string;
   operator?: string;
@@ -217,25 +223,38 @@ export interface TicketLine {
    */
   qr?: string;
   /**
-   * 为真表示这一行按「放大居中」出纸(夹单的桌号:打印机 GS ! 倍宽倍高 / 飞鹅 <C><B>)。
-   * 放大行的字符网格已失效,前端不再按格渲染,直接用大字居中显示。
+   * 为真表示这一行按「放大」出纸(打印机 GS ! 倍宽倍高 / 飞鹅 <C><B> 或 <B>)。
+   * 放大行的字符网格已失效,前端不再按格渲染,直接用大字显示;
+   * 是否居中看 bigLeft。
    */
   big?: boolean;
+  /**
+   * 为真表示上面那个放大行是「左对齐」的:整单厨房单的菜品清单(逐条编号,
+   * 飞鹅用 <B> 而非 <C><B>)。居中了编号就不在行首,后厨划单时视线要左右找。
+   */
+  bigLeft?: boolean;
 }
 
-// 票据预览(后端重放渲染返回的等宽文本行;按等宽字体展示即与出纸 1:1)。
+// 票据预览(后端回放台账存下的票面快照返回的等宽文本行;按等宽字体展示即与出纸 1:1)。
 export interface TicketPreview {
   /** 按实际入队规则切好的段:超长票据打印时会拆成多段依次送出,与预览分段一一对应 */
   chunks: TicketLine[][];
   /** 每行可容纳的半角字符数(58mm 纸=32,80mm 纸=48),前端排版用 */
   lineWidth: number;
   docType?: string;
+  /** 触发场景:guest 单据靠它区分两种形态(顾客小票/结账小票),见 dicts.printDocLabel */
+  triggerBy?: string;
   orderNo?: string;
   printerName?: string;
   copies?: number;
   /**
-   * 为 true 表示这张预览只是「形态一致」而非内容复现:
-   * 加菜小票无法还原当时新增了哪些菜(订单只增不减、日志不存渲染快照),
+   * 为 true 表示内容来自这条记录当时存下的票面快照(回放,一字不差):
+   * 订单后来加过菜、店名/页脚/纸宽后来改过,都不影响它。
+   */
+  fromSnapshot?: boolean;
+  /**
+   * 为 true 表示这张预览只是「形态一致」而非内容复现 —— 只在没有票面快照时出现
+   * (升级前打的老记录):按当前订单重新渲染,加菜小票更是无从还原当时新增了哪些菜,
    * 菜品区退化为订单当前整单,UI 需要显式说明。
    */
   approximate?: boolean;

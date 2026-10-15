@@ -33,7 +33,7 @@ const (
 	EnvAgentJobTTLTestMin = "AGENT_JOB_TTL_TEST_MIN"
 	// EnvAgentJobTTLKitchenMin 是厨房单任务过期分钟数环境变量。
 	EnvAgentJobTTLKitchenMin = "AGENT_JOB_TTL_KITCHEN_MIN"
-	// EnvAgentJobTTLGuestMin 是食客小票任务过期分钟数环境变量。
+	// EnvAgentJobTTLGuestMin 是顾客小票任务过期分钟数环境变量。
 	EnvAgentJobTTLGuestMin = "AGENT_JOB_TTL_GUEST_MIN"
 	// EnvAgentToken 是云端预置本地打印代理初始令牌的环境变量。
 	// 注意:与 EnvPrintAgentToken(PRINT_AGENT_TOKEN)是两个不同角色 ——
@@ -82,7 +82,7 @@ const (
 	DefaultAgentJobTTLTestMin = "30"
 	// DefaultAgentJobTTLKitchenMin 是厨房单任务默认过期分钟数。
 	DefaultAgentJobTTLKitchenMin = "120"
-	// DefaultAgentJobTTLGuestMin 是食客小票任务默认过期分钟数。
+	// DefaultAgentJobTTLGuestMin 是顾客小票任务默认过期分钟数。
 	DefaultAgentJobTTLGuestMin = "1440"
 	// DefaultPrintAgentEnvFile 是本地打印代理默认配置文件名。
 	DefaultPrintAgentEnvFile = "agent.env"

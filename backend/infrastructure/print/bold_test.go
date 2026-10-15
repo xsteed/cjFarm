@@ -23,11 +23,14 @@ func TestBoldLineRules(t *testing.T) {
 		line string
 		bold bool
 	}{
-		{"【食客小票】", true},                            // 标题
+		{"【顾客小票】", false},                           // 点菜单单据名:副标题弱化,不加粗
+		{"【结账小票】", false},                           // 结账小票单据名:同为副标题,不加粗
 		{"【厨房单】", true},                             // 标题
 		{"【加菜单】", true},                             // 标题
 		{"合计                          98.00", true}, // 合计行
-		{"长健农场 · 柴火农家土菜", true},                     // 店名(seed 默认:「品牌 · 标语」)
+		// 店名不再走形态反推:反推要拿店名比对,而本函数按行调用,那等于每行查一次
+		// 配置表。店名行改由渲染层显式标记(见 shopNameLines)。
+		{"长健农场 · 柴火农家土菜", false},                    // 店名(seed 默认:「品牌 · 标语」)
 		{"凉拌青瓜 (份) x2", false},                      // 菜名
 		{"  * 加辣", true},                            // 单菜备注(做法/忌口,必须醒目)
 		{"菜品金额                      86.00", false},  // 金额行(仅合计加粗)
@@ -48,26 +51,78 @@ func TestBoldLineRules(t *testing.T) {
 
 // TestBoldLineRemarkLines 备注行按「备注强调」规则加粗,且不受备注内容形态影响:
 // 备注文本恰好是【…】形态时仍只算一次强调(前缀「备注: 」已把它挡在标题规则之外)。
+// 判定必须走消费方的唯一入口 BoldText(显式标记优先 + 形态反推兜底)。
 func TestBoldLineRemarkLines(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 	o.OrderRemark = "【vip 包间】"
 	lines := RenderGuestTicket(o, items, 48)
-	boldCount := 0
+
+	bolds := []string{}
 	for _, l := range lines {
-		if BoldLine(l) {
-			boldCount++
+		if text, ok := BoldText(l); ok {
+			bolds = append(bolds, text)
 		}
 	}
-	// 期望加粗:店名、标题、单菜备注、合计、整单备注 = 5 行。
-	if boldCount != 5 {
-		bolds := []string{}
-		for _, l := range lines {
-			if BoldLine(l) {
-				bolds = append(bolds, l)
-			}
+	// 期望加粗:单菜备注、合计、整单备注 = 3 行。
+	// 店名改为放大行(不走进加粗判定)、单据名副标题弱化,都不计入加粗。
+	if len(bolds) != 3 {
+		t.Fatalf("样例小票应恰好 3 行加粗(单菜备注/合计/备注), got %d: %q", len(bolds), bolds)
+	}
+}
+
+// TestLongRemarkBoldOnEveryLine 长备注按纸宽折行后,**每一行**都要加粗。
+//
+// 这是形态反推(BoldLine)的盲区:折行由 splitLines 完成,续行没有「* 」「整单备注: 」
+// 前缀,反推不出来 —— 同一段备注会前半加粗、后半不加粗,后厨很容易把后半句当成普通说明。
+func TestLongRemarkBoldOnEveryLine(t *testing.T) {
+	setupTestDB(t)
+
+	// 单元级:appendRemarkLines 是渲染层所有备注的唯一出口,逐行标记是它的契约,
+	// 直接断言它最可靠(从成品票面反推「哪几行是续行」本身就是做不到的事)。
+	long := "整单备注: 不要香菜不要葱不要蒜,鱼要清蒸不要红烧,米饭少放点"
+	lines := appendRemarkLines(nil, long, 32)
+	if len(lines) < 2 {
+		t.Fatalf("这段备注在 32 格下应折成多行, got %d: %q", len(lines), lines)
+	}
+	for i, l := range lines {
+		text, bold := BoldText(l)
+		if !bold {
+			t.Fatalf("第 %d 行未加粗: %q", i+1, text)
 		}
-		t.Fatalf("样例小票应恰好 5 行加粗(店名/标题/单菜备注/合计/备注), got %d: %v", boldCount, bolds)
+		if strings.ContainsRune(text, '\x02') {
+			t.Fatalf("控制前缀不得残留在正文里: %q", text)
+		}
+	}
+	// 票面形态不变:前缀只在首行,续行不重复。
+	if first, _ := BoldText(lines[0]); !strings.HasPrefix(first, "整单备注: ") {
+		t.Fatalf("首行应保留原前缀: %q", first)
+	}
+	if second, _ := BoldText(lines[1]); strings.HasPrefix(second, "整单备注: ") {
+		t.Fatalf("续行不应重复前缀: %q", second)
+	}
+
+	// 端到端:渲染层产出的控制行必须被发送层完全消费 —— 控制字符一旦漏剥就是直接
+	// 打到纸上(或把标签当正文发出去)。渲染结果里有控制行是正常的,落地结果里没有才正常。
+	o, items := sampleOrder()
+	o.OrderRemark = "不要香菜不要葱不要蒜,鱼要清蒸不要红烧"
+	items[0].Remark = "不要香菜不要葱不要蒜"
+	for name, rendered := range map[string][]string{
+		"厨房单":  RenderKitchenTicket(o, items, 32, KitchenTicketOptions{Title: "【厨房单】"}),
+		"顾客小票": RenderGuestTicket(o, items, 32),
+		"加菜小票": RenderGuestAppendTicket(o, items, 32),
+	} {
+		content := strings.Join(splitFeieContent(rendered), "")
+		if strings.ContainsRune(content, '\x02') || strings.ContainsRune(content, '\x03') {
+			t.Fatalf("%s 飞鹅 content 残留控制字符: %q", name, content)
+		}
+		if bytes.ContainsAny(encodeESCPOS(rendered), "\x02\x03") {
+			t.Fatalf("%s ESC/POS 字节流残留控制字符", name)
+		}
+		// 备注文本本身必须留在票面上(前缀只被剥掉,内容不能丢)。
+		if !strings.Contains(content, "不要香菜") {
+			t.Fatalf("%s 备注内容丢失: %q", name, content)
+		}
 	}
 }
 
@@ -75,7 +130,7 @@ func TestBoldLineRemarkLines(t *testing.T) {
 func TestEncodeESCPOSBoldBytes(t *testing.T) {
 	setupTestDB(t)
 
-	raw := encodeESCPOS([]string{"【食客小票】", "凉拌青瓜 x2", "合计                          98.00"})
+	raw := encodeESCPOS([]string{"【厨房单】", "凉拌青瓜 x2", "合计                          98.00"})
 	escEOn := []byte{0x1B, 0x45, 0x01}
 	escEOff := []byte{0x1B, 0x45, 0x00}
 
@@ -106,11 +161,11 @@ func TestEncodeESCPOSBoldBytes(t *testing.T) {
 func TestFeieBoldTag(t *testing.T) {
 	setupTestDB(t)
 
-	lines := []string{"【食客小票】", "凉拌青瓜 (份) x2", "合计                          98.00"}
+	lines := []string{"【厨房单】", "凉拌青瓜 (份) x2", "合计                          98.00"}
 	content := strings.Join(splitFeieContent(lines), "")
 
-	if !strings.Contains(content, "<BOLD>【食客小票】</BOLD>") {
-		t.Fatalf("标题行应套 <BOLD>: %q", content)
+	if !strings.Contains(content, "<BOLD>【厨房单】</BOLD>") {
+		t.Fatalf("厨房单标题行应套 <BOLD>: %q", content)
 	}
 	if !strings.Contains(content, "<BOLD>合计") {
 		t.Fatalf("合计行应套 <BOLD>: %q", content)
@@ -118,9 +173,11 @@ func TestFeieBoldTag(t *testing.T) {
 	if strings.Contains(content, "<BOLD>凉拌青瓜") {
 		t.Fatalf("普通菜名行不应加粗: %q", content)
 	}
-	// <B> 只能出现在放大行的 <C><B> 组合里;强调行绝不能用它。
+	// 纯文本行(非放大行)绝不能被套上 <B>:它会把 ticket.go 算好的等宽列对齐撑坏。
+	// 放大行另走 SplitBigLine / SplitBigLeftLine 分支,输入里没有它们,所以这里
+	// 一旦出现 <B> 就说明强调行用错了标签。
 	if strings.Contains(content, "<B>") {
-		t.Fatalf("强调行不得使用 <B>(官方语义是放大一倍,会破坏列对齐): %q", content)
+		t.Fatalf("强调行不得使用 <B>(官方语义是「放大一倍」,会破坏列对齐): %q", content)
 	}
 }
 

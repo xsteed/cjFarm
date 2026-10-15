@@ -29,7 +29,7 @@
       <div class="ticket-shop">
         {{ shopName }}
       </div>
-      <div class="ticket-sub">食客小票</div>
+      <div class="ticket-sub">顾客小票</div>
       <div class="ticket-line">--------------------------------</div>
       <div class="ticket-row">
         <span>订单号</span><span>{{ order.orderNo }}</span>

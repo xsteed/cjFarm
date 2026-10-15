@@ -473,6 +473,7 @@ function copy(text?: string): void {
 .qr-actions {
   display: flex;
   gap: 10px;
+
   /* 4 个按钮合计约 410px：视口 ≤1024px 时弹窗内容区只有约 400px(480px 弹窗
      再扣 TDesign 24px 内边距 + style.css 的 16px 内边距)，手机上仅约 343px。
      不换行就会顶宽 .t-dialog__body(overflow: auto)出现横向滚动条 */

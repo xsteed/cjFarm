@@ -332,7 +332,7 @@ func OrderSettleCancel(c *gin.Context) {
 	okMsg(c, "已撤销结算，订单恢复为未支付")
 }
 
-// printOrderTicket 读取订单并异步打印食客小票(打印失败不影响结账结果)。
+// printOrderTicket 读取订单并异步打印结账小票(打印失败不影响结账结果)。
 //
 // 只发小票机 —— 这里曾经复用 PrintOrder(它会给所有启用的打印机都发单),
 // 于是结账时厨房机又被打了一张一模一样的厨房单。结账与后厨无关,
@@ -347,13 +347,19 @@ func printOrderTicket(ctx context.Context, orderID int) {
 	print.PrintGuestTicket(ctx, o)
 }
 
-// printKitchenOnPaid 先付模式专属:订单「首次收款成功」后,才把厨单(厨房单 + 点菜单)发给后厨。
+// printKitchenOnPaid 先付模式专属:订单「首次收款成功」后,才把厨单发给后厨、
+// 把结账小票发给小票机。
 //
 // 为什么单独抽出来:先付模式下下单时不出单(customer.go 已跳过),出单时机后移到收款成功;
 // 而收款有两条互不相通的路径 —— 线上支付回调/查单(pay.go)与前台手工收款(OrderPay),
 // 两者都必须触发,否则「线上下单 + 前台收现金」的顾客会一单都吃不上。
 //
-// 后付模式下厨单已在下单时出过,这里直接返回,不会重复出纸。
+// 这里刻意不再走 PrintOrder(它会连带出一张点菜单):先付模式收款成功那一刻,
+// 订单就已经是「已支付」,后续不会再有独立的结账动作(SettleOrder 对已支付订单
+// 直接拒绝)—— 收款时出的这张小票是该订单唯一的付款凭证,因此直接按
+// PrintGuestTicket(trigger=settle)出【结账小票】,点菜单与付款凭证合一;
+// 厨房单则照常走 PrintKitchen(trigger=order)。后付模式下厨单已在下单时出过,
+// 这里直接返回,不会重复出纸。
 // 打印在 print 包内异步执行且自带失败留痕,故本函数不返回错误,不影响收款结果。
 func printKitchenOnPaid(ctx context.Context, orderID int) {
 	if !service.PayFirstEnabled() {
@@ -364,7 +370,8 @@ func printKitchenOnPaid(ctx context.Context, orderID int) {
 		logger.CtxWarnf(ctx, "[print][告警] 先付模式收款后读取订单失败,厨单未出 订单%d: %v", orderID, err)
 		return
 	}
-	print.PrintOrder(ctx, o, items)
+	print.PrintKitchen(ctx, o, items)
+	printOrderTicket(ctx, orderID)
 }
 
 func OrderFinish(c *gin.Context) {

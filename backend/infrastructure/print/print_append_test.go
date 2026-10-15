@@ -3,7 +3,7 @@ package print
 // ============================================================================
 // 加菜重出小票(print_guest_on_append)
 //
-// 加菜时后厨拿「加菜单」(只列新菜),小票机重出一张整单最新金额的食客小票。
+// 加菜时后厨拿「加菜单」(只列新菜),小票机重出一张整单最新金额的加菜小票。
 // 这里验证两件事:配置开关的默认值与三态语义;加菜触发的作业渲染的是
 // 整单口径(而非只列新菜的片段单 —— 那会和金额区对不上,也无法被补打重放)。
 // ============================================================================
@@ -70,7 +70,7 @@ func TestGuestAppendJobRendersAppendOnly(t *testing.T) {
 		}
 	}
 	// 整单口径的内容不应出现在加菜小票上:标题、金额分项与「合计」措辞。
-	for _, bad := range []string{"【食客小票】", "【加菜单】", "优惠", "赠送", " 合计"} {
+	for _, bad := range []string{"【顾客小票】", "【结账小票】", "【加菜单】", "优惠", "赠送", " 合计"} {
 		if strings.Contains(got, bad) {
 			t.Fatalf("加菜小票不应包含整单要素 %q:\n%s", bad, got)
 		}
@@ -78,7 +78,7 @@ func TestGuestAppendJobRendersAppendOnly(t *testing.T) {
 }
 
 // TestDocTypeNormalizeKeepsAppendForm 补打/预览必须保留 guest_append 形态:
-// 抹成 guest 会让重出来的票变成另一张(标题「【食客小票】」、金额区整单口径),
+// 抹成 guest 会让重出来的票变成另一张(标题「【顾客小票】/【结账小票】」、金额区整单口径),
 // 与打印记录里的「加菜小票」对不上。
 func TestDocTypeNormalizeKeepsAppendForm(t *testing.T) {
 	if got := normalizeDocType(po.PrintDocGuestAppend); got != po.PrintDocGuestAppend {
@@ -93,7 +93,7 @@ func TestDocTypeNormalizeKeepsAppendForm(t *testing.T) {
 }
 
 // TestGuestAppendPreviewKeepsAppendForm 加菜小票的预览必须仍是加菜小票形态
-// (标题 + 一行「当前合计」),而不是整单食客小票。
+// (标题 + 一行「当前合计」),而不是整单顾客小票。
 func TestGuestAppendPreviewKeepsAppendForm(t *testing.T) {
 	setupTestDB(t)
 	orderID := insertPreviewOrder(t)
@@ -110,7 +110,7 @@ func TestGuestAppendPreviewKeepsAppendForm(t *testing.T) {
 		}
 	}
 	// 整单口径的要素不该出现:那是另一张票。
-	for _, bad := range []string{"【食客小票】", "茶位费"} {
+	for _, bad := range []string{"【顾客小票】", "【结账小票】", "茶位费"} {
 		if strings.Contains(got, bad) {
 			t.Fatalf("加菜小票预览不应包含整单要素 %q:\n%s", bad, got)
 		}
@@ -128,5 +128,38 @@ func TestReprintKitchenTitleFollowsTrigger(t *testing.T) {
 		if got := kitchenTitleFor(tr); got != "【厨房单】" {
 			t.Fatalf("触发场景 %s 的厨房单抬头应为【厨房单】, got %q", tr, got)
 		}
+	}
+}
+
+// TestGuestAppendTicketNoFarewellTail 加菜小票不带「送客」收尾。
+//
+// 页脚(出厂默认「谢谢惠顾,欢迎再次光临」)是客人离场时才该出现的东西 ——
+// 加菜时人还在店里,这里把页脚配置上,证明是「刻意不打」而不是「没配置」。
+// 二维码已在「小票二维码」功能下线时整体移除(桌台上有点餐码),无需配置。
+func TestGuestAppendTicketNoFarewellTail(t *testing.T) {
+	setupTestDB(t)
+	setPrintSetting(t, "print_guest_footer", "谢谢惠顾,欢迎再次光临")
+
+	o, items := sampleOrder()
+	lines := RenderGuestAppendTicket(o, items, 48)
+	got := strings.Join(lines, "\n")
+
+	if strings.Contains(got, "谢谢惠顾") {
+		t.Fatalf("加菜小票不应带送客页脚:\n%s", got)
+	}
+	for _, l := range lines {
+		if _, ok := SplitQRLine(l); ok {
+			t.Fatalf("加菜小票不应带扫码二维码:\n%s", got)
+		}
+	}
+	// 该有的要素一个不少。
+	for _, want := range []string{"【加菜小票】", "凉拌青瓜", "当前合计"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("加菜小票缺少要素 %q:\n%s", want, got)
+		}
+	}
+	// 收尾不留孤行分隔线(页脚省略时的既有口径)。
+	if len(lines) > 0 && lines[len(lines)-1] == hr(48) {
+		t.Fatalf("收尾不应是孤行分隔线:\n%s", got)
 	}
 }

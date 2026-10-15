@@ -307,7 +307,7 @@ async function syncRefund(row: Refund): Promise<void> {
 async function onReprint(docType: DocType): Promise<void> {
   if (!detail.value || acting.value) return;
   acting.value = true;
-  const label = docType === 'kitchen' ? '厨房单' : '食客小票';
+  const label = docType === 'kitchen' ? '厨房单' : '顾客小票';
   try {
     const res = await reprintOrder({ orderId: detail.value.orderId, docType });
     MessagePlugin.success(res?.msg || `${label}补打指令已发送`);

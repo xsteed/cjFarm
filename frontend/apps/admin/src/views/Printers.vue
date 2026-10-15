@@ -237,7 +237,7 @@
             :theme="row.printerType === 1 ? 'danger' : 'primary'"
             variant="light"
           >
-            {{ row.printerType === 1 ? '厨房单' : '食客小票' }}
+            {{ row.printerType === 1 ? '厨房单' : '顾客小票' }}
           </t-tag>
         </div>
 
@@ -351,7 +351,7 @@
           :theme="row.printerType === 1 ? 'danger' : 'primary'"
           variant="light"
         >
-          {{ row.printerType === 1 ? '厨房单' : '食客小票' }}
+          {{ row.printerType === 1 ? '厨房单' : '顾客小票' }}
         </t-tag>
       </template>
       <template #provider="{ row }">
@@ -501,7 +501,7 @@
             variant="default-filled"
           >
             <t-radio-button :value="1">厨房单</t-radio-button>
-            <t-radio-button :value="2">食客小票</t-radio-button>
+            <t-radio-button :value="2">顾客小票</t-radio-button>
           </t-radio-group>
         </t-form-item>
 
@@ -985,7 +985,7 @@ async function save(): Promise<void> {
     return;
   }
   form.copies = copies;
-  // 食客小票必须含全部菜品，后端也会强制清空分类，这里保持一致避免误导。
+  // 顾客小票必须含全部菜品，后端也会强制清空分类，这里保持一致避免误导。
   const payload: PrinterPayload = { ...form, printerId: form.printerId ?? undefined };
   if (payload.printerType === 2) payload.categoryIdList = [];
   if (saving.value) return;
@@ -1310,7 +1310,7 @@ onUnmounted(() => {
 /* TDesign 给「最后一个表单项」打 .t-form__item--last 并 margin:0(收掉末尾多余的
    24px 行距)。但它只统计带 name 的表单项来判定谁是最后一项:
    「打印参数」没有 name(它只是容器,不参与校验),「IP 地址 / 端口」又包在普通
-   div.conn-row 里、不算 Form 的直接子项 —— 于是选「食客小票」隐藏掉「负责分类」
+   div.conn-row 里、不算 Form 的直接子项 —— 于是选「顾客小票」隐藏掉「负责分类」
    后,这顶「最后一项」的帽子落到了前面的「接入方式」(飞鹅时是「打印机编号」)上,
    它与下方字段之间整段行距被清零。
    这里只给「被误标」的项拿回行距:真正的最后一项必然是 :last-of-type,仍保持收口。 */

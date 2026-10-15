@@ -109,7 +109,7 @@ func TestGenRefundNo(t *testing.T) {
 }
 
 // TestSettingFlagDefaultOnMatchesRenderSemantics 守护「默认开」型开关的回显与渲染语义一致:
-// 食客小票的优惠行等段落开关,渲染侧(print 包)按「!= "0"」判定,回显侧必须同语义——
+// 顾客小票的优惠行等段落开关,渲染侧(print 包)按「!= "0"」判定,回显侧必须同语义——
 // 否则配置键缺失时,配置页显示「关」而小票上仍在打印,两边自相矛盾。
 func TestSettingFlagDefaultOnMatchesRenderSemantics(t *testing.T) {
 	store.Init(filepath.Join(t.TempDir(), "flagdefaulton.db"))
@@ -133,6 +133,8 @@ func TestSettingFlagDefaultOnMatchesRenderSemantics(t *testing.T) {
 			if _, err := store.DB.Exec(`DELETE FROM tb_config WHERE cfg_key=?`, key); err != nil {
 				t.Fatalf("清理配置键失败: %v", err)
 			}
+			// 裸 SQL 绕过了 SetSetting 的写穿失效,需手动清缓存。
+			dao.InvalidateSettingCache()
 		} else if err := dao.SetSetting(key, c.val); err != nil {
 			t.Fatalf("写入配置失败: %v", err)
 		}

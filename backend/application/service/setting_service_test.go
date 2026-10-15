@@ -155,6 +155,8 @@ func TestSettingFlag(t *testing.T) {
 				if _, err := store.DB.Exec(`DELETE FROM tb_config WHERE cfg_key=?`, key); err != nil {
 					t.Fatalf("删除配置键失败: %v", err)
 				}
+				// 裸 SQL 绕过了 SetSetting 的写穿失效,需手动清缓存。
+				dao.InvalidateSettingCache()
 			} else if err := dao.SetSetting(key, c.val); err != nil {
 				t.Fatalf("写入配置失败: %v", err)
 			}
@@ -204,6 +206,8 @@ func TestSettingFlagDefaultOn(t *testing.T) {
 				if _, err := store.DB.Exec(`DELETE FROM tb_config WHERE cfg_key=?`, key); err != nil {
 					t.Fatalf("删除配置键失败: %v", err)
 				}
+				// 裸 SQL 绕过了 SetSetting 的写穿失效,需手动清缓存。
+				dao.InvalidateSettingCache()
 			} else if err := dao.SetSetting(key, c.val); err != nil {
 				t.Fatalf("写入配置失败: %v", err)
 			}

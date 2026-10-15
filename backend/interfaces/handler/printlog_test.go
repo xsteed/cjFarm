@@ -104,7 +104,7 @@ func TestOrderReprintBranches(t *testing.T) {
 
 	// 无启用打印机:按单据类型提示。
 	orderID := plInsertOrderFixture(t, "ORDPL3")
-	if _, res := prtCall(t, OrderReprint, http.MethodPost, "/test", `{"orderId":`+itoa(orderID)+`,"docType":"guest"}`, nil); res["code"] != float64(400) || !strings.Contains(res["msg"].(string), "食客小票") {
+	if _, res := prtCall(t, OrderReprint, http.MethodPost, "/test", `{"orderId":`+itoa(orderID)+`,"docType":"guest"}`, nil); res["code"] != float64(400) || !strings.Contains(res["msg"].(string), "顾客小票") {
 		t.Fatalf("无启用小票机应提示, got %v", res)
 	}
 	if _, res := prtCall(t, OrderReprint, http.MethodPost, "/test", `{"orderId":`+itoa(orderID)+`,"docType":"kitchen"}`, nil); res["code"] != float64(400) || !strings.Contains(res["msg"].(string), "厨房单") {
@@ -120,7 +120,7 @@ func TestOrderReprintBranches(t *testing.T) {
 }
 
 func TestPrinterTypeLabel(t *testing.T) {
-	if got := printerTypeLabel(po.PrinterTypeGuest); got != "食客小票" {
+	if got := printerTypeLabel(po.PrinterTypeGuest); got != "顾客小票" {
 		t.Fatalf("guest 标签错误: %q", got)
 	}
 	if got := printerTypeLabel(po.PrinterTypeKitchen); got != "厨房单" {

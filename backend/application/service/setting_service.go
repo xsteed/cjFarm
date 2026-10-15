@@ -49,7 +49,7 @@ var ManagedSettingKeys = []string{
 	"alipay_enabled", "alipay_appid", "alipay_private_key_path",
 	"alipay_public_key", "alipay_notify_url",
 	"print_enabled", "print_kitchen_show_price", "print_kitchen_split_mode",
-	"print_guest_footer", "print_guest_show_discount", "print_guest_qr",
+	"print_guest_footer", "print_guest_show_discount",
 	"print_guest_on_append", "print_guest_on_order",
 	"feie_user", "feie_api_url", "agent_latest_version",
 	// 桌台遗留订单防护与营业日定义(见 stale_service.go)
@@ -110,7 +110,7 @@ func NormalizeAmountValue(v string) string {
 // SettingFlagDefaultOn 「默认开启」型开关的读取归一化:只有明确 "0" 才算关闭,
 // 其余(含 "1"、空值、配置项缺失)一律返回 "1"。
 //
-// 与 SettingFlag 的分工:打印总开关等「默认关」用 SettingFlag;食客小票段落开关
+// 与 SettingFlag 的分工:打印总开关等「默认关」用 SettingFlag;顾客小票段落开关
 // (优惠行等)出厂即显示,渲染侧(print.guestShowDiscount)按「!= "0」判定,
 // 回显侧必须用同一套语义,否则键缺失时配置页显示「关」而实际仍在打印。
 func SettingFlagDefaultOn(key string) string {
@@ -208,15 +208,13 @@ func ListSettings() dto.Settings {
 		PrintKitchenShowPrice: SettingFlag("print_kitchen_show_price"),
 		// 厨房单打印粒度(枚举项,回落值为整单;与渲染侧 print.kitchenSplitMode 同一套白名单)
 		PrintKitchenSplitMode: SettingEnum("print_kitchen_split_mode", po.KitchenSplitModes, po.KitchenSplitWhole),
-		// 食客小票模板配置(页脚可清空,段落开关按「默认开」语义归一化,与渲染侧一致)
+		// 顾客小票模板配置(页脚可清空,段落开关按「默认开」语义归一化,与渲染侧一致)
 		PrintGuestFooter:       dao.GetSetting("print_guest_footer"),
 		PrintGuestShowDiscount: SettingFlagDefaultOn("print_guest_show_discount"),
 		// 加菜重出小票默认开,与渲染侧 guestPrintOnAppend 的「!= "0"」语义一致
 		PrintGuestOnAppend: SettingFlagDefaultOn("print_guest_on_append"),
 		// 下单点菜单默认开,与渲染侧 guestPrintOnOrder 的「!= "0"」语义一致
 		PrintGuestOnOrder: SettingFlagDefaultOn("print_guest_on_order"),
-		// 二维码默认关闭(SettingFlag:只有明确 "1" 才开),与渲染侧 guestQR 同一套语义
-		PrintGuestQR: SettingFlag("print_guest_qr"),
 		// 飞鹅云打印(feie_ukey 为敏感项,已配置回显占位符)
 		FeieUser:   dao.GetSetting("feie_user"),
 		FeieUkey:   maskIfSet("feie_ukey"),
@@ -288,7 +286,6 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		// 页脚是普通文本项,允许清空(清空=不打印页脚);段落开关归一化落库。
 		"print_guest_footer":        settings.PrintGuestFooter,
 		"print_guest_show_discount": normFlagValue(settings.PrintGuestShowDiscount),
-		"print_guest_qr":            normFlagValue(settings.PrintGuestQR),
 		"print_guest_on_append":     normFlagValue(settings.PrintGuestOnAppend),
 		"print_guest_on_order":      normFlagValue(settings.PrintGuestOnOrder),
 		"feie_user":                 settings.FeieUser,

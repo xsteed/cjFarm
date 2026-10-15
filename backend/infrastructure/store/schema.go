@@ -1,9 +1,11 @@
 package store
 
 import (
-	"dining-system/infrastructure/logger"
 	"fmt"
 	"strings"
+
+	"dining-system/domain/po"
+	"dining-system/infrastructure/logger"
 )
 
 // ============================================================================
@@ -17,6 +19,8 @@ import (
 //	{{OPTS}} 建表尾选项       MySQL : ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ...
 //	{{BLOB}} 大二进制列类型   SQLite: BLOB
 //	                          MySQL : LONGBLOB(BLOB 上限 64KB,装不下单张上传图)
+//	{{TEXT}} 大文本列类型     SQLite: TEXT
+//	                          MySQL : LONGTEXT(见 textTypeFor;不带 DEFAULT)
 //
 // 类型选择原则(两库语义尽量对齐):
 //   - 主键/外键/金额/计数 一律 INTEGER:SQLite 原生 64 位,MySQL 映射为 INT(≈±21 亿,
@@ -125,6 +129,19 @@ var schemaTemplate = []string{
 	// 失败了只有后端日志留痕,商家端完全无感知(小票没出来也不知道为什么)。
 	// detail 对 TCP 存「地址 / 失败原因」,对飞鹅存「云端订单号」,
 	// remote_id 单独存飞鹅订单号,便于用 Open_queryOrderState 追问是否真的打出来了。
+	//
+	// label 是这张票的可读标识(拆单厨房单为「【厨房单】1/4」,其余为票种名;
+	// 测试页为空)。必须是独立列而不是拼在 detail 前面:代理通道的回执、重试、
+	// 过期作废都会整段改写 detail(见 dao.UpdatePrintLogResult),拼进去的标识
+	// 一到那一步就没了 —— 而「一菜一单」下一次下单会写多条台账,不写第几张
+	// 在记录页上根本分不清丢的是哪一张。
+	//
+	// content / paper_width 是「票面快照」:content 存这次实际送出的每一张纸的
+	// 完整文本行(JSON),paper_width 存当时的纸宽。有了它,「打印记录」里的预览与
+	// 「补打」都是回放这张票,而不是拿现在的订单与现在的店铺配置重算一遍 ——
+	// 订单后来加过菜、店名或页脚后来改过,都不会再改变一条历史记录的还原结果。
+	// 老记录(升级前)该列为空,读侧回落到重算(见 print/snapshot.go)。
+	// 三列都长期保留(与台账同寿),不做清理。
 	`CREATE TABLE IF NOT EXISTS tb_print_log (
 		print_id     {{PK}},
 		order_id     INTEGER      DEFAULT 0,
@@ -139,7 +156,10 @@ var schemaTemplate = []string{
 		copies       INTEGER      DEFAULT 1,
 		status       INTEGER      DEFAULT 0,
 		remote_id    VARCHAR(128) DEFAULT '',
+		label        VARCHAR(64)  DEFAULT '',
 		detail       VARCHAR(500) DEFAULT '',
+		content      {{TEXT}},
+		paper_width  INTEGER      DEFAULT 48,
 		trigger_by   VARCHAR(16)  DEFAULT '',
 		operator     VARCHAR(64)  DEFAULT '',
 		cost_ms      INTEGER      DEFAULT 0,
@@ -491,15 +511,22 @@ var schemaTemplate = []string{
 func schemaStatements(d Dialect) []string {
 	out := make([]string, 0, len(schemaTemplate))
 	for _, tpl := range schemaTemplate {
-		s := strings.ReplaceAll(tpl, "{{PK}}", autoIncPKFor(d))
-		s = strings.ReplaceAll(s, "{{OPTS}}", tableOptionsFor(d))
-		s = strings.ReplaceAll(s, "{{BLOB}}", blobTypeFor(d))
-		s = strings.ReplaceAll(s, "{{TSTYPE}}", tsTypeFor(d))
-		s = strings.ReplaceAll(s, "{{NOWDEF}}", tsNowDefaultFor(d))
-		s = strings.ReplaceAll(s, "{{ONUPD}}", tsOnUpdateFor(d))
-		out = append(out, s)
+		out = append(out, expandDialectPlaceholders(tpl, d))
 	}
 	return out
+}
+
+// expandDialectPlaceholders 把模板里的方言占位符替换为具体 DDL 片段。
+// 建表语句与增量补列(alterCols 的 Def 也可能带占位符)共用,避免两处展开逻辑漂移。
+func expandDialectPlaceholders(s string, d Dialect) string {
+	s = strings.ReplaceAll(s, "{{PK}}", autoIncPKFor(d))
+	s = strings.ReplaceAll(s, "{{OPTS}}", tableOptionsFor(d))
+	s = strings.ReplaceAll(s, "{{BLOB}}", blobTypeFor(d))
+	s = strings.ReplaceAll(s, "{{TEXT}}", textTypeFor(d))
+	s = strings.ReplaceAll(s, "{{TSTYPE}}", tsTypeFor(d))
+	s = strings.ReplaceAll(s, "{{NOWDEF}}", tsNowDefaultFor(d))
+	s = strings.ReplaceAll(s, "{{ONUPD}}", tsOnUpdateFor(d))
+	return s
 }
 
 // ---- 时间列的方言分叉 ----
@@ -790,6 +817,13 @@ var alterCols = []alterCol{
 	{Table: "tb_spec", Name: "create_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_spec", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_print_log", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	// 票面快照:content 存这次实际送出的每一张纸的完整文本行(JSON),
+	// paper_width 存当时的纸宽。老记录留空,读侧回落到按当前数据重算。
+	{Table: "tb_print_log", Name: "content", Def: "{{TEXT}}"},
+	{Table: "tb_print_log", Name: "paper_width", Def: "INTEGER DEFAULT 48"},
+	// 票据标识(【厨房单】1/4)。老库升级补列后历史行为空:那时它拼在 detail 里,
+	// 不做解析回填(格式靠字符串拼出来,硬拆比留空更容易错)。
+	{Table: "tb_print_log", Name: "label", Def: "VARCHAR(64) DEFAULT ''"},
 	{Table: "tb_print_job", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_oper_log", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_config", Name: "create_time", Def: "VARCHAR(32) DEFAULT NULL"},
@@ -808,7 +842,8 @@ var alterCols = []alterCol{
 func alterStatements(d Dialect) []string {
 	out := make([]string, 0, len(alterCols))
 	for _, c := range alterCols {
-		out = append(out, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.Table, c.Name, c.Def))
+		out = append(out, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s",
+			c.Table, c.Name, expandDialectPlaceholders(c.Def, d)))
 	}
 	return out
 }
@@ -841,7 +876,8 @@ func migrate(stmts []string) {
 		if columnExists(c.Table, c.Name) {
 			continue
 		}
-		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.Table, c.Name, c.Def)
+		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s",
+			c.Table, c.Name, expandDialectPlaceholders(c.Def, dialect))
 		if _, err := DB.Exec(stmt); err != nil {
 			logger.Fatalf("补列失败(%s): %v\n%s", dialect, err, stmt)
 		}
@@ -874,6 +910,7 @@ func migrate(stmts []string) {
 	backfillMealTimes()
 	migrateUploadPrefix()
 	migrateShopNameDot()
+	normalizeFeieSNs()
 
 	// 最后建「自动推进 update_time」的触发器:它引用 update_time 列,必须等上面的
 	// 补列跑完(老库的 tb_image/tb_print_job 等列是本次才补上的)。
@@ -911,6 +948,66 @@ func backfillMealTimes() {
 	if _, err := DB.Exec(`UPDATE tb_order SET meal_end_time = finish_time
 		WHERE meal_end_time IS NULL AND order_status IN (4,5) AND COALESCE(finish_time,'') <> ''`); err != nil {
 		logger.Warnf("[db] 回填用餐结束时间失败: %v", err)
+	}
+}
+
+// normalizeFeieSNs 规范存量打印机的飞鹅 SN(幂等,只在有变更时写库)。
+//
+// 机身标签印的是「SN 961828266」,商户照抄进输入框就带着前缀入库。飞鹅接口按 SN 精确
+// 匹配,带着前缀推过去等于推给一台不存在的机器,而飞鹅很可能仍返回 ret=0 ——
+// 表现就是「日志成功、纸却没出来」,事后极难排查。保存路径已做规范化(po.NormalizeFeieSN),
+// 这里把老库里的存量脏值一次性收敛;剥离前缀后仍不合法的(如中间带空格)只告警、不擅自
+// 改写,留给商户到「打印机管理」按机身标签核对后重存。
+func normalizeFeieSNs() {
+	rows, err := DB.Query(`SELECT printer_id, COALESCE(printer_name,''), COALESCE(feie_sn,'')
+		FROM tb_printer WHERE provider=? AND COALESCE(feie_sn,'')<>''`, po.PrinterProviderFeie)
+	if err != nil {
+		logger.Warnf("[db] 读取飞鹅打印机失败: %v", err)
+		return
+	}
+	type snRow struct {
+		id   int
+		name string
+		sn   string
+	}
+	fixes := []snRow{}
+	invalid := []snRow{}
+	for rows.Next() {
+		var r snRow
+		if err := rows.Scan(&r.id, &r.name, &r.sn); err != nil {
+			continue
+		}
+		norm := po.NormalizeFeieSN(r.sn)
+		if norm == r.sn {
+			continue // 已是规范值
+		}
+		r.sn = norm
+		if po.IsFeieSN(norm) {
+			fixes = append(fixes, r)
+		} else {
+			invalid = append(invalid, r)
+		}
+	}
+	// 必须查 Err():扫描中途出错时 Next 会提前返回 false,不查会静默少修复几台。
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		logger.Warnf("[db] 遍历飞鹅打印机失败: %v", err)
+	}
+
+	fixed := 0
+	for _, r := range fixes {
+		if _, err := DB.Exec(`UPDATE tb_printer SET feie_sn=? WHERE printer_id=?`, r.sn, r.id); err != nil {
+			logger.Warnf("[db] 规范化打印机[%s]的飞鹅 SN 失败: %v", r.name, err)
+			continue
+		}
+		fixed++
+	}
+	if fixed > 0 {
+		logger.Infof("[db] 已规范化 %d 台飞鹅打印机的 SN(剥离「SN」标签前缀)", fixed)
+	}
+	for _, r := range invalid {
+		logger.Warnf("[db] 飞鹅打印机[%s]的 SN %q 含非法字符,请按机身标签核对后到「打印机管理」重新保存", r.name, r.sn)
 	}
 }
 

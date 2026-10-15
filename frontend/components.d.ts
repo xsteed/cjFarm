@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    __lint_tmp: typeof import('./apps/admin/src/components/__lint_tmp.vue')['default']
     ActionSheet: typeof import('./apps/admin/src/components/ActionSheet.vue')['default']
     BottomSheet: typeof import('./apps/admin/src/components/BottomSheet.vue')['default']
     CreditSettleDialog: typeof import('./apps/admin/src/components/order/CreditSettleDialog.vue')['default']
@@ -28,7 +29,6 @@ declare module 'vue' {
     TButton: typeof import('tdesign-vue-next')['Button']
     TCheckbox: typeof import('tdesign-vue-next')['Checkbox']
     TCheckboxGroup: typeof import('tdesign-vue-next')['CheckboxGroup']
-    TCol: typeof import('tdesign-vue-next')['Col']
     TDateRangePicker: typeof import('tdesign-vue-next')['DateRangePicker']
     TDescriptions: typeof import('tdesign-vue-next')['Descriptions']
     TDescriptionsItem: typeof import('tdesign-vue-next')['DescriptionsItem']
@@ -47,7 +47,6 @@ declare module 'vue' {
     TRadio: typeof import('tdesign-vue-next')['Radio']
     TRadioButton: typeof import('tdesign-vue-next')['RadioButton']
     TRadioGroup: typeof import('tdesign-vue-next')['RadioGroup']
-    TRow: typeof import('tdesign-vue-next')['Row']
     TSelect: typeof import('tdesign-vue-next')['Select']
     TSpace: typeof import('tdesign-vue-next')['Space']
     TSwitch: typeof import('tdesign-vue-next')['Switch']

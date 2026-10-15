@@ -50,7 +50,8 @@ backend/migrations/
 > 下文「归属脚本」中的 incr 编号即上表 01~25 的序号。
 
 > 另有 `tb_print_log`（打印日志）与 `tb_printer` 的飞鹅云字段，因早于 `incr/` 机制建立，
-> 老库升级由 `store.alterCols` 在启动时自动补列/建表，`full/` 脚本已包含最终结构。
+> 老库升级由 `store.alterCols` 在启动时自动补列/建表，`full/` 脚本已包含最终结构
+> （`tb_print_log` 的「票据标识 + 票面快照」三列另见 incr 29，`alterCols` 与脚本等价幂等）。
 
 **命名规则**
 
@@ -67,7 +68,7 @@ backend/migrations/
 - 一次变更涉及多张表时，表名部分用下划线连接（如 `tb_payment_refund_create`）。
 - 本仓库从 **26 号（`20261015000000`）起** 才真正落 `incr/` 文件；此前 01~25 号只在
   下表的历史演进清单里出现，实际升级一直依赖后端启动时 `store.alterCols` 自动补列。
-  已收录的两条脚本说明见 [`incr/README.md`](./incr/README.md)。
+  已收录脚本（26 起）的说明见 [`incr/README.md`](./incr/README.md)。
 
 > **脚本是生成的，不是手写的**：`full/` 下 4 个文件由
 > `go run ./cmd/gensql` 从 `internal/store` 的表结构与种子数据定义自动生成
@@ -146,7 +147,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 10 | `tb_order_urge` | 催菜/加菜记录 | 运行时产生 | incr 01 |
 | 11 | `tb_payment` | 支付流水（在线支付） | 运行时产生 | incr 02/10/14 |
 | 12 | `tb_refund` | 退款流水 | 运行时产生 | incr 02/10/14 |
-| 13 | `tb_print_log` | 打印日志（成功/失败留痕、支持补打） | 运行时产生 | full |
+| 13 | `tb_print_log` | 打印日志（成功/失败留痕、票据标识与票面快照、支持补打与预览回放） | 运行时产生 | full + incr 29 |
 | 14 | `tb_role` | 角色（权限点集合） | 4 个内置角色 | incr 05 |
 | 15 | `tb_user` | 员工账号 | 首次启动引导超管 | incr 05 |
 | 16 | `tb_oper_log` | 操作日志（审计留痕：谁在何时改了什么） | 运行时产生 | incr 06 |

@@ -90,12 +90,19 @@ func EncodeTicket(lines []string) []byte { return encodeESCPOS(lines) }
 
 // encodeESCPOS 组装一份单据的 ESC/POS 字节流,入参为已对齐/折行后的文本行。
 //
-// 强调行(店名/标题/合计,见 BoldLine)用 ESC E 重打加粗:重打不占额外宽度,
-// 与渲染层的等宽对齐完全兼容。放大行(夹单桌号,见 SplitBigLine)单独走 GS !。
+// 强调行用 ESC E 重打加粗:重打不占额外宽度,与渲染层的等宽对齐完全兼容。
+// 判定顺序固定为「显式标记(SplitBoldLine)→ 形态反推(BoldLine)」,详见 boldMarkPrefix。
+// 放大行单独走 GS !:居中放大见 SplitBigLine,左对齐放大见 SplitBigLeftLine。
 func encodeESCPOS(lines []string) []byte {
 	var b []byte
 	b = append(b, 0x1B, 0x40) // ESC @ 初始化
 	for _, ln := range lines {
+		if SplitCutLine(ln) {
+			// 票与票之间的主动切纸。直连/代理每张票独立发送、末尾本就带切纸,不会出现这一行;
+			// 这里只是兜底:万一有调用方把多张票拼在一起交给本函数,也要切得开、且不吐控制字符。
+			b = append(b, 0x1D, 0x56, 0x42, 0x00)
+			continue
+		}
 		if qr, ok := SplitQRLine(ln); ok {
 			b = append(b, encodeQR(qr)...)
 			continue
@@ -104,11 +111,16 @@ func encodeESCPOS(lines []string) []byte {
 			b = append(b, encodeBigLine(big)...)
 			continue
 		}
-		bold := BoldLine(ln)
+		if bigL, ok := SplitBigLeftLine(ln); ok {
+			b = append(b, encodeBigLeftLine(bigL)...)
+			continue
+		}
+		// 加粗判定走唯一入口:显式标记优先(备注折行的续行靠它),形态反推兜底。
+		text, bold := BoldText(ln)
 		if bold {
 			b = append(b, 0x1B, 0x45, 0x01) // ESC E 1 开启加粗
 		}
-		b = append(b, gbk(ln)...)
+		b = append(b, gbk(text)...)
 		b = append(b, '\n')
 		if bold {
 			b = append(b, 0x1B, 0x45, 0x00) // ESC E 0 关闭加粗
@@ -118,19 +130,41 @@ func encodeESCPOS(lines []string) []byte {
 	return b
 }
 
-// encodeBigLine 输出一行「放大居中」文本:GS ! 0x11 让字符倍宽倍高,ESC a 1 居中。
+// encodeBigLine 输出一行「放大居中加粗」文本:GS ! 0x11 倍宽倍高、ESC a 1 居中、ESC E 加粗。
 //
-// 每行打完立即还原字号与对齐 —— 不还原的话后面所有行都会变成双倍宽,
-// 渲染层辛苦算好的等宽对齐全废。GS ! 是 Epson 系通用指令,国产热敏机普遍兼容;
+// 放大行(店名/夹单桌号)同时加粗:倍宽倍高只把字形撑大,笔画粗细不变,加 ESC E 后
+// 更有「招牌」观感,与飞鹅 <B>、预览 font-weight 一致。
+// 每行打完立即还原字号、加粗与对齐 —— 不还原的话后面所有行都会变成双倍宽,
+// 渲染层辛苦算好的等宽对齐全废。GS ! / ESC E 都是 Epson 系通用指令,国产热敏机普遍兼容;
 // 万一某机型不支持,最坏结果是该行以正常字号左对齐打出,不会乱码。
 func encodeBigLine(text string) []byte {
-	b := make([]byte, 0, len(text)*2+16)
+	b := make([]byte, 0, len(text)*2+24)
 	b = append(b, 0x1B, 0x61, 0x01) // ESC a 1:居中
 	b = append(b, 0x1D, 0x21, 0x11) // GS ! 0x11:倍宽 + 倍高
+	b = append(b, 0x1B, 0x45, 0x01) // ESC E 1:加粗
 	b = append(b, gbk(text)...)
 	b = append(b, '\n')
+	b = append(b, 0x1B, 0x45, 0x00) // ESC E 0:取消加粗
 	b = append(b, 0x1D, 0x21, 0x00) // GS ! 0x00:还原字号
 	b = append(b, 0x1B, 0x61, 0x00) // ESC a 0:还原左对齐
+	return b
+}
+
+// encodeBigLeftLine 输出一行「左对齐放大加粗」文本:GS ! 0x11 倍宽倍高 + ESC E 加粗,不设居中。
+//
+// 与 encodeBigLine 的唯一差别是不发 ESC a 1:整单菜品清单逐条编号,只有左对齐才能让编号
+// 在行首对齐,后厨划单时视线不用在每行左右找起点。
+// 显式发一次 ESC a 0 而不是依赖上一条指令的状态:票头刚打过居中放大行,对齐状态是未知的。
+// 收尾同样还原字号与加粗,不把双倍宽留给后续行。
+func encodeBigLeftLine(text string) []byte {
+	b := make([]byte, 0, len(text)*2+24)
+	b = append(b, 0x1B, 0x61, 0x00) // ESC a 0:左对齐
+	b = append(b, 0x1D, 0x21, 0x11) // GS ! 0x11:倍宽 + 倍高
+	b = append(b, 0x1B, 0x45, 0x01) // ESC E 1:加粗
+	b = append(b, gbk(text)...)
+	b = append(b, '\n')
+	b = append(b, 0x1B, 0x45, 0x00) // ESC E 0:取消加粗
+	b = append(b, 0x1D, 0x21, 0x00) // GS ! 0x00:还原字号
 	return b
 }
 

@@ -21,7 +21,7 @@ type PrintOrderItemRow = dao.OrderItemRow
 func ListPrinters() ([]po.Printer, error) { return dao.ListPrinters() }
 
 // ListEnabledPrinters 查询启用的打印机;printerType 传 0 表示全部,
-// 否则按类型过滤(1=厨房单 2=食客小票)。
+// 否则按类型过滤(1=厨房单 2=顾客小票)。
 func ListEnabledPrinters(printerType int) ([]po.Printer, error) {
 	return dao.ListEnabledPrinters(printerType)
 }

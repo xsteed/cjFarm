@@ -105,7 +105,7 @@ func CustomerCreateOrder(c *gin.Context) {
 		return
 	}
 
-	// 下单成功后异步触发打印机打印(厨房单 + 食客小票),失败不影响下单;幂等命中不重复打印。
+	// 下单成功后异步触发打印机打印(厨房单 + 点菜单),失败不影响下单;幂等命中不重复打印。
 	//
 	// 先付模式(PayFirstEnabled)下不去打:这时订单还没收到钱,后厨提前做菜就违背了「先付」语义。
 	// 厨单改为在首次收款成功后补出(见 printKitchenOnPaid),线上支付与前台收款两条路都覆盖。
@@ -176,7 +176,7 @@ func CustomerAppendOrder(c *gin.Context) {
 		closeOnlinePayment(c.Request.Context(), res.OrderID)
 	}
 
-	// 打印:厨房机出「加菜单」(只列新菜),小票机重出一张整单最新金额的食客小票
+	// 打印:厨房机出「加菜单」(只列新菜),小票机重出一张整单最新金额的加菜小票
 	// (print_guest_on_append 可关);幂等命中不重复打印。
 	//
 	// 先付模式下同样跳过:能加菜的订单必然是「未支付」的,此时后厨本就不该开火;

@@ -131,7 +131,7 @@ func TestPrintPreviewHandlerContract(t *testing.T) {
 	if !ok || len(chunks) == 0 {
 		t.Fatalf("chunks 应为非空数组, got %v", data["chunks"])
 	}
-	joined, boldLines := "", map[string]bool{}
+	joined, boldLines, bigLines := "", map[string]bool{}, map[string]bool{}
 	for _, c := range chunks {
 		lines, ok := c.([]interface{})
 		if !ok || len(lines) == 0 {
@@ -140,21 +140,28 @@ func TestPrintPreviewHandlerContract(t *testing.T) {
 		for _, l := range lines {
 			m := l.(map[string]interface{})
 			joined += m["text"].(string) + "\n"
+			// 行文本带 pad 尾随空格,按 trim 后的 key 收集便于断言。
 			if b, ok := m["bold"].(bool); ok && b {
-				// 行文本带 pad 尾随空格,按 trim 后的 key 收集便于断言。
 				boldLines[strings.TrimSpace(m["text"].(string))] = true
+			}
+			if b, ok := m["big"].(bool); ok && b {
+				bigLines[strings.TrimSpace(m["text"].(string))] = true
 			}
 		}
 	}
-	if !strings.Contains(joined, "【食客小票】") || !strings.Contains(joined, "凉拌青瓜") {
+	if !strings.Contains(joined, "【顾客小票】") || !strings.Contains(joined, "凉拌青瓜") {
 		t.Fatalf("预览内容缺少关键行:\n%s", joined)
 	}
-	// 加粗标记:标题行与合计行应标记 bold,普通菜名行不应。
-	if !boldLines["【食客小票】"] {
-		t.Fatalf("标题行应加粗:\n%s", joined)
+	// 票头版式:店名一行标记 big(放大居中),单据名副标题弱化(不加粗),当前合计行仍加粗。
+	// 该台账的触发是顾客下单(trigger=order),重算走点菜单形态。
+	if len(bigLines) != 1 {
+		t.Fatalf("顾客小票应恰有一行放大(店名), got %v:\n%s", bigLines, joined)
 	}
-	if !anyStartsWith(boldLines, "合计") {
-		t.Fatalf("合计行应加粗:\n%s", joined)
+	if boldLines["【顾客小票】"] {
+		t.Fatalf("顾客小票单据名副标题应弱化(不加粗):\n%s", joined)
+	}
+	if !anyStartsWith(boldLines, "当前合计") {
+		t.Fatalf("当前合计行应加粗:\n%s", joined)
 	}
 	if anyStartsWith(boldLines, "凉拌青瓜") {
 		t.Fatalf("普通菜名行不应加粗:\n%s", joined)
@@ -209,13 +216,48 @@ func TestToPreviewLinesControlRows(t *testing.T) {
 	}
 }
 
+// TestToPreviewLinesBigLeftDishRow 整单厨房单的菜品行是「左对齐放大」控制行:
+// 预览必须同时带 big 与 bigLeft 标记 —— 前端据此既不按字符网格渲染,也不居中,
+// 否则逐条编号的清单会在预览里显示成居中大字,后厨按预览核对时与出纸观感对不上。
+func TestToPreviewLinesBigLeftDishRow(t *testing.T) {
+	initAgentTestDB(t)
+
+	o := po.Order{OrderNo: "D20260922PREVIEW02", TableNo: "03", TableName: "大厅03桌",
+		PersonCount: 2, CreateTime: "2026-09-22 12:00:00"}
+	kitchen := print.RenderKitchenTicket(o,
+		[]po.OrderItem{{DishName: "凉拌青瓜", SpecName: "份", Quantity: 2, Price: 2800, Amount: 5600}}, 48,
+		print.KitchenTicketOptions{Title: "【厨房单】"})
+
+	raw := ""
+	for _, l := range kitchen {
+		if _, ok := print.SplitBigLeftLine(l); ok {
+			raw = l
+		}
+	}
+	if raw == "" {
+		t.Fatalf("整单厨房单的菜品行应为左对齐放大控制行:\n%s", strings.Join(kitchen, "\n"))
+	}
+
+	lines := toPreviewLines([]string{raw})
+	if len(lines) != 1 || !lines[0].Big || !lines[0].BigLeft {
+		t.Fatalf("左对齐放大行应带 big+bigLeft 标记, got %+v", lines)
+	}
+	if lines[0].Text != "1. 凉拌青瓜 (份) x2" {
+		t.Fatalf("文本应剥掉控制前缀并保留行首编号, got %q", lines[0].Text)
+	}
+	if strings.ContainsRune(lines[0].Text, '\x02') {
+		t.Fatalf("前端不应看到控制前缀, got %q", lines[0].Text)
+	}
+}
+
 // TestPrintPreviewSampleHandler 示例模板预览:请求体的覆盖参数必须透传到渲染
 // (表单里未保存的值也能预览到)。
 func TestPrintPreviewSampleHandler(t *testing.T) {
 	initAgentTestDB(t)
 
 	// 用与 callAgent 相同的 POST 方式调用(该接口本身就是 POST + JSON body)。
-	code, resp := callAgent(t, PrintPreviewSample, "", `{"docType":"guest","paperWidth":48,"footer":"未保存的口号","showDiscount":false}`)
+	// docType 取 guest_settle(结账形态):优惠行只在这张票上,showDiscount 覆盖才有断言意义。
+	code, resp := callAgent(t, PrintPreviewSample, "", `{"docType":"guest_settle","paperWidth":48,"footer":"未保存的口号","showDiscount":false}`)
 	if code != http.StatusOK {
 		t.Fatalf("示例预览应返回 200, got %d(%v)", code, resp)
 	}
@@ -245,7 +287,7 @@ func TestPrintPreviewSampleHandler(t *testing.T) {
 	if !strings.Contains(joined, "茶位费") {
 		t.Fatalf("有茶位费时应显示该行:\n%s", joined)
 	}
-	if !strings.Contains(joined, "【食客小票】") {
+	if !strings.Contains(joined, "【结账小票】") {
 		t.Fatalf("示例小票缺少标题:\n%s", joined)
 	}
 }
