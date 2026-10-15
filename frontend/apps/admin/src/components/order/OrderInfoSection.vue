@@ -223,22 +223,21 @@
       >
         取消订单
       </button>
-    </div>
-
-    <!-- 条件性操作：只有满足条件才出现，平时不占位置 -->
-    <div
-      v-if="hasExtraActions"
-      class="od-actions od-actions-extra"
-    >
-      <span class="od-extra-label">更多操作</span>
       <button
-        v-if="canFinish"
         type="button"
         class="ab ab-more"
+        :disabled="!canFinish"
         @click="emit('finish')"
       >
         完成订单
       </button>
+    </div>
+
+    <!-- 条件性操作：只有满足条件才出现，平时不占位置 -->
+    <div
+      v-if="canCreditSettleOrder || canCancelSettleOrder || canRefundOrder"
+      class="od-actions od-actions-extra"
+    >
       <button
         v-if="canCreditSettleOrder"
         type="button"
@@ -370,8 +369,7 @@ const {
   canRefundOrder,
   canRefundView,
   canRefundOperate,
-  canReprint,
-  hasExtraActions
+  canReprint
 } = useOrderActions(detailRef);
 
 const { isMobile } = useIsMobile();
@@ -623,14 +621,7 @@ function refreshRefunds(): void {
 }
 
 .od-actions-extra {
-  align-items: center;
   margin-top: 10px;
-}
-
-.od-extra-label {
-  flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--ink-3);
 }
 
 .ab {
@@ -764,10 +755,6 @@ function refreshRefunds(): void {
   .od-total {
     justify-content: space-between;
     gap: 6px 12px;
-  }
-
-  .od-extra-label {
-    flex-basis: 100%;
   }
 }
 </style>
