@@ -295,7 +295,7 @@
               <span class="tip ell">{{ row.detail || '—' }}</span>
               <div
                 v-if="row.provider === 'agent' && queueCostText(row.costMs)"
-                class="tip queue-cost"
+                class="tip ell queue-cost"
                 :class="{ 'queue-warn': Number(row.costMs) > 60000 }"
               >
                 排队耗时 {{ queueCostText(row.costMs) }}
@@ -494,8 +494,14 @@ function isExpired(row: PrintLogRow): boolean {
 // 长失败原因不会被再截一次。空说明不弹浮层。
 const tipOverlayStyle = { maxWidth: '420px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' };
 
+// 浮层正文 = 说明 + 排队耗时(两者在列里都可能被省略/折行)。
 function detailTip(row: PrintLogRow): string {
-  return (row.detail || '').trim();
+  const parts: string[] = [];
+  const detail = (row.detail || '').trim();
+  if (detail) parts.push(detail);
+  const cost = queueCostText(row.costMs);
+  if (row.provider === 'agent' && cost) parts.push(`排队耗时 ${cost}`);
+  return parts.join('\n');
 }
 
 const statusOptions = [
