@@ -66,6 +66,9 @@ type Settings struct {
 	StaleAlertHours     string `json:"stale_alert_hours"`     // 告警阈值(小时,1~72)
 	// 营业日切换时刻(0~12 点,0=自然日 00:00)。同时决定跨日清台的判定边界与当日取餐号的重置时刻。
 	BizDateCutoffHour string `json:"biz_date_cutoff_hour"`
+	// 先付模式开关("1"=先付,其余=后付)。开启后顾客下单需先完成支付,后厨在收款成功后才出单制作;
+	// 关闭(出厂默认)为后付模式:下单即出单做菜,餐后/离店前再结账。
+	PayFirstEnabled string `json:"pay_first_enabled"`
 	// 配置内容指纹(乐观锁):SettingList 下发,SettingSave 原样带回校验。
 	Version string `json:"version,omitempty"`
 }

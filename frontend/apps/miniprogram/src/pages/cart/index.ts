@@ -48,6 +48,10 @@ Page({
     submitting: false,
     /** 本桌已有「进行中且未支付」的订单 → 走加菜而不是新开单 */
     appendMode: false,
+    /** 门店先付模式：下单后需先完成支付，提交按钮与提示文案随之变化 */
+    payFirst: false,
+    /** 先付模式提示整句（非先付模式为空串，wxml 按空串决定显隐） */
+    payHint: '',
     submitText: '提交订单'
   },
 
@@ -64,10 +68,16 @@ Page({
     const appendMode = !!order && isActiveStatus(Number(order.orderStatus)) && Number(order.payStatus) === 0;
     // 加菜时人数沿用订单现值（仍可继续调整）；否则沿用会话里记的人数
     const personCount = appendMode ? setPersonCount(Number(order?.personCount) || 1) : setPersonCount(s.personCount);
+    // 先付模式：这笔钱要先付，下方提示据此显隐
+    const payFirst = s.config?.pay_first_enabled === '1';
 
     this.setData({
       appendMode,
+      payFirst,
       submitText: appendMode ? '提交加菜' : '提交订单',
+      // 只讲「下单后要付款」这件事本身，不说「提交后跳转支付」——
+      // 提交后落在订单明细页，由那里的待付款引导带他去支付。
+      payHint: payFirst ? '本店为先付模式：下单后先完成支付，后厨即刻开工～' : '',
       personCount
     });
     this.render();
@@ -256,6 +266,8 @@ Page({
       } catch {
         /* 交给订单页按 orderNo 重拉 */
       }
+      // 提交后一律落订单明细页：顾客先核对菜品与金额，
+      // 再由订单页的「待付款」引导带他去支付。
       wx.redirectTo({
         url: recovered ? '/pages/order/index' : `/pages/order/index?orderNo=${encodeURIComponent(orderNo)}`
       });

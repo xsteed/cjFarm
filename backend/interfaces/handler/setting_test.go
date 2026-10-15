@@ -239,6 +239,8 @@ func TestManagedSettingKeysComplete(t *testing.T) {
 		WxCodeEnvVersion:   "release",
 		WxpayApiv3Key:      "apiv3-secret", WxAppSecret: "wx-app-secret",
 		FeieUkey: "feie-secret", AgentToken: "agent-secret",
+		// 先付/后付模式:后加入的受管键,fixture 必须同步覆盖(见本测试的守护说明)。
+		PayFirstEnabled: "1",
 	}
 	w, c := newSaveContext(cfg)
 	SettingSave(c)

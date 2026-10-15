@@ -237,6 +237,37 @@
             下面两道防线用来兜住这种情况，按你的营业习惯决定开不开。
           </div>
 
+          <t-form-item label="先付模式">
+            <div class="biz-item">
+              <div class="biz-control">
+                <t-switch
+                  v-model="form.pay_first_enabled"
+                  :custom-value="['1', '0']"
+                />
+                <span class="biz-state">{{
+                  form.pay_first_enabled === '1' ? '先付（下单先付款）' : '后付（餐后结账）'
+                }}</span>
+              </div>
+              <div class="biz-lead"><b>后付（默认）</b>：顾客下单即出单做菜，餐后/离店前再结账。</div>
+              <ul class="biz-points">
+                <li><b>先付</b>：顾客下单后先完成支付，<b>支付成功才给后厨出单</b>；顾客端下单后会直接进入支付页。</li>
+                <li>
+                  先付模式下，未支付的订单不出厨单；顾客到前台付现金时，请用「订单管理 →
+                  收款」收款（厨单会在收款成功后补出）。直接「结账」等于结束这桌，不会再出单。
+                </li>
+                <li>先付要求顾客即时付款；若门店仍以「餐后买单」为主，请保持关闭。</li>
+              </ul>
+              <div
+                v-if="form.pay_first_enabled === '1' && noPayChannel"
+                class="biz-warn"
+              >
+                已开启先付，但尚未配置在线支付或收款码：顾客只能看到「联系收银员付款」， 必须由前台在「订单管理 →
+                收款」手动收款后才会出厨单。<br />
+                建议先到「在线支付」页配置微信/支付宝，或上传收款码。
+              </div>
+            </div>
+          </t-form-item>
+
           <t-form-item label="营业日切换">
             <div class="biz-item">
               <div class="biz-control">
@@ -1121,6 +1152,7 @@ const activeTab = ref('basic');
 
 // config:view 可看，config:edit 才能改。只读账号禁用保存按钮(后端 saveConfig 同样 403)。
 const canEdit = computed(() => hasPerm('config:edit'));
+
 // 打印代理身份的新增 / 吊销属于打印机管理写操作,沿用 printer:edit 权限码控制显隐。
 const canEditAgents = computed(() => hasPerm('printer:edit'));
 
@@ -1174,6 +1206,8 @@ interface ConfigForm {
   stale_alert_hours: number | string;
   // 营业日切换时刻(0~12 点,0=自然日 00:00)
   biz_date_cutoff_hour: number | string;
+  // 先付模式开关:'1' 先付 / '0' 后付(默认)
+  pay_first_enabled: string;
 }
 
 // 后端 config 全量字段:entities 的 ConfigData 只声明了公开配置子集,这里补齐
@@ -1267,8 +1301,17 @@ const form = reactive<ConfigForm>({
   stale_alert_enabled: '0',
   stale_alert_hours: 4,
   // 营业日切换时刻：出厂默认 0 = 按自然日 00:00 切换
-  biz_date_cutoff_hour: 0
+  biz_date_cutoff_hour: 0,
+  // 先付/后付模式：出厂默认后付('0')，与后端 settingDefaults 一致
+  pay_first_enabled: '0'
 });
+
+// 先付模式下没有任何「顾客可自助付款」的渠道时给出警示：
+// 这种配置下顾客只能看到「联系收银员付款」，门店很容易以为「开了先付就能自动收钱」。
+// 放在 form 之后声明：它读的就是上面这份表单，避免「先引用后声明」的绕读。
+const noPayChannel = computed(
+  () => form.wxpay_enabled !== '1' && form.alipay_enabled !== '1' && !form.pay_qr_wx && !form.pay_qr_ali
+);
 const logoFiles = ref<UploadFile[]>([]);
 const wxFiles = ref<UploadFile[]>([]);
 const aliFiles = ref<UploadFile[]>([]);
@@ -1298,7 +1341,8 @@ const FLAG_KEYS = [
   'print_guest_on_append',
   'print_guest_on_order',
   'stale_release_enabled',
-  'stale_alert_enabled'
+  'stale_alert_enabled',
+  'pay_first_enabled'
 ] as const;
 
 function normFlag(v: unknown): '1' | '0' {

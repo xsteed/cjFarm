@@ -438,6 +438,32 @@ describe('OrderPage', () => {
     wrapper.unmount();
   });
 
+  it('先付模式：下单成功后落到订单明细页，并由待付款引导去支付', async () => {
+    getPublicConfigMock.mockResolvedValue({ ...configFixture, pay_first_enabled: '1' });
+
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await wrapper.findAll('.op-add')[0].trigger('click');
+    await wrapper.find('.op-checkout').trigger('click');
+    await wrapper.find('.submit-btn').trigger('click');
+    await flushPromises();
+
+    // 落点是订单明细页：顾客要能看见自己点了什么、多少钱
+    expect(wrapper.find('.pay-wrap').exists()).toBe(false);
+    expect(wrapper.find('.st-paybtn').exists()).toBe(true);
+    // 待付款引导必须点明「先付模式」与动作，且与「去支付」按钮同时出现
+    const tip = wrapper.find('.st-payfirst-tip');
+    expect(tip.exists()).toBe(true);
+    expect(tip.text()).toContain('先付模式');
+    expect(tip.text()).toContain('去支付');
+    // 金额不写在引导里：账单末行已给出，重复出现反而像两笔账
+    expect(tip.text()).not.toContain('¥');
+    // 下单成功的 toast 不能再宣称「大厨已收到」—— 先付模式下后厨还没收到这颗单
+    expect(MessagePlugin.success).toHaveBeenCalledWith(expect.stringContaining('还没付款'));
+    wrapper.unmount();
+  });
+
   it('下单失败时停留在抽屉并提示', async () => {
     createOrderMock.mockImplementation(() => {
       MessagePlugin.error('下单失败，请重试');
@@ -646,6 +672,71 @@ describe('未结账订单归属确认', () => {
     const wrapper = mountPage();
     await flushPromises();
     expect(wrapper.text()).not.toContain('本桌已有一笔未结账的订单');
+    wrapper.unmount();
+  });
+});
+
+// 先付模式下「本单还没付款」是顾客必须马上处理的事：后厨压根没收到厨单。
+// 但下单后的落点仍是订单明细页 —— 顾客得先看清自己点了什么、多少钱，
+// 再由页面上的待付款引导（点明先付模式 + 指向「去支付」按钮）带他去付款。
+describe('先付模式 · 页面落点与待付款引导', () => {
+  const payFirstConfig: PublicConfig = { ...configFixture, pay_first_enabled: '1' };
+  const unpaidOrder = () => makeOrder({ orderStatus: 1, payStatus: 0 });
+
+  it('已认领且未支付：落订单明细页，并给出待付款引导', async () => {
+    getPublicConfigMock.mockResolvedValue(payFirstConfig);
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: unpaidOrder() });
+
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.pay-wrap').exists()).toBe(false);
+    const tip = wrapper.find('.st-payfirst-tip');
+    expect(tip.exists()).toBe(true);
+    expect(tip.text()).toContain('去支付');
+    wrapper.unmount();
+  });
+
+  it('未认领：先确认归属，认领后同样落订单明细页', async () => {
+    sessionStorage.clear();
+    getPublicConfigMock.mockResolvedValue(payFirstConfig);
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: unpaidOrder() });
+
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(wrapper.text()).toContain('本桌已有一笔未结账的订单');
+
+    await wrapper.findAll('.resume-btn')[0].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.pay-wrap').exists()).toBe(false);
+    expect(wrapper.find('.st-payfirst-tip').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('后付（默认）：同样场景仍落订单页，行为不变', async () => {
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: unpaidOrder() });
+
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.pay-wrap').exists()).toBe(false);
+    expect(wrapper.find('.st-paybtn').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('先付但已支付：进已结账视图看出餐进度，不再催付款', async () => {
+    sessionStorage.clear();
+    getPublicConfigMock.mockResolvedValue(payFirstConfig);
+    getTableMock.mockResolvedValue({
+      ...tableNoOrder,
+      currentOrder: makeOrder({ orderStatus: 2, payStatus: 1, payType: '微信' })
+    });
+
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.pay-wrap').exists()).toBe(false);
+    expect(wrapper.find('.st-payfirst-tip').exists()).toBe(false);
     wrapper.unmount();
   });
 });

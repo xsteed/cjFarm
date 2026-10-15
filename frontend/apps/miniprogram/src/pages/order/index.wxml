@@ -119,6 +119,15 @@
             </view>
           </view>
         </view>
+
+        <!-- 待付款引导：点明「先付模式」与下一步动作，紧跟账单、与底部「去支付」按钮连成一条线。
+             不带金额 —— 账单末行已给出，重复出现反而像两笔账 -->
+        <view
+          wx:if="{{showPayFirstTip}}"
+          class="pay-first-tip"
+        >
+          💳 本店为先付模式：点击下方「去支付」完成付款，后厨即刻开工～
+        </view>
       </view>
 
       <!-- 状态提示：只有「已取消 / 已完成 / 已结账」才出这张卡。
@@ -177,7 +186,7 @@
         class="btn-primary foot-main"
         bindtap="onPay"
       >
-        去支付
+        {{payBtnText}}
       </view>
       <view
         wx:elif="{{settled || done || canceled}}"

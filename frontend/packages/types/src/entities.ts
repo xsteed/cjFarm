@@ -393,6 +393,11 @@ export interface PublicConfig extends Extensible {
   pay_qr_ali?: string;
   wxpay_enabled?: string;
   alipay_enabled?: string;
+  /**
+   * 先付模式开关：为 "1" 时顾客下单后需先完成支付，后厨才开始制作，
+   * 顾客端下单成功后直达支付页；为 "0"（默认）时是后付模式：下单即出单做菜，餐后结账。
+   */
+  pay_first_enabled?: string;
   /** 会员功能开关：后端已配置小程序 AppID/AppSecret 才为 "1"，顾客端据此显隐登录入口。 */
   member_enabled?: string;
   /**

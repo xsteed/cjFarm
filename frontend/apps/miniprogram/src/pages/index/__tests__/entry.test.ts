@@ -118,6 +118,29 @@ describe('菜单页 · 进入与重试', () => {
   });
 
   // 选「不是我的」：不能把上一桌的账单摊给新客人，也不该把他推进订单页
+  it('先付模式：本桌未支付的单认领后同样落订单明细页（引导去支付）', async () => {
+    const page = await mount();
+    wxMock.reply({ code: 200, msg: 'ok', data: { pay_first_enabled: '1' } }); // 公开配置
+    wxMock.reply({
+      code: 200,
+      msg: 'ok',
+      data: {
+        ...TABLE_OK,
+        tableId: 1,
+        tableName: '大厅01桌',
+        currentOrder: { orderNo: 'D001', orderStatus: 1, payStatus: 0, personCount: 2, items: [] }
+      }
+    });
+    wxMock.reply({ code: 200, msg: 'ok', data: MENU });
+    wxMock.reply({ code: 200, msg: 'ok', data: [] });
+    page.onLoad({ table: 'A1' });
+    await flush();
+
+    // 先付模式也不在这里把人扔进支付页：先给明细，再由订单页的待付款引导带他付款
+    expect(wxMock.navigations).toContainEqual({ type: 'redirectTo', url: '/pages/order/index' });
+  });
+
+  // 选「不是我的」：不能把上一桌的账单摊给新客人，也不该把他推进订单页
   it('未结账订单被认作「不是我的」时，停在提示页等服务员清台', async () => {
     wxMock.modalConfirm = false;
     const page = await mount();

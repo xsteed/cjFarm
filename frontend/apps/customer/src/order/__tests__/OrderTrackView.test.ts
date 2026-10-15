@@ -23,16 +23,22 @@ function order(overrides: Partial<OrderDetail> = {}): OrderDetail {
   };
 }
 
-function mountView(overrides: Partial<OrderDetail> = {}, view: ViewState = 'order') {
+function mountView(
+  overrides: Partial<OrderDetail> = {},
+  view: ViewState = 'order',
+  payFirst = false,
+  canAppend = false
+) {
   return mount(OrderTrackView, {
     props: {
       view,
       currentOrder: order(overrides),
       isActive: true,
-      canAppend: false,
+      canAppend,
       urging: false,
       urgeCooldown: 0,
-      showTabbar: true
+      showTabbar: true,
+      payFirst
     }
   });
 }
@@ -64,5 +70,46 @@ describe('OrderTrackView', () => {
   it('已完成的单：文案是「这顿吃完啦」', () => {
     const wrapper = mountView({ orderStatus: 4, payStatus: 1 }, 'done');
     expect(wrapper.find('.st-tip').text()).toContain('这顿吃完啦');
+  });
+
+  it('先付模式：未支付时给出「待付款」引导，后付模式不出现', () => {
+    // 后付（默认）：未支付订单不该出现待付款引导
+    expect(mountView({ payStatus: 0 }).find('.st-payfirst-tip').exists()).toBe(false);
+    const payFirst = mountView({ payStatus: 0 }, 'order', true);
+    const tip = payFirst.find('.st-payfirst-tip').text();
+    // 引导要同时点明「先付模式」与下一步动作「点下方去支付」；
+    // 金额刻意不带 —— 账单末行已给出，重复出现反而像两笔账
+    expect(tip).toContain('先付模式');
+    expect(tip).toContain('去支付');
+    expect(tip).not.toContain('¥');
+    // 已支付：引导随之消失（付款已完成，无需再引导）
+    expect(mountView({ payStatus: 1 }, 'settled', true).find('.st-payfirst-tip').exists()).toBe(false);
+  });
+
+  it('先付模式：未支付的「去支付」按钮带火苗，后付模式不带', () => {
+    // 先付：后厨还没收到这颗单，付款是关键动作，火苗给紧迫感
+    expect(mountView({ payStatus: 0 }, 'order', true).find('.st-paybtn').text()).toContain('🔥 去支付');
+    // 后付：只是结账，不加火苗
+    expect(mountView({ payStatus: 0 }, 'order', false).find('.st-paybtn').text()).toBe('去支付');
+    // 已支付：按钮本身就不渲染了
+    expect(mountView({ payStatus: 1 }, 'settled', true).find('.st-paybtn').exists()).toBe(false);
+  });
+
+  it('先付模式：未支付时收掉催菜，只留「加菜」这条出口', () => {
+    // 后付（默认）：未支付照样能催
+    expect(mountView({ payStatus: 0 }).find('.st-urge').exists()).toBe(true);
+
+    // 先付 + 未支付 + 可加菜：催菜收起，加菜还在（不能把动作区整块抽掉）
+    const appendOnly = mountView({ payStatus: 0 }, 'order', true, true);
+    expect(appendOnly.find('.st-urge').exists()).toBe(false);
+    expect(appendOnly.find('.st-append').exists()).toBe(true);
+
+    // 先付 + 未支付 + 不可加菜：动作区整块不渲染，页面只剩「去支付」
+    const payOnly = mountView({ payStatus: 0 }, 'order', true, false);
+    expect(payOnly.find('.st-actions').exists()).toBe(false);
+    expect(payOnly.find('.st-paybtn').exists()).toBe(true);
+
+    // 先付 + 已支付：后厨已经收到单，催菜回来
+    expect(mountView({ orderStatus: 2, payStatus: 1 }, 'order', true).find('.st-urge').exists()).toBe(true);
   });
 });

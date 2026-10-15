@@ -134,6 +134,11 @@ var settingDefaults = map[string]string{
 	"stale_alert_enabled":   "0",
 	"stale_alert_hours":     "4",
 	"biz_date_cutoff_hour":  "0",
+	// 先付/后付模式(见 application/service.PayFirstEnabled):
+	//   "0"(默认)后付 —— 顾客下单即出单做菜,餐后/离店前结账;
+	//   "1" 先付 —— 顾客下单需先完成支付,后厨在收款成功后才出单。
+	// 默认关是刻意的:先付模式下没收到钱的单不会出单,一旦误开会让后厨一单都收不到。
+	"pay_first_enabled": "0",
 }
 
 // SettingDefault 返回配置项出厂默认值(不存在时返回空串)。

@@ -44,6 +44,14 @@
       </block>
 
       <block wx:else>
+        <!-- 先付模式：下单后即进入本页，先说明「付完才开做」，再引导付款 -->
+        <view
+          wx:if="{{payFirst}}"
+          class="card sec"
+        >
+          <view class="tip-line">💳 本店为先付模式：完成支付后后厨即刻开工～</view>
+        </view>
+
         <!-- 渠道切换 -->
         <view class="card sec">
           <view class="tabs">

@@ -3,7 +3,7 @@
 //      「还没付款」的假象（轮询此时已停，页面会彻底卡住）。
 //   2) 「收款成功」后有 800ms 延时跳转，顾客可能抢先手动返回，不能重复导航。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { bootApp, mountPage } from '../../../../test/harness';
+import { bootApp, mountPage, setCurrentPages } from '../../../../test/harness';
 import type { PageInstance } from '../../../../test/harness';
 import { flush, wxMock } from '../../../../test/mock-wx';
 
@@ -19,6 +19,7 @@ describe('支付页', () => {
     app.session.currentOrder = { orderNo: 'D001', orderStatus: 1, payStatus: 0, personCount: 1 };
     app.session.config = { shop_name: '长健农场', pay_qr_wx: '/uploads/pay_wx.png' };
     wxMock.reset();
+    setCurrentPages([]);
     page = null;
   });
 
@@ -48,6 +49,28 @@ describe('支付页', () => {
     page.leaveToOrder();
     page.leaveToOrder();
 
-    expect(wxMock.navigations.filter(n => n.type === 'navigateBack')).toHaveLength(1);
+    // 只要求「只导航一次」：去订单还是退回订单由 utils/nav 按页面栈决定，见下面两条
+    expect(wxMock.navigations).toHaveLength(1);
+  });
+
+  it('栈里已有订单页（从订单页点「去支付」进来）：退回它，保留它的滚动位置与数据', async () => {
+    setCurrentPages([{ route: 'pages/index/index' }, { route: 'pages/order/index' }, { route: 'pages/pay/index' }]);
+    page = await mount();
+    page.onLoad();
+
+    page.leaveToOrder();
+
+    expect(wxMock.navigations).toEqual([{ type: 'navigateBack', delta: 1 }]);
+  });
+
+  it('栈里没有订单页（分享直接进本页）：redirectTo 打开订单页', async () => {
+    setCurrentPages([{ route: 'pages/index/index' }, { route: 'pages/pay/index' }]);
+    page = await mount();
+    page.onLoad();
+
+    page.leaveToOrder();
+
+    // 若无脑 navigateBack 会退回菜单页：顾客既看不到刚下的单，也看不出出餐进度
+    expect(wxMock.navigations).toEqual([{ type: 'redirectTo', url: '/pages/order/index' }]);
   });
 });

@@ -94,9 +94,18 @@
         </div>
       </div>
 
+      <!-- 待付款引导:点明「先付模式」与下一步动作,紧跟账单、与下方「去支付」按钮连成一条线。
+           这里刻意不带金额 —— 金额已在账单末行给出,重复出现反而像两笔账 -->
+      <div
+        v-if="payFirst && view === 'order' && isActive && Number(currentOrder.payStatus) === 0"
+        class="st-tip st-payfirst-tip"
+      >
+        💳 本店为先付模式：点击下方「去支付」完成付款，后厨即刻开工～
+      </div>
+
       <!-- 进行中的订单:可加菜、可催菜 -->
       <div
-        v-if="view === 'order' && isActive"
+        v-if="view === 'order' && isActive && (canAppend || canUrge)"
         class="st-actions"
       >
         <div
@@ -118,6 +127,7 @@
           加菜
         </div>
         <div
+          v-if="canUrge"
           class="st-urge"
           :class="{ disabled: urgeCooldown > 0 || urging }"
           @click="emit('urge')"
@@ -149,7 +159,9 @@
         class="st-paybtn"
         @click="emit('pay')"
       >
-        去支付
+        <!-- 先付模式下后厨还没收到这颗单,付款才是关键动作,用火苗催一下;
+             后付模式只是结账,不加这个紧迫感 -->
+        {{ payFirst ? '🔥 去支付' : '去支付' }}
       </div>
       <div
         v-if="view === 'settled' || view === 'done' || view === 'canceled'"
@@ -207,6 +219,8 @@ const props = defineProps<{
   urging: boolean;
   urgeCooldown: number;
   showTabbar: boolean;
+  /** 门店先付模式:未支付时提示「付款后才开做」 */
+  payFirst: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -222,6 +236,10 @@ const STATUS_THEME: Record<number, string> = { 1: 'primary', 2: 'warning', 3: 's
 const orderStatus = computed(() => Number(props.currentOrder.orderStatus) || 1);
 const statusLabel = computed(() => STATUS_LABEL[orderStatus.value] || '处理中');
 const statusTheme = computed(() => STATUS_THEME[orderStatus.value] || 'primary');
+
+// 催菜只对「后厨已经收到厨单」的订单有意义:先付模式下未支付时后厨还没收到单,
+// 顾客点催菜只会得到一个「已催」的假反馈,反而以为菜在做 —— 这类订单先引导付款。
+const canUrge = computed(() => !props.payFirst || Number(props.currentOrder.payStatus) === 1);
 
 // 结束态:与小程序 order 页的 settled / done / canceled 三态一致
 const done = computed(() => props.view === 'done');
@@ -364,6 +382,11 @@ const renderItems = computed<RenderItem[]>(() => {
 .st-tip--cancel {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* 先付模式提示:紧贴账单,给「去支付」按钮做铺垫 */
+.st-payfirst-tip {
+  margin-top: 12px;
 }
 
 .st-card {

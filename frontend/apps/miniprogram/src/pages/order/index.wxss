@@ -159,6 +159,18 @@
   color: var(--danger);
 }
 
+/* 先付模式提示（对应 H5 OrderTrackView 的 st-payfirst-tip）：
+   紧贴账单末行，给底部「去支付」按钮做铺垫 */
+.pay-first-tip {
+  margin-top: 16rpx;
+  padding: 18rpx 22rpx;
+  border-radius: var(--r-md);
+  background: var(--brand-ghost);
+  color: var(--ink-2);
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
 /* ---------- 出餐进度（对应 H5 OrderProgress.vue） ----------
    三步只映射后厨的真实节点，不承诺时间；当前节点用品牌光晕标出。 */
 .steps {

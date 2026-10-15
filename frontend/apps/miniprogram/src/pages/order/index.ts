@@ -74,6 +74,10 @@ Page({
     canAppend: false,
     canUrge: false,
     canPay: false,
+    /** 底部主按钮文案：先付模式未支付时带火苗，提示「付款后厨才开工」 */
+    payBtnText: '去支付',
+    /** 先付模式下「未支付」时的那句说明：付款后才出厨单，别让顾客干等 */
+    showPayFirstTip: false,
     urging: false,
     urgeCooldown: 0,
     // 结束态
@@ -254,6 +258,15 @@ Page({
       .slice(0, 16);
     const paidInfo = payStatus === 1 ? [payStatusText(order), paidAt].filter(Boolean).join(' · ') : '';
 
+    // 先付模式下的两处收紧（与 H5 OrderTrackView 同口径）：
+    //   1) 催菜只对「后厨已收到厨单」的订单有意义 —— 未支付时后厨还没收到，催了只会得到
+    //      一个「已催」的假反馈，顾客反而以为菜在做；
+    //   2) 未支付时给一句「待付款」引导，与底部「去支付」按钮形成因果。
+    const payFirst = sessionState().config?.pay_first_enabled === '1';
+    // 先付模式下后厨还没收到这颗单，付款才是关键动作，给按钮加个火苗催一下；
+    // 后付模式只是结账，不加这个紧迫感（与 H5 OrderTrackView 的 st-paybtn 文案同口径）
+    const payBtnText = payFirst && active && payStatus === 0 ? '🔥 去支付' : '去支付';
+
     const table = sessionState().table;
     this.setData({
       steps,
@@ -277,8 +290,10 @@ Page({
       orderRemark: String(order.orderRemark || ''),
       rows,
       canAppend: active && payStatus === 0,
-      canUrge: active,
+      canUrge: active && (!payFirst || payStatus === 1),
       canPay: active && payStatus === 0,
+      payBtnText,
+      showPayFirstTip: payFirst && active && payStatus === 0,
       settled,
       done,
       canceled,

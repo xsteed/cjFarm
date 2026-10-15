@@ -171,3 +171,54 @@ describe('购物车页 · 下单', () => {
     expect(page.data.rows).toHaveLength(0);
   });
 });
+
+// 先付模式（门店在管理端「营业设置」里开启）：付完款后厨才出单。
+// 但落点仍是订单明细页 —— 顾客要能先核对菜品与金额，再由页面上的待付款引导去支付。
+describe('购物车页 · 先付模式', () => {
+  beforeEach(async () => {
+    const app = await bootApp();
+    cartClear();
+    app.session.tableId = 7;
+    app.session.tableCode = 'K7M3PQ9X';
+    app.session.currentOrder = null;
+    app.session.personCount = 1;
+    app.session.config = { shop_name: '长健农场', pay_first_enabled: '1' };
+    wxMock.reset();
+  });
+
+  it('首次下单：落订单明细页，提示说明要先付款', async () => {
+    seedLine(101, 2, 108);
+    const page = await mount();
+    page.onShow();
+
+    expect(page.data.payFirst).toBe(true);
+    // 提交后仍是明细页：让顾客先核对菜品与金额，再由待付款引导去支付
+    expect(page.data.submitText).toBe('提交订单');
+    expect(page.data.payHint).toContain('先付模式');
+
+    wxMock.reply({ code: 200, msg: 'ok', data: { orderNo: 'D001' } });
+    wxMock.reply({ code: 200, msg: 'ok', data: { orderNo: 'D001', orderStatus: 1, payStatus: 0 } });
+    await page.onSubmit();
+    await flush();
+
+    expect(wxMock.navigations).toContainEqual({ type: 'redirectTo', url: '/pages/order/index' });
+  });
+
+  it('加菜：同样落订单明细页', async () => {
+    const app = await bootApp();
+    app.session.currentOrder = { orderNo: 'D001', orderStatus: 2, payStatus: 0, personCount: 3 };
+    seedLine(102, 5, 42);
+
+    const page = await mount();
+    page.onShow();
+    expect(page.data.appendMode).toBe(true);
+    expect(page.data.submitText).toBe('提交加菜');
+
+    wxMock.reply({ code: 200, msg: 'ok', data: { orderNo: 'D001' } });
+    wxMock.reply({ code: 200, msg: 'ok', data: { orderNo: 'D001', orderStatus: 2, payStatus: 0 } });
+    await page.onSubmit();
+    await flush();
+
+    expect(wxMock.navigations).toContainEqual({ type: 'redirectTo', url: '/pages/order/index' });
+  });
+});

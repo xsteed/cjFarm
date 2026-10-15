@@ -13,6 +13,7 @@ import { mediaUrl } from '../../config';
 import { applyOrder, readPersisted, sessionState } from '../../store/session';
 import { createPoller } from '../../store/poller';
 import type { Poller } from '../../store/poller';
+import { goToOrder } from '../../utils/nav';
 import { toast } from '../../utils/toast';
 import { money } from '@dining/shared/money';
 import { ORDER_STATUS } from '@dining/shared/dicts';
@@ -35,6 +36,8 @@ Page({
     /** 当前渠道的付款指引（按「是否开通在线支付」+「是否配置收款码」分档） */
     chanTip: '',
     paid: false,
+    /** 门店先付模式：显示「付完才开做」提示 */
+    payFirst: false,
     checking: false,
     /**
      * 后端是否已开通小程序内支付（JSAPI）：由公开配置的 `wxpay_jsapi_enabled` 决定。
@@ -57,7 +60,14 @@ Page({
   /** 支付成功后延时跳转的定时器：页面提前卸载时必须清掉 */
   leaveTimer: null as ReturnType<typeof setTimeout> | null,
 
-  onLoad() {
+  onLoad(options: Record<string, string | undefined>) {
+    // 会话里没有订单时，允许从链接参数带 orderNo 进来（与订单页同款兜底）
+    const fromQuery = String(options?.orderNo || '').trim();
+    if (fromQuery) {
+      this.setData({ orderNo: fromQuery });
+      void this.recover(fromQuery);
+      return;
+    }
     const order = sessionState().currentOrder;
     if (order?.orderNo) {
       this.render(order);
@@ -87,8 +97,8 @@ Page({
     }
   },
 
-  async recover() {
-    const orderNo = readPersisted().orderNo;
+  async recover(explicit?: string) {
+    const orderNo = String(explicit || '').trim() || readPersisted().orderNo;
     if (!orderNo) {
       this.setData({ loading: false, error: '没有找到待结账的订单' });
       return;
@@ -134,6 +144,8 @@ Page({
           : '请用微信「扫一扫 → 相册」识别上方收款码付款，或直接到前台结账。'
         : '本店未配置该渠道的收款码，请到前台结账。',
       paid: Number(order.payStatus) === 1,
+      // 先付模式：给顾客一句「付完才开做」，避免以为已下厨
+      payFirst: cfg.pay_first_enabled === '1',
       // 小程序内支付只有微信渠道有 JSAPI 通道；支付宝渠道仍走收款码
       canJsapi: tab === 'wx' && cfg.wxpay_jsapi_enabled === '1'
     });
@@ -258,12 +270,15 @@ Page({
   /**
    * 回订单页看出餐进度。
    * 支付成功后有 800ms 的延时导航，顾客可能抢先手动返回 —— 标记位保证只跳一次。
+   *
+   * 切页策略交给 utils/nav（与订单页/菜单页同源）：栈里已有订单页就退回它，
+   * 保留它的滚动位置与已加载数据；栈里没有才 redirectTo 打开。
+   * 栈里没有订单页的情况（例如直接分享进本页），若无脑 navigateBack，
+   * 顾客会被丢回上一屏，既看不到刚下的单，也看不出「付完才开做」的进度。
    */
   leaveToOrder(): void {
     if (this.leaving) return;
     this.leaving = true;
-    wx.navigateBack({
-      fail: () => wx.redirectTo({ url: '/pages/order/index' })
-    });
+    goToOrder();
   }
 });

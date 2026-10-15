@@ -265,6 +265,14 @@
         </div>
       </div>
 
+      <!-- 先付模式提示:让顾客在下单前就知道接下来要立即付款,而不是提交后才发现还没付 -->
+      <div
+        v-if="payFirst"
+        class="pay-first-hint"
+      >
+        {{ payHint }}
+      </div>
+
       <div class="sheet-submit">
         <!-- 金额标签固定「合计」,金额用结算总额(菜品+茶位费-满减):
              加菜与否的区分由下方按钮文案承担,口径与小程序购物车页一致 -->
@@ -335,6 +343,8 @@ const props = defineProps<{
   personCount: number;
   orderRemark: string;
   submitting: boolean;
+  /** 门店先付模式:下单后需立即支付,提交按钮文案与提示随之变化 */
+  payFirst: boolean;
   currentOrder: OrderDetail | null;
   openRemark: (item: CartItem) => void;
   changeCartQty: (item: CartItem, delta: number) => void;
@@ -353,6 +363,11 @@ const remarkModel = computed({
   get: () => props.orderRemark,
   set: v => emit('update:orderRemark', v)
 });
+
+// 先付模式让顾客点之前就知道：这笔钱先付。
+// 只讲「下单后要付款」这件事本身，不说「提交后立刻跳转」——
+// 提交后落在订单明细页，由那里的「待付款」引导带他去支付。
+const payHint = '本店为先付模式：下单后先完成支付，后厨即刻开工～';
 </script>
 
 <style scoped>
@@ -647,6 +662,17 @@ const remarkModel = computed({
   align-items: center;
   justify-content: space-between;
   margin-top: 16px;
+}
+
+/* 先付模式提示:与加菜提示同款浅色底,位置紧贴提交按钮之上 */
+.pay-first-hint {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .ss-total {

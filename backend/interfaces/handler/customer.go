@@ -106,7 +106,10 @@ func CustomerCreateOrder(c *gin.Context) {
 	}
 
 	// 下单成功后异步触发打印机打印(厨房单 + 食客小票),失败不影响下单;幂等命中不重复打印。
-	if !res.Duplicated {
+	//
+	// 先付模式(PayFirstEnabled)下不去打:这时订单还没收到钱,后厨提前做菜就违背了「先付」语义。
+	// 厨单改为在首次收款成功后补出(见 printKitchenOnPaid),线上支付与前台收款两条路都覆盖。
+	if !res.Duplicated && !service.PayFirstEnabled() {
 		if created, ok := service.LoadOrderForPrint(int(res.OrderID)); ok {
 			print.PrintOrder(c.Request.Context(), created, res.Items)
 		}
@@ -164,7 +167,10 @@ func CustomerAppendOrder(c *gin.Context) {
 
 	// 打印:厨房机出「加菜单」(只列新菜),小票机重出一张整单最新金额的食客小票
 	// (print_guest_on_append 可关);幂等命中不重复打印。
-	if !res.Duplicated {
+	//
+	// 先付模式下同样跳过:能加菜的订单必然是「未支付」的,此时后厨本就不该开火;
+	// 加进来的菜会和整单一起在收款成功后出单(printKitchenOnPaid 出的是整单)。
+	if !res.Duplicated && !service.PayFirstEnabled() {
 		if created, ok := service.LoadOrderForPrint(res.OrderID); ok {
 			print.PrintKitchen(c.Request.Context(), created, res.Items)
 			print.PrintGuestAppend(c.Request.Context(), created, res.Items)

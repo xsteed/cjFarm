@@ -171,6 +171,8 @@ func CustomerSettings() map[string]string {
 		// 在线支付开关(顾客端据此决定是否展示在线支付入口)
 		"wxpay_enabled":  flag("wxpay_enabled"),
 		"alipay_enabled": flag("alipay_enabled"),
+		// 先付/后付模式:顾客端据此决定「下单后是否直达支付页/是否提示先付款」
+		"pay_first_enabled": flag("pay_first_enabled"),
 		// 会员功能开关:小程序 AppID/AppSecret 已配置才开放「注册成为会员」
 		"member_enabled": memberEnabledFlag(),
 	}

@@ -41,6 +41,45 @@ func TestNormalizeAmountValue(t *testing.T) {
 	}
 }
 
+// TestPayFirstEnabledDefaultOff 先付模式默认必须是「关」(后付):
+// 误开会让没收到钱的订单永不出单,风险远大于多出几张晚付的单。
+func TestPayFirstEnabledDefaultOff(t *testing.T) {
+	settingInitDB(t)
+	if PayFirstEnabled() {
+		t.Fatal("出厂默认应为后付模式(PayFirstEnabled=false)")
+	}
+	// 脏值/空值同样按后付处理。
+	for _, v := range []string{"", "yes", "true", "01"} {
+		if err := dao.SetSetting("pay_first_enabled", v); err != nil {
+			t.Fatalf("写入配置失败: %v", err)
+		}
+		if PayFirstEnabled() {
+			t.Fatalf("非 \"1\" 取值 %q 应判定为后付", v)
+		}
+	}
+	if err := dao.SetSetting("pay_first_enabled", "1"); err != nil {
+		t.Fatalf("写入配置失败: %v", err)
+	}
+	if !PayFirstEnabled() {
+		t.Fatal("明确 \"1\" 应判定为先付模式")
+	}
+}
+
+// TestCustomerSettingsExposesPayFirst 顾客公开配置必须下发先付开关:
+// 顾客端 H5/小程序据此决定下单后是否直达支付页。
+func TestCustomerSettingsExposesPayFirst(t *testing.T) {
+	settingInitDB(t)
+	if got := CustomerSettings()["pay_first_enabled"]; got != "0" {
+		t.Fatalf("默认应下发 pay_first_enabled=0, got %q", got)
+	}
+	if err := dao.SetSetting("pay_first_enabled", "1"); err != nil {
+		t.Fatalf("写入配置失败: %v", err)
+	}
+	if got := CustomerSettings()["pay_first_enabled"]; got != "1" {
+		t.Fatalf("开启后应下发 pay_first_enabled=1, got %q", got)
+	}
+}
+
 // TestSaveSettingsClampsNegativeAmount 负数的茶位费/满减配置在保存时回落为 0,
 // 防止 total = 菜品金额 + 茶位费 - 优惠 被反算,影响全部新单与加菜重算。
 func TestSaveSettingsClampsNegativeAmount(t *testing.T) {

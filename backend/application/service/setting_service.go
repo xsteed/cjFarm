@@ -54,6 +54,8 @@ var ManagedSettingKeys = []string{
 	"feie_user", "feie_api_url", "agent_latest_version",
 	// 桌台遗留订单防护与营业日定义(见 stale_service.go)
 	"stale_release_enabled", "stale_alert_enabled", "stale_alert_hours", "biz_date_cutoff_hour",
+	// 先付/后付模式(见 PayFirstEnabled)
+	"pay_first_enabled",
 	// 敏感项(不回显,但同样参与指纹:它们变了,别的管理端就该刷新)
 	"wxpay_apiv3_key", "wx_app_secret", "feie_ukey", "agent_token",
 }
@@ -132,6 +134,13 @@ func SettingEnum(key string, allowed []string, def string) string {
 	}
 	return def
 }
+
+// PayFirstEnabled 先付模式开关:开启后顾客下单需先完成支付,后厨在收款成功后才出单制作。
+//
+// 采用「默认关」语义(SettingFlag):只有明确 "1" 才算先付,其余(含配置缺失、脏值)
+// 一律按后付处理。误判成先付的后果更严重 —— 没付钱的单会永远不出单、菜永远不做;
+// 多出几张晚付的单只是账期问题,两者风险不对称,故默认必须偏向后付。
+func PayFirstEnabled() bool { return dao.GetSetting("pay_first_enabled") == "1" }
 
 // normEnumValue 写入侧的同一套归一化:非法值落库为默认值,保证库里永远是白名单取值。
 func normEnumValue(v string, allowed []string, def string) string {
@@ -220,6 +229,8 @@ func ListSettings() dto.Settings {
 		StaleAlertEnabled:   SettingFlag(SettingStaleAlertEnabled),
 		StaleAlertHours:     strconv.Itoa(StaleAlertHours()),
 		BizDateCutoffHour:   strconv.Itoa(BizDayCutoffHour()),
+		// 先付模式开关(默认关,只有明确 "1" 才先付)
+		PayFirstEnabled: SettingFlag("pay_first_enabled"),
 		// 乐观锁指纹:保存时原样带回,后端比对发现不一致即拒绝(409)
 		Version: dao.SettingsFingerprint(ManagedSettingKeys),
 	}
@@ -288,6 +299,8 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		"stale_alert_enabled":   normFlagValue(settings.StaleAlertEnabled),
 		"stale_alert_hours":     NormalizeStaleAlertHours(settings.StaleAlertHours),
 		"biz_date_cutoff_hour":  NormalizeBizDateCutoffHour(settings.BizDateCutoffHour),
+		// 先付/后付模式:开关归一化,落库永远是 "1"/"0"
+		"pay_first_enabled": normFlagValue(settings.PayFirstEnabled),
 	}
 	// 普通配置项:提交值直接覆盖保存(敏感项由 SetSetting 自动加密)。
 	// 旧值快照必须赶在 SetSetting 之前取——落库后 LoadSettings 读到的已是新值,

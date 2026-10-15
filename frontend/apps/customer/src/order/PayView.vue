@@ -19,6 +19,16 @@
       </div>
     </div>
 
+    <!-- 先付模式:在下单后即进入本页,明确告知「付完才开做」,避免顾客以为已经下厨。
+         仅在未支付时显示:支付后轮询还有几秒才会把视图切到已结账,这期间不该再说「请先付款」。
+         与订单页同口径:不带金额,金额由账单末行承担 -->
+    <div
+      v-if="payFirst && Number(currentOrder.payStatus) === 0"
+      class="pay-notice"
+    >
+      💳 本店为先付模式：完成支付后后厨即刻开工～
+    </div>
+
     <!-- 在线支付(渠道已启用) -->
     <template v-if="onlineEnabled">
       <div
@@ -90,6 +100,8 @@ defineProps<{
   paying: boolean;
   onlineEnabled: boolean;
   currentPayQr: string | undefined;
+  /** 门店先付模式:显示「付完才开做」提示 */
+  payFirst: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -126,6 +138,20 @@ const emit = defineEmits<{
   display: flex;
   gap: 8px;
   margin: 16px 0;
+}
+
+/* 先付模式提示:整宽浅色底,位于金额与渠道选择之间 */
+.pay-notice {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .pay-tab {

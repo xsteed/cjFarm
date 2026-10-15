@@ -231,12 +231,24 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 // 返回 false 表示回写遭遇 DB 故障,调用方(回调)应应答 FAIL 让渠道重试;
 // 主动查单路径可忽略返回值(本次不入账,下次轮询再试)。
 func applyPaymentSuccess(ctx context.Context, orderID int, orderNo, channel string, amountCents int64, channelTradeNo string) bool {
+	// 记录回写前的支付状态:先付模式下,只有「这一拍才把订单从不支付变为已支付」才需要补出厨单。
+	// ApplyPaymentSuccess 对重复通知/掉单补偿等场景同样返回空结果,单看返回值区分不出「首次入账」;
+	// 而厨单重复出纸会让后厨照着一张单做两遍,代价比多查一次订单高。
+	beforePaid := false
+	if o, err := service.GetOrderAmount(orderNo); err == nil && o.PayStatus == 1 {
+		beforePaid = true
+	}
 	res := service.ApplyPaymentSuccess(ctx, orderNo, channel, channelTradeNo, channelName(channel), amountCents)
 	if res.Failed {
 		return false
 	}
 	if res.Duplicate {
 		autoRefundDuplicatePayment(ctx, orderID, orderNo, channel, amountCents, channelTradeNo)
+		return true
+	}
+	// 先付模式:本次才由未支付转为已支付 → 后厨出单(后付模式下无操作)。
+	if !beforePaid {
+		printKitchenOnPaid(ctx, orderID)
 	}
 	return true
 }

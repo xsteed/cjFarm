@@ -22,6 +22,14 @@
         本桌已有进行中的订单，本次提交将作为「加菜」并入该单。
       </view>
 
+      <!-- 先付模式：下单前先讲清这笔钱要先付（文案见 onShow 的 payHint） -->
+      <view
+        wx:if="{{payHint}}"
+        class="notice"
+      >
+        {{payHint}}
+      </view>
+
       <!-- 菜品清单 -->
       <view class="card sec">
         <view class="sec-hd">

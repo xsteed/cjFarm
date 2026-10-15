@@ -10,6 +10,7 @@ import (
 
 	"dining-system/application/service"
 	"dining-system/domain/po"
+	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/print"
 	"dining-system/interfaces/dto"
 )
@@ -214,6 +215,8 @@ func OrderPay(c *gin.Context) {
 	// 线下收款成功后,同步关闭该订单未支付的在线支付单:顾客若还开着此前的
 	// 收款二维码,扫了会付第二笔(重复支付),关单后旧码失效。
 	closeOnlinePayment(c.Request.Context(), p.OrderID)
+	// 先付模式下,前台手工收款同样要触发后厨出单(否则「线上下单 + 前台付现金」的单没人做)。
+	printKitchenOnPaid(c.Request.Context(), p.OrderID)
 	SetAuditDetail(c, "order", strconv.Itoa(p.OrderID), "订单收款，方式 "+payType)
 	okMsg(c, "支付成功")
 }
@@ -342,6 +345,26 @@ func printOrderTicket(ctx context.Context, orderID int) {
 	// 明细由 PrintGuestTicket 内部重新加载:结账要的是整桌完整菜品与最终金额,
 	// 而不是调用方手里可能只带部分明细的 o.Items。
 	print.PrintGuestTicket(ctx, o)
+}
+
+// printKitchenOnPaid 先付模式专属:订单「首次收款成功」后,才把厨单(厨房单 + 点菜单)发给后厨。
+//
+// 为什么单独抽出来:先付模式下下单时不出单(customer.go 已跳过),出单时机后移到收款成功;
+// 而收款有两条互不相通的路径 —— 线上支付回调/查单(pay.go)与前台手工收款(OrderPay),
+// 两者都必须触发,否则「线上下单 + 前台收现金」的顾客会一单都吃不上。
+//
+// 后付模式下厨单已在下单时出过,这里直接返回,不会重复出纸。
+// 打印在 print 包内异步执行且自带失败留痕,故本函数不返回错误,不影响收款结果。
+func printKitchenOnPaid(ctx context.Context, orderID int) {
+	if !service.PayFirstEnabled() {
+		return
+	}
+	o, items, _, err := service.GetOrder(orderID)
+	if err != nil {
+		logger.CtxWarnf(ctx, "[print][告警] 先付模式收款后读取订单失败,厨单未出 订单%d: %v", orderID, err)
+		return
+	}
+	print.PrintOrder(ctx, o, items)
 }
 
 func OrderFinish(c *gin.Context) {

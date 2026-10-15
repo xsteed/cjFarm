@@ -390,6 +390,7 @@
         :urging="urging"
         :urge-cooldown="urgeCooldown"
         :show-tabbar="showTabbar"
+        :pay-first="payFirst"
         @append="startAppend"
         @urge="urge"
         @pay="view = 'pay'"
@@ -582,6 +583,7 @@
         :paying="paying"
         :online-enabled="onlineEnabled"
         :current-pay-qr="currentPayQr"
+        :pay-first="payFirst"
         @switch-tab="switchPayTab"
         @online-pay="startOnlinePay"
         @back="backFromPay"
@@ -651,6 +653,7 @@
       :total-price="totalPrice"
       :can-append="canAppend"
       :submitting="submitting"
+      :pay-first="payFirst"
       :current-order="currentOrder"
       :open-remark="openRemark"
       :change-cart-qty="changeCartQty"
@@ -872,6 +875,9 @@ const currentPayQr = computed(() => (payTab.value === 'wx' ? config.value.pay_qr
 const onlineEnabled = computed(() =>
   payTab.value === 'wx' ? config.value.wxpay_enabled === '1' : config.value.alipay_enabled === '1'
 );
+// 先付模式:下单后需先支付,后厨才开始制作(由门店在管理端「营业设置」配置)。
+// 顾客端据此把下单后的落点从「订单页」改成「支付页」,并在各处提示先付款。
+const payFirst = computed(() => config.value.pay_first_enabled === '1');
 // 是否已存在当前订单（订单视图能不能出内容、能不能催菜都看它）。
 const hasOrder = computed(() => !!currentOrder.value);
 // 底部 tabbar 常驻(点餐/订单两档):与小程序一致 —— 还没下单也能进订单页看空态,
@@ -1079,7 +1085,10 @@ async function submit(): Promise<void> {
         personCount: personCount.value,
         clientRequestId
       });
-      MessagePlugin.success('加菜成功～新菜已进后厨，马上安排');
+      // 先付模式：加的菜要等整单付完款才进后厨，不能说“已进后厨，马上安排”
+      MessagePlugin.success(
+        payFirst.value ? '加菜成功～整单付款后后厨立刻开工' : '加菜成功～新菜已进后厨，马上安排'
+      );
       orderNo = res.orderNo;
     } else {
       const res = await createOrder({
@@ -1089,7 +1098,10 @@ async function submit(): Promise<void> {
         items,
         clientRequestId
       });
-      MessagePlugin.success('下单成功～大厨已收到，火力全开中');
+      // 先付模式：还没收到钱，后厨此刻并不知道这颗单，不能说“已经收到、火力全开”
+      MessagePlugin.success(
+        payFirst.value ? '下单成功～还没付款哦，付完款后厨立刻开工' : '下单成功～大厨已收到，火力全开中'
+      );
       orderNo = res.orderNo;
     }
     // 订单已在后端创建成功:先落定前端状态(清幂等键与购物车、切订单视图),再回拉完整详情。
@@ -1104,6 +1116,8 @@ async function submit(): Promise<void> {
     } catch {
       currentOrder.value = { orderNo } as OrderDetail;
     }
+    // 下单成功后一律落到订单明细页：顾客要在这里核对菜品、看到金额，
+    // 再由页面上的「待付款」引导条带他去支付（先付模式下那条引导是必看的一步）。
     view.value = 'order';
     startPolling();
   } catch {
@@ -1160,6 +1174,7 @@ function ownKey(): string {
 
 function confirmMine(): void {
   safeSession.set(ownKey(), '1');
+  // 落到订单明细页：顾客先核对菜品，再由页面上的待付款引导去支付
   view.value = 'order';
   startPolling();
 }
@@ -1229,6 +1244,9 @@ async function load(): Promise<void> {
       // 明确说过不是自己单的(no)直接停在「等服务员清台」。
       const mine = safeSession.get(ownKey()) || '';
       if (paid) view.value = 'settled';
+      // 两位都落订单明细页：顾客先核对菜品与金额，再由页面上的「待付款」引导去支付。
+      // 只有认领过(mine==='1')才直达订单页；没认领的先走归属确认，
+      // 避免把上一桌的账单摊给下一桌。
       else if (mine === '1') view.value = 'order';
       else {
         view.value = 'resume';

@@ -365,6 +365,8 @@ Page({
 
   /** 跳订单页。跳转失败（页面被删 / 路径写错）时不能让本页卡在 loading，退化成菜单。 */
   gotoOrder(info: TableInfo) {
+    // 一律先落订单明细页：顾客核对菜品与金额后，再由页面上的「待付款」引导去支付。
+    // 直接把人扔进支付页，他连自己点了什么都不确认不了。
     wx.redirectTo({
       url: '/pages/order/index',
       fail: () => this.renderMenu(info)
