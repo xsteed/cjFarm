@@ -479,6 +479,7 @@
       @confirm="save"
     >
       <t-form
+        class="printer-form"
         :data="form"
         :label-width="isMobile ? '84px' : '100px'"
       >
@@ -1305,6 +1306,17 @@ onUnmounted(() => {
 }
 
 /* ===== 新增/编辑打印机弹窗排版 ===== */
+
+/* TDesign 给「最后一个表单项」打 .t-form__item--last 并 margin:0(收掉末尾多余的
+   24px 行距)。但它只统计带 name 的表单项来判定谁是最后一项:
+   「打印参数」没有 name(它只是容器,不参与校验),「IP 地址 / 端口」又包在普通
+   div.conn-row 里、不算 Form 的直接子项 —— 于是选「食客小票」隐藏掉「负责分类」
+   后,这顶「最后一项」的帽子落到了前面的「接入方式」(飞鹅时是「打印机编号」)上,
+   它与下方字段之间整段行距被清零。
+   这里只给「被误标」的项拿回行距:真正的最后一项必然是 :last-of-type,仍保持收口。 */
+.printer-form :deep(.t-form__item--last:not(:last-of-type)) {
+  margin-bottom: var(--td-comp-margin-xxl, 24px);
+}
 
 /* TDesign 的 .t-form__controls-content 是 nowrap 的 flex 行:控件之外再放说明文字,
    必须自己包一层竖排容器,否则文字会和控件挤在同一行被压窄(仓库 Config.vue 同做法)。 */
