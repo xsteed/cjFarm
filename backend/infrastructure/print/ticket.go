@@ -164,6 +164,43 @@ func appendRemarkLines(lines []string, text string, width int) []string {
 	return lines
 }
 
+// splitBigLines 把文本按 max 半角格数折成多行(供放大行使用):
+//   - 优先在空格处断行(菜名 / 规格 / 份数是天然断点),不把「(大份)」拆成两半;
+//   - 单个词自身超宽(长菜名没有空格)时按字符硬折,与 splitLines 同规则。
+//
+// 为什么不交给打印机自动折行:倍宽行放不下时机器会按行宽硬折,断点不可控,
+// 「x1」可能被折到任意位置;主动折行后每行都独立放大居中,断点落在词与词之间。
+func splitBigLines(text string, max int) []string {
+	if max < 1 {
+		max = 1
+	}
+	out := make([]string, 0, 2)
+	cur := ""
+	for _, word := range strings.Fields(text) {
+		if cur == "" {
+			cur = word
+		} else if displayWidth(cur)+1+displayWidth(word) <= max {
+			cur += " " + word
+		} else {
+			out = append(out, cur)
+			cur = word
+		}
+		// 单个词自身超宽:硬折,尾段留作 cur 继续并后面的词。
+		for displayWidth(cur) > max {
+			parts := splitLines(cur, max)
+			out = append(out, parts[:len(parts)-1]...)
+			cur = parts[len(parts)-1]
+		}
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	if len(out) == 0 {
+		out = append(out, "")
+	}
+	return out
+}
+
 // ticketHeader 单据公共抬头:店名 + 单据名 + 单号 + 桌台/人数/时间 + 分隔线。
 // noLabel 为单号前缀(顾客小票用「订单号」、厨房单用「单号」),留空则不打印单号行。
 //
@@ -324,7 +361,8 @@ type KitchenTicketOptions struct {
 	// 调用方(打印路径)传快照;预览/补打这类一次性渲染不传也无妨。
 	ShopName string
 	// SingleDish 这张票只含一道菜(拆单/按份拆出来的夹单):
-	//   - 菜名放大(放得下时),夹在菜上、传菜口远远可认;
+	//   - 菜名一律放大,超宽(58mm 带规格/【赠】)时按倍宽行宽折成多行放大,夹在菜上、
+	//     传菜口远远可认;
 	//   - 不编菜品序号、不出「共 N 道 M 份」汇总 —— 恒为 1 道 1 份,纯属浪费纸面。
 	SingleDish bool
 }
@@ -349,16 +387,19 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts 
 		case opts.ShowPrice:
 			// 两列行(菜名 + 金额)放大后等宽对齐会崩,不放大。
 			lines = append(lines, twoCol(row, itemAmountText(it), w)...)
-		case displayWidth(row) <= w/2:
-			// 放大后每字符占两格,宽度减半;放得下才放大,放不下会折行,反而比正常字号
-			// 更难读 —— 与店名行同一套保护(58mm 纸基本都会回退成正常字号)。
-			if opts.SingleDish {
-				// 夹单:一票一道菜,居中放大最醒目。
-				lines = append(lines, bigMarkLine(row))
-			} else {
-				// 整单清单:逐条编号,左对齐放大,编号留在行首便于后厨划单。
-				lines = append(lines, bigLeftMarkLine(row))
+		case opts.SingleDish:
+			// 夹单一律放大:夹单的意义就是菜名远远可认,回退正常字号等于整张票没有重点。
+			// 菜名(带规格/【赠】)超过倍宽行宽时主动折成多行放大,断点落在词间
+			// (见 splitBigLines),而不是让打印机按行宽硬折。
+			// 每一行都要带 big: 标记 —— 少了它下游只当普通行打印,折行白折(菜名并没有放大)。
+			for _, l := range splitBigLines(row, w/2) {
+				lines = append(lines, bigMarkLine(l))
 			}
+		case displayWidth(row) <= w/2:
+			// 整单清单:放大后每字符占两格,宽度减半;放不下会折行,反而比正常字号
+			// 更难读 —— 与店名行同一套保护(58mm 纸基本都会回退成正常字号)。
+			// 整单清单逐条编号、左对齐放大,编号留在行首便于后厨划单。
+			lines = append(lines, bigLeftMarkLine(row))
 		default:
 			lines = append(lines, splitLines(row, w)...)
 		}
@@ -374,6 +415,10 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts 
 		lines = appendRemarkLines(lines, "整单备注: "+o.OrderRemark, w)
 	}
 	lines = append(lines, hr(w))
+	// 票尾垫一行空行再交给切纸:热敏机的切纸动作在末行打印完之后走纸裁断,末行内容
+	// 离刀口太近会被拦腰截断 —— 整单备注移到票尾后最明显,备注/分隔线正处在刀口上。
+	// 空行把票脚垫高一行,无论有没有整单备注,票尾都不再贴着刀口。
+	lines = append(lines, "")
 	return lines
 }
 
@@ -507,8 +552,8 @@ func trimTrailingHr(lines []string, w int) []string {
 	return lines
 }
 
-// appendGuestTicketTail 渲染顾客小票的送客收尾:结算信息块之后是可配置页脚
-// 与扫码二维码。这是「客人要走了」的收尾,只有整单小票(点菜单/结账小票)走它;
+// appendGuestTicketTail 渲染顾客小票的送客收尾:结算信息块之后是可配置页脚。
+// 这是「客人要走了」的收尾,只有整单小票(点菜单/结账小票)走它;
 // 加菜小票不走 —— 人还在店里,见 RenderGuestAppendTicket。
 func appendGuestTicketTail(lines []string, w int, cfg guestTicketConfig) []string {
 	// 页脚文案可配置(管理端「系统配置 → 小票打印」),清空则整段省略(含分隔线)。
@@ -522,9 +567,15 @@ func appendGuestTicketTail(lines []string, w int, cfg guestTicketConfig) []strin
 		// 页脚省略时,裁掉尾部残留的分隔线(备注/金额区后的 hr 会成为孤行收尾)。
 		lines = trimTrailingHr(lines, w)
 	}
-	// 二维码不再上小票:桌台上已有桌台点餐码(同一 H5 入口),小票再打一枚是重复,
-	// 而且加菜/点菜这类「人还在店里」的票打扫码入口更是干扰。qrMark 控制行基础设施
-	// (qrMarkLine/SplitQRLine/encodeQR)保留,供未来确实需要的二维码需求复用。
+	// 票尾二维码位置刻意留空,预留给小程序码:产品规划是以后在票尾打一枚
+	// 小程序码,顾客扫码进小程序查看/重打小票。此前的小票二维码(普通 URL 的
+	// GS ( k 码)已下线 —— 桌台上已有桌台点餐码,票上再打一枚是重复入口。
+	//
+	// 实现提醒:小程序码是微信接口生成的「图片」(葵花码),不是 QR 符号,
+	// 现有 qrMark 控制行(qrMarkLine → encodeQR 的 GS ( k)带不动它;到时候要
+	// 新增一条「位图」控制行(打印机走 GS v 0 / GS ( L 位图指令,注意 58mm
+	// 可打印宽度与缩放),预览侧同样按图片渲染。qrMark 基础设施保留不删,
+	// 就是给这一步留的位置。
 	return lines
 }
 
@@ -604,6 +655,10 @@ func trimStrPtr(s *string) string {
 //
 // 发送层与预览层都必须消费(剥掉)该行,否则这串前缀会被当成正文打到纸上。
 // 前缀里的 \x02 是不可见控制字符,正常票据文本不会出现,不会误判。
+//
+// 当前没有任何票据会产出该行(小票二维码已下线:桌台上已有桌台点餐码),
+// 整套基础设施(生成/解析/ESC-POS/飞鹅/预览)保留 —— 票尾位置预留给小程序码,
+// 见 appendGuestTicketTail 的实现提醒。
 const qrMarkPrefix = "\x02qr:"
 
 // qrMarkLine 生成二维码标记行。

@@ -107,16 +107,23 @@ func TestKitchenTicketMatureLayout(t *testing.T) {
 		}
 	})
 
-	t.Run("拆单且菜名过长:回落正常字号不折坏", func(t *testing.T) {
+	t.Run("拆单且菜名过长:折成多行放大不折坏", func(t *testing.T) {
 		long := []po.OrderItem{{DishName: "柴火土鸡炖野生菌汤配手工现磨米粉一份超大份量", SpecName: "半只", Quantity: 1, Price: 2000, Amount: 2000}}
 		lines := RenderKitchenTicket(o, long, 32, KitchenTicketOptions{Title: "【厨房单】1/1", SingleDish: true})
-		// 58mm 纸双倍宽只有 16 个半角位,长菜名放不下 → 只剩桌号一行放大。
-		if big := bigLinesOf(lines); len(big) != 1 || big[0] != "桌号 03" {
-			t.Fatalf("长菜名不应放大, got %v", big)
+		// 58mm 纸双倍宽只有 16 个半角位,长菜名放不下 → 主动折成多行放大,而不是回退正常字号
+		// (夹单的意义就在菜名远远可认,回退等于整张票没有重点);只有桌号一行因自身短而整行放大。
+		big := bigLinesOf(lines)
+		if len(big) < 2 {
+			t.Fatalf("长菜名应折成多行放大, got %v", big)
 		}
 		for _, l := range lines {
 			if displayWidth(l) > 32 {
 				t.Fatalf("行超宽(%d): %q", displayWidth(l), l)
+			}
+		}
+		for _, b := range big {
+			if displayWidth(b) > 16 {
+				t.Fatalf("放大行超宽(放大后 %d 格 > 32): %q", displayWidth(b)*2, b)
 			}
 		}
 	})
@@ -307,6 +314,33 @@ func TestKitchenSplitSeqScopedPerPrinter(t *testing.T) {
 	for _, j := range jobs {
 		if j.title != "【厨房单】" {
 			t.Fatalf("每台机器只出 1 张时不应带序号, got %q", j.title)
+		}
+	}
+}
+
+// TestKitchenSplitSecondTicketDishAlwaysBig 一菜一单的第二张票(菜名带规格,超过倍宽行宽)
+// 菜名仍要放大:折成多行放大,而不是回退正常字号 —— 夹单的意义就是菜名远远可认,
+// 一叠夹单里混着一张小字票,后厨根本注意不到。
+// 同时验证每张厨房单票尾都垫一行空行:整单备注/分隔线不贴切纸刀口,不被拦腰截断。
+func TestKitchenSplitSecondTicketDishAlwaysBig(t *testing.T) {
+	setupTestDB(t)
+	o, _ := sampleOrder()
+	items := []po.OrderItem{
+		{DishName: "凉拌青瓜", SpecName: "份", Quantity: 2, Price: 2800, Amount: 5600},
+		{DishName: "香辣干锅牛肉", SpecName: "大份", Quantity: 1, Price: 5800, Amount: 5800},
+	}
+	// 58mm:第 1 张「凉拌青瓜 (份) x2」恰好 16 格整行放大;第 2 张 22 格超宽,折成多行放大。
+	for i, it := range items {
+		lines := RenderKitchenTicket(o, []po.OrderItem{it}, 32, KitchenTicketOptions{
+			Title: seqTitle("【厨房单】", i, len(items)), SingleDish: true,
+		})
+		for _, piece := range splitBigLines(itemQtyLabel(it), 16) {
+			if !hasBigLine(lines, piece) {
+				t.Fatalf("第 %d 张菜名应放大(%q), got %v:\n%s", i+1, piece, bigLinesOf(lines), strings.Join(lines, "\n"))
+			}
+		}
+		if last := lines[len(lines)-1]; last != "" {
+			t.Fatalf("第 %d 张票尾应有一行空行, got last %q", i+1, last)
 		}
 	}
 }
