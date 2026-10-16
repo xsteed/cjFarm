@@ -477,7 +477,10 @@
         >
           <t-select
             v-model="form.categoryId"
-            placeholder="请选择分类"
+            placeholder="请选择分类，输入名称可新建"
+            filterable
+            creatable
+            @create="onCreateCategory"
           >
             <t-option
               v-for="c in categories"
@@ -616,7 +619,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
-import { listDishes, saveDish, updateDish, deleteDish, listCategories, uploadFile } from '@dining/api';
+import { listDishes, saveDish, updateDish, deleteDish, listCategories, saveCategory, uploadFile } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { useViewMode } from '../composables/useViewMode';
 import { useIsMobile } from '../utils/useMobile';
@@ -738,6 +741,31 @@ async function loadCategories(): Promise<void> {
   if (!hasPerm('category:view')) return;
   const res = await listCategories();
   categories.value = res.items || [];
+}
+
+// 「所属分类」下拉直接输入新分类名回车即建档:调 /admin/category/save 建分类,
+// 再刷新下拉并选中新建项。t-select 的 create 事件只把输入值抛出来、不会自动选中,
+// 选中由这里回填;失败(权限不足等)时保持原选中不变。
+async function onCreateCategory(name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  if (!hasPerm('category:edit')) {
+    MessagePlugin.warning('无新增分类权限，请到「分类管理」添加');
+    return;
+  }
+  if (categories.value.some(c => c.categoryName === trimmed)) {
+    MessagePlugin.warning(`分类「${trimmed}」已存在`);
+    return;
+  }
+  try {
+    await saveCategory({ categoryName: trimmed, sortOrder: 0 });
+    await loadCategories();
+    const created = categories.value.find(c => c.categoryName === trimmed);
+    if (created) form.categoryId = created.categoryId;
+    MessagePlugin.success(`已创建分类「${trimmed}」`);
+  } catch {
+    /* 失败已由拦截器统一 toast */
+  }
 }
 
 // 查询 / 搜索框回车:必须先回到第 1 页再查。
