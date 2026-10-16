@@ -174,6 +174,7 @@ func TestGuestTicketDiscountConfig(t *testing.T) {
 }
 
 // TestPreviewReflectsTemplateConfig 改完配置,预览立即反映(预览与出纸同一条渲染路径)。
+// 注意用结账小票样例:页脚只打在结账小票上,点菜单(trigger=order)永远不带页脚。
 func TestPreviewReflectsTemplateConfig(t *testing.T) {
 	setupTestDB(t)
 	orderID := insertPreviewOrder(t)
@@ -182,7 +183,7 @@ func TestPreviewReflectsTemplateConfig(t *testing.T) {
 	setPrintSetting(t, "print_guest_footer", "预览联动验证")
 	setPrintSetting(t, "print_guest_show_discount", "0")
 
-	chunks, _, err := PreviewTicket(printerID, orderID, po.PrintDocGuest, po.PrintTriggerOrder)
+	chunks, _, err := PreviewTicket(printerID, orderID, po.PrintDocGuestSettle, po.PrintTriggerSettle)
 	if err != nil {
 		t.Fatalf("PreviewTicket 失败: %v", err)
 	}

@@ -473,7 +473,8 @@ func RenderGuestTicket(o po.Order, items []po.OrderItem, paperWidth int) []strin
 //   - 金额区只有「当前合计」:下单后还会加菜,这个数是预估口径,刻意不用
 //     「合计」措辞 —— 与加菜小票同一套规避(见 RenderGuestAppendTicket);
 //   - 优惠与结算块不打印:下单时钱还没收,支付方式/结账时间无从谈起;
-//     优惠行留给结账小票,两张票的金额区因此各有分工。
+//     优惠行留给结账小票,两张票的金额区因此各有分工;
+//   - 页脚(「谢谢惠顾」送客收尾)不打印:客人还没走,只有结账小票带页脚。
 func RenderGuestOrderTicket(o po.Order, items []po.OrderItem, paperWidth int) []string {
 	return renderGuestTicketWith(o, items, paperWidth, currentGuestTicketConfig(), false)
 }
@@ -519,7 +520,9 @@ func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg
 		// 点菜单止步于此:下单时未结算,免单/挂账标注与结算信息块都不可能出现,
 		// 显式跳过而不是依赖「无值不出行」—— 万一调用方把已结算订单误当点菜单重放,
 		// 这里宁可少打,也不该让一张「点菜单」带出支付方式来。
-		return appendGuestTicketTail(lines, w, cfg)
+		// 页脚(送客收尾)也不打:下单时人刚坐下,「谢谢惠顾」只有客人离场
+		// 时才该出现,留给结账小票(见 appendGuestTicketTail)。
+		return trimTrailingHr(lines, w)
 	}
 	// 免单 / 挂账:小票需明确标注结算方式,避免客人或收银对账时产生歧义。
 	switch o.SettleType {
@@ -554,8 +557,8 @@ func trimTrailingHr(lines []string, w int) []string {
 }
 
 // appendGuestTicketTail 渲染顾客小票的送客收尾:结算信息块之后是可配置页脚。
-// 这是「客人要走了」的收尾,只有整单小票(点菜单/结账小票)走它;
-// 加菜小票不走 —— 人还在店里,见 RenderGuestAppendTicket。
+// 这是「客人要走了」的收尾,只有结账小票走它;点菜单与加菜小票都不走 ——
+// 人还在店里,见 renderGuestTicketWith 与 RenderGuestAppendTicket。
 func appendGuestTicketTail(lines []string, w int, cfg guestTicketConfig) []string {
 	// 页脚文案可配置(管理端「系统配置 → 小票打印」),清空则整段省略(含分隔线)。
 	if cfg.footer != "" {

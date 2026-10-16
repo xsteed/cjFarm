@@ -414,8 +414,8 @@ func TestGuestTicketFormFollowsTrigger(t *testing.T) {
 	if !strings.Contains(order, "【顾客小票】") || !strings.Contains(order, "当前合计") {
 		t.Fatalf("点菜单形态缺要素:\n%s", order)
 	}
-	// 「\n合计」匹配顶格的金额行,不会撞上「当前合计」。
-	for _, bad := range []string{"【结账小票】", "优惠", "支付方式", "结账时间", "\n合计"} {
+	// 页脚是送客收尾,点菜单不打(此时库配置是出厂默认,证明是刻意不打)。
+	for _, bad := range []string{"【结账小票】", "优惠", "支付方式", "结账时间", "\n合计", "谢谢惠顾"} {
 		if strings.Contains(order, bad) {
 			t.Fatalf("点菜单不应包含结账要素 %q:\n%s", bad, order)
 		}

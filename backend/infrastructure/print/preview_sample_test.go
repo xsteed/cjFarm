@@ -28,15 +28,16 @@ func TestPreviewTicketSampleGuest(t *testing.T) {
 	}
 	got := chunks[0]
 	joined := strings.Join(got, "\n")
-	// 点菜单要素:标题、示例菜、茶位费、预估合计、默认页脚(由 seed 补齐)。
-	for _, want := range []string{"【顾客小票】", "凉拌青瓜", "柴火土鸡", "茶位费(3人)", "当前合计", "谢谢惠顾"} {
+	// 点菜单要素:标题、示例菜、茶位费、预估合计。页脚不打 —— 「谢谢惠顾」
+	// 是送客收尾,只有结账小票带(即使库里配了页脚,点菜单也不打)。
+	for _, want := range []string{"【顾客小票】", "凉拌青瓜", "柴火土鸡", "茶位费(3人)", "当前合计"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("点菜单样例缺少 %q:\n%s", want, joined)
 		}
 	}
-	// 结账形态的要素不该出现在点菜单上:优惠行与结算块都属于结账小票。
+	// 结账形态的要素不该出现在点菜单上:优惠行、结算块与送客页脚都属于结账小票。
 	// 「合计」不进黑名单 —— 「当前合计」本身含该子串,措辞断言放在 want 里。
-	for _, bad := range []string{"【结账小票】", "优惠", "支付方式", "结账时间"} {
+	for _, bad := range []string{"【结账小票】", "优惠", "支付方式", "结账时间", "谢谢惠顾"} {
 		if strings.Contains(joined, bad) {
 			t.Fatalf("点菜单不应包含结账要素 %q:\n%s", bad, joined)
 		}
