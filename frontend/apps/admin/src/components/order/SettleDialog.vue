@@ -116,6 +116,11 @@ const emit = defineEmits<{
   (e: 'changed'): void;
 }>();
 
+// 支付方式首位即默认值(当前为微信支付):门店绝大多数收款走微信,
+// 默认选中它可以少一次下拉操作,也避免收银忘记切换时误记成现金。
+const payTypes = ['微信支付', '现金', '支付宝', '银行卡', '其他'];
+const defaultPayType = payTypes[0];
+
 const settleVisible = ref(false);
 const settleSubmitting = ref(false);
 const settleForm = reactive<SettleForm>({
@@ -123,11 +128,10 @@ const settleForm = reactive<SettleForm>({
   total: 0,
   mode: 'settle',
   settleType: 'normal',
-  payType: '现金',
+  payType: defaultPayType,
   remark: '',
   printTicket: true
 });
-const payTypes = ['现金', '微信', '支付宝', '银行卡', '其他'];
 const settleTypes: { value: SettleType; label: string; desc: string }[] = [
   { value: 'normal', label: '正常收款', desc: '当场收款，计入营业额' },
   { value: 'free', label: '免单', desc: '商家让利，实收 0' },
@@ -142,7 +146,7 @@ function open(row: SettleTarget, mode: SettleMode): void {
   settleForm.total = Number(row.totalAmount);
   settleForm.mode = mode;
   settleForm.settleType = 'normal';
-  settleForm.payType = '现金';
+  settleForm.payType = defaultPayType;
   settleForm.remark = '';
   settleForm.printTicket = true;
   settleVisible.value = true;
