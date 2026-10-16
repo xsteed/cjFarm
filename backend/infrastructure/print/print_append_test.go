@@ -133,12 +133,12 @@ func TestReprintKitchenTitleFollowsTrigger(t *testing.T) {
 
 // TestGuestAppendTicketNoFarewellTail 加菜小票不带「送客」收尾。
 //
-// 页脚(出厂默认「谢谢惠顾,欢迎再次光临」)是客人离场时才该出现的东西 ——
+// 页脚(出厂默认「谢谢惠顾，欢迎再次光临！」)是客人离场时才该出现的东西 ——
 // 加菜时人还在店里,这里把页脚配置上,证明是「刻意不打」而不是「没配置」。
 // 二维码已在「小票二维码」功能下线时整体移除(桌台上有点餐码),无需配置。
 func TestGuestAppendTicketNoFarewellTail(t *testing.T) {
 	setupTestDB(t)
-	setPrintSetting(t, "print_guest_footer", "谢谢惠顾,欢迎再次光临")
+	setPrintSetting(t, "print_guest_footer", "谢谢惠顾，欢迎再次光临！")
 
 	o, items := sampleOrder()
 	lines := RenderGuestAppendTicket(o, items, 48)

@@ -224,7 +224,8 @@ func ticketHeader(o po.Order, width int, title, noLabel, shopName string, kitche
 		if kitchen {
 			lines = append(lines, pad(title, width))
 		} else {
-			lines = append(lines, center(title, width))
+			// 顾客小票的单据名副标题用机器居中(见 centerMarkPrefix),不再空格补位。
+			lines = append(lines, centerMarkLine(title))
 		}
 	}
 	// 取餐号是单据上唯一能口头传递的标识:顾客凭它向服务员报号、后厨据此叫号。
@@ -586,7 +587,7 @@ func appendGuestTicketTail(lines []string, w int, cfg guestTicketConfig) []strin
 // (整单最新,含此前已点的全部菜品)—— 措辞刻意不用「合计」,避免被误读为
 // 所列菜品的金额小计。优惠等整单口径的信息留在结账小票上。
 //
-// 不带送客收尾:页脚(「谢谢惠顾,欢迎再次光临」)与扫码重打的二维码都是
+// 不带送客收尾:页脚(「谢谢惠顾，欢迎再次光临！」)与扫码重打的二维码都是
 // 「客人要走了」才该出现的东西 —— 加菜时人还在店里,见 appendGuestTicketTail。
 func RenderGuestAppendTicket(o po.Order, items []po.OrderItem, paperWidth int) []string {
 	w := LineWidth(paperWidth)
@@ -721,6 +722,31 @@ func SplitBigLeftLine(line string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(strings.TrimPrefix(line, bigLeftMarkPrefix)), true
+}
+
+// ============================================================================
+// 居中行
+// ============================================================================
+
+// centerMarkPrefix 居中行标记前缀。
+//
+// 与放大行同一套「控制行」思路:单据名副标题这类短行用**机器指令**居中
+// (ESC/POS 的 ESC a 1、飞鹅的 <C>、预览的 CSS 居中),不再用空格补位 ——
+// 空格居中建立在「半角空格恰好是汉字一半宽」的假设上,机器实际字宽略有出入
+// 整行就会偏移;部分云通道还会裁掉行首空格,补位直接失效。
+// 与放大行的差别:不加粗、不放大,只改对齐。
+const centerMarkPrefix = "\x02ctr:"
+
+// centerMarkLine 生成居中行。
+func centerMarkLine(text string) string { return centerMarkPrefix + text }
+
+// SplitCenterLine 若该行是居中标记行,返回文本与 true;否则返回 false。
+// 导出给发送层与 handler(预览)使用。
+func SplitCenterLine(line string) (string, bool) {
+	if !strings.HasPrefix(line, centerMarkPrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(line, centerMarkPrefix), true
 }
 
 // ============================================================================

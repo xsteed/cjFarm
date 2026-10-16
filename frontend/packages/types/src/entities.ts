@@ -223,6 +223,11 @@ export interface TicketLine {
    */
   qr?: string;
   /**
+   * 为真表示这一行按「机器居中」出纸(单据名副标题):前端按 CSS 居中渲染,
+   * 与放大行同一套观感,不再按字符网格左对齐。
+   */
+  center?: boolean;
+  /**
    * 为真表示这一行按「放大」出纸(打印机 GS ! 倍宽倍高 / 飞鹅 <C><B> 或 <B>)。
    * 放大行的字符网格已失效,前端不再按格渲染,直接用大字显示;
    * 是否居中看 bigLeft。
@@ -242,6 +247,8 @@ export interface TicketPreview {
   /** 每行可容纳的半角字符数(58mm 纸=32,80mm 纸=48),前端排版用 */
   lineWidth: number;
   docType?: string;
+  /** 厨房单打印粒度(whole/item/portion),仅 docType=kitchen 时返回 */
+  splitMode?: string;
   /** 触发场景:guest 单据靠它区分两种形态(顾客小票/结账小票),见 dicts.printDocLabel */
   triggerBy?: string;
   orderNo?: string;

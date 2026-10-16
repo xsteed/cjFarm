@@ -115,6 +115,10 @@ func encodeESCPOS(lines []string) []byte {
 			b = append(b, encodeBigLeftLine(bigL)...)
 			continue
 		}
+		if ctr, ok := SplitCenterLine(ln); ok {
+			b = append(b, encodeCenterLine(ctr)...)
+			continue
+		}
 		// 加粗判定走唯一入口:显式标记优先(备注折行的续行靠它),形态反推兜底。
 		text, bold := BoldText(ln)
 		if bold {
@@ -165,6 +169,26 @@ func encodeBigLeftLine(text string) []byte {
 	b = append(b, '\n')
 	b = append(b, 0x1B, 0x45, 0x00) // ESC E 0:取消加粗
 	b = append(b, 0x1D, 0x21, 0x00) // GS ! 0x00:还原字号
+	return b
+}
+
+// encodeCenterLine 输出一行「机器居中」文本:ESC a 1 居中,按 BoldLine 形态决定是否加粗。
+//
+// 单据名副标题(【顾客小票】/【结账小票】)不加粗;【加菜小票】按标题规则加粗。
+// 打完立即还原左对齐,不把居中状态留给后续行。
+func encodeCenterLine(text string) []byte {
+	_, bold := BoldText(text)
+	b := make([]byte, 0, len(text)*2+16)
+	b = append(b, 0x1B, 0x61, 0x01) // ESC a 1:居中
+	if bold {
+		b = append(b, 0x1B, 0x45, 0x01) // ESC E 1:加粗
+	}
+	b = append(b, gbk(text)...)
+	b = append(b, '\n')
+	if bold {
+		b = append(b, 0x1B, 0x45, 0x00) // ESC E 0:取消加粗
+	}
+	b = append(b, 0x1B, 0x61, 0x00) // ESC a 0:还原左对齐
 	return b
 }
 

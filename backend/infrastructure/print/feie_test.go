@@ -143,35 +143,32 @@ func TestGuestTicketHeaderLayout(t *testing.T) {
 	if big := bigLinesOf(guest); len(big) != 1 || big[0] != shop {
 		t.Fatalf("结账小票店名应为唯一放大行 %q, got %v:\n%s", shop, big, strings.Join(guest, "\n"))
 	}
-	// 单据名副标题:居中(左侧有缩进)且不加粗。
+	// 单据名副标题:机器居中控制行(不再空格补位)且不加粗。
 	titleLine := ""
 	for _, l := range guest {
-		if strings.TrimSpace(l) == "【结账小票】" {
+		if text, ok := SplitCenterLine(l); ok && strings.TrimSpace(text) == "【结账小票】" {
 			titleLine = l
 		}
 	}
 	if titleLine == "" {
-		t.Fatalf("结账小票应保留单据名副标题:\n%s", strings.Join(guest, "\n"))
+		t.Fatalf("结账小票应保留单据名副标题(居中控制行):\n%s", strings.Join(guest, "\n"))
 	}
-	if !strings.HasPrefix(titleLine, " ") {
-		t.Fatalf("单据名副标题应居中(左侧留白), got %q", titleLine)
-	}
-	if BoldLine(titleLine) {
-		t.Fatalf("单据名副标题应弱化(不加粗), got %q", titleLine)
+	if text, _ := SplitCenterLine(titleLine); BoldLine(text) {
+		t.Fatalf("单据名副标题应弱化(不加粗), got %q", text)
 	}
 
 	// 点菜单形态(trigger=order):单据名换成「【顾客小票】」,同样弱化居中。
 	order := RenderGuestOrderTicket(o, items, 48)
 	orderTitle := ""
 	for _, l := range order {
-		if strings.TrimSpace(l) == "【顾客小票】" {
+		if text, ok := SplitCenterLine(l); ok && strings.TrimSpace(text) == "【顾客小票】" {
 			orderTitle = l
 		}
 	}
 	if orderTitle == "" {
 		t.Fatalf("点菜单应保留单据名副标题:\n%s", strings.Join(order, "\n"))
 	}
-	if !strings.HasPrefix(orderTitle, " ") || BoldLine(orderTitle) {
+	if text, _ := SplitCenterLine(orderTitle); BoldLine(text) {
 		t.Fatalf("点菜单单据名应弱化居中, got %q", orderTitle)
 	}
 

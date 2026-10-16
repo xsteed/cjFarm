@@ -31,7 +31,7 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_first_enabled', '0'
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_ali', '/uploads/pay_ali.jpg');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_wx', '/uploads/pay_wx.png');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_enabled', '1');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_footer', '谢谢惠顾,欢迎再次光临');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_footer', '谢谢惠顾，欢迎再次光临！');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_on_append', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_on_order', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('print_guest_show_discount', '1');

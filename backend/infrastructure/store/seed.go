@@ -74,7 +74,7 @@ var settingDefaults = map[string]string{
 	"print_enabled":             "1",
 	"print_kitchen_show_price":  "0",
 	"print_kitchen_split_mode":  "whole",
-	"print_guest_footer":        "谢谢惠顾,欢迎再次光临",
+	"print_guest_footer":        "谢谢惠顾，欢迎再次光临！",
 	"print_guest_show_discount": "1",
 	"print_guest_on_append":     "1",
 	"print_guest_on_order":      "1",
@@ -165,6 +165,17 @@ func EnsureSettingDefaults() {
 		}
 	}
 	logger.Infof("[setting] 配置项补齐完成: 新增 %d 项, 已存在 %d 项", added, existed)
+
+	// 页脚出厂文案更版(全角逗号 + 感叹号):把仍停留在**旧出厂文案**的存量值一并升级。
+	// 只精确匹配旧默认串 —— 商户改成过自定义文案的不受影响;幂等,可重复执行。
+	const legacyGuestFooter = "谢谢惠顾,欢迎再次光临"
+	if settingDefaults["print_guest_footer"] != legacyGuestFooter {
+		if _, err := DB.Exec(`UPDATE tb_config SET cfg_value=?, update_time=?
+			WHERE cfg_key='print_guest_footer' AND cfg_value=?`,
+			settingDefaults["print_guest_footer"], Now(), legacyGuestFooter); err != nil {
+			logger.Warnf("[setting] 升级旧版页脚默认文案失败: %v", err)
+		}
+	}
 }
 
 // AuditSettingEmpties 扫描配置表,对「出厂默认非空但当前为空」的键打 [warn]。

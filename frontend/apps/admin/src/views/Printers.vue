@@ -456,7 +456,7 @@
       </template>
     </t-table>
 
-    <!-- 测试页预览:不出纸先看样式,确认无误再点「测试打印」 -->
+    <!-- 票据预览:按该机当前设置模拟真实出纸,不出纸先核对版式 -->
     <TicketPreviewDialog
       v-model:visible="previewVisible"
       :title="previewTitle"
@@ -466,8 +466,7 @@
       :copies="previewRow?.copies"
     >
       <template #meta>
-        测试页由后端「出纸同一份渲染代码」生成；纸宽
-        {{ previewRow?.paperWidth === 32 ? '58mm' : '80mm' }}。确认无误后再点「测试打印」出纸。
+        {{ previewMeta }}
       </template>
     </TicketPreviewDialog>
 
@@ -684,7 +683,7 @@ import {
   getFeieInfo,
   getAgentInfo,
   listCategories,
-  previewPrinterTest,
+  previewPrinter,
   PRINTER_PROVIDER
 } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
@@ -1024,16 +1023,38 @@ async function onTest(row: PrinterRow): Promise<void> {
   }
 }
 
-// 票据预览:不出纸地看这台机器的测试页样式 —— 新装机器时先在这儿确认
-// 纸宽/通道名/份数写对了,再决定要不要真吐一张纸。
+// 票据预览:不出纸地看「这台机器真实下单会出什么」—— 示例订单按该机当前设置
+// (纸宽/负责分类/厨房单打印粒度/通道分段)模拟,与真实出纸同一份渲染代码,
+// 一段就是实际吐出的一张纸。
 const previewVisible = ref(false);
 const previewLoading = ref(false);
 const previewData = ref<TicketPreview | null>(null);
 const previewRow = ref<PrinterRow | null>(null);
 
 const previewTitle = computed(() =>
-  previewRow.value ? `票据预览 · ${previewRow.value.printerName} · 测试页` : '票据预览'
+  previewRow.value ? `票据预览 · ${previewRow.value.printerName} · 按当前设置模拟出纸` : '票据预览'
 );
+
+// 厨房单打印粒度中文名(与 po.KitchenSplitModes 同一套取值)
+const SPLIT_LABEL: Record<string, string> = { whole: '整单一张', item: '一菜一单', portion: '按份数拆' };
+
+// 底部说明:与打印记录页的 meta 同一行级短句,说清这份预览按哪些设置模拟。
+const previewMeta = computed((): string => {
+  const d = previewData.value;
+  if (!d) return '';
+  const paper = d.lineWidth === 32 ? '58mm' : '80mm';
+  const cat = previewRow.value?.categoryNames ? '，已按负责分类过滤菜品' : '';
+  // 兜底:后端尚未升级到「按设置模拟出纸」时,接口仍返回测试页(docType=test),
+  // 如实说明,不能落进 guest 分支误标成「点菜单形态」。
+  if (d.docType === 'test') {
+    return `测试页样式（与「测试打印」出纸一致）；纸宽 ${paper}。`;
+  }
+  if (d.docType === 'kitchen') {
+    const split = SPLIT_LABEL[d.splitMode || 'whole'] || d.splitMode || '整单一张';
+    return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，厨房单粒度「${split}」，每张纸即后厨收到的一张${cat}。`;
+  }
+  return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，点菜单形态，整单一张。`;
+});
 
 async function onPreview(row: PrinterRow): Promise<void> {
   previewVisible.value = true;
@@ -1041,7 +1062,7 @@ async function onPreview(row: PrinterRow): Promise<void> {
   previewData.value = null;
   previewRow.value = row;
   try {
-    previewData.value = await previewPrinterTest(row.printerId);
+    previewData.value = await previewPrinter(row.printerId);
   } catch {
     // 失败原因由请求拦截器统一弹出
     previewVisible.value = false;

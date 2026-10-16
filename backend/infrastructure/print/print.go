@@ -1156,6 +1156,90 @@ func PreviewTestTicket(printerID int) ([][]string, int, error) {
 	return sliceChunks(lines, lineChunksFor(p, lines)), LineWidth(p.PaperWidth), nil
 }
 
+// previewSampleCategoryNames 示例菜品对应的种子分类名(见 store.seedCategoryRows)。
+// 预览时按「当前库里的实际分类 ID」回填:门店改过分类名/重建过分类后,
+// 按名字解析不到了该菜就不带分类 —— 被分类分单过滤属预期行为,与真实订单一致。
+var previewSampleCategoryNames = []string{"凉菜素菜", "主食", "特色农家菜"}
+
+// previewSampleRows 示例订单的带分类明细:给三道示例菜配上当前库里的真实分类 ID,
+// 让「负责分类」筛选在预览里与真实打印走同一条 itemsForPrinter 路径。
+func previewSampleRows() (po.Order, []service.PrintOrderItemRow) {
+	o, items := samplePreviewOrder()
+	rows := make([]service.PrintOrderItemRow, 0, len(items))
+	for _, it := range items {
+		rows = append(rows, service.PrintOrderItemRow{OrderItem: it})
+	}
+	nameToID := map[string]int{}
+	if cats, err := service.ListCategories(); err == nil {
+		for _, c := range cats {
+			nameToID[strings.TrimSpace(c.CategoryName)] = c.CategoryID
+		}
+	}
+	for i, name := range previewSampleCategoryNames {
+		if i < len(rows) {
+			rows[i].CategoryID = nameToID[name]
+		}
+	}
+	return o, rows
+}
+
+// PreviewPrinterTicketResult 打印机票据预览的结果。
+type PreviewPrinterTicketResult struct {
+	// Chunks 分段后的文本行,一段就是一张纸:厨房单按打印粒度拆出的每张、
+	// 以及通道发送上限切出的每段,顺序与实际出纸一致。
+	Chunks [][]string
+	// LineWidth 每行可容纳的半角字符数(58mm=32,80mm=48)。
+	LineWidth int
+	// DocType 模拟的单据类型:kitchen(厨房单)/ guest(顾客点菜单)。
+	DocType string
+	// SplitMode 厨房单打印粒度(whole/item/portion);guest 为空串。
+	SplitMode string
+}
+
+// PreviewPrinterTicket 按某台打印机的当前设置,用示例订单模拟「真实下单时它会收到什么」。
+//
+// 与出纸走完全同一份代码(jobsForPrinter + job.render + lineChunksFor):
+//   - 纸宽按该机配置(58/80mm)渲染;
+//   - 厨房单按 print_kitchen_split_mode 拆张:整单一张 / 一菜一单 / 按份数拆,
+//     每张带序号标题与放大菜名,与后厨实际收到的一叠一致;
+//   - 「负责分类」筛选生效:配了分类的厨房机只预览分类匹配的菜品,
+//     一道都不匹配时报错 —— 真实下单时这台机器同样不会出纸;
+//   - 「厨房单显示金额」、店名等模板配置同样生效;
+//   - 通道发送上限(飞鹅字节/代理字符)对超长票的分段同样模拟。
+//
+// 只渲染,不发送、不出纸、不记日志。
+func PreviewPrinterTicket(printerID int) (PreviewPrinterTicketResult, error) {
+	p, err := service.LoadPrinter(printerID)
+	if err != nil {
+		return PreviewPrinterTicketResult{}, errors.New("打印机不存在")
+	}
+	docType, title := po.PrintDocGuest, ""
+	if p.PrinterType == po.PrinterTypeKitchen {
+		docType, title = po.PrintDocKitchen, "【厨房单】"
+	}
+	o, rows := previewSampleRows()
+	jobs := jobsForPrinter(p, o, rows, docType, title, po.PrintTriggerOrder, "", nil, nil)
+	if len(jobs) == 0 {
+		return PreviewPrinterTicketResult{}, errors.New(
+			"该打印机设置了「负责分类」,示例菜品都不在其负责的分类内 —— 真实下单时这台机器同样不会出纸;请调整分类或到订单详情按单补打")
+	}
+	chunks := make([][]string, 0, len(jobs))
+	for _, j := range jobs {
+		lines := j.render()
+		chunks = append(chunks, sliceChunks(lines, lineChunksFor(p, lines))...)
+	}
+	split := ""
+	if docType == po.PrintDocKitchen {
+		split = kitchenSplitMode()
+	}
+	return PreviewPrinterTicketResult{
+		Chunks:    chunks,
+		LineWidth: LineWidth(p.PaperWidth),
+		DocType:   docType,
+		SplitMode: split,
+	}, nil
+}
+
 // SampleOverrides 示例预览的模板配置覆盖;nil 字段表示「用当前库配置」,
 // 非 nil 字段以请求值优先 —— 让管理端在保存前就能看到「表单里改的值」的效果。
 type SampleOverrides struct {

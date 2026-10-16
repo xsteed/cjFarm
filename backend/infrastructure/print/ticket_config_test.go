@@ -35,7 +35,7 @@ func TestGuestTicketFooterConfig(t *testing.T) {
 	setupTestDB(t)
 
 	// 1) 默认页脚:出厂值由 seed 补齐(测试库走 store.Init 的同一条 seed 路径)。
-	if got := renderGuest(t); !strings.Contains(got, "谢谢惠顾,欢迎再次光临") {
+	if got := renderGuest(t); !strings.Contains(got, "谢谢惠顾，欢迎再次光临！") {
 		t.Fatalf("默认页脚缺失:\n%s", got)
 	}
 

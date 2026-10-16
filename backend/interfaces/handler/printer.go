@@ -197,15 +197,40 @@ func PrinterTest(c *gin.Context) {
 	okMsg(c, "已向「"+p.PrinterName+"」("+printerTarget(p)+") 发送测试打印指令")
 }
 
-// PrinterPreviewTest 预览该打印机的测试页样式(不出纸)。
+// PrinterPreview 预览该打印机的票据(不出纸)。
 //
-// 与「测试打印」互补:后者真吐一张纸。新装机器、想确认纸宽与通道参数时,
-// 先看预览再决定要不要出纸 —— 此前每核一次版式就得白扔一张。
-func PrinterPreviewTest(c *gin.Context) {
+// kind=ticket(默认):按该机当前设置用示例订单模拟「真实下单会出什么」——
+// 纸宽、负责分类、厨房单打印粒度(整单一张/一菜一单/按份数拆)、显示金额、
+// 通道分段全部与出纸同一份代码,一段就是一张纸。
+// kind=test:渲染测试页(通道信息页),与「测试打印」出的那张一致。
+func PrinterPreview(c *gin.Context) {
 	id, okid := idParam(c)
 	if !okid {
 		return
 	}
+	if c.Query("kind") == "test" {
+		previewTestPage(c, id)
+		return
+	}
+	res, err := print.PreviewPrinterTicket(id)
+	if err != nil {
+		fail(c, err.Error())
+		return
+	}
+	previewChunks := make([][]previewLine, 0, len(res.Chunks))
+	for _, ck := range res.Chunks {
+		previewChunks = append(previewChunks, toPreviewLines(ck))
+	}
+	ok(c, gin.H{
+		"chunks":    previewChunks,
+		"lineWidth": res.LineWidth,
+		"docType":   res.DocType,
+		"splitMode": res.SplitMode,
+	})
+}
+
+// previewTestPage 测试页预览( PrinterPreview 的 kind=test 分支)。
+func previewTestPage(c *gin.Context, id int) {
 	chunks, lineWidth, err := print.PreviewTestTicket(id)
 	if err != nil {
 		fail(c, err.Error())

@@ -68,7 +68,7 @@
               <div
                 v-else
                 class="ticket-line"
-                :class="{ bold: line.bold }"
+                :class="{ bold: line.bold, center: line.center }"
               >
                 <span
                   v-for="(cell, ci) in cellsOf(line.text)"
@@ -307,6 +307,12 @@ watch(
   font-weight: 700;
 }
 
+/* 机器居中行:单据名副标题(【顾客小票】等)。出纸走 ESC a 1 / 飞鹅 <C>,
+   预览按同样观感居中,不再依赖补位空格的字符网格对齐。 */
+.ticket-line.center {
+  text-align: center;
+}
+
 /* 放大行:店名/夹单桌号/菜品行。出纸走 GS ! 倍宽倍高(飞鹅 <C><B> 或 <B>),
    预览按同样观感放大,不再参与字符网格对齐。 */
 .ticket-line.big {
@@ -370,8 +376,12 @@ watch(
 }
 
 .paper-meta {
-  margin-top: 10px;
+  margin: 10px auto 0;
+  /* 弹窗是 width:fit-content,meta 不限宽的话一行长文案会把整个弹窗撑到超出屏幕;
+     限宽后长说明在此折行,弹窗宽度始终由纸面决定。 */
+  max-width: min(560px, 86vw);
   text-align: center;
+  word-break: break-word;
 }
 
 /* 没有票面快照的老记录:重渲染的结果可能已与当时不同,这句提示必须被看见,

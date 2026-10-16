@@ -68,7 +68,7 @@ func TestDescribeSettingChange(t *testing.T) {
 		"promotion_discount":        "0",
 		"feie_api_url":              "https://api.feieyun.cn/Api/Open/",
 		"print_enabled":             "1",
-		"print_guest_footer":        "谢谢惠顾,欢迎再次光临",
+		"print_guest_footer":        "谢谢惠顾，欢迎再次光临！",
 		"print_guest_show_discount": "1",
 		// 桌台遗留订单防护与营业日定义:出厂默认同样是「开关关 + 阈值 4 + 自然日切换」,
 		// 不补齐它们会额外进摘要

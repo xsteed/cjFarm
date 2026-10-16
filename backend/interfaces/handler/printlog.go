@@ -91,6 +91,9 @@ type previewLine struct {
 	// BigLeft 为真时那个放大行是左对齐的(整单菜品清单,见 print.SplitBigLeftLine):
 	// 前端不能再居中渲染 —— 出纸上编号在行首对齐,预览居中了就失去「预览即所得」。
 	BigLeft bool `json:"bigLeft,omitempty"`
+	// Center 为真表示这一行按「机器居中」出纸(单据名副标题,见 print.SplitCenterLine):
+	// 前端按 CSS 居中渲染,与放大行同一套观感,不再按字符网格左对齐。
+	Center bool `json:"center,omitempty"`
 }
 
 // qrPlaceholder 预览里二维码行的占位文本。
@@ -116,6 +119,12 @@ func toPreviewLines(lines []string) []previewLine {
 		}
 		if bigL, ok := print.SplitBigLeftLine(l); ok {
 			out = append(out, previewLine{Text: bigL, Big: true, BigLeft: true})
+			continue
+		}
+		if ctr, ok := print.SplitCenterLine(l); ok {
+			// 是否加粗沿用形态反推(【加菜小票】是标题要加粗,【顾客小票】副标题不加粗)。
+			_, bold := print.BoldText(ctr)
+			out = append(out, previewLine{Text: ctr, Bold: bold, Center: true})
 			continue
 		}
 		// 加粗判定走唯一入口:显式标记优先(备注折行的续行靠它),形态反推兜底。

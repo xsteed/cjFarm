@@ -107,6 +107,14 @@ func feieLinePiece(l string) string {
 		// 逐条编号因此在行首对齐。行宽由渲染层保证「放大后仍放得下」。
 		return "<B>" + escapeFeie(bigL) + "</B>"
 	}
+	if ctr, ok := SplitCenterLine(l); ok {
+		// 机器居中行(单据名副标题):<C> 是官方「居中」,由打印机自己对齐,
+		// 不依赖补位空格(部分云通道会裁行首空格)。是否加粗沿用形态反推。
+		if _, bold := BoldText(ctr); bold {
+			return "<C><BOLD>" + escapeFeie(ctr) + "</BOLD></C>"
+		}
+		return "<C>" + escapeFeie(ctr) + "</C>"
+	}
 	// 加粗判定走唯一入口:渲染层的显式标记优先(备注折行续行靠它),BoldLine 形态反推兜底。
 	// <BOLD> 是官方「字体加粗」,不改变字符宽度 —— 与 ESC/POS 的 ESC E 重打等价,
 	// 等宽列对齐不受影响。不要用 <B>:它的官方语义是「放大一倍」。

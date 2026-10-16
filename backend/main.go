@@ -141,8 +141,8 @@ func setupAPI(r *gin.Engine) {
 			admin.POST("/printer/update", handler.PrinterUpdate)
 			admin.DELETE("/printer/:id", handler.PrinterDelete)
 			admin.POST("/printer/test/:id", handler.PrinterTest)
-			// 预览该打印机的测试页样式(不出纸)
-			admin.GET("/printer/preview/:id", handler.PrinterPreviewTest)
+			// 预览该打印机的票据(不出纸):默认按当前设置模拟真实出纸,kind=test 出测试页
+			admin.GET("/printer/preview/:id", handler.PrinterPreview)
 			// 只测连通性不吐纸 / 查实时状态 / 绑定到飞鹅账号 / 清空飞鹅云端队列
 			admin.POST("/printer/probe/:id", handler.PrinterProbe)
 			admin.GET("/printer/status/:id", handler.PrinterStatus)

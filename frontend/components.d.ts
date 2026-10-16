@@ -11,7 +11,6 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
-    __lint_tmp: typeof import('./apps/admin/src/components/__lint_tmp.vue')['default']
     ActionSheet: typeof import('./apps/admin/src/components/ActionSheet.vue')['default']
     BottomSheet: typeof import('./apps/admin/src/components/BottomSheet.vue')['default']
     CreditSettleDialog: typeof import('./apps/admin/src/components/order/CreditSettleDialog.vue')['default']
