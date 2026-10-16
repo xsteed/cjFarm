@@ -366,6 +366,10 @@ type KitchenTicketOptions struct {
 	//     传菜口远远可认;
 	//   - 不编菜品序号、不出「共 N 道 M 份」汇总 —— 恒为 1 道 1 份,纯属浪费纸面。
 	SingleDish bool
+	// LastTicket 本台打印机这一批拆单小票的最后一张(仅拆单时有意义):
+	// 票尾分隔线改用「=」粗线 —— 一叠夹单逐张切纸后散落在一起,细线「----」
+	// 每张都有、无从分辨;最后一张的底部换成一整行粗线,后厨凭它确认「单子到齐了」。
+	LastTicket bool
 }
 
 // RenderKitchenTicket 渲染厨房单(厨打单/夹单),版式对齐成熟 POS 的通行做法:
@@ -373,7 +377,8 @@ type KitchenTicketOptions struct {
 //   - 票头:桌号放大居中、单号用可口头报读的短号、时间省到分(见 ticketHeader);
 //   - 菜品区:整单逐道编号(便于划单报数),拆单则单道菜放大;赠菜带【赠】;
 //   - 做法/忌口:单菜备注缩进成子行,与整单备注一并加粗 —— 后厨最容易做错的地方;
-//   - 票尾:整单给一行「共 N 道 M 份」,出纸是否齐全一眼可比对。
+//   - 票尾:整单给一行「共 N 道 M 份」,出纸是否齐全一眼可比对;
+//     拆单批次的最后一张以「=」粗线收尾,标记整叠夹单到此为止(见 LastTicket)。
 func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts KitchenTicketOptions) []string {
 	w := LineWidth(paperWidth)
 	title := strings.TrimSpace(opts.Title)
@@ -415,7 +420,16 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts 
 		lines = append(lines, hr(w))
 		lines = appendRemarkLines(lines, "整单备注: "+o.OrderRemark, w)
 	}
-	lines = append(lines, hr(w))
+	// 票尾分隔线:拆单批次的最后一张用「=」粗线收尾(见 KitchenTicketOptions.LastTicket),
+	// 其余照旧细线 —— 粗线即「这是最后一张」的视觉标记。
+	// 粗线走居中控制行由机器居中(等宽估算的「铺满一行」在真实字宽下可能差出半格),
+	// 并按 BoldLine 的粗线行规则加粗(ESC E 重打 / 飞鹅 <BOLD> / 预览 font-weight):
+	// 单纯一排等号笔画偏细,加粗才够「粗线」的观感。
+	bottom := hr(w)
+	if opts.LastTicket && opts.SingleDish {
+		bottom = centerMarkLine(strings.Repeat("=", w))
+	}
+	lines = append(lines, bottom)
 	// 票尾垫一行空行再交给切纸:热敏机的切纸动作在末行打印完之后走纸裁断,末行内容
 	// 离刀口太近会被拦腰截断 —— 整单备注移到票尾后最明显,备注/分隔线正处在刀口上。
 	// 空行把票脚垫高一行,无论有没有整单备注,票尾都不再贴着刀口。
@@ -811,7 +825,8 @@ func SplitCutLine(line string) bool { return line == cutMarkPrefix }
 //     以及拆单后带序号的同款标题(【厨房单】2/5 —— 序号与原标题同行,省纸且一眼看得出第几张);
 //   - 合计行:以「合计」或「当前合计」开头的两列行(后者是加菜小票的金额行);
 //   - 备注行:「整单备注: …」「备注: …」与单菜备注子行(「* 加辣」)。
-//     备注是后厨最容易看漏、也最容易做错菜的地方,与成熟厨打单一样统一加粗。
+//     备注是后厨最容易看漏、也最容易做错菜的地方,与成熟厨打单一样统一加粗;
+//   - 粗线行:整行全是「=」的票尾标记线(拆单最后一张),加粗才够醒目。
 //
 // **本函数不读配置、不碰数据库**:它按行被调用(一次落地就要逐行走一遍),任何
 // 「读一次配置」的兜底判断都会随行数放大成几十次单行查询。店名行因此改由渲染层
@@ -843,6 +858,12 @@ func BoldLine(text string) bool {
 		return true
 	}
 	if strings.HasPrefix(t, "合计") || strings.HasPrefix(t, "当前合计") {
+		return true
+	}
+	// 整行全是「=」的粗线行(拆单最后一张的票尾标记,见 KitchenTicketOptions.LastTicket):
+	// 单纯一排等号笔画偏细,够不上「粗线」的观感;按加粗(ESC E 重打)输出才醒目。
+	// 该形态不会与正文撞车 —— 菜名/备注都不会整行只有等号。
+	if strings.Trim(t, "=") == "" {
 		return true
 	}
 	// 备注行:整单备注 / 顾客小票备注 / 单菜备注子行(「* 加辣」)。

@@ -248,6 +248,57 @@ func TestKitchenSplitItemOnePerDishWithSeq(t *testing.T) {
 	}
 }
 
+// TestKitchenSplitLastTicketThickBottomLine 一菜一单的最后一张票尾用「=」粗线收尾:
+// 一叠夹单逐张切纸散在一起,细线「----」每张都有、无从分辨;粗线即「单子到齐了」的标记。
+func TestKitchenSplitLastTicketThickBottomLine(t *testing.T) {
+	setupTestDB(t)
+	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitItem)
+	o, _ := sampleOrder()
+	printers := []po.Printer{{PrinterName: "后厨机", PrinterType: po.PrinterTypeKitchen, PaperWidth: 48}}
+
+	jobs := buildJobs(nil, nil, printers, o, sampleRows(), po.PrintDocKitchen, "【厨房单】", po.PrintTriggerOrder, "")
+	if len(jobs) != 2 {
+		t.Fatalf("两道菜应出 2 张, got %d", len(jobs))
+	}
+	for i, j := range jobs {
+		want := strings.Repeat("-", 48)
+		if i == len(jobs)-1 {
+			want = strings.Repeat("=", 48)
+		}
+		lines := j.render()
+		bottom := lines[len(lines)-2]
+		// 最后一张的粗线必须是「居中 + 加粗」控制行(机器居中、ESC E 重打),其余仍是普通细线行。
+		if i == len(jobs)-1 {
+			text, ok := SplitCenterLine(bottom)
+			if !ok || text != want {
+				t.Fatalf("最后一张票尾应为居中粗线 %q, got %q:\n%s", want, bottom, strings.Join(lines, "\n"))
+			}
+			if _, bold := BoldText(text); !bold {
+				t.Fatalf("粗线应按加粗输出(粗线行形态反推), got %q", text)
+			}
+			raw := encodeESCPOS(lines)
+			if !bytes.Contains(raw, append([]byte{0x1B, 0x61, 0x01}, []byte{0x1B, 0x45, 0x01}...)) {
+				t.Fatalf("ESC/POS 粗线应先居中(ESC a 1)再加粗(ESC E 1), bytes=%v", raw)
+			}
+			continue
+		}
+		if bottom != want {
+			t.Fatalf("第 %d 张票尾分隔线应为 %q, got %q:\n%s", i+1, want, bottom, strings.Join(lines, "\n"))
+		}
+	}
+
+	// 整单档不受影响:票尾仍是细线。
+	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitWhole)
+	jobs = buildJobs(nil, nil, printers, o, sampleRows(), po.PrintDocKitchen, "【厨房单】", po.PrintTriggerOrder, "")
+	if len(jobs) != 1 {
+		t.Fatalf("整单档应只出 1 张, got %d", len(jobs))
+	}
+	lines := jobs[0].render()
+	if lines[len(lines)-2] != strings.Repeat("-", 48) {
+		t.Fatalf("整单档票尾不应变粗线, got %q", lines[len(lines)-2])
+	}
+}
+
 // TestKitchenSplitPortionExpandsQuantity 按份数拆:点 3 份(2+1)出 3 张,每张 x1。
 func TestKitchenSplitPortionExpandsQuantity(t *testing.T) {
 	setupTestDB(t)

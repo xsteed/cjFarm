@@ -318,6 +318,9 @@ type job struct {
 	// singleDish 表示这张厨房单是拆出来的夹单(只含一道菜):
 	// 渲染层据此放大菜名、且不编序号/不出份数汇总(见 KitchenTicketOptions.SingleDish)。
 	singleDish bool
+	// lastTicket 表示这张夹单是本台打印机本批拆单的最后一张:
+	// 渲染层据此在票尾打粗线,后厨凭它确认整叠夹单到此为止(见 KitchenTicketOptions.LastTicket)。
+	lastTicket bool
 	// shopName / showPrice 是本批票共享的模板配置快照。
 	//
 	// 同一次下单所有票的店名与「厨房单带金额」开关完全一致,没有理由逐票重查配置表 ——
@@ -406,6 +409,7 @@ func (j job) render() []string {
 		Title:      j.title,
 		ShowPrice:  j.showPrice,
 		SingleDish: j.singleDish,
+		LastTicket: j.lastTicket,
 		ShopName:   j.shopName,
 	})
 }
@@ -701,6 +705,7 @@ func jobsForPrinter(p po.Printer, o po.Order, items []service.PrintOrderItemRow,
 			docType: docType, title: seqTitle(title, i, len(groups)),
 			triggerBy: triggerBy, operator: operator,
 			singleDish: docType == po.PrintDocKitchen && mode != po.KitchenSplitWhole,
+			lastTicket: docType == po.PrintDocKitchen && mode != po.KitchenSplitWhole && i == len(groups)-1,
 			shopName:   shopName, showPrice: showPrice,
 			log: log, agentLog: agentLog,
 		})
@@ -1318,6 +1323,7 @@ func kitchenSampleChunks(o po.Order, items []po.OrderItem, paperWidth int, ov Sa
 			Title:      seqTitle("【厨房单】", i, len(groups)),
 			ShowPrice:  showPrice,
 			SingleDish: len(groups) > 1,
+			LastTicket: len(groups) > 1 && i == len(groups)-1,
 		}))
 	}
 	return out
