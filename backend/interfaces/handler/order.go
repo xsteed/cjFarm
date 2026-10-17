@@ -358,8 +358,10 @@ func printOrderTicket(ctx context.Context, orderID int) {
 // 订单就已经是「已支付」,后续不会再有独立的结账动作(SettleOrder 对已支付订单
 // 直接拒绝)—— 收款时出的这张小票是该订单唯一的付款凭证,因此直接按
 // PrintGuestTicket(trigger=settle)出【结账小票】,点菜单与付款凭证合一;
-// 厨房单则照常走 PrintKitchen(trigger=order)。后付模式下厨单已在下单时出过,
-// 这里直接返回,不会重复出纸。
+// 厨房单走 PrintKitchenNew(trigger=order):收款成功那一刻是该订单的第一张
+// 厨房单,整单全部菜品都要现做,抬头必须是【厨房单】而非【加菜单】——
+// 此前误用加菜专用的 PrintKitchen,整单被写死成【加菜单】+trigger=append。
+// 后付模式下厨单已在下单时出过,这里直接返回,不会重复出纸。
 // 打印在 print 包内异步执行且自带失败留痕,故本函数不返回错误,不影响收款结果。
 func printKitchenOnPaid(ctx context.Context, orderID int) {
 	if !service.PayFirstEnabled() {
@@ -370,7 +372,7 @@ func printKitchenOnPaid(ctx context.Context, orderID int) {
 		logger.CtxWarnf(ctx, "[print][告警] 先付模式收款后读取订单失败,厨单未出 订单%d: %v", orderID, err)
 		return
 	}
-	print.PrintKitchen(ctx, o, items)
+	print.PrintKitchenNew(ctx, o, items)
 	printOrderTicket(ctx, orderID)
 }
 

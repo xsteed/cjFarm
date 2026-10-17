@@ -872,19 +872,34 @@ func PrintOrder(ctx context.Context, o po.Order, items []po.OrderItem) {
 // 这几道),小票则重出整单最新金额;两者口径不同,不要合并。
 // items 应为本次新增的菜品(不是整桌的全部菜品)。
 func PrintKitchen(ctx context.Context, o po.Order, items []po.OrderItem) {
+	printKitchenDoc(ctx, o, items, "PrintKitchen", "【加菜单】", po.PrintTriggerAppend)
+}
+
+// PrintKitchenNew 首次出厨:向厨房机推「【厨房单】」(trigger=order)。
+//
+// 先付模式下下单时不出厨单(customer.go 已跳过),统一后移到「首次收款成功」;
+// 那一刻出的是该订单的第一张厨房单,整单全部菜品都是要做的菜 —— 抬头必须是
+// 【厨房单】、trigger 必须落 order。此前这里复用 PrintKitchen,整单被打成
+// 【加菜单】+trigger=append,后厨无从分辨是不是新单,补打/预览(kitchenTitleFor
+// 按 trigger 推导抬头)也跟着错。
+func PrintKitchenNew(ctx context.Context, o po.Order, items []po.OrderItem) {
+	printKitchenDoc(ctx, o, items, "PrintKitchenNew", "【厨房单】", po.PrintTriggerOrder)
+}
+
+func printKitchenDoc(ctx context.Context, o po.Order, items []po.OrderItem, fn, title, trigger string) {
 	if !printEnabled() {
 		return
 	}
 	log := logger.WithContext(ctx, zap.String("orderNo", o.OrderNo))
 	agentLog := logger.AgentWithContext(ctx, zap.String("orderNo", o.OrderNo))
-	goSafe("PrintKitchen", func() {
+	goSafe(fn, func() {
 		attached := service.AttachItemCategories(items)
 		printers, err := loadPrinters(po.PrinterTypeKitchen)
 		if err != nil {
 			log.Warnf("打印: 查询厨房打印机失败: %v", err)
 			return
 		}
-		runAsync(buildJobs(log, agentLog, printers, o, attached, po.PrintDocKitchen, "【加菜单】", po.PrintTriggerAppend, ""))
+		runAsync(buildJobs(log, agentLog, printers, o, attached, po.PrintDocKitchen, title, trigger, ""))
 	})
 }
 
