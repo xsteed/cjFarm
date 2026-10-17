@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils';
-import TDesign, { Select as TSelect } from 'tdesign-vue-next';
+import TDesign, { Pagination as TPagination } from 'tdesign-vue-next';
 import Orders from '../Orders.vue';
 import { listOrders } from '@dining/api';
 import { setAuth } from '@dining/auth';
@@ -50,8 +50,6 @@ vi.mock('../../components/OrderDetailDialog.vue', async () => {
 
 // 图标在 main.ts 里全局注册，测试环境没有；逐个 stub 掉避免组件解析告警。
 const iconStubs = {
-  'chevron-left-icon': { template: '<i />' },
-  'chevron-right-icon': { template: '<i />' },
   'search-icon': { template: '<i />' },
   'filter-icon': { template: '<i />' },
   'refresh-icon': { template: '<i />' }
@@ -77,7 +75,7 @@ const listOrdersMock = vi.mocked(listOrders);
 let restoreMatchMedia: () => void;
 
 beforeEach(() => {
-  // 移动端断点(max-width: 1024px)置真，页面走 App 式订单流(卡片 + 顶部页码选择器)
+  // 移动端断点(max-width: 1024px)置真，页面走 App 式订单流(卡片 + 底部分页器)
   const original = window.matchMedia;
   window.matchMedia = vi.fn().mockImplementation((query: string): MediaQueryList => {
     return {
@@ -117,81 +115,56 @@ function mountOrders() {
   });
 }
 
-describe('Orders 订单管理页 · 移动端顶部页码选择器', () => {
-  it('多页时在卡片列表上方渲染页码选择器，显示当前页/总页数与总单数', async () => {
+describe('Orders 订单管理页 · 移动端底部分页器', () => {
+  it('多页时在卡片列表底部渲染分页器(与菜品页同口径)', async () => {
     const wrapper = mountOrders();
     await flushPromises();
 
-    const pager = wrapper.find('.m-toppager');
+    const pager = wrapper.find('.m-pager');
     expect(pager.exists()).toBe(true);
-    // 选择器位于订单卡片列表之前(顶部)，而不是只在列表底部
-    expect(pager.element.compareDocumentPosition(wrapper.find('.m-list').element))
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(pager.text()).toContain('第 1 / 3 页');
-    expect(pager.text()).toContain(`共 ${TOTAL} 单`);
-    // 第 1 页时「上一页」禁用、「下一页」可点
-    expect(pager.findAll('.m-toppager-nav')[0].attributes('disabled')).toBeDefined();
-    expect(pager.findAll('.m-toppager-nav')[1].attributes('disabled')).toBeUndefined();
+    expect(pager.findComponent(TPagination).exists()).toBe(true);
+    expect(pager.findComponent(TPagination).props('total')).toBe(TOTAL);
+    // 只此一个分页器，且位于订单卡片之后(底部)
+    expect(wrapper.findAll('.m-pager')).toHaveLength(1);
+    expect(pager.element.compareDocumentPosition(wrapper.find('.ocard').element)).toBe(
+      Node.DOCUMENT_POSITION_PRECEDING
+    );
     wrapper.unmount();
   });
 
-  it('只有一页时不渲染顶部页码选择器', async () => {
+  it('一页或 0 单时不渲染分页器(v-if total > pageSize)', async () => {
     listOrdersMock.mockResolvedValue({ total: 8, items: orderPage(1).slice(0, 8) });
-    const wrapper = mountOrders();
+    const onePage = mountOrders();
     await flushPromises();
+    expect(onePage.find('.m-pager').exists()).toBe(false);
+    onePage.unmount();
 
-    expect(wrapper.find('.m-toppager').exists()).toBe(false);
-    wrapper.unmount();
+    listOrdersMock.mockResolvedValue({ total: 0, items: [] });
+    const empty = mountOrders();
+    await flushPromises();
+    expect(empty.find('.m-pager').exists()).toBe(false);
+    empty.unmount();
   });
 
-  it('点「下一页」带着当前筛选请求第 2 页，并更新页码显示', async () => {
+  it('点分页器页码即跳转(请求对应页并保留原筛选条件)', async () => {
     const wrapper = mountOrders();
     await flushPromises();
 
-    await wrapper.findAll('.m-toppager-nav')[1].trigger('click');
+    // current-change 首参就是新页码数字(见 t-pagination 事件签名)
+    const pagination = wrapper.find('.m-pager').findComponent(TPagination);
+    (pagination.vm as unknown as { $emit: (event: string, ...args: unknown[]) => void }).$emit(
+      'current-change',
+      3
+    );
     await flushPromises();
 
-    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageNum: 2, pageSize: PAGE_SIZE }));
-    expect(wrapper.find('.m-toppager').text()).toContain('第 2 / 3 页');
-    wrapper.unmount();
-  });
-
-  it('页码下拉列出全部页，选中即跳转(直接请求选中页)', async () => {
-    const wrapper = mountOrders();
-    await flushPromises();
-
-    const select = wrapper.findComponent(TSelect);
-    expect(select.exists()).toBe(true);
-    // 折叠态显示「第 X / Y 页」，下拉项逐页可点(即分页选择 + 跳转)
-    expect(wrapper.find('.m-toppager').text()).toContain('第 1 / 3 页');
-    expect(select.props('options')).toEqual([
-      { label: '第 1 页', value: 1 },
-      { label: '第 2 页', value: 2 },
-      { label: '第 3 页', value: 3 }
-    ]);
-
-    (select.vm as unknown as { $emit: (event: string, ...args: unknown[]) => void }).$emit('change', 3);
-    await flushPromises();
-
-    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageNum: 3 }));
-    expect(wrapper.find('.m-toppager').text()).toContain('第 3 / 3 页');
-    // 末页时「下一页」禁用，「上一页」恢复可点
-    expect(wrapper.findAll('.m-toppager-nav')[1].attributes('disabled')).toBeDefined();
-    expect(wrapper.findAll('.m-toppager-nav')[0].attributes('disabled')).toBeUndefined();
-    wrapper.unmount();
-  });
-
-  it('跳页后仍保留原筛选条件(页号变了，查询参数不变)', async () => {
-    const wrapper = mountOrders();
-    await flushPromises();
-
-    await wrapper.findAll('.m-toppager-nav')[1].trigger('click');
-    await flushPromises();
-
-    // 首屏与翻页两次请求的查询条件完全一致，只有 pageNum 不同
+    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageNum: 3, pageSize: PAGE_SIZE }));
+    // 跳页后仍保留原筛选条件：两次请求只有 pageNum 不同
     const firstCall = listOrdersMock.mock.calls[0][0];
-    const secondCall = listOrdersMock.mock.calls.at(-1)?.[0];
-    expect(secondCall).toEqual({ ...firstCall, pageNum: 2 });
+    const lastCall = listOrdersMock.mock.calls.at(-1)?.[0];
+    expect(lastCall).toEqual({ ...firstCall, pageNum: 3 });
+    // 分页器当前页同步为第 3 页
+    expect(wrapper.find('.m-pager').findComponent(TPagination).props('current')).toBe(3);
     wrapper.unmount();
   });
 });

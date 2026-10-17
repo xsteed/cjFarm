@@ -864,10 +864,12 @@ onUnmounted(() => {
   margin-top: 10px;
 }
 
-/* 移动端搜索栏右侧的图标按钮:正方形 */
+/* 移动端搜索栏右侧的图标按钮(批量导出桌台二维码):正方形,与搜索输入框同高。
+   输入框高度走 --td-comp-size-m(默认 32px),这里取同一 token 而不是写死像素,
+   换主题/组件尺寸时两边自动保持一致;原来固定 40px 会把整条搜索栏撑高、与输入框错位 */
 .m-filter-btn {
-  width: 40px;
-  height: 40px;
+  width: var(--td-comp-size-m);
+  height: var(--td-comp-size-m);
   flex-shrink: 0;
   padding: 0;
 }

@@ -143,52 +143,6 @@
         </div>
       </div>
 
-      <!-- 移动端顶部页码选择器:订单流一屏放不下几页,翻页/跳页不用再滑到列表底部。
-           「‹ 第 X / Y 页 ›」中的页码是一个下拉选择器,点开可直接跳到任意页(即跳转),
-           两侧箭头按钮管上/下翻页;最右侧给出总单数,单页时整条隐藏。 -->
-      <div
-        v-if="pagination.total > pagination.pageSize"
-        class="m-toppager"
-      >
-        <t-button
-          variant="outline"
-          size="small"
-          class="m-toppager-nav"
-          :disabled="pagination.current <= 1"
-          aria-label="上一页"
-          @click="goPage(pagination.current - 1)"
-        >
-          <template #icon>
-            <chevron-left-icon />
-          </template>
-        </t-button>
-        <t-select
-          :value="pagination.current"
-          :options="pageOptions"
-          size="small"
-          class="m-toppager-sel"
-          @change="onTopPageSelect"
-        >
-          <!-- 折叠态显示「第 X / Y 页」,下拉列表里则是「第 N 页」逐项可选 -->
-          <template #valueDisplay>
-            第 {{ pagination.current }} / {{ pageCount }} 页
-          </template>
-        </t-select>
-        <t-button
-          variant="outline"
-          size="small"
-          class="m-toppager-nav"
-          :disabled="pagination.current >= pageCount"
-          aria-label="下一页"
-          @click="goPage(pagination.current + 1)"
-        >
-          <template #icon>
-            <chevron-right-icon />
-          </template>
-        </t-button>
-        <span class="m-toppager-total">共 {{ pagination.total }} 单</span>
-      </div>
-
       <div class="m-list">
         <div
           v-if="!list.length"
@@ -292,6 +246,8 @@
           </div>
         </div>
 
+        <!-- 移动端底部分页器:与菜品页同口径(current-change 首参即新页码数字)，
+             多页时才出现;点页码数字即跳转到该页 -->
         <div
           v-if="pagination.total > pagination.pageSize"
           class="m-pager"
@@ -300,7 +256,7 @@
             :current="pagination.current"
             :page-size="pagination.pageSize"
             :total="pagination.total"
-            @change="onPageChange"
+            @current-change="onPageChange"
           />
         </div>
       </div>
@@ -313,7 +269,7 @@
       row-key="orderId"
       :loading="loading"
       :pagination="pagination"
-      @page-change="onPageChange"
+      @page-change="onTablePageChange"
     >
       <template #orderNo="{ row }">
         <span
@@ -778,34 +734,17 @@ function onSearch(): void {
   load();
 }
 
-function onPageChange(page: PageInfo): void {
-  pagination.current = page.current;
-  pagination.pageSize = page.pageSize;
+// 移动端底部分页器:current-change 首参就是新页码数字(与菜品页同口径,见 t-pagination 事件签名)
+function onPageChange(page: number): void {
+  pagination.current = page;
   load();
 }
 
-// ---- 移动端顶部页码选择器 ----
-// 总页数与页码下拉项:后端不纠偏越界页码(直接返回空列表),这里的边界都以
-// [1, pageCount] 夹紧,保证「上一页/下一页」到边即禁用、下拉只列合法页。
-const pageCount = computed(() => Math.max(1, Math.ceil(pagination.total / pagination.pageSize)));
-const pageOptions = computed(() =>
-  Array.from({ length: pageCount.value }, (_, i) => ({ label: `第 ${i + 1} 页`, value: i + 1 }))
-);
-
-// goPage 顶部选择器的统一翻页入口:页码夹到合法范围后重拉当前筛选条件下的列表。
-// 重复点当前页不发请求(下拉里选中当前页也会触发 change,静默忽略即可)。
-function goPage(page: number): void {
-  const next = Math.min(Math.max(1, Math.trunc(page) || 1), pageCount.value);
-  if (next === pagination.current) return;
-  pagination.current = next;
+// t-table 的 page-change 给的是 PageInfo(current + pageSize),语义与底部分页器不同,分开处理
+function onTablePageChange(pageInfo: PageInfo): void {
+  pagination.current = pageInfo.current;
+  pagination.pageSize = pageInfo.pageSize;
   load();
-}
-
-// 下拉选择器 change 回传的是 SelectValue(string|number|...),统一转成页码再走 goPage。
-function onTopPageSelect(value: unknown): void {
-  const page = Number(value);
-  if (!Number.isFinite(page) || page < 1) return;
-  goPage(page);
 }
 
 // openDetail 打开详情弹窗:只给组件 orderId,详情与退款记录由组件自行拉取。
@@ -1100,10 +1039,12 @@ onUnmounted(() => {
   color: var(--ink, #1a1a1a);
 }
 
-/* 移动端搜索栏右侧的筛选图标按钮:正方形 */
+/* 移动端搜索栏右侧的筛选图标按钮:正方形,与搜索输入框同高。
+   输入框高度走 --td-comp-size-m(默认 32px),这里直接取同一 token 而不是写死像素,
+   换主题/字号时两边自动保持一致;原来固定 40px 会把整条搜索栏撑高、与输入框错位 */
 .m-filter-btn {
-  width: 40px;
-  height: 40px;
+  width: var(--td-comp-size-m);
+  height: var(--td-comp-size-m);
   flex-shrink: 0;
   padding: 0;
 }
@@ -1125,35 +1066,5 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--ink-2);
   font-weight: 500;
-}
-
-/* 移动端顶部页码选择器:一行铺开「‹ 第 X / Y 页 › 共 N 单」,
-   贴在搜索/状态栏与卡片列表之间,翻页不用再滑到列表底部 */
-.m-toppager {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-/* 上/下翻页箭头:正方形小按钮,与搜索栏右侧筛选按钮同风格 */
-.m-toppager-nav {
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  padding: 0;
-}
-
-/* 页码下拉:吃掉中间剩余宽度;折叠态文案(第 X / Y 页)由 valueDisplay 渲染 */
-.m-toppager-sel {
-  flex: 1;
-  min-width: 0;
-}
-
-/* 总单数:弱化小字附在末尾,不抢页码的视觉重心 */
-.m-toppager-total {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: var(--ink-3, #8a8f99);
 }
 </style>

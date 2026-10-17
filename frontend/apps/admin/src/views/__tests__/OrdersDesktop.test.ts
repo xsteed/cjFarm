@@ -48,8 +48,6 @@ vi.mock('../../components/OrderDetailDialog.vue', async () => {
 });
 
 const iconStubs = {
-  'chevron-left-icon': { template: '<i />' },
-  'chevron-right-icon': { template: '<i />' },
   'search-icon': { template: '<i />' },
   'filter-icon': { template: '<i />' },
   'refresh-icon': { template: '<i />' }
