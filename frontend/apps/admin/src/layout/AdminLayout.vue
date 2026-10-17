@@ -196,19 +196,87 @@
         </router-link>
       </nav>
     </div>
+
+    <!-- 「顾客点餐页」选桌弹窗:开窗在 pickTable 的点击手势里同步完成,这里只负责选桌 -->
+    <t-dialog
+      v-model:visible="pickerVisible"
+      header="打开顾客点餐页"
+      width="420px"
+      :footer="false"
+    >
+      <t-input
+        v-model="pickerKeyword"
+        placeholder="搜索桌号 / 桌名"
+        clearable
+      />
+      <div class="pick-list">
+        <div
+          v-if="pickerLoading"
+          class="pick-tip"
+        >
+          加载桌台中...
+        </div>
+        <div
+          v-else-if="pickerError"
+          class="pick-tip"
+        >
+          {{ pickerError }}
+          <t-button
+            variant="text"
+            theme="primary"
+            size="small"
+            @click="loadPickerTables"
+          >
+            重试
+          </t-button>
+        </div>
+        <div
+          v-else-if="!filteredPickRows.length"
+          class="pick-tip"
+        >
+          {{ pickerRows.length ? '没有匹配的桌台' : '暂无桌台，请先到「桌台管理」创建桌台' }}
+        </div>
+        <template v-else>
+          <button
+            v-for="t in filteredPickRows"
+            :key="t.tableId"
+            type="button"
+            class="pick-item"
+            @click="pickTable(t)"
+          >
+            <span class="pick-name">{{ t.tableName }}（{{ t.tableNo }}桌）</span>
+            <span
+              v-if="Number(t.lockStatus) === 1"
+              class="pick-tag"
+              >停用</span
+            >
+            <span
+              v-else-if="Number(t.lockStatus) === 2"
+              class="pick-tag book"
+              >预约</span
+            >
+            <span
+              v-else-if="t.status === 1"
+              class="pick-tag busy"
+              >用餐中</span
+            >
+          </button>
+        </template>
+      </div>
+    </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { MessagePlugin } from 'tdesign-vue-next';
 import { listTables } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
 import { useShopBrand } from '../composables/useShopBrand';
 import { accessibleMenus, menuTree } from '../menu';
 import type { MenuNode } from '../menu';
 import { clearAuth, getDisplayName, getRoleName, hasPerm, revokeRemember } from '@dining/auth';
+import type { TableInfo } from '@dining/types';
 import pkg from '../../package.json';
 
 const route = useRoute();
@@ -331,19 +399,63 @@ function isActive(path: string | undefined): boolean {
   return !!path && route.path === path;
 }
 
-async function openOrderPage() {
+// ---------- 「顾客点餐页」选桌弹窗 ----------
+// 移动端浏览器(微信内置 / iOS Safari / 安卓 Chrome)要求 window.open 必须在
+// 用户手势的同步调用栈里执行:await 之后开窗会被静默拦截,表现为「点了没反应」。
+// 选桌动作本身就是一次点击手势,所以把开窗放进 pickTable 里同步调用——
+// 点击到开窗之间不做任何 await,也就不需要先开 about:blank 占位,不会出现空白标签页。
+const pickerVisible = ref(false);
+const pickerLoading = ref(false);
+const pickerKeyword = ref('');
+const pickerRows = ref<TableInfo[]>([]);
+const pickerError = ref('');
+
+const filteredPickRows = computed(() => {
+  const kw = pickerKeyword.value.trim().toLowerCase();
+  if (!kw) return pickerRows.value;
+  return pickerRows.value.filter(
+    t =>
+      (t.tableName || '').toLowerCase().includes(kw) ||
+      (t.tableNo || '').toLowerCase().includes(kw)
+  );
+});
+
+function openOrderPage(): void {
+  pickerKeyword.value = '';
+  pickerVisible.value = true;
+  void loadPickerTables();
+}
+
+async function loadPickerTables(): Promise<void> {
+  if (pickerLoading.value) return;
+  pickerLoading.value = true;
+  pickerError.value = '';
+  pickerRows.value = [];
   try {
-    const res = await listTables({ pageNum: 1, pageSize: 1 });
-    const rows = res.items || [];
-    if (!rows.length) {
-      MessagePlugin.warning('暂无桌台，请先到「桌台管理」创建桌台');
-      return;
+    // 分页拉全量,上限 10 页双保险,与桌台管理页的取数方式一致
+    const rows: TableInfo[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const res = await listTables({ pageNum: page, pageSize: 100 });
+      const items = res.items || [];
+      rows.push(...items);
+      if (!items.length || rows.length >= res.total) break;
     }
-    // 优先使用桌台稳定码(不可枚举),与二维码弹窗的 URL 规则保持一致;缺码的存量桌台回退数字 ID。
-    window.open(`/order/${rows[0].tableCode || rows[0].tableId}`, '_blank');
+    pickerRows.value = rows;
   } catch {
-    MessagePlugin.warning('获取桌台失败，请稍后重试');
+    pickerError.value = '获取桌台失败，请检查网络后重试';
+  } finally {
+    pickerLoading.value = false;
   }
+}
+
+function pickTable(t: TableInfo): void {
+  // 优先使用桌台稳定码(不可枚举),与二维码弹窗的 URL 规则保持一致;缺码的存量桌台回退数字 ID。
+  const target = `/order/${t.tableCode || t.tableId}`;
+  pickerVisible.value = false;
+  // 处于用户点击手势栈内,同步开窗不会被移动端拦截
+  const win = window.open(target, '_blank');
+  // 个别内核(如部分微信版本)不支持 window.open:退化为当前页跳转
+  if (!win) location.href = target;
 }
 
 function onLogout() {
@@ -363,6 +475,71 @@ function onLogout() {
   /* 移动端浏览器地址栏收起/展开会改变可视高度,100vh 会产生跳动 */
   height: 100dvh;
   background: var(--bg);
+}
+
+/* ---------- 顾客点餐页选桌弹窗 ---------- */
+.pick-list {
+  margin-top: 12px;
+  max-height: 56vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pick-tip {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.pick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pick-item:hover {
+  border-color: var(--brand);
+  background: #fff8f4;
+}
+
+.pick-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pick-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #ececec;
+  color: var(--ink-3);
+}
+
+.pick-tag.busy {
+  background: #fff1e8;
+  color: var(--brand-deep);
+}
+
+.pick-tag.book {
+  background: #eef4ff;
+  color: #3b6fd4;
 }
 
 /* ---------- 侧栏 ---------- */
