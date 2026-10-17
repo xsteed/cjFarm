@@ -367,8 +367,9 @@ type KitchenTicketOptions struct {
 	//   - 不编菜品序号、不出「共 N 道 M 份」汇总 —— 恒为 1 道 1 份,纯属浪费纸面。
 	SingleDish bool
 	// LastTicket 本台打印机这一批拆单小票的最后一张(仅拆单时有意义):
-	// 票尾分隔线改用「=」粗线 —— 一叠夹单逐张切纸后散落在一起,细线「----」
-	// 每张都有、无从分辨;最后一张的底部换成一整行粗线,后厨凭它确认「单子到齐了」。
+	// 票尾细线之下多加一行「====结束====」粗线 —— 一叠夹单逐张切纸后散落在一起,
+	// 细线「----」每张都有、无从分辨;最后一张多出的这一行粗线并嵌「结束」,
+	// 后厨凭它确认「单子到齐了」。
 	LastTicket bool
 }
 
@@ -378,7 +379,7 @@ type KitchenTicketOptions struct {
 //   - 菜品区:整单逐道编号(便于划单报数),拆单则单道菜放大;赠菜带【赠】;
 //   - 做法/忌口:单菜备注缩进成子行,与整单备注一并加粗 —— 后厨最容易做错的地方;
 //   - 票尾:整单给一行「共 N 道 M 份」,出纸是否齐全一眼可比对;
-//     拆单批次的最后一张以「=」粗线收尾,标记整叠夹单到此为止(见 LastTicket)。
+//     拆单批次的最后一张在票尾细线之下多加一行「====结束====」,标记整叠夹单到此为止(见 LastTicket)。
 func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts KitchenTicketOptions) []string {
 	w := LineWidth(paperWidth)
 	title := strings.TrimSpace(opts.Title)
@@ -420,16 +421,15 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts 
 		lines = append(lines, hr(w))
 		lines = appendRemarkLines(lines, "整单备注: "+o.OrderRemark, w)
 	}
-	// 票尾分隔线:拆单批次的最后一张用「=」粗线收尾(见 KitchenTicketOptions.LastTicket),
-	// 其余照旧细线 —— 粗线即「这是最后一张」的视觉标记。
+	// 票尾分隔线保持细线不变;拆单批次的最后一张在其下再加一行「====结束====」粗线
+	// (见 KitchenTicketOptions.LastTicket)—— 粗线即「这是最后一张」的视觉标记。
 	// 粗线走居中控制行由机器居中(等宽估算的「铺满一行」在真实字宽下可能差出半格),
 	// 并按 BoldLine 的粗线行规则加粗(ESC E 重打 / 飞鹅 <BOLD> / 预览 font-weight):
 	// 单纯一排等号笔画偏细,加粗才够「粗线」的观感。
-	bottom := hr(w)
+	lines = append(lines, hr(w))
 	if opts.LastTicket && opts.SingleDish {
-		bottom = centerMarkLine(strings.Repeat("=", w))
+		lines = append(lines, centerMarkLine(lastTicketMark(w)))
 	}
-	lines = append(lines, bottom)
 	// 票尾垫一行空行再交给切纸:热敏机的切纸动作在末行打印完之后走纸裁断,末行内容
 	// 离刀口太近会被拦腰截断 —— 整单备注移到票尾后最明显,备注/分隔线正处在刀口上。
 	// 空行把票脚垫高一行,无论有没有整单备注,票尾都不再贴着刀口。
@@ -456,6 +456,19 @@ func itemSummary(items []po.OrderItem) string {
 		qty += it.Quantity
 	}
 	return fmt.Sprintf("共 %d 道 %d 份", len(items), qty)
+}
+
+// lastTicketMark 拆单最后一张的票尾标记行:一整行等号粗线,中间嵌「结束」。
+//
+// 光有粗线只能看出「这张不一样」,远看仍要凑近读标题序号才知道是最后一张;
+// 中间嵌「结束」两字后,粗线本身就是一句「整叠到此为止」,不用再和别的票比。
+// 「结束」左右各留一个空格再让等号贴边:夹着等号的「结束」笔画会与等号糊在一起,
+// 留缝后远看更清楚。文本共 6 格(两个全角字 + 两个半角空格),两侧等号均分剩余宽度 ——
+// 纸宽(32/48)恒为偶数,两边必然等长;万一出现奇数纸宽,余数归右侧,视觉上仍居中。
+func lastTicketMark(w int) string {
+	const text = " 结束 "
+	side := (w - displayWidth(text)) / 2
+	return strings.Repeat("=", side) + text + strings.Repeat("=", w-displayWidth(text)-side)
 }
 
 // guestTicketConfig 顾客小票的模板配置快照。
@@ -826,7 +839,7 @@ func SplitCutLine(line string) bool { return line == cutMarkPrefix }
 //   - 合计行:以「合计」或「当前合计」开头的两列行(后者是加菜小票的金额行);
 //   - 备注行:「整单备注: …」「备注: …」与单菜备注子行(「* 加辣」)。
 //     备注是后厨最容易看漏、也最容易做错菜的地方,与成熟厨打单一样统一加粗;
-//   - 粗线行:整行全是「=」的票尾标记线(拆单最后一张),加粗才够醒目。
+//   - 粗线行:整行由等号(可夹「结束」)组成的票尾标记线(拆单最后一张),加粗才够醒目。
 //
 // **本函数不读配置、不碰数据库**:它按行被调用(一次落地就要逐行走一遍),任何
 // 「读一次配置」的兜底判断都会随行数放大成几十次单行查询。店名行因此改由渲染层
@@ -860,10 +873,11 @@ func BoldLine(text string) bool {
 	if strings.HasPrefix(t, "合计") || strings.HasPrefix(t, "当前合计") {
 		return true
 	}
-	// 整行全是「=」的粗线行(拆单最后一张的票尾标记,见 KitchenTicketOptions.LastTicket):
-	// 单纯一排等号笔画偏细,够不上「粗线」的观感;按加粗(ESC E 重打)输出才醒目。
-	// 该形态不会与正文撞车 —— 菜名/备注都不会整行只有等号。
-	if strings.Trim(t, "=") == "" {
+	// 票尾粗线行:整行由等号(可夹「 结束 」)组成,如「==== 结束 ====」(拆单最后一张的
+	// 收尾标记,见 KitchenTicketOptions.LastTicket):单纯一排等号笔画偏细,
+	// 够不上「粗线」的观感;按加粗(ESC E 重打)输出才醒目。
+	// 该形态不会与正文撞车 —— 菜名/备注都不会整行只有等号、「结束」与留缝空格。
+	if strings.Contains(t, "结束") && strings.Trim(t, "=结束 ") == "" {
 		return true
 	}
 	// 备注行:整单备注 / 顾客小票备注 / 单菜备注子行(「* 加辣」)。

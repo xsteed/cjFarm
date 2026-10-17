@@ -261,17 +261,23 @@ func TestKitchenSplitLastTicketThickBottomLine(t *testing.T) {
 		t.Fatalf("两道菜应出 2 张, got %d", len(jobs))
 	}
 	for i, j := range jobs {
-		want := strings.Repeat("-", 48)
-		if i == len(jobs)-1 {
-			want = strings.Repeat("=", 48)
-		}
 		lines := j.render()
-		bottom := lines[len(lines)-2]
-		// 最后一张的粗线必须是「居中 + 加粗」控制行(机器居中、ESC E 重打),其余仍是普通细线行。
+		// 票尾:所有票都以细线收尾 + 垫一行空行;最后一张在细线之下再多一行居中加粗的
+		// 「====结束====」,标记整叠夹单到此为止。
+		if lines[len(lines)-1] != "" {
+			t.Fatalf("第 %d 张票尾应垫空行, got %q", i+1, lines[len(lines)-1])
+		}
+		if lines[len(lines)-2] != strings.Repeat("-", 48) && i < len(jobs)-1 {
+			t.Fatalf("第 %d 张票尾分隔线应为细线, got %q", i+1, lines[len(lines)-2])
+		}
 		if i == len(jobs)-1 {
-			text, ok := SplitCenterLine(bottom)
+			if lines[len(lines)-3] != strings.Repeat("-", 48) {
+				t.Fatalf("最后一张应保留原有细线, got %q", lines[len(lines)-3])
+			}
+			want := strings.Repeat("=", 21) + " 结束 " + strings.Repeat("=", 21)
+			text, ok := SplitCenterLine(lines[len(lines)-2])
 			if !ok || text != want {
-				t.Fatalf("最后一张票尾应为居中粗线 %q, got %q:\n%s", want, bottom, strings.Join(lines, "\n"))
+				t.Fatalf("最后一张票尾应为居中粗线 %q, got %q:\n%s", want, lines[len(lines)-2], strings.Join(lines, "\n"))
 			}
 			if _, bold := BoldText(text); !bold {
 				t.Fatalf("粗线应按加粗输出(粗线行形态反推), got %q", text)
@@ -280,10 +286,6 @@ func TestKitchenSplitLastTicketThickBottomLine(t *testing.T) {
 			if !bytes.Contains(raw, append([]byte{0x1B, 0x61, 0x01}, []byte{0x1B, 0x45, 0x01}...)) {
 				t.Fatalf("ESC/POS 粗线应先居中(ESC a 1)再加粗(ESC E 1), bytes=%v", raw)
 			}
-			continue
-		}
-		if bottom != want {
-			t.Fatalf("第 %d 张票尾分隔线应为 %q, got %q:\n%s", i+1, want, bottom, strings.Join(lines, "\n"))
 		}
 	}
 
