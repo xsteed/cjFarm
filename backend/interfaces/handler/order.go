@@ -40,6 +40,11 @@ func OrderList(c *gin.Context) {
 	if v := c.Query("tableNo"); v != "" {
 		q.TableNo = v
 	}
+	// 桌台名称模糊匹配(如「大厅01桌」):与桌号筛选并列,名称可随时改,
+	// 历史单留的是改名前的快照,必须服务端过滤(同 settleRemark 的理由)。
+	if v := c.Query("tableName"); v != "" {
+		q.TableName = v
+	}
 	// 结算方式筛选:normal 正常收款 / free 免单 / credit 挂账
 	if v := c.Query("settleType"); v != "" {
 		q.SettleType = v
@@ -347,8 +352,8 @@ func printOrderTicket(ctx context.Context, orderID int) {
 	print.PrintGuestTicket(ctx, o)
 }
 
-// printKitchenOnPaid 先付模式专属:订单「首次收款成功」后,才把厨单发给后厨、
-// 把结账小票发给小票机。
+// printKitchenOnPaid 先付模式专属:订单「首次收款成功」后,先把结账小票发给小票机、
+// 再把厨单发给后厨。
 //
 // 为什么单独抽出来:先付模式下下单时不出单(customer.go 已跳过),出单时机后移到收款成功;
 // 而收款有两条互不相通的路径 —— 线上支付回调/查单(pay.go)与前台手工收款(OrderPay),
@@ -372,8 +377,11 @@ func printKitchenOnPaid(ctx context.Context, orderID int) {
 		logger.CtxWarnf(ctx, "[print][告警] 先付模式收款后读取订单失败,厨单未出 订单%d: %v", orderID, err)
 		return
 	}
-	print.PrintKitchenNew(ctx, o, items)
+	// 先出结账小票、再发厨房单:两者的分发顺序按此固定。
+	// 各自的发送在 print 包内仍异步执行,不互相等待 —— 这里的先后只是分发次序,
+	// 实际出纸快慢取决于各打印机,无需也不能互相阻塞收款流程。
 	printOrderTicket(ctx, orderID)
+	print.PrintKitchenNew(ctx, o, items)
 }
 
 func OrderFinish(c *gin.Context) {

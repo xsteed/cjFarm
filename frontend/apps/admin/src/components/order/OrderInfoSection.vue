@@ -138,7 +138,9 @@
       v-if="detail.payStatus === 1"
       class="od-settle-line"
     >
-      <span>结算：{{ payText(detail) }}</span>
+      <span
+        >结算：<span :class="payTextClass">{{ payText(detail) }}</span></span
+      >
       <span
         >实收 <b>¥{{ money(detail.paidAmount) }}</b></span
       >
@@ -232,6 +234,7 @@
         完成订单
       </button>
       <button
+        v-if="!payFirst"
         type="button"
         class="ab ab-settle"
         :disabled="!canPay"
@@ -401,8 +404,9 @@
 import { computed, toRef } from 'vue';
 import { ORDER_STATUS, REFUND_STATUS } from '@dining/api';
 import { useIsMobile } from '../../utils/useMobile';
-import { batchLabels, payStatusText } from '@dining/shared';
+import { batchLabels, payStatusText, payStatusTheme } from '@dining/shared';
 import { useOrderActions } from '../../composables/useOrderActions';
+import { usePayFirst } from '../../composables/usePayFirst';
 import type { OrderDetail, Refund } from '@dining/types';
 
 const props = defineProps<{
@@ -453,6 +457,11 @@ const {
 } = useOrderActions(detailRef);
 
 const { isMobile } = useIsMobile();
+
+// 先付模式下隐藏「收款并结束用餐」(即结算 /order/settle):它只出结账小票、不出厨房单,
+// 先付订单的厨单只在「确认收款」成功时补出(printKitchenOnPaid),点了后厨永远收不到单。
+// 与订单管理卡片同一口径:未支付单走「确认收款」,归档再用「完成订单」。
+const payFirst = usePayFirst();
 
 const statusOption = computed(() => {
   const status = props.detail?.orderStatus;
@@ -528,6 +537,9 @@ const refundCols = computed<TableCol[]>(() => {
 
 // 结算状态文案与「订单管理」列表共用 @dining/shared 里 orderDisplay 的实现,不再各写一份。
 const payText = payStatusText;
+
+// 结算状态配色与列表 t-tag 主题同口径:已支付/挂账已结 → 绿,免单/挂账待收 → 橙。
+const payTextClass = computed(() => `od-pay-text od-pay-text--${payStatusTheme(props.detail)}`);
 
 // 用餐时长(结束时间 − 下单时间):仅终态订单(有 meal_end_time)展示。
 // 口径与报表「用餐时长」一致:用餐结束 − 下单,含等餐;取消单同样有值。
@@ -697,6 +709,25 @@ function refreshRefunds(): void {
 }
 
 .od-settle-line b {
+  color: var(--ink);
+}
+
+/* 结算状态文案(已支付/免单/挂账待收/挂账已结)着色,与订单管理列表的标签主题同口径 */
+.od-pay-text {
+  font-weight: 600;
+}
+
+.od-pay-text--success {
+  color: var(--td-success-color, #2ba471);
+}
+
+.od-pay-text--warning {
+  color: var(--td-warning-color, #e37318);
+}
+
+.od-pay-text--default,
+.od-pay-text--primary,
+.od-pay-text--danger {
   color: var(--ink);
 }
 

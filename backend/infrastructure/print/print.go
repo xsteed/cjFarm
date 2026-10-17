@@ -132,13 +132,13 @@ func guestShowDiscount() bool { return service.GetSetting("print_guest_show_disc
 // 老库没有这个键时视为开启 —— 与 seed 的出厂默认一致。
 func guestPrintOnAppend() bool { return service.GetSetting("print_guest_on_append") != "0" }
 
-// guestPrintOnOrder 后付模式下单时是否向小票机出「点菜单」(默认开)。
+// guestPrintOnOrder 下单时是否向小票机出「点菜单」(默认开)。
 //
 // 下单即出的小票相当于点菜凭证(菜品上错、漏上当场能对),但与结账小票
 // 内容高度重叠,不想要重复出纸的门店可关 —— 关闭后下单只打厨房单,
 // 加菜小票(print_guest_on_append)与结账小票不受影响。
-// 先付模式不走这条路径:收款成功直接出结账小票(见 printKitchenOnPaid),
-// 点菜单与付款凭证合一,本开关管不到它。
+// 后付模式走 PrintOrder(厨房单+点菜单),先付模式走 PrintGuestOnOrder(只出点菜单),
+// 两种模式都受本开关控制;先付模式的厨单等首次收款成功才出(见 printKitchenOnPaid)。
 func guestPrintOnOrder() bool { return service.GetSetting("print_guest_on_order") != "0" }
 
 // ============================================================================
@@ -834,10 +834,11 @@ func sliceChunks(lines []string, spans []chunkSpan) [][]string {
 // 对外入口
 // ============================================================================
 
-// PrintOrder 下单后自动打印:厨房机出厨房单、小票机出「点菜单」。
+// PrintOrder 后付模式下单后自动打印:厨房机出厨房单、小票机出「点菜单」。
 //
 // 小票机这张是点菜凭证(下单即出,金额只覆盖已点的菜),可由
 // print_guest_on_order 单独关闭;加菜小票与结账小票不受它影响。
+// 先付模式不下单即打整包 —— 厨房单要等收款成功,下单时走 PrintGuestOnOrder 只出点菜单。
 // items 应为本次下单的菜品(未补分类也可,内部会补)。
 func PrintOrder(ctx context.Context, o po.Order, items []po.OrderItem) {
 	if !printEnabled() {
@@ -863,6 +864,33 @@ func PrintOrder(ctx context.Context, o po.Order, items []po.OrderItem) {
 			jobs = append(jobs, buildJobs(log, agentLog, printers, o, attached, po.PrintDocGuest, "", po.PrintTriggerOrder, "")...)
 		}
 		dispatchJobs(jobs)
+	})
+}
+
+// PrintGuestOnOrder 先付模式下单时专用:只向小票机出「点菜单」(受 print_guest_on_order 控制)。
+//
+// 后付模式的下单打印走 PrintOrder(厨房单 + 点菜单一起);先付模式下厨单必须等
+// 首次收款成功才出(printKitchenOnPaid),但点菜单只是点菜凭证、与后厨是否开工无关,
+// 下单时照常出 —— 顾客手里先有一张纸,菜上错/漏上当场就能对。
+// items 应为本次下单的菜品(未补分类也可,内部会补)。
+func PrintGuestOnOrder(ctx context.Context, o po.Order, items []po.OrderItem) {
+	if !printEnabled() || !guestPrintOnOrder() {
+		return
+	}
+	log := logger.WithContext(ctx, zap.String("orderNo", o.OrderNo))
+	agentLog := logger.AgentWithContext(ctx, zap.String("orderNo", o.OrderNo))
+	goSafe("PrintGuestOnOrder", func() {
+		attached := service.AttachItemCategories(items)
+		printers, err := loadPrinters(po.PrinterTypeGuest)
+		if err != nil {
+			log.Warnf("打印: 查询小票打印机失败: %v", err)
+			return
+		}
+		if len(printers) == 0 {
+			log.Warnf("打印: 没有启用中的小票打印机,跳过点菜单")
+			return
+		}
+		dispatchJobs(buildJobs(log, agentLog, printers, o, attached, po.PrintDocGuest, "", po.PrintTriggerOrder, ""))
 	})
 }
 

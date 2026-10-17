@@ -27,6 +27,7 @@ type OrderQuery struct {
 	PayStatus    *int   // nil 表示不限
 	OrderNo      string // 模糊匹配
 	TableNo      string // 精确匹配
+	TableName    string // 模糊匹配
 	SettleType   string // normal/free/credit
 	CreditStatus *int   // nil 表示不限
 	SettleRemark string // 结算备注(免单原因/挂账人)模糊匹配
@@ -46,6 +47,7 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 		PayStatus:    q.PayStatus,
 		OrderNo:      q.OrderNo,
 		TableNo:      q.TableNo,
+		TableName:    q.TableName,
 		SettleType:   q.SettleType,
 		CreditStatus: q.CreditStatus,
 		SettleRemark: q.SettleRemark,

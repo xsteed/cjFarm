@@ -173,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { getReportSummary, getOrderBoard, getStaleOrders } from '@dining/api';
 import { hasPerm } from '@dining/auth';
@@ -257,7 +257,52 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load);
+// ---- 停留在本页时自动刷新 ----
+// 看板是实时数据(桌台占用/进行中订单/超时告警),停留时每 15s 自动拉一次;
+// 切后台/锁屏暂停轮询(省流量与后端 QPS),回到可见立即补一轮并恢复节奏
+// (与订单管理/桌台管理页同策略)。
+const AUTO_REFRESH_MS = 15_000;
+let autoTimer: ReturnType<typeof setInterval> | null = null;
+// 看板没有 loading 态,用 in-flight 标记防止上一轮请求未回就叠新一轮。
+let inflight = false;
+
+function startAutoRefresh(): void {
+  stopAutoRefresh();
+  autoTimer = setInterval(() => {
+    if (inflight) return;
+    inflight = true;
+    load().finally(() => {
+      inflight = false;
+    });
+  }, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh(): void {
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
+
+function onVisibilityChange(): void {
+  if (document.hidden) {
+    stopAutoRefresh();
+  } else {
+    load();
+    startAutoRefresh();
+  }
+}
+
+onMounted(() => {
+  load();
+  startAutoRefresh();
+  document.addEventListener('visibilitychange', onVisibilityChange);
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+});
 </script>
 
 <style scoped>

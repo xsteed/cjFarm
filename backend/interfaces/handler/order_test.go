@@ -82,7 +82,7 @@ func TestOrderListAndFilters(t *testing.T) {
 	insertFlowOrder(t, "ORDLIST1", 1, 0, "settle_type='normal', credit_status=0")
 
 	// 覆盖全部筛选条件,只要不报错且 total >= 1 即通过。
-	res := ordGet(t, OrderList, "orderStatus=1&payStatus=0&orderNo=ORDLIST&tableNo=T1&settleType=normal&creditStatus=0", nil)
+	res := ordGet(t, OrderList, "orderStatus=1&payStatus=0&orderNo=ORDLIST&tableNo=T1&tableName=测试桌&settleType=normal&creditStatus=0", nil)
 	if res["code"] != float64(200) {
 		t.Fatalf("订单列表应返回 200, got %v", res)
 	}

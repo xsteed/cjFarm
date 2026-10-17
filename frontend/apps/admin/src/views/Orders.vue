@@ -18,6 +18,14 @@
           clearable
           style="width: 120px"
         />
+        <!-- 桌台名称模糊筛选:桌号只是编号,收银认的是「大厅01桌」这类名称;
+             桌台可改名,历史单留的是改名前的快照,故走后端模糊匹配 -->
+        <t-input
+          v-model="query.tableName"
+          placeholder="桌台名称"
+          clearable
+          style="width: 130px"
+        />
         <t-select
           v-model="query.orderStatus"
           placeholder="订单状态"
@@ -133,6 +141,52 @@
             {{ t.label }}
           </button>
         </div>
+      </div>
+
+      <!-- 移动端顶部页码选择器:订单流一屏放不下几页,翻页/跳页不用再滑到列表底部。
+           「‹ 第 X / Y 页 ›」中的页码是一个下拉选择器,点开可直接跳到任意页(即跳转),
+           两侧箭头按钮管上/下翻页;最右侧给出总单数,单页时整条隐藏。 -->
+      <div
+        v-if="pagination.total > pagination.pageSize"
+        class="m-toppager"
+      >
+        <t-button
+          variant="outline"
+          size="small"
+          class="m-toppager-nav"
+          :disabled="pagination.current <= 1"
+          aria-label="上一页"
+          @click="goPage(pagination.current - 1)"
+        >
+          <template #icon>
+            <chevron-left-icon />
+          </template>
+        </t-button>
+        <t-select
+          :value="pagination.current"
+          :options="pageOptions"
+          size="small"
+          class="m-toppager-sel"
+          @change="onTopPageSelect"
+        >
+          <!-- 折叠态显示「第 X / Y 页」,下拉列表里则是「第 N 页」逐项可选 -->
+          <template #valueDisplay>
+            第 {{ pagination.current }} / {{ pageCount }} 页
+          </template>
+        </t-select>
+        <t-button
+          variant="outline"
+          size="small"
+          class="m-toppager-nav"
+          :disabled="pagination.current >= pageCount"
+          aria-label="下一页"
+          @click="goPage(pagination.current + 1)"
+        >
+          <template #icon>
+            <chevron-right-icon />
+          </template>
+        </t-button>
+        <span class="m-toppager-total">共 {{ pagination.total }} 单</span>
       </div>
 
       <div class="m-list">
@@ -295,6 +349,20 @@
              桌面端不再只藏在 title 悬浮提示里 -->
         <div class="ono-full">{{ row.orderNo }}</div>
       </template>
+      <template #tableNo="{ row }">
+        <!-- 桌号列同时展示桌台名称:收银认的是「大厅01桌」这类名称(与移动端卡片/详情
+             弹窗同口径),名称为空的历史单回退只显示桌号;桌名过长时在单元格内折行,
+             title 悬浮给全称 -->
+        <span
+          class="tbl"
+          :title="row.tableNo ? row.tableNo + '号桌' + (row.tableName ? ' · ' + row.tableName : '') : ''"
+        >{{ row.tableNo ? row.tableNo + '号桌' : '-' }}<span
+          v-if="row.tableName"
+          class="tbl-name"
+        >
+            · {{ row.tableName }}</span
+        ></span>
+      </template>
       <template #orderStatus="{ row }">
         <t-tag
           :theme="ORDER_STATUS[row.orderStatus]?.theme"
@@ -375,9 +443,9 @@
             variant="text"
             size="small"
             :disabled="!canSettleRow(row)"
-            @click="openSettle(row, 'settle')"
+            @click="openSettle(row, settleMode)"
           >
-            结算
+            {{ settleLabel }}
           </t-button>
           <t-button
             theme="danger"
@@ -401,7 +469,7 @@
       </template>
     </t-table>
 
-    <!-- 移动端高级筛选:桌号 / 支付状态 / 结算方式收进底部弹层 -->
+    <!-- 移动端高级筛选:桌号 / 桌台名称 / 支付状态 / 结算方式收进底部弹层 -->
     <BottomSheet
       v-model="filterSheetVisible"
       title="筛选订单"
@@ -412,6 +480,14 @@
           <t-input
             v-model="query.tableNo"
             placeholder="如 01"
+            clearable
+          />
+        </label>
+        <label class="ff">
+          <span class="ff-k">桌台名称</span>
+          <t-input
+            v-model="query.tableName"
+            placeholder="如 大厅01桌"
             clearable
           />
         </label>
@@ -491,9 +567,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
-import { listOrders, changeOrderStatus, cancelOrder, handleUrge, ORDER_STATUS } from '@dining/api';
+import { listOrders, changeOrderStatus, cancelOrder, finishOrder, handleUrge, ORDER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
+import { usePayFirst } from '../composables/usePayFirst';
 import { hasPerm } from '@dining/auth';
 import { payStatusText, payStatusTheme, money } from '@dining/shared';
 import OrderDetailDialog from '../components/OrderDetailDialog.vue';
@@ -523,18 +600,28 @@ const canSettle = computed(() => hasPerm('order:settle')); // 收款/结账(弹�
 const canCancel = computed(() => hasPerm('order:cancel')); // 取消订单
 const canRefundOperate = computed(() => hasPerm('refund:operate')); // 发起退款/同步退款状态
 
+// 先付模式(pay_first_enabled='1')下「结算」是个坑:后端结算(/order/settle)只出结账小票、
+// 不出厨房单,而先付订单的厨单只在「收款成功」那一刻补出(printKitchenOnPaid),
+// 且结算会直接拒绝已支付订单。因此未支付先付单唯一正确的收款入口是
+// 「确认收款」(/order/pay,只标记收款不改状态)—— 按钮随之改显「确认收款」;
+// 后付模式(默认)显示「后付款结账」(收款/免单/挂账并一步归档、释放桌台)。
+const payFirst = usePayFirst();
+const settleMode = computed<'pay' | 'settle'>(() => (payFirst.value ? 'pay' : 'settle'));
+const settleLabel = computed(() => (payFirst.value ? '确认收款' : '后付款结账'));
+
 const list = ref<OrderRow[]>([]);
 const loading = ref(false);
 
 interface OrderQuery {
   orderNo: string;
   tableNo: string;
+  tableName: string;
   orderStatus: string;
   payStatus: string;
   settleFilter: string;
 }
 
-const query = reactive<OrderQuery>({ orderNo: '', tableNo: '', orderStatus: '', payStatus: '', settleFilter: '' });
+const query = reactive<OrderQuery>({ orderNo: '', tableNo: '', tableName: '', orderStatus: '', payStatus: '', settleFilter: '' });
 const pagination = reactive({ current: 1, pageSize: 10, total: 0 });
 const { isMobile } = useIsMobile();
 // 移动端下拉刷新当前列表(沿用当前筛选与页码)
@@ -559,7 +646,11 @@ const columns = computed(() => {
     // 该列实际渲染两行:首行取餐号/短号(#shortNo),第二行完整订单号(ono-full),
     // 标题取「取餐号/单号」覆盖两者,避免只叫「订单号」让人以为漏了完整单号。
     { colKey: 'orderNo', title: '取餐号/单号', width: 200 },
-    { colKey: 'tableNo', title: '桌号', width: 70 },
+    // 桌台列同时展示桌号与桌台名称(如「01号桌 · 大厅01桌」):收银认的是名称而非
+    // 桌号(与移动端卡片/详情弹窗同口径),名称为空的历史单回退只显示桌号。
+    // 「01号桌 · 包间牡丹厅」约 150px,桌名更长的(如「二楼VIP-牡丹厅」)允许折行,
+    // 不再硬撑宽度把整表拉宽。
+    { colKey: 'tableNo', title: '桌台', width: 150 },
     { colKey: 'personCount', title: '人数', width: 70 },
     { colKey: 'dishAmount', title: '菜品金额', width: 100 },
     { colKey: 'seatFee', title: '茶位费', width: 90 },
@@ -575,9 +666,10 @@ const columns = computed(() => {
     { colKey: 'mealEndTime', title: '结束时间', width: 195 }
   ];
   // 操作列改为固定渲染全部 7 个按钮(不满足条件时置灰而非隐藏),宽度按最坏情况
-  // 「详情/已催办/制作/上菜/结算/取消/退款」全可点估算:
-  // 12px 字号文字约 278px + 6 个 8px 间距 + 32px 内边距 ≈ 358px,留 20px 余量取 380。
-  cols.push({ colKey: 'op', title: '操作', width: 380 });
+  // 「详情/已催办/制作/上菜/后付款结账/取消/退款」全可点估算(后付模式的
+  // 「后付款结账」比原「结算」多 3 字;先付模式为「确认收款」,少 1 字):
+  // 12px 字号文字约 333px + 6 个 8px 间距 + 32px 内边距 ≈ 413px,留余量取 430。
+  cols.push({ colKey: 'op', title: '操作', width: 430 });
   return cols;
 });
 
@@ -613,6 +705,11 @@ function canServeRow(row: OrderRow): boolean {
 function canSettleRow(row: OrderRow): boolean {
   return !!row && [1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle.value;
 }
+// 完成(归档收尾)与详情弹窗 canFinish 同口径:任意进行中状态 + 已支付。
+// 未支付订单点了仍会被后端拒绝(先收款/结账),所以这里只管状态与收款两道。
+function canFinishRow(row: OrderRow): boolean {
+  return !!row && [1, 2, 3].includes(row.orderStatus) && row.payStatus === 1 && canOperate.value;
+}
 function canCancelRow(row: OrderRow): boolean {
   // 已支付订单不可直接取消(后端 CancelOrder 会拒绝并要求先退款),
   // 少这道条件按钮可点但点了必然报错。
@@ -631,6 +728,8 @@ async function load(silent = false): Promise<void> {
     const params: PageQuery = { pageNum: pagination.current, pageSize: pagination.pageSize };
     if (query.orderNo) params.orderNo = query.orderNo;
     if (query.tableNo) params.tableNo = query.tableNo;
+    // 桌台名称模糊匹配:名称可改名,历史单留改名前快照,必须服务端过滤
+    if (query.tableName) params.tableName = query.tableName;
     if (query.orderStatus) params.orderStatus = query.orderStatus;
     if (query.payStatus) params.payStatus = query.payStatus;
     // 结算方式筛选:挂账需区分待收 / 已结
@@ -658,6 +757,15 @@ async function load(silent = false): Promise<void> {
       refundAmount: Number(r.refundAmount) || 0
     }));
     pagination.total = res.total;
+    // 筛选 / 自动刷新后总数可能缩水(进行中的订单被完成或取消后掉出当前筛选),
+    // 当前页码随之超出新的总页数,而后端不纠偏(越界页码直接返回空列表)——
+    // 夹回最后一页并重拉一次,避免停在「第 3/5 页却一片空白」的状态。
+    // 页码已夹到合法范围,不会再次触发,也就不会递归。
+    const maxPage = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
+    if (pagination.current > maxPage) {
+      pagination.current = maxPage;
+      load();
+    }
   } catch {
     /* 失败已由拦截器统一 toast */
   } finally {
@@ -674,6 +782,30 @@ function onPageChange(page: PageInfo): void {
   pagination.current = page.current;
   pagination.pageSize = page.pageSize;
   load();
+}
+
+// ---- 移动端顶部页码选择器 ----
+// 总页数与页码下拉项:后端不纠偏越界页码(直接返回空列表),这里的边界都以
+// [1, pageCount] 夹紧,保证「上一页/下一页」到边即禁用、下拉只列合法页。
+const pageCount = computed(() => Math.max(1, Math.ceil(pagination.total / pagination.pageSize)));
+const pageOptions = computed(() =>
+  Array.from({ length: pageCount.value }, (_, i) => ({ label: `第 ${i + 1} 页`, value: i + 1 }))
+);
+
+// goPage 顶部选择器的统一翻页入口:页码夹到合法范围后重拉当前筛选条件下的列表。
+// 重复点当前页不发请求(下拉里选中当前页也会触发 change,静默忽略即可)。
+function goPage(page: number): void {
+  const next = Math.min(Math.max(1, Math.trunc(page) || 1), pageCount.value);
+  if (next === pagination.current) return;
+  pagination.current = next;
+  load();
+}
+
+// 下拉选择器 change 回传的是 SelectValue(string|number|...),统一转成页码再走 goPage。
+function onTopPageSelect(value: unknown): void {
+  const page = Number(value);
+  if (!Number.isFinite(page) || page < 1) return;
+  goPage(page);
 }
 
 // openDetail 打开详情弹窗:只给组件 orderId,详情与退款记录由组件自行拉取。
@@ -721,8 +853,9 @@ async function onHandleUrge(row: OrderRow): Promise<void> {
   }
 }
 
-// 列表行的「结算」/「退款」直接复用详情组件里的弹窗:
-// openSettle mode=pay 仅标记收款,mode=settle 可选择免单/挂账并完成订单。
+// 列表行的收款入口直接复用详情组件里的弹窗:
+// openSettle mode=pay 仅标记收款(先付模式下未支付单的唯一正确入口,会补出厨房单),
+// mode=settle 可选择免单/挂账并完成订单(后付模式一步归档、释放桌台)。
 function openSettle(row: OrderRow, mode: 'pay' | 'settle'): void {
   detailRef.value?.openSettle(row, mode);
 }
@@ -748,6 +881,29 @@ function onCancel(row: OrderRow): void {
   });
 }
 
+// onFinish 完成订单:归档、计入今日统计并释放桌台。与详情弹窗的「完成订单」同一接口,
+// 确认文案保持一致;先付模式下顾客付款后单子常停在「已下单」,卡片上给个直接出口。
+function onFinish(row: OrderRow): void {
+  if (acting.value) return;
+  const dlg = DialogPlugin.confirm({
+    header: '确认完成',
+    body: '确认后订单将归档并计入今日统计，桌台释放为空闲。',
+    onConfirm: async () => {
+      acting.value = true;
+      try {
+        await finishOrder({ orderId: row.orderId });
+        MessagePlugin.success('订单已完成');
+        dlg.hide();
+        await afterRowAction(row.orderId);
+      } catch {
+        dlg.hide();
+      } finally {
+        acting.value = false;
+      }
+    }
+  });
+}
+
 // ---- 移动端订单卡片的操作按钮 ----
 // 直接铺在卡片上,不再有「更多」二级面板:能做什么一眼可见、一键直达。
 interface CardAction {
@@ -759,7 +915,28 @@ interface CardAction {
 }
 
 function cardActions(row: OrderRow): CardAction[] {
-  const items: CardAction[] = [{ key: 'detail', label: '详情', theme: 'primary', run: () => openDetail(row) }];
+  // 先付模式:卡片收敛为收银四键,按 详情 → 确认收款 → 取消订单 → 完成订单 排列
+  // (与移动端详情弹窗的主动作行同口径)。制作/上齐/催办/退款一律进详情弹窗,
+  // 不占卡片 —— 先付单的收款入口不能被制作流程按钮挤到后面,完成订单(归档、
+  // 释放桌台)也给个卡片上的直接出口,不必为了点它先打开详情。
+  // 各键按行状态显隐:确认收款/取消订单仅未支付,完成订单仅已支付。
+  if (payFirst.value) {
+    const items: CardAction[] = [{ key: 'detail', label: '订单详情', theme: 'primary', run: () => openDetail(row) }];
+    if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle.value)
+      items.push({
+        key: 'settle',
+        label: settleLabel.value,
+        theme: 'success',
+        run: () => openSettle(row, settleMode.value)
+      });
+    if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canCancel.value)
+      items.push({ key: 'cancel', label: '取消订单', theme: 'danger', run: () => onCancel(row) });
+    if (canFinishRow(row))
+      items.push({ key: 'finish', label: '完成订单', theme: 'primary', run: () => onFinish(row), disabled: acting.value });
+    return items;
+  }
+  // 后付模式:完整操作铺在卡片上(制作/上齐是厨房流程,催办/退款按行状态出现)。
+  const items: CardAction[] = [{ key: 'detail', label: '订单详情', theme: 'primary', run: () => openDetail(row) }];
   if (row.pendingUrge && canOperate.value)
     items.push({ key: 'urge', label: '已催办', theme: 'danger', run: () => onHandleUrge(row), disabled: acting.value });
   if (row.orderStatus === 1 && canOperate.value)
@@ -771,11 +948,16 @@ function cardActions(row: OrderRow): CardAction[] {
       disabled: acting.value
     });
   if (row.orderStatus === 2 && canOperate.value)
-    items.push({ key: 'serve', label: '上齐', theme: 'warning', run: () => setStatus(row, 3), disabled: acting.value });
+    items.push({ key: 'serve', label: '已上齐', theme: 'warning', run: () => setStatus(row, 3), disabled: acting.value });
   if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle.value)
-    items.push({ key: 'settle', label: '结算', theme: 'success', run: () => openSettle(row, 'settle') });
+    items.push({
+      key: 'settle',
+      label: settleLabel.value,
+      theme: 'success',
+      run: () => openSettle(row, settleMode.value)
+    });
   if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canCancel.value)
-    items.push({ key: 'cancel', label: '取消', theme: 'danger', run: () => onCancel(row) });
+    items.push({ key: 'cancel', label: '取消订单', theme: 'danger', run: () => onCancel(row) });
   if (canRefund(row)) items.push({ key: 'refund', label: '退款', theme: 'danger', run: () => openRefund(row) });
   return items;
 }
@@ -803,6 +985,7 @@ function applyFilters(): void {
 
 function resetFilters(): void {
   query.tableNo = '';
+  query.tableName = '';
   query.payStatus = '';
   query.settleFilter = '';
   // 订单号搜索框与桌面端共用同一个 query.orderNo,漏清会让「重置」后关键词仍在;
@@ -883,6 +1066,19 @@ onUnmounted(() => {
   word-break: break-all;
 }
 
+/* 桌台列:桌号是定位依据(主色加粗),桌台名称是收银口语(弱化一档);
+   长桌名在单元格内折行,title 悬浮给全称,避免把整表撑宽 */
+.tbl {
+  font-weight: 600;
+  color: var(--ink, #1a1a1a);
+}
+
+.tbl-name {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ink-2, #5b6270);
+}
+
 /* 移动端卡片里的催菜角标:贴住短号右侧,不另起一行 */
 .urgent-mini {
   margin-left: 6px;
@@ -929,5 +1125,35 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--ink-2);
   font-weight: 500;
+}
+
+/* 移动端顶部页码选择器:一行铺开「‹ 第 X / Y 页 › 共 N 单」,
+   贴在搜索/状态栏与卡片列表之间,翻页不用再滑到列表底部 */
+.m-toppager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 上/下翻页箭头:正方形小按钮,与搜索栏右侧筛选按钮同风格 */
+.m-toppager-nav {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+/* 页码下拉:吃掉中间剩余宽度;折叠态文案(第 X / Y 页)由 valueDisplay 渲染 */
+.m-toppager-sel {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 总单数:弱化小字附在末尾,不抢页码的视觉重心 */
+.m-toppager-total {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--ink-3, #8a8f99);
 }
 </style>

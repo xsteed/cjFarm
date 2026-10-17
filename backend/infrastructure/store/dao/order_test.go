@@ -187,6 +187,15 @@ func TestListOrdersFiltersAndPagination(t *testing.T) {
 		t.Fatalf("按桌号查询失败: %v (err=%v)", list, err)
 	}
 
+	// 按桌台名称模糊匹配(改过名的桌,历史单留的是旧名快照)。
+	if _, err := store.DB.Exec(`UPDATE tb_order SET table_name=? WHERE order_no=?`, "大厅A1", "D-LIST-0001"); err != nil {
+		t.Fatalf("更新桌台名称失败: %v", err)
+	}
+	_, list, err = ListOrders(OrderQuery{TableName: "大厅"}, 1, 100)
+	if err != nil || len(list) != 1 || list[0].OrderNo != "D-LIST-0001" {
+		t.Fatalf("按桌台名称模糊查询失败: %v (err=%v)", list, err)
+	}
+
 	// 支付状态筛选。
 	paid := 1
 	_, list, err = ListOrders(OrderQuery{PayStatus: &paid}, 1, 100)

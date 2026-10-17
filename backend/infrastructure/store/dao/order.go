@@ -299,6 +299,7 @@ type OrderQuery struct {
 	PayStatus    *int   // nil 表示不限
 	OrderNo      string // 模糊匹配
 	TableNo      string // 精确匹配
+	TableName    string // 模糊匹配
 	SettleType   string // normal/free/credit
 	CreditStatus *int   // nil 表示不限
 	// SettleRemark 结算备注模糊匹配(免单原因/挂账人)。
@@ -328,6 +329,13 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 	if q.TableNo != "" {
 		where = append(where, "table_no=?")
 		args = append(args, q.TableNo)
+	}
+	// 桌台名称模糊匹配:桌号只是「01/02」这类编号,收银认的是「大厅01桌」这类名称,
+	// 且桌台可改名,历史单上留的是改名前的快照 —— 必须服务端过滤,
+	// 前端只过滤当前页会让第 2 页起的命中记录永远搜不到。
+	if q.TableName != "" {
+		where = append(where, "COALESCE(table_name,'') LIKE ?")
+		args = append(args, "%"+q.TableName+"%")
 	}
 	// 结算方式筛选:normal 正常收款 / free 免单 / credit 挂账
 	if q.SettleType != "" {

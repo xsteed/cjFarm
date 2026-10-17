@@ -79,7 +79,12 @@
         <div class="st-hint">挂账后订单即可完成、桌台释放，欠款记入挂账，收款后再核销。</div>
       </div>
 
-      <div class="st-field st-print">
+      <!-- 打印开关仅对结算(mode=settle)有意义:收款(mode=pay)接口不接 printTicket,
+           先付模式下收款后的小票与厨单由后端自动出且不可关(printKitchenOnPaid) -->
+      <div
+        v-if="settleForm.mode === 'settle'"
+        class="st-field st-print"
+      >
         <div class="st-label">打印小票</div>
         <t-switch v-model="settleForm.printTicket" />
         <div class="st-hint">关闭后本次结算不出纸（免单、挂账常不需要给客人留底）。不影响「订单详情 → 补打」。</div>
