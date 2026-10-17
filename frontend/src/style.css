@@ -255,11 +255,28 @@ svg.ic-svg {
   .t-dialog__footer {
     flex-shrink: 0;
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 10px;
     text-align: left;
     padding: 12px 20px !important;
     border-top: 1px solid var(--line);
+
+    /* 必须显式改回 border-box:TDesign 给 footer 设了 width:100%,却没给它设
+       box-sizing(只覆盖了 fullscreen 变体),而本应用未引入 TDesign 的 reset.css,
+       浏览器默认 content-box 会让下面的水平内边距加在 100% 宽度之外 ——
+       footer 实际宽出 40px,「确认」按钮被挤出弹层右缘、右边距丢失。 */
+    box-sizing: border-box;
+  }
+
+  /* TDesign 把「取消/确认」包在一层匿名 div 里:两个按钮是这层 div 的子节点,
+     并非 .t-dialog__footer 的直接子节点。gap 只写在 footer 上不生效,
+     而下面又把 TDesign 默认的按钮间距(margin-left)清零 —— 结果移动端两个
+     按钮紧贴在一起。这里把 gap 一并作用到真正容纳按钮的容器,恢复间距。 */
+  .t-dialog__footer > * {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
 
   .t-dialog__footer .t-button {
