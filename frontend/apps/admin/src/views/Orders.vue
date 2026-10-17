@@ -162,8 +162,11 @@
               {{ ORDER_STATUS[row.orderStatus]?.label }}
             </t-tag>
           </div>
+          <!-- 完整订单号:移动端没有桌面端表格的 title 悬浮提示,直接铺在卡上方便对账报号 -->
+          <div class="ocard-orderNo">单号 {{ row.orderNo }}</div>
           <div class="ocard-meta">
-            {{ row.tableNo }} 号桌 · {{ row.personCount }} 人 · {{ row.createTime }}
+            <!-- 桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号 -->
+            {{ row.tableName || row.tableNo + ' 号桌' }} · {{ row.personCount }} 人 · {{ row.createTime }}
             <t-tag
               v-if="row.pendingUrge"
               theme="danger"
@@ -493,7 +496,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { listOrders, changeOrderStatus, cancelOrder, handleUrge, ORDER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
@@ -621,8 +624,10 @@ function canCancelRow(row: OrderRow): boolean {
 // 请求序号:快速连点查询/翻页时,仅最新一次请求可写回列表,防止旧页响应乱序覆盖新页
 let loadSeq = 0;
 
-async function load(): Promise<void> {
-  loading.value = true;
+// silent=true 用于定时自动刷新:不点亮全表 loading 遮罩,避免每轮轮询都闪一下。
+// 手动刷新(按钮/下拉/筛选)仍走默认 false,保留可见的加载反馈。
+async function load(silent = false): Promise<void> {
+  if (!silent) loading.value = true;
   const seq = ++loadSeq;
   try {
     const params: PageQuery = { pageNum: pagination.current, pageSize: pagination.pageSize };
@@ -808,7 +813,48 @@ function resetFilters(): void {
   pagination.current = 1;
 }
 
-onMounted(load);
+// ---- 停留在本页时自动刷新 ----
+// 订单状态(新单/制作/上菜/支付)变化频繁,靠人工点「刷新」容易漏单。
+// 每 10s 静默拉一次当前筛选与页码下的列表;切后台/锁屏暂停轮询(省流量与后端 QPS),
+// 回到可见立即补一轮并恢复节奏(与「打印管理」页的代理轮询同策略)。
+const AUTO_REFRESH_MS = 10_000;
+let autoTimer: ReturnType<typeof setInterval> | null = null;
+
+function startAutoRefresh(): void {
+  stopAutoRefresh();
+  autoTimer = setInterval(() => {
+    // 详情弹窗打开或行操作进行中时跳过本轮,避免后台刷新与用户正在进行的操作互相干扰。
+    if (detailVisible.value || acting.value || loading.value) return;
+    load(true);
+  }, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh(): void {
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
+
+function onVisibilityChange(): void {
+  if (document.hidden) {
+    stopAutoRefresh();
+  } else {
+    load(true);
+    startAutoRefresh();
+  }
+}
+
+onMounted(() => {
+  load();
+  startAutoRefresh();
+  document.addEventListener('visibilitychange', onVisibilityChange);
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+});
 </script>
 
 <style scoped>
