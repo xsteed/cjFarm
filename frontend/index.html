@@ -38,6 +38,10 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- iOS 主屏 App 状态栏样式。iOS 26 实机验证:iOS 26 无论取 default 还是 black-translucent,
+         都会在状态栏条带叠加系统磨砂材质(Apple 论坛 2026-10「iOS 27 and the forced status bar
+         blur in PWAs」),网页侧无法移除;而 black-translucent 在老 iOS(≤25)会强制白字状态栏,
+         压在浅色顶栏上时间/电量看不清。故保持 default(深色文字、各版本安全)。 -->
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta
       name="theme-color"

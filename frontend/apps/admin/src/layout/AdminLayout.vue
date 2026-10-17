@@ -1101,10 +1101,14 @@ function onLogout() {
     box-shadow: 6px 0 28px rgb(0 0 0 / 18%);
   }
 
-  /* iOS 主屏 PWA(standalone + viewport-fit=cover)下视口延伸到状态栏底下:
-     顶栏是 flex 流第一个元素、渲染在 y=0,不加适配会被状态栏压住,
-     表现为「页面整体上移、顶部发虚」。这里把状态栏高度加进顶栏高度,
-     并用 padding-top 把内容推到状态栏下方。 */
+  /* iOS 主屏 PWA 状态栏适配。iOS 26 实机验证过两种状态栏样式:
+     - apple-mobile-web-app-status-bar-style=default(当前取值):视口从状态栏下方开始,
+       env(safe-area-inset-top)=0,下面的 calc/padding 是空操作、不会重复留白;
+     - =black-translucent:视口铺满全屏、inset=47px,这里自动把状态栏区域画成顶栏同色(白),
+       状态文字由系统自适应为深色,可读。
+     两种取值下 iOS 26 都会在状态栏条带叠加一层系统磨砂材质,网页侧无法移除
+     (Apple 论坛 2026-10「iOS 27 and the forced status bar blur in PWAs」),
+     不要再尝试用 CSS 消掉它。这里的写法保留,是为了让内容永远不被状态栏压住。 */
   .top {
     height: calc(52px + env(safe-area-inset-top, 0px));
     padding: 0 12px;
@@ -1147,8 +1151,10 @@ function onLogout() {
     background: #fff;
     border-top: 1px solid var(--line);
 
-    /* 全面屏底部横条区域留白,否则「菜品/更多」会贴在横条上 */
-    padding-bottom: env(safe-area-inset-bottom, 0);
+    /* 全面屏底部横条区域留白,否则「菜品/更多」会贴在横条上。
+       具体留多少由 style.css 的 --safe-bottom-tabbar 统一决定(Home 指示条 34px 中留 20px),
+       悬浮按钮 .m-fab 用的是同一个变量,两者不会错位。 */
+    padding-bottom: var(--safe-bottom-tabbar, env(safe-area-inset-bottom, 0));
   }
 
   .tb {

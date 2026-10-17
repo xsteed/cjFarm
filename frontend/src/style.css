@@ -43,6 +43,12 @@
   --shadow-2: 0 8px 24px rgb(26 26 26 / 10%);
   --shadow-3: 0 12px 36px rgb(240 72 31 / 28%);
 
+  /* 移动端底部 tabbar 的安全区留白:Home 指示条本身是 34px,这里只保留 20px——
+     另外 14px 让给内容,视觉上更贴底,图标仍不会压到上滑手势区。
+     没有 Home 指示条的机型(env=0)自动为 0。
+     tabbar 与悬浮按钮(.m-fab)共用这一个值,避免两处各自计算、悬浮按钮盖住 tabbar。 */
+  --safe-bottom-tabbar: max(0px, calc(env(safe-area-inset-bottom, 0px) - 14px));
+
   /* 主渐变（按钮 / 头部 / CTA） */
   --grad-brand: linear-gradient(135deg, #ff8a50 0%, #ff6b35 45%, #f0481f 100%);
   --grad-brand-soft: linear-gradient(135deg, #ff8a50 0%, #f0481f 100%);
@@ -85,6 +91,15 @@ body,
   height: 100%;
   margin: 0;
   padding: 0;
+}
+
+/* iOS 主屏 PWA(standalone + viewport-fit=cover)的视口延伸到状态栏与 Home 指示条底下,
+   这两条区域由系统绘制(新版 iOS 还会在其上叠一层磨砂材质):页面只有把自己纯色背景
+   一路画到屏幕底,系统材质叠在纯色上才不可见。body 的背景靠传播兜底不够稳——
+   个别 iOS 版本下 html 不显式给背景时会透出系统默认材质,表现为「顶部发虚、底部泛白」。
+   这里显式声明,与 body 同色。 */
+html {
+  background: var(--bg);
 }
 
 body {
@@ -773,7 +788,9 @@ svg.ic-svg {
 .m-fab {
   position: fixed;
   right: 16px;
-  bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+
+  /* 66px = tabbar 内容高度 54px + 12px 间距;安全区部分与 tabbar 共用同一变量 */
+  bottom: calc(66px + var(--safe-bottom-tabbar, env(safe-area-inset-bottom, 0px)));
   z-index: 60;
   height: 40px;
   padding: 0 14px;

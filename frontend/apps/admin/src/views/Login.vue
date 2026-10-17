@@ -1,5 +1,13 @@
 <template>
   <div class="login-wrap">
+    <!-- iOS 主屏 PWA(standalone + viewport-fit=cover)视口延伸到状态栏底下,新版 iOS 会在
+         状态栏条带强制叠一层系统磨砂材质:页面画在后面的内容越"花",磨砂越明显。这条纯色
+         补丁把状态栏区域压成与渐变顶部同色的纯色,磨砂叠在纯色上即不可见。
+         无刘海机型 env()=0、补丁零高度,自动隐身;桌面浏览器同理。 -->
+    <div
+      class="safe-top"
+      aria-hidden="true"
+    ></div>
     <div class="login-card">
       <div class="login-logo">点</div>
       <div class="login-title">{{ brandName }}</div>
@@ -275,6 +283,18 @@ onMounted(() => {
   background: radial-gradient(circle, rgb(240 72 31 / 12%), transparent 70%);
   bottom: -140px;
   right: -80px;
+  pointer-events: none;
+}
+
+/* 状态栏条带纯色补丁(作用见模板注释):高度即状态栏安全区,无安全区时为 0 自动隐身。
+   放在装饰圆(::before/::after)之后绘制,盖住伸进条带里的渐变与光斑。 */
+.safe-top {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: env(safe-area-inset-top, 0);
+  background: #fff4ec;
   pointer-events: none;
 }
 
