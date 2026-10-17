@@ -237,6 +237,12 @@ onMounted(() => {
   height: 100dvh;
   box-sizing: border-box;
   padding: 20px;
+
+  /* iOS 主屏 PWA(standalone + viewport-fit=cover):登录卡是全屏居中布局,
+     不避让状态栏/底部横条时,卡片与装饰圆会压到状态栏底下。
+     max() 保证安全区外的设备(桌面浏览器、安卓)仍保留 20px 基础留白。 */
+  padding-top: max(20px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
   display: flex;
   align-items: center;
   justify-content: center;

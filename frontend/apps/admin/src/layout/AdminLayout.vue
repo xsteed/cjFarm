@@ -268,7 +268,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { listTables } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
@@ -288,6 +288,26 @@ const { isMobile } = useIsMobile();
 
 // 移动端侧栏抽屉开合状态
 const drawerOpen = ref(false);
+
+// 安卓系统返回键(standalone PWA 与安卓浏览器通用;iOS 无系统返回键,不受影响):
+// 抽屉打开时如果直接按返回,会不收抽屉而直接退出应用/返回上一页。
+// 对策:打开抽屉时往 history 压入一条占位记录,系统返回触发 popstate 时
+// 只收抽屉、不离开页面;通过遮罩/菜单项/关闭按钮收起时,再把占位记录
+// 消费掉(history.back()),避免之后出现「按返回没反应」的空放一枪。
+watch(drawerOpen, (open, wasOpen) => {
+  if (open) {
+    history.pushState({ adminDrawer: true }, '');
+  } else if (wasOpen && (history.state as { adminDrawer?: boolean } | null)?.adminDrawer) {
+    history.back();
+  }
+});
+
+function onPopState(): void {
+  if (drawerOpen.value) drawerOpen.value = false;
+}
+
+onMounted(() => window.addEventListener('popstate', onPopState));
+onBeforeUnmount(() => window.removeEventListener('popstate', onPopState));
 
 // 桌面端侧栏折叠状态:收起后只剩图标列(64px),组菜单 hover 弹出子菜单浮层。
 // 仅桌面端有意义,移动端不渲染折叠按钮、该状态也不参与布局。
@@ -1065,10 +1085,16 @@ function onLogout() {
     box-shadow: 6px 0 28px rgb(0 0 0 / 18%);
   }
 
+  /* iOS 主屏 PWA(standalone + viewport-fit=cover)下视口延伸到状态栏底下:
+     顶栏是 flex 流第一个元素、渲染在 y=0,不加适配会被状态栏压住,
+     表现为「页面整体上移、顶部发虚」。这里把状态栏高度加进顶栏高度,
+     并用 padding-top 把内容推到状态栏下方。 */
   .top {
-    height: 52px;
+    height: calc(52px + env(safe-area-inset-top, 0px));
     padding: 0 12px;
+    padding-top: env(safe-area-inset-top, 0px);
     gap: 8px;
+    box-sizing: border-box;
   }
 
   .top-title {
