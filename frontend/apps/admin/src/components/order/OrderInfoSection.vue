@@ -25,6 +25,11 @@
         <span class="od-v">{{ detail.personCount }}人</span>
         <span class="od-k od-gap">下单时间：</span>
         <span class="od-v">{{ detail.createTime }}</span>
+        <!-- 用餐结束时间:订单到终态(完成/取消)时写入 meal_end_time,取消单同样显示 -->
+        <template v-if="detail.mealEndTime">
+          <span class="od-k od-gap">结束时间：</span>
+          <span class="od-v">{{ detail.mealEndTime }}</span>
+        </template>
       </div>
     </div>
 
@@ -162,7 +167,10 @@
       >
         手动改单
       </button>
+      <!-- 移动端:取消/完成订单顶替开始制作/上齐的位置常驻底部栏(见下方互换),
+           且排在确认收款之后:移动端顺序 = 改单 / 收款 / 取消 / 完成 / 结算 -->
       <button
+        v-if="!isMobile"
         type="button"
         class="ab ab-make"
         :disabled="!canMake || busy"
@@ -171,6 +179,7 @@
         开始制作
       </button>
       <button
+        v-if="!isMobile"
         type="button"
         class="ab ab-serve"
         :disabled="!canServe || busy"
@@ -185,6 +194,24 @@
         @click="emit('settle', 'pay')"
       >
         确认收款
+      </button>
+      <button
+        v-if="isMobile"
+        type="button"
+        class="ab ab-cancel"
+        :disabled="!canCancelOrder"
+        @click="emit('cancel')"
+      >
+        取消订单
+      </button>
+      <button
+        v-if="isMobile"
+        type="button"
+        class="ab ab-more ab-finish"
+        :disabled="!canFinish"
+        @click="emit('finish')"
+      >
+        完成订单
       </button>
       <button
         type="button"
@@ -213,9 +240,29 @@
         :disabled="!canReprint || busy"
         @click="emit('reprint', 'guest')"
       >
-        重打小票
+        重打顾客小票
+      </button>
+      <!-- 移动端:开始制作/上齐顶替取消/完成订单的位置(与主操作组互换) -->
+      <button
+        v-if="isMobile"
+        type="button"
+        class="ab ab-make"
+        :disabled="!canMake || busy"
+        @click="emit('set-status', 2)"
+      >
+        开始制作
       </button>
       <button
+        v-if="isMobile"
+        type="button"
+        class="ab ab-serve"
+        :disabled="!canServe || busy"
+        @click="emit('set-status', 3)"
+      >
+        上齐/用餐中
+      </button>
+      <button
+        v-if="!isMobile"
         type="button"
         class="ab ab-cancel"
         :disabled="!canCancelOrder"
@@ -224,6 +271,7 @@
         取消订单
       </button>
       <button
+        v-if="!isMobile"
         type="button"
         class="ab ab-more ab-finish"
         :disabled="!canFinish"
@@ -693,6 +741,12 @@ function refreshRefunds(): void {
   border-color: #dcdcdc;
 }
 
+/* 桌面端完成订单位于主操作组:恢复与主按钮一致的等宽铺满 */
+.od-actions-main .ab-more {
+  flex: 1 1 0;
+  min-width: 100px;
+}
+
 .ab-finish {
   color: #2ba471;
   border-color: #a3ddc6;
@@ -726,7 +780,7 @@ function refreshRefunds(): void {
     margin-top: 12px;
   }
 
-  /* 主操作组:排到内容末尾并常驻弹层底部,滚动查看明细时收款/结算/制作始终可点。
+  /* 主操作组:排到内容末尾并常驻弹层底部,滚动查看明细时收款/结算/取消始终可点。
      负外边距 + 等量内边距让它横向铺满弹层(否则两侧 16px 内边距会露出滚动内容)。 */
   .od-actions-main {
     order: 1;
@@ -735,7 +789,7 @@ function refreshRefunds(): void {
     z-index: 3;
     gap: 8px;
     margin: 14px -16px 0;
-    padding: 10px 16px 2px;
+    padding: 10px 16px 12px;
     background: #fff;
     border-top: 1px solid var(--line);
   }
@@ -747,14 +801,21 @@ function refreshRefunds(): void {
     font-size: 14px;
   }
 
+  /* 桌面端的 .od-actions-main .ab-more(两类的优先级)会压过上面的单类 .ab,
+     导致同排的取消订单被挤宽;这里以同等优先级还原移动端两列等宽 */
+  .od-actions-main .ab-more {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
+  /* 结算按钮独占最后一行:5 个按钮两列排布会剩一个孤立的半宽按钮,铺满更均衡醒目 */
+  .od-actions-main .ab-settle {
+    flex: 1 1 100%;
+  }
+
   /* 移动端次要按钮恢复两列等宽大按钮(覆盖桌面端的按内容自适应) */
   .od-actions-sub .ab {
     flex: 1 1 calc(50% - 4px);
-  }
-
-  .ab-more {
-    flex: 1 1 calc(50% - 4px);
-    height: 40px;
   }
 
   .od-total {

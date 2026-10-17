@@ -1204,7 +1204,7 @@ function foreignTip(): boolean {
 const resumeTime = computed(() => {
   // 统一时间口径:后端可能返回 "YYYY-MM-DD HH:MM:SS" 或 ISO "YYYY-MM-DDTHH:MM:SSZ",
   // 先把 T 归一为空格再截取,避免切出 "10-09T12:03" 这种带 T 的丑值(与 paidAt 展示一致)。
-  const t = String(currentOrder.value?.createTime || currentOrder.value?.beginTime || '').replace('T', ' ');
+  const t = String(currentOrder.value?.createTime || '').replace('T', ' ');
   return t.length >= 16 ? t.slice(5, 16) : '--:--';
 });
 const resumeCount = computed(() =>

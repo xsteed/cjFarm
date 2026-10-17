@@ -131,8 +131,9 @@ export interface OrderSummary extends Extensible {
   paidAmount?: number;
   giftAmount?: number;
   finishTime?: NullableString;
-  beginTime?: NullableString;
-  endTime?: NullableString;
+  /** 用餐起止时间:开始=下单;结束=订单到终态(完成/取消)。进行中为空 */
+  mealStartTime?: NullableString;
+  mealEndTime?: NullableString;
   createBy?: string;
   createTime?: string;
   updateBy?: string;

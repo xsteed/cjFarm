@@ -9,7 +9,7 @@ export const ORDER_STATUS: Record<number, DictOption> = {
   1: { label: '已下单', theme: 'primary' },
   2: { label: '制作中', theme: 'warning' },
   3: { label: '已上齐', theme: 'success' },
-  4: { label: '已完成', theme: 'default' },
+  4: { label: '已完成', theme: 'success' },
   5: { label: '已取消', theme: 'danger' }
 };
 
