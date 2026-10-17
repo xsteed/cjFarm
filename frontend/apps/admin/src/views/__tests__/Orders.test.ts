@@ -132,11 +132,15 @@ describe('Orders 订单管理页 · 移动端底部分页器', () => {
     wrapper.unmount();
   });
 
-  it('一页或 0 单时不渲染分页器(v-if total > pageSize)', async () => {
+  it('只有一页时也渲染分页器(共 N 条数据 · 1 页)，0 单才隐藏', async () => {
     listOrdersMock.mockResolvedValue({ total: 8, items: orderPage(1).slice(0, 8) });
     const onePage = mountOrders();
     await flushPromises();
-    expect(onePage.find('.m-pager').exists()).toBe(false);
+    // 一页也常驻:此时仍可把「10 条/页」切成 5 条,一页变两页浏览
+    const pager = onePage.find('.m-pager');
+    expect(pager.exists()).toBe(true);
+    expect(pager.findComponent(TPagination).props('total')).toBe(8);
+    expect(pager.findComponent(TPagination).props('current')).toBe(1);
     onePage.unmount();
 
     listOrdersMock.mockResolvedValue({ total: 0, items: [] });
@@ -146,16 +150,33 @@ describe('Orders 订单管理页 · 移动端底部分页器', () => {
     empty.unmount();
   });
 
+  it('改每页条数后回第 1 页重拉(page-size-change)', async () => {
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    // 先跳到第 2 页,再改每页条数:必须回第 1 页,否则可能越过新的总页数拿到空列表
+    const pager = wrapper.find('.m-pager').findComponent(TPagination);
+    const emit = (event: string, ...args: unknown[]) =>
+      (pager.vm as unknown as { $emit: (e: string, ...a: unknown[]) => void }).$emit(event, ...args);
+    emit('current-change', 2);
+    await flushPromises();
+    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageNum: 2 }));
+
+    emit('page-size-change', 5);
+    await flushPromises();
+
+    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageNum: 1, pageSize: 5 }));
+    expect(wrapper.find('.m-pager').findComponent(TPagination).props('pageSize')).toBe(5);
+    wrapper.unmount();
+  });
+
   it('点分页器页码即跳转(请求对应页并保留原筛选条件)', async () => {
     const wrapper = mountOrders();
     await flushPromises();
 
     // current-change 首参就是新页码数字(见 t-pagination 事件签名)
     const pagination = wrapper.find('.m-pager').findComponent(TPagination);
-    (pagination.vm as unknown as { $emit: (event: string, ...args: unknown[]) => void }).$emit(
-      'current-change',
-      3
-    );
+    (pagination.vm as unknown as { $emit: (event: string, ...args: unknown[]) => void }).$emit('current-change', 3);
     await flushPromises();
 
     expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ pageNum: 3, pageSize: PAGE_SIZE }));

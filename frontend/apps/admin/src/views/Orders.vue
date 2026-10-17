@@ -246,10 +246,12 @@
           </div>
         </div>
 
-        <!-- 移动端底部分页器:与菜品页同口径(current-change 首参即新页码数字)，
-             多页时才出现;点页码数字即跳转到该页 -->
+        <!-- 移动端底部分页器:只要有数据就常驻(一页时显示「共 N 条数据 · 1 ›」),
+             0 单空态才隐藏。此时仍可把「10 条/页」切成 5 条,一页变两页浏览;
+             点页码数字即跳转到该页。事件口径与菜品页一致(current-change 首参即新页码),
+             另补 page-size-change —— 菜品页漏绑该事件导致条数选择器改了不生效。 -->
         <div
-          v-if="pagination.total > pagination.pageSize"
+          v-if="pagination.total > 0"
           class="m-pager"
         >
           <t-pagination
@@ -257,6 +259,7 @@
             :page-size="pagination.pageSize"
             :total="pagination.total"
             @current-change="onPageChange"
+            @page-size-change="onPageSizeChange"
           />
         </div>
       </div>
@@ -737,6 +740,14 @@ function onSearch(): void {
 // 移动端底部分页器:current-change 首参就是新页码数字(与菜品页同口径,见 t-pagination 事件签名)
 function onPageChange(page: number): void {
   pagination.current = page;
+  load();
+}
+
+// 每页条数变更:t-pagination 自带条数选择器(一页数据时靠它切 5 条/页分成两页浏览)。
+// 改完必须回第 1 页 —— 沿用旧页码可能越过新的总页数,后端不纠偏会返回空列表。
+function onPageSizeChange(size: number): void {
+  pagination.pageSize = size;
+  pagination.current = 1;
   load();
 }
 
