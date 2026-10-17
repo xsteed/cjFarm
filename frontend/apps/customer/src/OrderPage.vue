@@ -1113,7 +1113,7 @@ async function submit(): Promise<void> {
     cart.value = [];
     cartVisible.value = false;
     try {
-      currentOrder.value = await getOrderByNo(orderNo);
+      currentOrder.value = await getOrderByNo(orderNo, tableId.value);
     } catch {
       currentOrder.value = { orderNo } as OrderDetail;
     }

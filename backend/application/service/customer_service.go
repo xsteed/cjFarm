@@ -364,11 +364,21 @@ func customerCreateOrderFromExistingID(orderID int) (CustomerCreateOrderResult, 
 	}, nil
 }
 
-// CustomerOrderByNo 按订单号查询订单详情(顾客端)。
-func CustomerOrderByNo(orderNo string) (dto.Order, error) {
+// CustomerOrderByNo 按订单号查询订单(顾客端订单页轮询/小票页使用)。
+//
+// tableID > 0 时校验订单归属:调用方(扫码进来的桌台)必须证明这个单是自己的 ——
+// 单号会出现在小票/照片/群聊里,无鉴权接口不做归属校验等于把全店订单明细
+// (菜品/金额/挂账人)敞开给匿名访客遍历。与加菜/催菜同一口径(tableId 一并提交)。
+// tableID <= 0 时(老二维码链接未带桌台)退化为仅按单号查询,由顾客端限流
+// 中间件兜底(见 main.go 路由上的 NewIPRateLimit)。
+func CustomerOrderByNo(orderNo string, tableID int) (dto.Order, error) {
 	o, err := dao.GetOrderByNo(orderNo)
 	if err != nil {
 		return dto.Order{}, errors.New("订单不存在")
+	}
+	if tableID > 0 && o.TableID != tableID {
+		// 与「订单不存在」同一文案:不向调用方泄露「单号存在但不属于你」。
+		return dto.Order{}, errors.New("订单不存在或已结束")
 	}
 	return dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false), nil
 }

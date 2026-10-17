@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"dining-system/domain/po"
 	"dining-system/infrastructure/conf"
 	"dining-system/infrastructure/logger"
+	"dining-system/infrastructure/store"
 	"dining-system/infrastructure/store/dao"
 	"dining-system/interfaces/dto"
 )
@@ -149,34 +151,46 @@ func ReleaseStaleTables(ctx context.Context) (StaleReleaseOutcome, error) {
 		return out, nil
 	}
 	for _, id := range tableIDs {
-		// 刻意不带隔离:这里要的正是「该桌所有进行中订单」的全景,
-		// 才能判断它是不是还有本营业日的单(有则说明客人正在用餐,不能清)。
+		// 事务外快照仅用于日志计数(该桌遗留了几笔单);清台判定以事务内为准。
 		orders := dao.ListActiveOrdersByTable(id, "")
-		stale, inUse := 0, false
+		stale := 0
 		for _, o := range orders {
 			// biz_date 为空的行无从判定营业日,保守当作「该桌还有人」:宁可让店家人工处理,
 			// 也不能把一张正在用餐的桌判成空闲,否则下一桌客人坐进去就成了两拨人一桌。
 			if o.BizDate == "" || o.BizDate >= today {
-				inUse = true
 				break
 			}
 			stale++
 		}
 		// 一桌多单场景下旧单与新单可以并存:该桌还有本营业日的订单就不清。
-		if inUse || stale == 0 {
+		if stale == 0 || len(orders) > stale {
 			continue
 		}
-		// 先读当前状态再决定写不写:SQLite 的 UPDATE 影响行数统计的是「匹配到的行」,
-		// 值没变也返回 1 —— 直接据此计数会让每轮巡检都报告同样的清台动作,
-		// 日志被「清台 2 张」刷屏却看不出哪一次才是真变化。顺带也拿到了「桌台已删除」。
-		cur, err := dao.GetTableStatus(id)
-		if err != nil {
+		// 已经空闲的桌台直接跳过(仅优化:值没变也计数会让每轮巡检都报告同样的
+		// 清台动作,日志被「清台 N 张」刷屏却看不出哪一次才是真变化)。
+		if cur, err := dao.GetTableStatus(id); err != nil || cur == 0 {
 			continue
 		}
-		if cur == 0 {
-			continue
-		}
-		if _, err := dao.SetTableStatus(id, 0); err != nil {
+		// 「判断 + 写入」在同一事务内原子完成:先对桌台行做自赋值 UPDATE 取行写锁
+		// (TouchTableTx),把并发的顾客下单(OccupyTableTx 同样要拿这行的写锁)挡在
+		// 锁外;再数本营业日的进行中订单,为 0 才置空闲。旧实现在事务外
+		// 「读快照 → 内存判定 → 无条件置空闲」,窗口期内顾客扫码开的新单会被随后
+		// 的置空闲抹成「空闲桌」:看板显示空闲而桌上挂着未结账单。
+		if err := store.WithTx(func(tx *sql.Tx) error {
+			if err := dao.TouchTableTx(tx, id); err != nil {
+				return err
+			}
+			// 带营业日隔离(biz_date 为空按未隔离处理,与上方快照口径一致):
+			// 跨日遗留单不算「还在出餐」,否则桌台永远释放不掉。
+			n, err := dao.CountUnfinishedOrdersTx(tx, id, today)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				return nil // 该桌还有本营业日的进行中订单,不清
+			}
+			return dao.SetTableStatusTx(tx, id, 0)
+		}); err != nil {
 			return out, err
 		}
 		out.Tables++

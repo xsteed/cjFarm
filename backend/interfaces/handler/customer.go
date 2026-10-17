@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -133,7 +134,11 @@ func CustomerCreateOrder(c *gin.Context) {
 }
 
 func CustomerOrderByNo(c *gin.Context) {
-	order, err := service.CustomerOrderByNo(c.Param("orderNo"))
+	// 归属校验:调用方(扫码进来的桌台)带 tableId 时校验订单归属,防止凭单号
+	// 遍历查询他人订单(单号会出现在小票/照片/群聊里)。老二维码链接未带桌台
+	// 参数时退化为仅按单号查询,由本路由上的 IP 限流兜底(见 main.go)。
+	tableID, _ := strconv.Atoi(c.Query("tableId"))
+	order, err := service.CustomerOrderByNo(c.Param("orderNo"), tableID)
 	if err != nil {
 		customerFail(c, err)
 		return

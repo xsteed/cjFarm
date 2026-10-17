@@ -93,6 +93,22 @@ func GetPendingDuplicateRefund(orderNo, channel string) (po.Refund, error) {
 	return r, err
 }
 
+// GetPendingDuplicateRefundTx 是 GetPendingDuplicateRefund 的事务版本。
+// 配合 TouchOrderTx 使用:先在事务内锁住订单行,再查重、落退款单,
+// 使「查重 → 落单」在同一订单行上串行化,消除两条并发支付通知
+// (渠道重发 + 前端轮询补单)各自查重通过、对同一笔支付发起两笔退款的竞态。
+func GetPendingDuplicateRefundTx(tx *sql.Tx, orderNo, channel string) (po.Refund, error) {
+	var r po.Refund
+	err := tx.QueryRow(`SELECT refund_id, refund_no FROM tb_refund
+		WHERE order_no=? AND channel=? AND COALESCE(is_duplicate,0)=1 AND status IN (?,?)
+		ORDER BY refund_id DESC LIMIT 1`,
+		orderNo, channel, po.RefundStatusProcessing, po.RefundStatusSuccess).Scan(&r.RefundID, &r.RefundNo)
+	if err == sql.ErrNoRows {
+		return po.Refund{}, nil
+	}
+	return r, err
+}
+
 // MarkRefund 更新退款单状态(成功/失败)。
 func MarkRefund(refundID, status int, channelRefundNo, failReason string) error {
 	_, err := store.DB.Exec(`UPDATE tb_refund SET status=?, channel_refund_no=?, fail_reason=?, update_time=? WHERE refund_id=?`,

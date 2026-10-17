@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -234,7 +235,7 @@ func ListSettings() dto.Settings {
 	}
 }
 
-// SaveSettings 保存整份配置,返回审计摘要与是否发生乐观锁冲突。
+// SaveSettings 保存整份配置,返回审计摘要、是否发生乐观锁冲突与落库错误。
 //
 // 串行化整个保存过程:指纹校验、快照、落库、摘要之间不留并发窗口。
 // 校验必须在锁内——若在锁外,两个请求可同时通过校验,后获得锁的
@@ -243,14 +244,18 @@ func ListSettings() dto.Settings {
 // 乐观锁:version 来自 ListSettings 下发的指纹,与当前库内容不一致说明
 // 有其他人已先保存——继续提交会用旧快照整表覆盖掉对方的修改。
 // 旧前端不传 version,跳过校验保持兼容。冲突时不落库、不生成摘要。
+//
+// 任一项落库失败必须返回 error:静默 warning 会让管理员看到「保存成功」,
+// 而支付密钥/打印开关实际并未写入(DB 抖动、磁盘满、列超长),审计摘要
+// 还是基于提交值生成的,日志与库不一致 —— 这类「假成功」比报错更难排查。
 // ctx 用于把 requestID 带进日志:保存配置涉及多条告警(清空默认值、敏感项跳过、
 // 令牌清空),排查「配置怎么被改坏的」必须能定位到具体那次提交。
-func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (detail string, conflict bool) {
+func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (detail string, conflict bool, err error) {
 	settingSaveMu.Lock()
 	defer settingSaveMu.Unlock()
 
 	if settings.Version != "" && settings.Version != dao.SettingsFingerprint(ManagedSettingKeys) {
-		return "", true
+		return "", true, nil
 	}
 
 	vals := map[string]string{
@@ -303,13 +308,16 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 	// 旧值快照必须赶在 SetSetting 之前取——落库后 LoadSettings 读到的已是新值,
 	// 摘要里的「旧值 → 新值」会因此恒相等,变更记录全部丢失。
 	before := dao.LoadSettings()
+	// 落库失败的配置键:任一项失败都不允许回「保存成功」,调用方据此应答错误。
+	var failedKeys []string
 	for k, v := range vals {
 		// 出厂默认非空却被保存为空:记录告警,便于追查「功能静默缺失」的起因。
 		if v == "" && dao.HasNonEmptyDefault(k) {
 			logger.CtxWarnf(ctx, "[setting][告警] 管理员 %s 将配置项 %s 保存为空值(出厂默认应为 %q)", actor, k, dao.DefaultValue(k))
 		}
 		if err := dao.SetSetting(k, v); err != nil {
-			logger.CtxWarnf(ctx, "[setting] 保存配置项 %s 失败: %v", k, err)
+			failedKeys = append(failedKeys, k)
+			logger.CtxErrorf(ctx, "[setting][告警] 保存配置项 %s 失败: %v", k, err)
 		}
 	}
 
@@ -336,7 +344,8 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 			continue
 		}
 		if err := dao.SetSetting(k, v); err != nil {
-			logger.CtxWarnf(ctx, "[setting] 保存敏感配置项 %s 失败: %v", k, err)
+			failedKeys = append(failedKeys, k)
+			logger.CtxErrorf(ctx, "[setting][告警] 保存敏感配置项 %s 失败: %v", k, err)
 		}
 	}
 	// 「清空代理令牌」是一次性指令,必须在敏感项写入之后执行,否则会被本次提交的
@@ -348,16 +357,21 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 			agentTokenCleared = true
 		}
 		if err := dao.SetSetting("agent_token", ""); err != nil {
-			logger.CtxWarnf(ctx, "[setting] 清空代理令牌失败: %v", err)
+			logger.CtxErrorf(ctx, "[setting][告警] 清空代理令牌失败: %v", err)
 			agentTokenCleared = false
+			failedKeys = append(failedKeys, "agent_token")
 		}
+	}
+	// 有配置项落库失败:不生成「保存成功」的审计摘要,把失败键清单交给调用方应答。
+	if len(failedKeys) > 0 {
+		return "", false, fmt.Errorf("以下配置项保存失败: %s", strings.Join(failedKeys, ", "))
 	}
 	logger.CtxInfof(ctx, "[setting] 管理员 %s 保存配置完成(普通项 %d + 敏感项 %d)", actor, len(vals), len(secrets))
 	detail = describeSettingChange(before, vals, secrets)
 	if agentTokenCleared {
 		detail += "；清空代理令牌(敏感项,值不记录)"
 	}
-	return detail, false
+	return detail, false, nil
 }
 
 // IssueAgentToken 签发 legacy 全局打印代理令牌,返回仅展示一次的明文与新指纹。

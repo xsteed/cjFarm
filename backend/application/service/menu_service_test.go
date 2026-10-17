@@ -214,6 +214,22 @@ func TestCategoryCRUD(t *testing.T) {
 		t.Fatalf("UpdateCategory 失败: %v", err)
 	}
 
+	// 分类下还有菜品时禁止删除:否则菜品会从顾客端菜单静默消失,
+	// 而下单校验只查菜品自身 del_flag,旧客户端/缓存仍能点进来。
+	if _, err := SaveDish(dto.Dish{
+		CategoryID: int(id), DishName: "凉拌黄瓜",
+		Specs: []dto.Spec{{SpecName: "份", Price: 8}},
+	}); err != nil {
+		t.Fatalf("准备菜品失败: %v", err)
+	}
+	if err := DeleteCategory(int(id)); err == nil || !strings.Contains(err.Error(), "还有") {
+		t.Fatalf("分类下有菜品时应拒绝删除, got %v", err)
+	}
+	// 移走菜品后才允许删除。
+	if _, err := store.DB.Exec(`UPDATE tb_dish SET del_flag='1' WHERE category_id=?`, id); err != nil {
+		t.Fatalf("移走菜品失败: %v", err)
+	}
+
 	if err := DeleteCategory(int(id)); err != nil {
 		t.Fatalf("DeleteCategory 失败: %v", err)
 	}

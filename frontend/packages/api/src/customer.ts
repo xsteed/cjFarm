@@ -23,8 +23,11 @@ export const createOrder = (data: OrderCreatePayload): Promise<OrderCreateResult
   http.post<unknown, OrderCreateResult>('/customer/order', data);
 export const appendOrder = (data: OrderCreatePayload): Promise<OrderCreateResult> =>
   http.post<unknown, OrderCreateResult>('/customer/order/append', data);
-export const getOrderByNo = (no: Id): Promise<OrderDetail> =>
-  http.get<unknown, OrderDetail>(`/customer/order/no/${no}`);
+// 按单号查订单详情。带当前桌台 tableId 时,后端校验订单归属 ——
+// 单号会出现在小票/照片/群聊里,无鉴权接口必须防「凭单号遍历查他人订单」。
+// 老二维码链接未带桌台参数时可省略(后端退化为仅按单号查询 + IP 限流)。
+export const getOrderByNo = (no: Id, tableId?: number): Promise<OrderDetail> =>
+  http.get<unknown, OrderDetail>(`/customer/order/no/${no}${tableId ? `?tableId=${tableId}` : ''}`);
 // 顾客催菜:请求后厨加急(同一订单 3 分钟冷却,超频后端会返回剩余秒数)。
 // 后端需校验订单归属桌台,故一并提交当前桌台的 tableId。
 // config 可传 { silent: true }:冷却拒绝(HTTP 400 带结构化 cooldown)时不弹全局错误

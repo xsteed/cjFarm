@@ -42,6 +42,16 @@ func UpdateCategory(ct po.Category) error {
 	return err
 }
 
+// CountActiveDishes 统计某分类下未删除的菜品数。
+// 删除分类前调用:分类下还有菜品时禁止删除 —— 顾客端菜单按分类分组构建,
+// 分类被删后其下菜品会从菜单里静默消失,而下单校验只查菜品自身的 del_flag,
+// 旧客户端/缓存仍能点进来,形成「菜单上看不到、却能下单」的割裂。
+func CountActiveDishes(categoryID int) (int, error) {
+	var n int
+	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_dish WHERE category_id=? AND del_flag='0'`, categoryID).Scan(&n)
+	return n, err
+}
+
 // DeleteCategory 软删除分类。
 func DeleteCategory(id int) error {
 	_, err := store.DB.Exec(`UPDATE tb_category SET del_flag='1', update_time=? WHERE category_id=?`, store.Now(), id)

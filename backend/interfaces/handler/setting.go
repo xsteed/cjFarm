@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"dining-system/application/service"
+	"dining-system/infrastructure/logger"
 	"dining-system/interfaces/dto"
 )
 
@@ -35,7 +36,14 @@ func SettingSave(c *gin.Context) {
 		return
 	}
 
-	detail, conflict := service.SaveSettings(c.Request.Context(), settings, adminName(c))
+	detail, conflict, err := service.SaveSettings(c.Request.Context(), settings, adminName(c))
+	if err != nil {
+		// 落库失败不回「保存成功」:管理员会以为配置已生效(支付密钥/打印开关),
+		// 实际并未写入。原因进日志,前端只回可操作提示。
+		logger.CtxErrorf(c.Request.Context(), "[setting][告警] 保存配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, NewRsp(c, 500, "部分配置保存失败，请重试"))
+		return
+	}
 	if conflict {
 		c.JSON(http.StatusConflict, NewRsp(c, 409, "配置已被他人修改，页面已重新加载最新值，请核对后再次保存"))
 		return

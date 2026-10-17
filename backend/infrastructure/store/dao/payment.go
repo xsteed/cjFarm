@@ -47,6 +47,37 @@ func InsertPayment(orderNo, channel string, amountCents int64, prepayID string) 
 	return err
 }
 
+// InsertPaymentTx 是 InsertPayment 的事务版本:在订单行锁保护下落支付流水。
+//
+// 配合 GetOrderAmountTx 做「金额复核」:PayCreate 读金额到渠道下单之间若发生
+// 加菜/改单抬价,事务内重读会发现金额已变,调用方据此拒绝出码(并关掉渠道单),
+// 避免生成旧金额二维码 —— 顾客按旧金额付款后,回调会被金额防线拒之门外,
+// 钱到了订单却入不了账。
+func InsertPaymentTx(tx *sql.Tx, orderNo, channel string, amountCents int64, prepayID string) error {
+	if _, err := tx.Exec(store.InsertIgnoreInto("tb_payment",
+		"order_no", "channel", "amount", "status", "prepay_id", "channel_trade_no", "create_time", "update_time"),
+		orderNo, channel, amountCents, PayStatusPending, prepayID, "P_"+orderNo, store.Now(), store.Now()); err != nil {
+		return err
+	}
+	// 占位行可能已存在:正常复用(待支付)或被关单(closed,改单/结账时 closePendingPayments
+	// 会把全部渠道待支付单关闭)。无论哪种,统一把占位行重置为待支付并更新金额与 prepay_id,
+	// 覆盖「关单后重新发起支付」的场景:channel_trade_no 仍为 "P_<order_no>" 占位的行
+	// 说明从未支付成功过,复活为待支付是安全的;已支付的行 channel_trade_no 已被真实
+	// 交易号替换,不会命中本 UPDATE。
+	_, err := tx.Exec(`UPDATE tb_payment SET status=?, amount=?, prepay_id=?, update_time=? WHERE order_no=? AND channel=? AND channel_trade_no=?`,
+		PayStatusPending, amountCents, prepayID, store.Now(), orderNo, channel, "P_"+orderNo)
+	return err
+}
+
+// GetOrderAmountTx 是 GetOrderAmount 的事务版本,在行锁保护下重读订单最新应收金额。
+// 只填充 po.Order 的 OrderID/PayStatus/OrderStatus/TotalAmount 四列。
+func GetOrderAmountTx(tx *sql.Tx, orderNo string) (po.Order, error) {
+	var o po.Order
+	err := tx.QueryRow(`SELECT order_id, pay_status, order_status, total_amount FROM tb_order WHERE order_no=?`,
+		orderNo).Scan(&o.OrderID, &o.PayStatus, &o.OrderStatus, &o.TotalAmount)
+	return o, err
+}
+
 // GetPayment 查询某订单某渠道最近一条支付流水。
 //
 // 只填充 po.Payment 的 PaymentID/Status/Amount 三列(调用方只需要这三项),

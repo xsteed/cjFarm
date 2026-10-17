@@ -48,10 +48,13 @@ export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer, 
       // 异步通知丢失或延迟时,由前端触发补单,避免顾客付款后页面一直停在待支付。
       pollCount++;
       const orderNo = currentOrder.value.orderNo as string;
+      // 归属校验参数:轮询按单号拉详情,带桌台 ID 让后端校验订单归属
+      // (防凭单号遍历他人订单,见 api.getOrderByNo)。缺失时按 0 传(后端放行+限流)。
+      const tableId = Number(currentOrder.value.tableId) || 0;
       if (view.value === 'pay' && pollCount % 5 === 0) {
         const r = await queryPay(orderNo);
         if (r?.payStatus === 1) {
-          const o = await getOrderByNo(orderNo);
+          const o = await getOrderByNo(orderNo, tableId);
           if (currentOrder.value === base) {
             currentOrder.value = o;
             onlineQr.value = '';
@@ -61,7 +64,7 @@ export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer, 
           return;
         }
       }
-      const o = await getOrderByNo(orderNo);
+      const o = await getOrderByNo(orderNo, tableId);
       if (currentOrder.value !== base) return;
       currentOrder.value = o;
       if (o.orderStatus === ORDER_STATUS_CODE.CANCELED) {

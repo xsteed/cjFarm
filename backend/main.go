@@ -68,7 +68,11 @@ func setupAPI(r *gin.Engine) {
 		api.POST("/customer/auth/login", handler.CustomerMemberLogin)
 		api.GET("/customer/auth/profile", handler.CustomerAuthRequired, handler.CustomerMemberProfile)
 		api.GET("/customer/order/mine", handler.CustomerAuthRequired, handler.CustomerMyOrders)
-		api.GET("/customer/order/no/:orderNo", handler.CustomerOrderByNo)
+		// 按单号查订单是无鉴权公开接口,且单号会出现在小票/照片/群聊里:
+		// 挂单 IP 限流兜底遍历探测(归属校验见 handler.CustomerOrderByNo)。
+		api.GET("/customer/order/no/:orderNo",
+			middleware.NewIPRateLimit(time.Minute, middleware.LoadCustomerOrderQueryRateLimit()),
+			handler.CustomerOrderByNo)
 		api.POST("/customer/order/urge", handler.CustomerUrgeOrder)
 		api.GET("/customer/pay/qr", handler.CustomerPayQr)
 		api.POST("/customer/pay/create", handler.PayCreate)

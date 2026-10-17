@@ -82,7 +82,7 @@ func PayCreate(c *gin.Context) {
 	log := logger.WithContext(ctx,
 		zap.String("orderNo", p.OrderNo), zap.String("channel", p.Channel))
 
-	_, totalCents, err := service.ValidateOrderPayable(ctx, p.OrderNo)
+	orderID, totalCents, err := service.ValidateOrderPayable(ctx, p.OrderNo)
 	if err != nil {
 		fail(c, err.Error())
 		return
@@ -105,9 +105,20 @@ func PayCreate(c *gin.Context) {
 	}
 
 	// 落支付流水(待支付)。同一订单同一渠道重复发起时,复用旧流水记录状态。
-	// 落库失败绝不能再把二维码给顾客:否则顾客付款后回调找不到待支付流水可回写,
+	// 落库在事务内复核订单金额(锁订单行后重读):校验读金额到渠道下单之间若发生
+	// 加菜/改单抬价,这里会发现金额已变,必须关掉刚生成的旧金额码并请顾客重新发起 ——
+	// 否则顾客按旧金额付款后回调被金额防线拒绝,钱到了订单却入不了账。
+	// 落库失败绝不能再把二维码给顾客:顾客付款后回调找不到待支付流水可回写,
 	// 订单永远停在未支付。这里 fail-closed,并尝试关掉刚生成的渠道收款码。
-	if err := service.CreatePayment(p.OrderNo, p.Channel, totalCents, result.CodeURL); err != nil {
+	if err := service.CreatePayment(orderID, p.OrderNo, p.Channel, totalCents, result.CodeURL); err != nil {
+		if errors.Is(err, service.ErrOrderAmountChanged) {
+			log.Warnf("[pay] 订单金额在出码期间被修改,关闭本次收款码 订单%s", p.OrderNo)
+			if closeErr := provider.Close(p.OrderNo); closeErr != nil {
+				log.Warnf("[pay][告警] 金额变更后关单也失败(旧码可能仍可支付,请人工关注): %v", closeErr)
+			}
+			fail(c, "订单金额已变更，请刷新后重新发起支付")
+			return
+		}
 		log.Errorf("[pay][告警] 支付流水落库失败,拒绝返回二维码: %v", err)
 		// 渠道收款码已生成,若不关单顾客仍可扫码付款,只能尽力关单降低掉单风险;
 		// 关单失败仅告警(渠道侧单可能仍可付,需人工关注)。
@@ -231,13 +242,10 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 // 返回 false 表示回写遭遇 DB 故障,调用方(回调)应应答 FAIL 让渠道重试;
 // 主动查单路径可忽略返回值(本次不入账,下次轮询再试)。
 func applyPaymentSuccess(ctx context.Context, orderID int, orderNo, channel string, amountCents int64, channelTradeNo string) bool {
-	// 记录回写前的支付状态:先付模式下,只有「这一拍才把订单从不支付变为已支付」才需要补出厨单。
-	// ApplyPaymentSuccess 对重复通知/掉单补偿等场景同样返回空结果,单看返回值区分不出「首次入账」;
-	// 而厨单重复出纸会让后厨照着一张单做两遍,代价比多查一次订单高。
-	beforePaid := false
-	if o, err := service.GetOrderAmount(orderNo); err == nil && o.PayStatus == 1 {
-		beforePaid = true
-	}
+	// 先付模式出厨单的依据由 ApplyPaymentSuccess 回报(FirstTime = 本次才把订单
+	// 从未支付翻到已支付,含掉单补偿入账)。不在事务外读 beforePaid 快照:两个并发
+	// 通知(渠道重发 + 前端轮询补单)可同时读到「未支付」,各自出单,后厨会收到
+	// 两张同一订单的厨单,照单做两遍。
 	res := service.ApplyPaymentSuccess(ctx, orderNo, channel, channelTradeNo, channelName(channel), amountCents)
 	if res.Failed {
 		return false
@@ -246,8 +254,8 @@ func applyPaymentSuccess(ctx context.Context, orderID int, orderNo, channel stri
 		autoRefundDuplicatePayment(ctx, orderID, orderNo, channel, amountCents, channelTradeNo)
 		return true
 	}
-	// 先付模式:本次才由未支付转为已支付 → 后厨出单(后付模式下无操作)。
-	if !beforePaid {
+	// 先付模式:本次首次入账 → 后厨出单(后付模式下无操作)。
+	if res.FirstTime {
 		printKitchenOnPaid(ctx, orderID)
 	}
 	return true
@@ -266,14 +274,21 @@ func autoRefundDuplicatePayment(ctx context.Context, orderID int, orderNo, chann
 	// 排障时按订单号 grep 也更快:字段是结构化的,不受文案措辞变化影响。
 	log := logger.WithContext(ctx, zap.String("orderNo", orderNo), zap.String("channel", channel))
 
-	// 查重:该渠道已有未终态的重复支付退款单(通知重发场景),复用而非重复发起,
-	// 否则同一笔支付会被渠道二次退款(商户资金损失)。
+	// 查重(快速路径):该渠道已有未终态的重复支付退款单(通知重发场景),复用而非重复发起,
+	// 否则同一笔支付会被渠道二次退款(商户资金损失)。 authoritative 判定在
+	// RecordDuplicateRefund 的事务内(锁订单行后重查),这里只是省掉一次事务。
 	if refundID, refundNo := service.HasPendingDuplicateRefund(ctx, orderNo, channel); refundID > 0 {
 		log.Infof("[pay] 重复支付退款已受理过,跳过重复发起 退款单%s", refundNo)
 		return
 	}
 	log.Warnf("[pay][告警] 检测到重复支付,自动原路退回 金额%d分 流水号%s", amountCents, channelTradeNo)
 	refundNo, refundID, paymentID, totalCents, err := service.RecordDuplicateRefund(ctx, orderID, orderNo, channel, amountCents, channelTradeNo)
+	if errors.Is(err, service.ErrDuplicateRefundPending) {
+		// 并发通知抢先落了单(快速路径查重未命中、事务内查重命中):本协程不再发起,
+		// 由抢先者完成退款即可。
+		log.Infof("[pay] 重复支付退款已被并发请求登记,跳过重复发起 订单%s", orderNo)
+		return
+	}
 	if err != nil {
 		// 登记失败 = 重复支付的钱退不出去(渠道侧无退款单可依据),只能人工介入;
 		// 静默 return 会让这笔钱彻底消失在账上。
@@ -295,7 +310,9 @@ func autoRefundDuplicatePayment(ctx context.Context, orderID int, orderNo, chann
 		log.Warnf("[pay][告警] 重复支付自动退回失败,请人工处理 退款单%s: %v", refundNo, err)
 		return
 	}
-	if refundSettled(channel) {
+	// 判据用「渠道返回的实际状态」而非渠道名:微信退款同样可能同步返回 SUCCESS,
+	// 按渠道名放行会把已退出的钱停在「处理中」,报表虚高且文案误导(见 PayRefund 同款修复)。
+	if result.Status == pay.RefundSuccess || refundSettled(channel) {
 		if e := service.MarkRefund(refundID, po.RefundStatusSuccess, result.RefundNo, ""); e != nil {
 			log.Errorf("[pay][告警] 重复支付已退回但退款单置成功失败,请人工核对 退款单%d: %v", refundID, e)
 		}
@@ -485,8 +502,11 @@ func PayRefund(c *gin.Context) {
 		fail(c, "退款失败: "+err.Error())
 		return
 	}
-	// 微信可能返回受理中(PROCESSING),此时不立即入账,由管理端「同步状态」或退款查单补结果。
-	if result.Success && refundSettled(channel) {
+	// 入账判据用「渠道返回的实际状态」而非渠道名:微信退款同样可能同步返回
+	// SUCCESS(钱已退出),此前按渠道名放行会把已退出的钱停在「处理中」——
+	// refund_amount 不累加、paid_amount 不扣减(当天营业额虚高),退款单继续占用
+	// 可退额度,且回给商家「等待到账」的文案与事实相反。
+	if result.Success && (result.Status == pay.RefundSuccess || refundSettled(channel)) {
 		if err := service.ApplyRefundSuccess(ctx, refundID, paymentID, orderNo, refundCents, result.RefundNo); err != nil {
 			// 渠道钱已退但账务回写失败:不能回复「退款成功」误导商家。
 			// 这是最需要告警的一类 —— 钱已经出去了,账上却没记。
@@ -514,7 +534,9 @@ func PayRefund(c *gin.Context) {
 	ok(c, gin.H{"refundId": refundID, "status": po.RefundStatusProcessing, "msg": "退款已受理，等待渠道到账"})
 }
 
-// refundSettled 判断渠道退款结果是否为「已到账」(支付宝同步到账,微信多为异步)。
+// refundSettled 判断渠道退款结果是否为「已到账」(支付宝同步到账)。
+// 仅作为 result.Status 的补充判据:微信等异步渠道以其返回的实际状态为准
+// (SUCCESS=已退 / PROCESSING=受理中),不按渠道名一刀切。
 func refundSettled(channel string) bool {
 	return channel == pay.ChannelAlipay
 }

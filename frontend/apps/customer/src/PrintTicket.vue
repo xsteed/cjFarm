@@ -172,6 +172,8 @@ const $money = money;
 
 const route = useRoute();
 const orderNo = ref<string>(String(route.query.orderNo || ''));
+// 桌台参数用于订单归属校验(后端防凭单号遍历他人订单);老链接未带时按 0 传。
+const tableId = ref<number>(Number(route.query.tableId) || 0);
 const order = ref<OrderDetail | null>(null);
 const shopName = ref<string>('');
 
@@ -189,7 +191,7 @@ async function load(): Promise<void> {
   if (!orderNo.value) return;
   loadError.value = '';
   try {
-    order.value = await getOrderByNo(orderNo.value);
+    order.value = await getOrderByNo(orderNo.value, tableId.value);
   } catch {
     // 失败原因由拦截器统一 toast,页面给出可操作的提示而不是空白
     loadError.value = '订单查询失败，请核对订单号后重试';

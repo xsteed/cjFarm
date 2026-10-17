@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"dining-system/domain/po"
@@ -118,7 +119,20 @@ func UpdateCategory(ct dto.Category) error {
 }
 
 // DeleteCategory 软删除分类;删除失败向上透传,避免接口恒报「删除成功」。
+//
+// 删除前拦截「分类下还有菜品」:顾客端菜单按分类分组构建,分类被删后其下菜品会
+// 从菜单里静默消失(命中不了分组即被丢弃),而下单校验只查菜品自身的 del_flag,
+// 旧客户端/缓存仍能点进来,形成「菜单上看不到、却能下单」的割裂;管理端列表用
+// LEFT JOIN,分类名变空串,看起来「还在」,问题极难定位。与 DeleteTable 同口径:
+// 先清引用再删本体。
 func DeleteCategory(id int) error {
+	n, err := dao.CountActiveDishes(id)
+	if err != nil {
+		return fmt.Errorf("检查分类下菜品失败: %w", err)
+	}
+	if n > 0 {
+		return fmt.Errorf("该分类下还有 %d 道菜品,请先移动或删除菜品后再删除分类", n)
+	}
 	return dao.DeleteCategory(id)
 }
 

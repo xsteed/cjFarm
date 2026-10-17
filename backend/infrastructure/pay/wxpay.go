@@ -152,12 +152,17 @@ func (p *Wxpay) Refund(orderNo, refundNo string, refundCents, totalCents int64) 
 	// status 取值见微信文档:SUCCESS 成功 / PROCESSING 处理中 / CLOSED 关闭 / ABNORMAL 异常。
 	// CLOSED/ABNORMAL 是明确失败(钱没退),必须与「处理中」区分开:调用方据此把退款单
 	// 置为失败,否则这笔退款单会一直停在处理中、永久占用可退额度,后续再也退不出去。
-	status := RefundFail
+	// 无法识别的状态(字段缺失/渠道新增状态码)fail-safe 到「处理中」:继续占用额度、
+	// 等退款查单兜底。默认成「明确失败」会释放可退额度,若渠道实际已受理/已退出这笔钱,
+	// 就打开了超退的口子 —— 宁可多一次人工核对,不可放过可能的资金风险。
+	status := RefundProcessing
 	switch out.Status {
 	case "SUCCESS":
 		status = RefundSuccess
 	case "PROCESSING":
 		status = RefundProcessing
+	case "CLOSED", "ABNORMAL":
+		status = RefundFail
 	}
 	return RefundResult{
 		RefundNo: out.RefundID,
@@ -185,13 +190,17 @@ func (p *Wxpay) QueryRefund(orderNo, refundNo string) (RefundQuery, error) {
 		return RefundQuery{}, err
 	}
 	q := RefundQuery{ChannelRefundNo: out.RefundID, Refunded: out.Amount.Refund}
+	// 与 Refund 同一口径:CLOSED 是明确失败,无法识别的状态 fail-safe 到「处理中」,
+	// 等下次查单兜底,不把可能的已退款置成失败而释放可退额度。
 	switch out.Status {
 	case "SUCCESS":
 		q.Status = RefundSuccess
 	case "PROCESSING", "CHANGE":
 		q.Status = RefundProcessing
-	default:
+	case "CLOSED", "ABNORMAL":
 		q.Status = RefundFail
+	default:
+		q.Status = RefundProcessing
 	}
 	return q, nil
 }

@@ -441,10 +441,18 @@ func Authenticate(ctx context.Context, username, password, ip string) LoginResul
 	log := logger.WithContext(ctx, zap.String("username", username), zap.String("ip", ip))
 
 	// 账号维度锁定:只对真实存在的账号计数,避免攻击者刷不存在的用户名把内存刷爆。
+	// 查询失败时按「不存在」处理(不启用用户维度锁),但必须留痕 —— 静默跳过会让
+	// 账号维度防爆破在 DB 故障时失效而无人知晓。
 	var userKey string
-	if taken, _ := dao.UsernameExists(username, 0); taken {
+	if taken, existsErr := dao.UsernameExists(username, 0); existsErr != nil {
+		logger.CtxWarnf(ctx, "[auth] 用户名查重查询失败,本次不启用账号维度锁定: %v", existsErr)
+	} else if taken {
 		userKey = "user:" + username
 		if guard.locked(userKey) {
+			// 锁定分支也执行一次完整 bcrypt:与下方「账号不存在」分支保持同等耗时,
+			// 否则攻击者可用响应时间差区分「账号存在且被锁定」(配合下方文案差异
+			// 构成用户名枚举信道)。
+			store.WastePasswordVerify(password)
 			log.Warnf("[auth] 登录被拒:账号处于锁定期(连续失败过多)")
 			return LoginResult{Fail: LoginFailUserLocked, Username: username}
 		}

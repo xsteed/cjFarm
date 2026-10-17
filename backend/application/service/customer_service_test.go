@@ -229,13 +229,23 @@ func TestCustomerSvcOrderByNo(t *testing.T) {
 		t.Fatalf("下单失败: %v", err)
 	}
 
-	order, err := CustomerOrderByNo(out.OrderNo)
+	order, err := CustomerOrderByNo(out.OrderNo, 0)
 	if err != nil || order.OrderID != int(out.OrderID) {
 		t.Fatalf("按单号查订单应成功, got order=%+v err=%v", order, err)
 	}
 
-	if _, err := CustomerOrderByNo("NO_SUCH_ORDER"); err == nil || !strings.Contains(err.Error(), "订单不存在") {
+	if _, err := CustomerOrderByNo("NO_SUCH_ORDER", 0); err == nil || !strings.Contains(err.Error(), "订单不存在") {
 		t.Fatalf("不存在订单应报错, got %v", err)
+	}
+
+	// 归属校验:带了不属于本订单的 tableId 必须拒绝,且文案与「订单不存在」
+	// 一致(不泄露「单号存在但不属于你」)。
+	if _, err := CustomerOrderByNo(out.OrderNo, 999); err == nil || err.Error() != "订单不存在或已结束" {
+		t.Fatalf("归属不符的订单应被拒绝, got %v", err)
+	}
+	// 带了正确的 tableId 应放行。
+	if _, err := CustomerOrderByNo(out.OrderNo, 1); err != nil {
+		t.Fatalf("归属一致的订单应放行, got %v", err)
 	}
 }
 
@@ -507,7 +517,7 @@ func TestCustomerSvcPickupNo(t *testing.T) {
 		t.Fatalf("取餐号未落库: %+v", o)
 	}
 
-	detail, err := CustomerOrderByNo(out.OrderNo)
+	detail, err := CustomerOrderByNo(out.OrderNo, 0)
 	if err != nil {
 		t.Fatalf("按单号查单失败: %v", err)
 	}

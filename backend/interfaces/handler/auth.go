@@ -131,8 +131,12 @@ func AdminLogin(c *gin.Context) {
 	res := service.Authenticate(ctx, username, p.Password, ip)
 	switch res.Fail {
 	case service.LoginFailUserLocked:
+		// 文案与「用户名或密码错误」保持一致:账号是否被锁定属于内部状态,
+		// 回给前端会成为「账号存在」的枚举信道(时序差异已在 Authenticate 里
+		// 用 WastePasswordVerify 抹平,文案不能再漏)。真实原因只进后端登录
+		// 日志(WriteLoginLog),供管理员排查。
 		WriteLoginLog(c, 0, res.Username, false, "登录失败次数过多，已被临时锁定")
-		fail(c, "登录失败次数过多，请稍后再试")
+		fail(c, "用户名或密码错误")
 		return
 	case service.LoginFailBadCredentials:
 		WriteLoginLog(c, res.UserID, res.Username, false, "用户名或密码错误")

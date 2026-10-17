@@ -92,7 +92,6 @@ func TestSaveSettingsClampsNegativeAmount(t *testing.T) {
 		PromotionThreshold: "-100",
 		PromotionDiscount:  "-10",
 	}, "tester")
-
 	for _, k := range []string{"seat_fee", "promotion_threshold", "promotion_discount"} {
 		if got := GetSetting(k); got != "0.00" {
 			t.Fatalf("负数配置 %s 应回落 0.00, got %q", k, got)
@@ -275,7 +274,7 @@ func TestSaveSettingsConflict(t *testing.T) {
 	}
 
 	settings := dto.Settings{ShopName: "新值", Version: "deadbeefdeadbeef"}
-	detail, conflict := SaveSettings(context.Background(), settings, "admin")
+	detail, conflict, _ := SaveSettings(context.Background(), settings, "admin")
 	if !conflict {
 		t.Fatal("版本指纹不一致应判定为冲突")
 	}
@@ -292,11 +291,11 @@ func TestSaveSettingsNormal(t *testing.T) {
 	settingInitDB(t)
 	// 先保存一次把库中普通项收敛为快照(其余字段清空),
 	// 后续只改 shop_name,变更摘要不会被种子默认值变化干扰。
-	if _, conflict := SaveSettings(context.Background(), dto.Settings{ShopName: "旧值"}, "admin"); conflict {
+	if _, conflict, _ := SaveSettings(context.Background(), dto.Settings{ShopName: "旧值"}, "admin"); conflict {
 		t.Fatal("首次保存不应冲突")
 	}
 
-	detail, conflict := SaveSettings(context.Background(), dto.Settings{ShopName: "新店"}, "admin")
+	detail, conflict, _ := SaveSettings(context.Background(), dto.Settings{ShopName: "新店"}, "admin")
 	if conflict {
 		t.Fatal("空 version 应跳过乐观锁校验")
 	}
@@ -311,11 +310,11 @@ func TestSaveSettingsNormal(t *testing.T) {
 // TestSaveSettingsNoChange 校验内容未变时摘要为「无字段变更」。
 func TestSaveSettingsNoChange(t *testing.T) {
 	settingInitDB(t)
-	if _, conflict := SaveSettings(context.Background(), dto.Settings{ShopName: "店A"}, "admin"); conflict {
+	if _, conflict, _ := SaveSettings(context.Background(), dto.Settings{ShopName: "店A"}, "admin"); conflict {
 		t.Fatal("首次保存不应冲突")
 	}
 	// 用回显快照再保存一次:普通项与库中一致,敏感项留空,应判定为无变更。
-	detail, conflict := SaveSettings(context.Background(), ListSettings(), "admin")
+	detail, conflict, _ := SaveSettings(context.Background(), ListSettings(), "admin")
 	if conflict {
 		t.Fatal("指纹一致不应冲突")
 	}
@@ -328,21 +327,21 @@ func TestSaveSettingsNoChange(t *testing.T) {
 // 只有 agent_token_clear="1" 能真正置空并留下审计痕迹。
 func TestSaveSettingsClearAgentToken(t *testing.T) {
 	settingInitDB(t)
-	if _, conflict := SaveSettings(context.Background(), dto.Settings{AgentToken: "agent-secret"}, "admin"); conflict {
+	if _, conflict, _ := SaveSettings(context.Background(), dto.Settings{AgentToken: "agent-secret"}, "admin"); conflict {
 		t.Fatal("保存不应冲突")
 	}
 	if got := dao.GetSetting("agent_token"); got != "agent-secret" {
 		t.Fatalf("敏感项应落库, got %q", got)
 	}
 	// 敏感项留空:不修改(与 wxpay_apiv3_key 同一语义)。
-	if _, conflict := SaveSettings(context.Background(), dto.Settings{ShopName: "店A"}, "admin"); conflict {
+	if _, conflict, _ := SaveSettings(context.Background(), dto.Settings{ShopName: "店A"}, "admin"); conflict {
 		t.Fatal("保存不应冲突")
 	}
 	if got := dao.GetSetting("agent_token"); got != "agent-secret" {
 		t.Fatalf("留空不应清空代理令牌, got %q", got)
 	}
 
-	detail, conflict := SaveSettings(context.Background(), dto.Settings{AgentTokenClear: "1"}, "admin")
+	detail, conflict, _ := SaveSettings(context.Background(), dto.Settings{AgentTokenClear: "1"}, "admin")
 	if conflict {
 		t.Fatal("保存不应冲突")
 	}
@@ -357,7 +356,7 @@ func TestSaveSettingsClearAgentToken(t *testing.T) {
 // TestSaveSettingsFlagNormalize 校验开关脏值在保存时被归一化。
 func TestSaveSettingsFlagNormalize(t *testing.T) {
 	settingInitDB(t)
-	if _, conflict := SaveSettings(context.Background(), dto.Settings{SeatFeeEnabled: "abc"}, "admin"); conflict {
+	if _, conflict, _ := SaveSettings(context.Background(), dto.Settings{SeatFeeEnabled: "abc"}, "admin"); conflict {
 		t.Fatal("保存不应冲突")
 	}
 	if got := dao.GetSetting("seat_fee_enabled"); got != "0" {
@@ -368,7 +367,7 @@ func TestSaveSettingsFlagNormalize(t *testing.T) {
 // TestSaveSettingsSecret 校验敏感项保存与留空不覆盖。
 func TestSaveSettingsSecret(t *testing.T) {
 	settingInitDB(t)
-	if _, conflict := SaveSettings(context.Background(), dto.Settings{WxpayApiv3Key: "new-secret"}, "admin"); conflict {
+	if _, conflict, _ := SaveSettings(context.Background(), dto.Settings{WxpayApiv3Key: "new-secret"}, "admin"); conflict {
 		t.Fatal("保存不应冲突")
 	}
 	if got := dao.GetSetting("wxpay_apiv3_key"); got != "new-secret" {
@@ -376,11 +375,34 @@ func TestSaveSettingsSecret(t *testing.T) {
 	}
 
 	// 再次保存但敏感项留空:不应覆盖已有密钥。
-	if _, conflict := SaveSettings(context.Background(), dto.Settings{ShopName: "随便改个名"}, "admin"); conflict {
+	if _, conflict, _ := SaveSettings(context.Background(), dto.Settings{ShopName: "随便改个名"}, "admin"); conflict {
 		t.Fatal("保存不应冲突")
 	}
 	if got := dao.GetSetting("wxpay_apiv3_key"); got != "new-secret" {
 		t.Fatalf("敏感项留空不应覆盖, got %q", got)
+	}
+}
+
+// TestSaveSettingsPersistError 落库失败必须返回 error(而非静默 warning 后报「保存成功」):
+// DB 故障时管理员看到「保存成功」而配置实际没写入,是最难排查的一类假成功。
+func TestSaveSettingsPersistError(t *testing.T) {
+	settingInitDB(t)
+	// 关库制造写入故障:SetSetting 全部失败。
+	if err := store.DB.Close(); err != nil {
+		t.Fatalf("关库失败: %v", err)
+	}
+	detail, conflict, err := SaveSettings(context.Background(), dto.Settings{ShopName: "店A"}, "admin")
+	if err == nil {
+		t.Fatal("落库失败应返回 error")
+	}
+	if conflict {
+		t.Fatal("落库失败不应判为乐观锁冲突")
+	}
+	if detail != "" {
+		t.Fatalf("落库失败不应生成审计摘要, got %q", detail)
+	}
+	if !strings.Contains(err.Error(), "shop_name") {
+		t.Fatalf("错误应列出失败键, got %v", err)
 	}
 }
 

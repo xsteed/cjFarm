@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"dining-system/domain/po"
@@ -44,9 +45,33 @@ func ValidateOrderPayable(ctx context.Context, orderNo string) (orderID int, tot
 }
 
 // CreatePayment 写入一笔支付流水(待支付)。同一订单同一渠道重复发起时复用旧流水。
-func CreatePayment(orderNo, channel string, amountCents int64, prepayID string) error {
-	return dao.InsertPayment(orderNo, channel, amountCents, prepayID)
+//
+// 落库在事务内完成「锁订单行 → 重读金额复核 → 写流水」:ValidateOrderPayable 读金额
+// 到渠道下单之间存在改价窗口(顾客加菜/店家改单),事务内在订单行锁保护下重读,
+// 发现金额已变即返回 ErrOrderAmountChanged,由调用方关掉刚生成的收款码并请顾客
+// 重新发起 —— 否则旧金额二维码会流出,顾客按旧金额付款后回调被金额防线拒绝,
+// 钱到了订单却入不了账,只能人工捞。
+func CreatePayment(orderID int, orderNo, channel string, amountCents int64, prepayID string) error {
+	return store.WithTx(func(tx *sql.Tx) error {
+		// 先取订单行写锁:与改单(EditOrder 的事务)串行化,重读到的金额才是
+		// 「本流水出码时刻」的确定值;也挡住并发重复发起时的插入竞态。
+		if err := dao.TouchOrderTx(tx, orderID); err != nil {
+			return err
+		}
+		o, err := dao.GetOrderAmountTx(tx, orderNo)
+		if err != nil {
+			return fmt.Errorf("订单不存在")
+		}
+		if o.TotalAmount != amountCents {
+			return ErrOrderAmountChanged
+		}
+		return dao.InsertPaymentTx(tx, orderNo, channel, amountCents, prepayID)
+	})
 }
+
+// ErrOrderAmountChanged 表示落支付流水前重读发现订单应收金额已变(加菜/改单抬价):
+// 渠道收款码是按旧金额生成的,必须关掉旧码、请顾客重新发起。
+var ErrOrderAmountChanged = errors.New("订单金额已变更，请重新发起支付")
 
 // GetPayment 查询某订单某渠道最近一条支付流水(仅填充 PaymentID/Status/Amount)。
 func GetPayment(orderNo, channel string) (po.Payment, error) {
@@ -86,6 +111,11 @@ type PaymentSuccessResult struct {
 	// Failed 表示回写过程遇到 DB 故障(而非业务状态),handler 必须应答 FAIL
 	// 让渠道重试 —— 否则顾客已付款但订单未入账,掉单不可恢复。
 	Failed bool
+	// FirstTime 表示本次回写把订单从「未支付」翻到了「已支付」(含掉单补偿入账)。
+	// 先付模式下只有这一拍需要补出厨单 —— 由 MarkOrderPaidByChannel 的条件更新
+	// 结果判定,而非 handler 在事务外读快照(两个并发通知可同时读到「未支付」,
+	// 各自出单,后厨收到两张同一订单的厨单)。
+	FirstTime bool
 }
 
 // ApplyPaymentSuccess 支付成功回写(回调与主动查单补单共用):
@@ -168,7 +198,8 @@ func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, 
 				return PaymentSuccessResult{Failed: true}
 			}
 			logger.CtxWarnf(ctx, "[pay] 掉单补偿成功:流水早已支付,本次补回订单入账 订单%s 渠道%s 金额%d分 流水号%s", orderNo, channel, amountCents, channelTradeNo)
-			return PaymentSuccessResult{}
+			// 掉单补偿同样把订单从未支付翻到已支付,先付模式要补出厨单。
+			return PaymentSuccessResult{FirstTime: true}
 		}
 		// 流水缺失/已关闭却收到成功回调,且订单尚未支付:钱到了但订单没入账,属于掉单。
 		// 绝不能折叠成成功应答 —— 否则渠道停止重试、订单永远不入账。应答 Failed 让渠道重试,
@@ -176,7 +207,8 @@ func ApplyPaymentSuccess(ctx context.Context, orderNo, channel, channelTradeNo, 
 		logger.CtxErrorf(ctx, "[pay][告警] 支付成功但无待支付流水可回写,应答失败待渠道重试(请人工核对) 订单%s 渠道%s 流水号%s", orderNo, channel, channelTradeNo)
 		return PaymentSuccessResult{Failed: true}
 	}
-	return PaymentSuccessResult{}
+	// changed=true 且订单条件更新命中:本次首次入账(先付模式据此出厨单)。
+	return PaymentSuccessResult{FirstTime: true}
 }
 
 // RecordMismatchedPayment 金额不一致的支付留痕:写一条标记为失败的退款流水,
@@ -204,29 +236,59 @@ func HasPendingDuplicateRefund(ctx context.Context, orderNo, channel string) (re
 	return r.RefundID, r.RefundNo
 }
 
+// ErrDuplicateRefundPending 表示该渠道已有一笔未终态的重复支付退款单
+// (通知重发/并发轮询场景),复用而非重复发起。
+var ErrDuplicateRefundPending = errors.New("duplicate refund already pending")
+
 // RecordDuplicateRefund 登记重复支付自动原路退回的退款单(处理中)。
-// 返回退款单号/ID 与订单金额,供 handler 调渠道退款;登记失败时告警并返回 error。
+// 返回退款单号/ID 与订单金额,供 handler 调渠道退款;登记失败时告警并返回 error;
+// 已受理过时返回 ErrDuplicateRefundPending,调用方直接跳过。
+//
+// 「锁订单行 → 查重 → 落退款单」在同一事务内完成:两条并发通知(渠道重发 +
+// 前端轮询补单)会同时进入重复支付分支,若查重与落单不在同一订单行上串行化,
+// 两者都查不到已有退款单,各自生成不同 refundNo 调两次渠道退款 ——
+// 同一笔支付被退两次(此前仅靠渠道侧「累计退款不超订单金额」的外部限制兜底)。
+// 与手工退款路径 CreateRefund 的行锁模式同构。
 func RecordDuplicateRefund(ctx context.Context, orderID int, orderNo, channel string, amountCents int64, channelTradeNo string) (refundNo string, refundID, paymentID int, totalCents int64, err error) {
 	// 支付流水 ID 与订单金额取不到时不中断:退款单仍要登记下来(唯一可追的凭据),
 	// 只是后续 channel 退款缺少 paymentID/金额依据。故留告警而非静默。
+	// paymentID 从事务外读:订单此时已支付,流水状态不会变,无竞态。
 	if p, e := dao.GetPayment(orderNo, channel); e != nil {
 		logger.CtxWarnf(ctx, "[pay][告警] 登记重复支付退款单时未找到支付流水,退款单将缺流水关联 订单%s 渠道%s: %v", orderNo, channel, e)
 	} else {
 		paymentID = p.PaymentID
 	}
-	if o, e := dao.GetOrderAmount(orderNo); e != nil {
-		logger.CtxWarnf(ctx, "[pay][告警] 登记重复支付退款单时读取订单金额失败,退款金额将以渠道返回为准 订单%s: %v", orderNo, e)
-	} else {
-		totalCents = o.TotalAmount
-	}
 	refundNo = GenRefundNo(RefundNoRefund)
-	refundID, err = dao.InsertRefund(po.Refund{
-		OrderID: orderID, OrderNo: orderNo, PaymentID: paymentID,
-		RefundNo: refundNo, Channel: channel, ChannelRefundNo: channelTradeNo,
-		Amount: amountCents, Status: po.RefundStatusProcessing,
-		Reason: "重复支付自动原路退回", Operator: "system", IsDuplicate: 1,
+	err = store.WithTx(func(tx *sql.Tx) error {
+		// 先取订单行写锁,使后续查重读到的是串行化后的最新落单结果。
+		if err := dao.TouchOrderTx(tx, orderID); err != nil {
+			return err
+		}
+		pending, err := dao.GetPendingDuplicateRefundTx(tx, orderNo, channel)
+		if err != nil {
+			return err
+		}
+		if pending.RefundID > 0 {
+			return ErrDuplicateRefundPending
+		}
+		// 订单金额在行锁保护下重读(原从事务外读):退款申请依据以最新值为准。
+		if o, e := dao.GetOrderAmountTx(tx, orderNo); e != nil {
+			logger.CtxWarnf(ctx, "[pay][告警] 登记重复支付退款单时读取订单金额失败,退款金额将以渠道返回为准 订单%s: %v", orderNo, e)
+		} else {
+			totalCents = o.TotalAmount
+		}
+		refundID, err = dao.InsertRefundTx(tx, po.Refund{
+			OrderID: orderID, OrderNo: orderNo, PaymentID: paymentID,
+			RefundNo: refundNo, Channel: channel, ChannelRefundNo: channelTradeNo,
+			Amount: amountCents, Status: po.RefundStatusProcessing,
+			Reason: "重复支付自动原路退回", Operator: "system", IsDuplicate: 1,
+		})
+		return err
 	})
 	if err != nil {
+		if errors.Is(err, ErrDuplicateRefundPending) {
+			return "", 0, paymentID, totalCents, ErrDuplicateRefundPending
+		}
 		logger.CtxWarnf(ctx, "[pay][告警] 重复支付退款单登记失败(请人工处理) 订单%s: %v", orderNo, err)
 		return "", 0, paymentID, totalCents, err
 	}

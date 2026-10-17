@@ -87,6 +87,17 @@ func OccupyTableTx(tx *sql.Tx, tableID int) (int64, error) {
 	return 1, nil
 }
 
+// TouchTableTx 在事务中对桌台行做自赋值 UPDATE 取行写锁。
+//
+// 供「先判断再写入」类流程(M-5 跨日清台)使用:先拿桌台行锁,把并发的
+// 顾客下单(OccupyTableTx 同样要拿这行的写锁)挡在锁外,再读订单计数,
+// 使「该桌还有没有本营业日的进行中订单」与「置空闲」基于同一把行锁原子完成。
+// 带未删除守卫;桌台不存在/已删除时命中 0 行,调用方按无害空操作处理。
+func TouchTableTx(tx *sql.Tx, tableID int) error {
+	_, err := tx.Exec(`UPDATE tb_table SET update_time=? WHERE table_id=? AND del_flag='0'`, store.Now(), tableID)
+	return err
+}
+
 // ListAllTables 查询全部未删除桌台。
 func ListAllTables() ([]po.Table, error) {
 	rows, err := store.DB.Query(`SELECT ` + TableCols + ` FROM tb_table WHERE del_flag='0' ORDER BY sort_order, table_id`)

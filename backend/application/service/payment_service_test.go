@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,9 +76,9 @@ func TestPaymentSvcValidateOrderPayable(t *testing.T) {
 
 func TestPaymentSvcPaymentFlow(t *testing.T) {
 	paymentSvcInit(t)
-	paymentSvcInsertOrder(t, "PF1", OrderStatusPlaced, 0, 5000)
+	pf1 := paymentSvcInsertOrder(t, "PF1", OrderStatusPlaced, 0, 5000)
 
-	if err := CreatePayment("PF1", "wxpay", 5000, "prepay-1"); err != nil {
+	if err := CreatePayment(pf1, "PF1", "wxpay", 5000, "prepay-1"); err != nil {
 		t.Fatalf("创建支付流水失败: %v", err)
 	}
 	flow, err := GetPayment("PF1", "wxpay")
@@ -85,16 +86,22 @@ func TestPaymentSvcPaymentFlow(t *testing.T) {
 		t.Fatalf("支付流水查询异常: id=%d status=%d amount=%d err=%v", flow.PaymentID, flow.Status, flow.Amount, err)
 	}
 
-	// 重复发起同一渠道复用旧流水。
-	if err := CreatePayment("PF1", "wxpay", 5001, "prepay-2"); err != nil {
+	// 重复发起同一渠道复用旧流水(金额不变)。
+	if err := CreatePayment(pf1, "PF1", "wxpay", 5000, "prepay-2"); err != nil {
 		t.Fatalf("重复创建支付流水失败: %v", err)
 	}
-	if reused, _ := GetPayment("PF1", "wxpay"); reused.Amount != 5001 {
-		t.Fatalf("复用流水应更新金额, got %d", reused.Amount)
+	if reused, _ := GetPayment("PF1", "wxpay"); reused.Amount != 5000 {
+		t.Fatalf("复用流水金额不应变化, got %d", reused.Amount)
+	}
+
+	// 出码金额与订单当前应收不一致(加菜/改单抬价)必须拒绝:否则旧金额二维码
+	// 会流出,顾客按旧金额付款后回调被金额防线拒绝,钱到了订单却入不了账。
+	if err := CreatePayment(pf1, "PF1", "wxpay", 5001, "prepay-3"); !errors.Is(err, ErrOrderAmountChanged) {
+		t.Fatalf("金额不一致应拒绝出码, got %v", err)
 	}
 
 	// 另一渠道待支付流水。
-	if err := CreatePayment("PF1", "alipay", 5000, "prepay-ali"); err != nil {
+	if err := CreatePayment(pf1, "PF1", "alipay", 5000, "prepay-ali"); err != nil {
 		t.Fatalf("创建支付宝流水失败: %v", err)
 	}
 	pending := ListPendingPayments("PF1", "wxpay")
@@ -123,12 +130,15 @@ func TestPaymentSvcApplyPaymentSuccess(t *testing.T) {
 
 	t.Run("正常支付成功", func(t *testing.T) {
 		id := paymentSvcInsertOrder(t, "APS1", OrderStatusPlaced, 0, 5000)
-		if err := CreatePayment("APS1", "wxpay", 5000, "prepay"); err != nil {
+		if err := CreatePayment(id, "APS1", "wxpay", 5000, "prepay"); err != nil {
 			t.Fatalf("创建流水失败: %v", err)
 		}
 		res := ApplyPaymentSuccess(context.Background(), "APS1", "wxpay", "wxTradeNo", "wxpay", 5000)
 		if res.Duplicate {
 			t.Fatalf("正常支付不应标记为重复")
+		}
+		if !res.FirstTime {
+			t.Fatalf("首次入账应回报 FirstTime(先付模式据此出厨单)")
 		}
 		var payStatus int
 		store.DB.QueryRow(`SELECT pay_status FROM tb_order WHERE order_id=?`, id).Scan(&payStatus)
@@ -141,18 +151,21 @@ func TestPaymentSvcApplyPaymentSuccess(t *testing.T) {
 	})
 
 	t.Run("同渠道重复回调幂等", func(t *testing.T) {
-		paymentSvcInsertOrder(t, "APS2", OrderStatusPlaced, 0, 5000)
-		CreatePayment("APS2", "wxpay", 5000, "prepay")
+		id := paymentSvcInsertOrder(t, "APS2", OrderStatusPlaced, 0, 5000)
+		CreatePayment(id, "APS2", "wxpay", 5000, "prepay")
 		ApplyPaymentSuccess(context.Background(), "APS2", "wxpay", "t1", "wxpay", 5000)
 		res := ApplyPaymentSuccess(context.Background(), "APS2", "wxpay", "t1", "wxpay", 5000)
 		if res.Duplicate {
 			t.Fatalf("同渠道重复回调不应标记为重复")
 		}
+		if res.FirstTime {
+			t.Fatalf("重复回调不应再报首次入账(否则会重复出厨单)")
+		}
 	})
 
 	t.Run("订单已支付返回重复", func(t *testing.T) {
-		paymentSvcInsertOrder(t, "APS3", OrderStatusPlaced, 1, 5000)
-		CreatePayment("APS3", "wxpay", 5000, "prepay")
+		id := paymentSvcInsertOrder(t, "APS3", OrderStatusPlaced, 1, 5000)
+		CreatePayment(id, "APS3", "wxpay", 5000, "prepay")
 		res := ApplyPaymentSuccess(context.Background(), "APS3", "wxpay", "t2", "wxpay", 5000)
 		if !res.Duplicate {
 			t.Fatalf("已支付订单再次支付应返回重复标记")
@@ -162,8 +175,8 @@ func TestPaymentSvcApplyPaymentSuccess(t *testing.T) {
 	t.Run("重复支付通知重发不再重复标记", func(t *testing.T) {
 		// 钉住重复退款防线:输家流水先被置为已支付,同交易号通知重发时命中
 		// 幂等短路,不会再次返回 Duplicate —— 否则会向渠道发起第二笔退款。
-		paymentSvcInsertOrder(t, "APS5", OrderStatusPlaced, 1, 5000)
-		CreatePayment("APS5", "wxpay", 5000, "prepay")
+		id := paymentSvcInsertOrder(t, "APS5", OrderStatusPlaced, 1, 5000)
+		CreatePayment(id, "APS5", "wxpay", 5000, "prepay")
 		res := ApplyPaymentSuccess(context.Background(), "APS5", "wxpay", "t5", "wxpay", 5000)
 		if !res.Duplicate {
 			t.Fatalf("第一次应返回重复标记")
@@ -192,13 +205,16 @@ func TestPaymentSvcApplyPaymentSuccess(t *testing.T) {
 		// 中间态(流水已支付、订单仍 pay_status=0)。渠道重试时必须补回订单入账,
 		// 不能被「流水已支付」短路成成功应答 —— 否则渠道停止重试,订单永远不入账。
 		id := paymentSvcInsertOrder(t, "APS6", OrderStatusPlaced, 0, 5000)
-		CreatePayment("APS6", "wxpay", 5000, "prepay")
+		CreatePayment(id, "APS6", "wxpay", 5000, "prepay")
 		if _, err := dao.MarkPaymentPaid("APS6", "wxpay", "t6"); err != nil {
 			t.Fatalf("预置流水已支付失败: %v", err)
 		}
 		res := ApplyPaymentSuccess(context.Background(), "APS6", "wxpay", "t6", "wxpay", 5000)
 		if res.Failed {
 			t.Fatalf("掉单补偿不应应答失败")
+		}
+		if !res.FirstTime {
+			t.Fatalf("掉单补偿也是首次入账,应回报 FirstTime(先付模式据此补出厨单)")
 		}
 		var payStatus int
 		store.DB.QueryRow(`SELECT pay_status FROM tb_order WHERE order_id=?`, id).Scan(&payStatus)
@@ -314,6 +330,17 @@ func TestPaymentSvcRecordMismatchedAndDuplicate(t *testing.T) {
 	refundNo, refundID, _, totalCents, err := RecordDuplicateRefund(context.Background(), id, "RMD1", "alipay", 10000, "trade-dup")
 	if err != nil || refundID <= 0 || totalCents != 10000 || !strings.HasPrefix(refundNo, "R") {
 		t.Fatalf("重复退款登记异常: refundNo=%s id=%d total=%d err=%v", refundNo, refundID, totalCents, err)
+	}
+
+	// 并发通知(渠道重发 + 前端轮询补单)会各自进入重复支付分支:第二次登记必须被
+	// 事务内查重(锁订单行后重查)拦截,否则同一笔支付会被渠道退两次。
+	_, dupID, _, _, err2 := RecordDuplicateRefund(context.Background(), id, "RMD1", "alipay", 10000, "trade-dup")
+	if !errors.Is(err2, ErrDuplicateRefundPending) {
+		t.Fatalf("重复登记应被查重拦截, got id=%d err=%v", dupID, err2)
+	}
+	// 换一个渠道不算重复:微信/支付宝各付一笔时两笔都要退。
+	if _, _, _, _, err3 := RecordDuplicateRefund(context.Background(), id, "RMD1", "wxpay", 10000, "trade-dup2"); err3 != nil {
+		t.Fatalf("其它渠道的重复支付应允许登记, got %v", err3)
 	}
 
 	// 到账回写。
