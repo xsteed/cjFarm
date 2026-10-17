@@ -19,17 +19,34 @@
         </span>
       </div>
       <div class="od-row">
-        <span class="od-k">桌号：</span>
-        <span class="od-v">{{ detail.tableNo }}号</span>
-        <span class="od-k od-gap">人数：</span>
-        <span class="od-v">{{ detail.personCount }}人</span>
-        <span class="od-k od-gap">下单时间：</span>
-        <span class="od-v">{{ detail.createTime }}</span>
+        <span class="od-pair">
+          <span class="od-k">桌号：</span>
+          <span class="od-v">{{ detail.tableNo }}号</span>
+        </span>
+        <span class="od-pair od-gap">
+          <span class="od-k">人数：</span>
+          <span class="od-v">{{ detail.personCount }}人</span>
+        </span>
+      </div>
+      <!-- 时间字段:标签 + 值成对(od-pair)。桌面端同行排布;移动端每个时间独立成行,
+           长日期串不再把后续字段挤到下一行,也不会出现半行孤字。 -->
+      <div class="od-row">
+        <span class="od-pair od-pair-time">
+          <span class="od-k">下单时间：</span>
+          <span class="od-v od-time">{{ detail.createTime }}</span>
+        </span>
         <!-- 用餐结束时间:订单到终态(完成/取消)时写入 meal_end_time,取消单同样显示 -->
-        <template v-if="detail.mealEndTime">
-          <span class="od-k od-gap">结束时间：</span>
-          <span class="od-v">{{ detail.mealEndTime }}</span>
-        </template>
+        <span
+          v-if="detail.mealEndTime"
+          class="od-pair od-pair-time od-gap"
+        >
+          <span class="od-k">结束时间：</span>
+          <span class="od-v od-time">{{ detail.mealEndTime }}</span>
+          <span
+            v-if="mealDuration"
+            class="od-duration"
+          >时长 {{ mealDuration }}</span>
+        </span>
       </div>
     </div>
 
@@ -488,6 +505,24 @@ const refundCols = computed<TableCol[]>(() => {
 // 结算状态文案与「订单管理」列表共用 @dining/shared 里 orderDisplay 的实现,不再各写一份。
 const payText = payStatusText;
 
+// 用餐时长(结束时间 − 下单时间):仅终态订单(有 meal_end_time)展示。
+// 口径与报表「用餐时长」一致:用餐结束 − 下单,含等餐;取消单同样有值。
+// 分钟数取整(四舍五入到分),不足 1 小时只给分钟,避免「0 小时 3 分」这种噪音。
+const mealDuration = computed(() => {
+  const start = props.detail?.createTime;
+  const end = props.detail?.mealEndTime;
+  if (!start || !end) return '';
+  const s = new Date(String(start).replace(' ', 'T'));
+  const e = new Date(String(end).replace(' ', 'T'));
+  const ms = e.getTime() - s.getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return '不到 1 分钟';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h > 0 ? `${h} 小时 ${m} 分钟` : `${m} 分钟`;
+});
+
 function refreshRefunds(): void {
   const id = props.detail?.orderId;
   if (id != null) emit('refresh-refunds', id);
@@ -523,6 +558,28 @@ function refreshRefunds(): void {
 
 .od-v {
   font-weight: 600;
+}
+
+/* 键值对:标签与值不跨行拆分(白盒边界整体换行) */
+.od-pair {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* 时间值:等宽数字,「:」与秒位纵向对齐,扫读时长更快 */
+.od-time {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+
+/* 时长:弱化处理,不与「结束时间」的值抢视觉重量 */
+.od-duration {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
 }
 
 .od-gap {
@@ -778,6 +835,17 @@ function refreshRefunds(): void {
   .od-actions {
     gap: 8px;
     margin-top: 12px;
+  }
+
+  /* 时间字段每个独立成行:桌面端「桌号/人数/下单/结束」混排时,长日期串会把
+     后续字段挤成半行孤字;移动端改为一条一行,标签定宽保证两行的值左缘对齐 */
+  .od-pair-time {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .od-pair-time .od-k {
+    flex: 0 0 auto;
   }
 
   /* 主操作组:排到内容末尾并常驻弹层底部,滚动查看明细时收款/结算/取消始终可点。
