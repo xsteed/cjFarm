@@ -160,20 +160,21 @@ function mountTables() {
 }
 
 describe('Tables 桌台管理页', () => {
-  it('挂载后顶部统计数值正确（总数/占用空闲/停用预约/上座率/容量）', async () => {
+  it('挂载后顶部统计数值正确（桌台容纳/占用空闲/停用预约/上座率）', async () => {
     const wrapper = mountTables();
     await flushPromises();
 
     const nums = wrapper.findAll('.stat .num').map(n => n.text());
-    expect(nums).toHaveLength(5);
+    expect(nums).toHaveLength(4);
+    // 合并卡「桌台总数 / 容纳人数」:4 张桌共 28 人
     expect(nums[0]).toContain('4');
+    expect(nums[0]).toContain('28');
     // 合并卡「占用 / 空闲」:斜杠两侧分别是 2 / 2
     expect(nums[1]).toContain('2');
     expect(nums[1]).toContain('/');
     // 合并卡「停用 / 预约」:默认数据无人为锁定,均为 0
     expect(nums[2]).toContain('0');
     expect(nums[3]).toContain('50');
-    expect(nums[4]).toContain('28');
     wrapper.unmount();
   });
 

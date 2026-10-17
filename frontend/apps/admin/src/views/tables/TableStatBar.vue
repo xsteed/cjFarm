@@ -1,10 +1,13 @@
 <template>
   <!-- 顶部总览:基于全量桌台(忽略分页/搜索)统计,一眼看清当前楼面桌况 -->
   <div class="stat-row">
+    <!-- 桌台总数与总容纳人数合并:楼面规模(几桌 / 能坐几人)一张卡看完 -->
     <div class="stat">
-      <div class="label">桌台总数</div>
+      <div class="label">桌台总数 / 容纳人数</div>
       <div class="num">
-        {{ summary.total }}
+        {{ summary.total }}<span class="unit">桌</span>
+        <span class="nslash">/</span>
+        {{ summary.capacity }}<span class="unit">人</span>
       </div>
     </div>
     <div class="stat">
@@ -26,10 +29,6 @@
     <div class="stat">
       <div class="label">占用率</div>
       <div class="num">{{ summary.rate }}<span class="unit">%</span></div>
-    </div>
-    <div class="stat">
-      <div class="label">总容纳人数</div>
-      <div class="num">{{ summary.capacity }}<span class="unit">人</span></div>
     </div>
   </div>
 </template>
