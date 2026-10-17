@@ -291,6 +291,39 @@ export interface QrCardOptions extends QrOptions {
   qrImageSrc?: string; // 直接嵌入已有图片(如微信小程序码),与 text 二选一
 }
 
+/** ctx.letterSpacing 在部分 TS lib 版本里尚未收录,用交集类型兜底。 */
+type SpacedCanvasCtx = CanvasRenderingContext2D & { letterSpacing?: string };
+
+/** 轻微字距:让灰色小字更透气;不支持的浏览器会忽略该属性,版式不受影响。 */
+function setLetterSpacing(ctx: CanvasRenderingContext2D, px: number): void {
+  (ctx as SpacedCanvasCtx).letterSpacing = `${px}px`;
+}
+
+/**
+ * 把桌台标签装进给定宽度:优先缩字号(最低到原字号 65%,宁可小一点也别截断),
+ * 仍放不下才按字符截断补省略号,保证胶囊永不溢出卡片(竖版)或文字列(横版)。
+ */
+function fitPillLabel(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  font: number,
+  maxTextW: number,
+  sans: string
+): { text: string; font: number } {
+  let fs = font;
+  ctx.font = `700 ${fs}px ${sans}`;
+  while (ctx.measureText(label).width > maxTextW && fs > font * 0.65) {
+    fs -= 1;
+    ctx.font = `700 ${fs}px ${sans}`;
+  }
+  if (ctx.measureText(label).width <= maxTextW) return { text: label, font: fs };
+  let text = label;
+  while (text.length > 1 && ctx.measureText(`${text}…`).width > maxTextW) {
+    text = text.slice(0, -1);
+  }
+  return { text: `${text}…`, font: fs };
+}
+
 /**
  * 渲染一张矩形桌牌卡片:圆角白底 + 商家名 + 二维码(含 Logo) + 「扫码点餐」提醒 + 桌号。
  * 返回的画布可直接 toDataURL 导出 PNG,也可嵌入打印页。
@@ -309,24 +342,30 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
   const ctx = canvas.getContext('2d')!;
   ctx.scale(scale, scale);
 
+  // 版式基准:所有间距按 480px 设计稿等比缩放。
+  // 否则字号随宽度放大、间距却固定成像素,360px 预览会松垮、1200px 高清导出反而拥挤。
+  const u = W / 480;
+  const sp = (base: number): number => Math.max(1, Math.round(base * u));
+
   // 外层浅色底,卡片像一张贴纸
   ctx.fillStyle = '#f5f6f8';
   ctx.fillRect(0, 0, W, H);
 
   // 白色卡片 + 圆角细边框
-  const m = 12;
+  const m = sp(12);
+  const cardRadius = sp(20);
   const cx = m;
   const cy = m;
   const cw = W - m * 2;
   const ch = H - m * 2;
-  roundRect(ctx, cx, cy, cw, ch, 20);
+  roundRect(ctx, cx, cy, cw, ch, cardRadius);
   ctx.fillStyle = '#ffffff';
   ctx.fill();
   ctx.lineWidth = 1;
   ctx.strokeStyle = '#eceef1';
   ctx.stroke();
 
-  const pad = 16;
+  const pad = sp(16);
   const innerW = cw - pad * 2;
 
   // 头部:品牌色块 + 白色店名 + 白色小副题(两侧细线装饰),餐饮桌牌的经典版式
@@ -337,8 +376,8 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
   let headH = 0;
   if (shopName) {
     headH = Math.round(W * 0.15);
-    // 顶部两角圆角的色块
-    const cr = 20;
+    // 顶部两角圆角的色块(圆角与卡片外框一致)
+    const cr = cardRadius;
     ctx.beginPath();
     ctx.moveTo(cx, cy + headH);
     ctx.lineTo(cx, cy + cr);
@@ -367,7 +406,7 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
     ctx.lineWidth = 1;
     for (const dir of [-1, 1]) {
-      const x1 = W / 2 + dir * (tw2 / 2 + 12);
+      const x1 = W / 2 + dir * (tw2 / 2 + sp(12));
       ctx.beginPath();
       ctx.moveTo(x1, subY);
       ctx.lineTo(x1 + dir * lineLen, subY);
@@ -377,30 +416,49 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
 
   // 底部/侧栏文字尺寸
   const titleFont = Math.round(W * 0.07);
-  const tableFont = Math.round(W * 0.038);
-  const hintFont = Math.round(W * 0.027);
-  const pillH = tableFont + 18;
-  const tableLabel = [params.tableName, params.tableNo ? `桌号 ${params.tableNo}` : '']
-    .filter(Boolean)
-    .join(' · ');
+  // 桌台名称是顾客认桌的主信息,桌号只在下单/上菜时对照:名称进品牌色胶囊,
+  // 桌号降为胶囊下方的小号灰字,主次一眼可分。
+  const nameFont = Math.round(W * 0.052);
+  const noFont = Math.round(W * 0.034);
+  const hintFont = Math.round(W * 0.03);
+  const pillH = nameFont + sp(20);
+  // 间距按组分级:关系越近间距越小 —— 标题与桌名不是一组(大),
+  // 桌名与桌号是同一桌(小),提示语另起一组(大)。
+  const titleGap = sp(14);
+  const noGap = sp(8);
+  const pillHintGap = sp(16);
+  const noLineH = Math.round(noFont * 1.35);
+  const hintH = Math.round(hintFont * 1.25);
+  // 二维码衬底与文字区之间至少保留的间距(小方标卡片也不会贴到一起)
+  const footGap = sp(8);
+  // 底部留白:文字末行到卡片内边距。文字块下方无需与左右内边距等宽,
+  // 略收一点视觉更匀称(留白过多会让文字像被顶到上方)。
+  const footSlack = sp(8);
+  // 有名称时胶囊放名称、桌号单独一行;没有名称时桌号顶上做唯一标识
+  const pillText = params.tableName || (params.tableNo ? `桌号 ${params.tableNo}` : '');
+  const noLine = params.tableName && params.tableNo ? `桌号 ${params.tableNo}` : '';
   const horizontal = ratio < 1;
+  // 「扫码点餐」一张卡片只写一次:顶部品牌色块已经有副题时(无店名才会没有),
+  // 文字区就不再重复,横竖版统一按这个规则。
+  const titleText = hasShop ? '' : params.title || '';
 
-  let footH = 4;
+  let footH = footSlack;
   if (horizontal) {
     footH = 0; // 横版文字放二维码右侧,不占底部
   } else {
-    if (!hasShop && params.title) footH += titleFont + 12;
-    if (tableLabel) footH += pillH + 8;
-    if (params.hint) footH += hintFont;
+    if (titleText) footH += titleFont + titleGap;
+    if (pillText) footH += pillH;
+    if (noLine) footH += noGap + noLineH;
+    if (params.hint) footH += pillHintGap + hintH;
   }
 
-  const platePad = Math.max(8, Math.round(W * 0.02)); // 白色衬底四周留白
+  const platePad = Math.max(sp(8), Math.round(W * 0.02)); // 白色衬底四周留白
   let plateX: number;
   let plateY: number;
   let qrSide: number;
   if (horizontal) {
     // 横版:左码右文。二维码占左侧正方形,右侧垂直居中排文字。
-    const bodyTop = cy + (hasShop ? headH + 4 : pad + 4);
+    const bodyTop = cy + (hasShop ? headH + sp(4) : pad + sp(4));
     const bodyBottom = cy + ch - pad;
     const bodyH = Math.max(120, bodyBottom - bodyTop);
     qrSide = Math.max(
@@ -410,16 +468,18 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
     plateX = cx + pad;
     plateY = bodyTop + Math.max(0, (bodyH - (qrSide + platePad * 2)) / 2);
   } else {
-    // 竖版/方形:居中,二维码按宽度尽量铺满,压掉上下空白。
-    const qrTop = cy + (hasShop ? headH + 4 : pad + 4);
+    // 竖版/方形:二维码按宽度尽量铺满;高度预算里先扣掉与文字区的间距,
+    // 剩余空白按上 4 : 下 6 分布 —— 底部是文字区,多留一点呼吸感。
+    const qrTop = cy + (hasShop ? headH + sp(4) : pad + sp(4));
     const qrBottom = cy + ch - pad - footH;
     const qrAreaH = Math.max(100, qrBottom - qrTop);
     qrSide = Math.max(
       100,
-      Math.min(innerW - platePad * 2, qrAreaH - platePad * 2)
+      Math.min(innerW - platePad * 2, qrAreaH - platePad * 2 - footGap)
     );
     plateX = cx + (cw - (qrSide + platePad * 2)) / 2;
-    plateY = qrTop + (qrAreaH - (qrSide + platePad * 2)) / 2;
+    const slackV = Math.max(0, qrAreaH - footGap - (qrSide + platePad * 2));
+    plateY = qrTop + Math.round(slackV * 0.4);
   }
 
   // 生成或嵌入二维码(Logo 由 renderQrCanvas 画在中心)
@@ -435,7 +495,7 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
   }
   // 白色圆角衬底 + 细边框,二维码 contain 居中其中
   const plateSide = qrSide + platePad * 2;
-  roundRect(ctx, plateX, plateY, plateSide, plateSide, 12);
+  roundRect(ctx, plateX, plateY, plateSide, plateSide, sp(12));
   ctx.fillStyle = '#ffffff';
   ctx.fill();
   ctx.lineWidth = 1;
@@ -455,74 +515,105 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
   );
 
   if (horizontal) {
-    // 右侧文字列:垂直居中
-    const colL = plateX + plateSide + 24;
+    // 右侧文字列:垂直居中。桌台名称进胶囊做主视觉,桌号是下方的小号灰字。
+    // 列宽只有卡片一半,胶囊左右内边距收到 1 倍字号,长桌名也放得下。
+    const colL = plateX + plateSide + sp(24);
     const colR = cx + cw - pad;
     const colCx = (colL + colR) / 2;
-    const th = params.title ? titleFont + 12 : 0;
-    const ph2 = tableLabel ? pillH + 8 : 0;
-    const hh = params.hint ? hintFont : 0;
-    let ey = plateY + Math.max(0, (plateSide - (th + ph2 + hh)) / 2);
-    if (params.title) {
+    const th = titleText ? titleFont + titleGap : 0;
+    const ph = pillText ? pillH : 0;
+    const nh = noLine ? noGap + noLineH : 0;
+    const hh = params.hint ? pillHintGap + hintH : 0;
+    let ey = plateY + Math.max(0, (plateSide - (th + ph + nh + hh)) / 2);
+    if (titleText) {
       ctx.fillStyle = '#1f2329';
       ctx.font = `700 ${titleFont}px ${sans}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(params.title, colCx, ey);
-      ey += titleFont + 12;
+      ctx.fillText(titleText, colCx, ey);
+      ey += titleFont + titleGap;
     }
-    if (tableLabel) {
-      // 桌号:实心品牌色胶囊 + 白色加粗字,桌与桌之间一眼可辨
-      ctx.font = `700 ${tableFont}px ${sans}`;
-      const tw = ctx.measureText(tableLabel).width;
-      const pw = Math.min(tw + tableFont * 2, colR - colL);
+    if (pillText) {
+      // 桌台名称:实心品牌色胶囊 + 白色加粗字,一眼认出是哪一桌
+      const fit = fitPillLabel(ctx, pillText, nameFont, colR - colL - nameFont, sans);
+      const tw = ctx.measureText(fit.text).width;
+      const pw = Math.min(tw + nameFont, colR - colL);
       roundRect(ctx, colCx - pw / 2, ey, pw, pillH, pillH / 2);
       ctx.fillStyle = accent;
       ctx.fill();
       ctx.fillStyle = '#ffffff';
+      ctx.font = `700 ${fit.font}px ${sans}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(tableLabel, colCx, ey + pillH / 2 + tableFont * 0.04);
-      ey += pillH + 8;
+      ctx.fillText(fit.text, colCx, ey + pillH / 2 + fit.font * 0.04);
+      ey += pillH;
+    }
+    if (noLine) {
+      // 桌号:辅助信息,小号灰字跟在胶囊下方(比提示语更深,便于扫读)
+      ey += noGap;
+      ctx.fillStyle = '#5b6270';
+      ctx.font = `600 ${noFont}px ${sans}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(noLine, colCx, ey);
+      ey += noLineH;
     }
     if (params.hint) {
+      ey += pillHintGap;
       ctx.fillStyle = '#9299a6';
       ctx.font = `400 ${hintFont}px ${sans}`;
+      setLetterSpacing(ctx, hintFont * 0.06);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(params.hint, colCx, ey);
+      setLetterSpacing(ctx, 0);
     }
   } else {
     // 底部文字(底对齐到卡片内边距)
     let fy = cy + ch - pad - footH;
-    if (!hasShop && params.title) {
+    if (titleText) {
       ctx.fillStyle = '#1f2329';
       ctx.font = `700 ${titleFont}px ${sans}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(params.title, W / 2, fy);
-      fy += titleFont + 12;
+      ctx.fillText(titleText, W / 2, fy);
+      fy += titleFont + titleGap;
     }
-    if (tableLabel) {
-      // 桌号:实心品牌色胶囊 + 白色加粗字,桌与桌之间一眼可辨
-      ctx.font = `700 ${tableFont}px ${sans}`;
-      const tw = ctx.measureText(tableLabel).width;
-      const pw = tw + tableFont * 2;
+    if (pillText) {
+      // 桌台名称:实心品牌色胶囊 + 白色加粗字,是卡片上除二维码外最醒目的信息。
+      // 超长桌名先缩字号再截断,保证胶囊不溢出卡片。
+      const fit = fitPillLabel(ctx, pillText, nameFont, innerW - nameFont * 2, sans);
+      const tw = ctx.measureText(fit.text).width;
+      const pw = Math.min(tw + nameFont * 2, innerW);
       roundRect(ctx, (W - pw) / 2, fy, pw, pillH, pillH / 2);
       ctx.fillStyle = accent;
       ctx.fill();
       ctx.fillStyle = '#ffffff';
+      ctx.font = `700 ${fit.font}px ${sans}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(tableLabel, W / 2, fy + pillH / 2 + tableFont * 0.04);
-      fy += pillH + 8;
+      ctx.fillText(fit.text, W / 2, fy + pillH / 2 + fit.font * 0.04);
+      fy += pillH;
+    }
+    if (noLine) {
+      // 桌号:辅助信息,小号灰字跟在胶囊下方(比提示语更深,便于扫读)
+      fy += noGap;
+      ctx.fillStyle = '#5b6270';
+      ctx.font = `600 ${noFont}px ${sans}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(noLine, W / 2, fy);
+      fy += noLineH;
     }
     if (params.hint) {
+      fy += pillHintGap;
       ctx.fillStyle = '#9299a6';
       ctx.font = `400 ${hintFont}px ${sans}`;
+      setLetterSpacing(ctx, hintFont * 0.06);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(params.hint, W / 2, fy);
+      setLetterSpacing(ctx, 0);
     }
   }
 
