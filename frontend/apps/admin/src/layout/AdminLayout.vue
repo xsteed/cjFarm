@@ -49,7 +49,7 @@
             class="mi"
             :class="{ on: isActive(n.path) }"
             :title="n.title"
-            @click="drawerOpen = false"
+            @click="onMenuNav(n.path)"
           >
             <span class="ic"><component :is="n.icon" /></span>
             <span class="txt">{{ n.title }}</span>
@@ -85,7 +85,7 @@
                 :to="c.path"
                 class="mi sub"
                 :class="{ on: isActive(c.path) }"
-                @click="drawerOpen = false"
+                @click="onMenuNav(c.path)"
               >
                 <span class="txt">{{ c.title }}</span>
               </router-link>
@@ -294,12 +294,19 @@ const drawerOpen = ref(false);
 // 对策:打开抽屉时往 history 压入一条占位记录,系统返回触发 popstate 时
 // 只收抽屉、不离开页面;通过遮罩/菜单项/关闭按钮收起时,再把占位记录
 // 消费掉(history.back()),避免之后出现「按返回没反应」的空放一枪。
-watch(drawerOpen, (open, wasOpen) => {
+watch(drawerOpen, open => {
   if (open) {
-    history.pushState({ adminDrawer: true }, '');
-  } else if (wasOpen && (history.state as { adminDrawer?: boolean } | null)?.adminDrawer) {
-    history.back();
+    // 必须叠加 vue-router 已写入该记录的字段(position/current/scroll 等),
+    // 直接用一个新对象覆盖会让 vue-router 的历史位置跟踪从这里开始失真。
+    history.pushState({ ...((history.state as object | null) ?? {}), adminDrawer: true }, '');
+    return;
   }
+  // 只有在「占位记录仍是当前记录」时才回退。
+  // 路由跳转会先由 vue-router 压入一条新记录(finalizeNavigation 里
+  // history.push 早于 currentRoute 更新),此时占位记录是被夹在旧/新记录之间的,
+  // 若再 back() 就会把刚进入的新页面一起弹掉 —— 表现正是「移动端点侧栏菜单没反应」。
+  // 判断 adminDrawer 是否为当前记录的标记,天然区分了这两种情形。
+  if ((history.state as { adminDrawer?: boolean } | null)?.adminDrawer) history.back();
 });
 
 function onPopState(): void {
@@ -313,13 +320,22 @@ onBeforeUnmount(() => window.removeEventListener('popstate', onPopState));
 // 仅桌面端有意义,移动端不渲染折叠按钮、该状态也不参与布局。
 const collapsed = ref(false);
 
-// 路由变化(含浏览器后退、程序跳转)一律收起抽屉,避免新页面被遮罩挡住
+// 路由变化(含浏览器后退、程序跳转)一律收起抽屉,避免新页面被遮罩挡住。
+// 菜单项跳转也走这条路,而不是在 @click 里同步收:
+// vue-router 压新记录(history.push)早于 currentRoute 更新,所以这个 watcher
+// 跑起来时占位记录已不是当前记录,watch(drawerOpen) 里不会误发 history.back()。
 watch(
   () => route.path,
   () => {
     drawerOpen.value = false;
   }
 );
+
+// 菜单项点击:跳转由 vue-router 负责,抽屉交给上面的 route.path watcher 收。
+// 只有点「当前所在页」时路由不会变化,需要自己收,否则抽屉关不上。
+function onMenuNav(path: string): void {
+  if (route.path === path) drawerOpen.value = false;
+}
 
 // 从移动端宽度切回桌面宽度时,抽屉状态没有意义,顺手复位;
 // 进入移动端时折叠态也无意义(移动端侧栏是抽屉),一并清除,避免菜单变成 64px 破图
