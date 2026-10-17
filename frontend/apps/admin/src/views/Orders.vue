@@ -155,7 +155,7 @@
         >
           <div class="ocard-top">
             <span class="ocard-no"
-              ><span class="ocard-no-label">短号</span
+              ><span class="ocard-no-label">短号(取餐号):</span
               >#{{ row.shortNo || row.orderNo.slice(-6) }}</span
             >
             <t-tag
@@ -166,11 +166,11 @@
             </t-tag>
           </div>
           <!-- 完整订单号:移动端没有桌面端表格的 title 悬浮提示,直接铺在卡上方便对账报号 -->
-          <div class="ocard-orderNo">单号 {{ row.orderNo }}</div>
+          <div class="ocard-orderNo">单号: {{ row.orderNo }}</div>
           <div class="ocard-meta">
             <!-- 桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号;加粗突出桌台 -->
             <span class="ocard-table">{{ row.tableName || row.tableNo + ' 号桌' }}</span> · {{ row.personCount }} 人 ·
-            {{ row.createTime }}
+            {{ row.createTime }} 下单
             <t-tag
               v-if="row.pendingUrge"
               theme="danger"
