@@ -217,6 +217,13 @@
             </div>
           </div>
         </template>
+        <!-- 菜单全量渲染,滚到底就是真到底了:给一句小提示,顾客不会以为还没加载完 -->
+        <div
+          v-if="filteredMenu.length"
+          class="op-end"
+        >
+          已经到底啦
+        </div>
       </div>
     </div>
   </div>
@@ -505,11 +512,18 @@ function onAdd(d: Dish, e?: MouseEvent): void {
   font-size: 13px;
 }
 
+/* 列表底部提示:滚到底后给一句「已经到底啦」,避免顾客以为内容没加载完 */
+.op-end {
+  padding: 16px 0 0;
+  text-align: center;
+  color: var(--ink-4);
+  font-size: 12px;
+}
+
 .op-dish {
   display: flex;
   gap: 11px;
   padding: 11px 0;
-  border-bottom: 1px solid #f5f5f5;
   cursor: pointer;
 }
 
