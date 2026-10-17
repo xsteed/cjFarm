@@ -8,7 +8,8 @@ import {
   getHourlyReport,
   getMonthlyTrend,
   getReportSummary,
-  getSettleMix
+  getSettleMix,
+  getVisitStats
 } from '@dining/api';
 import type {
   DailyTrendRow,
@@ -17,7 +18,8 @@ import type {
   HourlyRow,
   MonthlyTrendRow,
   ReportSummary,
-  SettleMixRow
+  SettleMixRow,
+  VisitStats
 } from '@dining/types';
 import { disposeAll, EMPTY_OPTION } from '../../../composables/useEChart';
 import { flushPromises, stubResizeObserver } from '@shell/test/mocks.ts';
@@ -80,7 +82,9 @@ vi.mock('@dining/api', () => ({
   getDishRank: vi.fn(),
   getHourlyReport: vi.fn(),
   getSettleMix: vi.fn(),
-  getDiningDuration: vi.fn()
+  getDiningDuration: vi.fn(),
+  // 访问统计(站点 PV/UV):报表页新增的第三组图表
+  getVisitStats: vi.fn()
 }));
 
 vi.mock('vue-router', () => ({
@@ -175,6 +179,7 @@ const getDishRankMock = vi.mocked(getDishRank);
 const getHourlyReportMock = vi.mocked(getHourlyReport);
 const getSettleMixMock = vi.mocked(getSettleMix);
 const getDiningDurationMock = vi.mocked(getDiningDuration);
+const getVisitStatsMock = vi.mocked(getVisitStats);
 
 const summaryFixture: ReportSummary = {
   todayAmount: 12888.5,
@@ -249,6 +254,37 @@ const durationFixture: DiningDurationStats = {
   ]
 };
 
+const visitFixture: VisitStats = {
+  range: { start: '2025-01-01', end: '2025-01-07' },
+  summary: {
+    pv: 420,
+    uv: 180,
+    newUv: 36,
+    memberUv: 22,
+    totalVisitors: 640,
+    memberCount: 88,
+    todayPv: 66,
+    todayUv: 40,
+    todayNewUv: 5,
+    yesterdayPv: 58,
+    yesterdayUv: 35
+  },
+  daily: [
+    { date: '2025-01-01', pv: 50, uv: 30, newUv: 6, h5Pv: 40, mpPv: 8, adminPv: 2 },
+    { date: '2025-01-02', pv: 62, uv: 36, newUv: 5, h5Pv: 50, mpPv: 10, adminPv: 2 },
+    { date: '2025-01-03', pv: 58, uv: 33, newUv: 4, h5Pv: 46, mpPv: 10, adminPv: 2 }
+  ],
+  channels: [
+    { channel: 'h5', label: '扫码点餐', pv: 300, uv: 140 },
+    { channel: 'miniprogram', label: '小程序', pv: 100, uv: 35 },
+    { channel: 'admin', label: '管理后台', pv: 20, uv: 5 }
+  ],
+  entries: [
+    { entry: 'K7M3PQ9X', label: '大厅 A · 1 号桌', pv: 26 },
+    { entry: '8YG3Q335', label: '大厅 B · 2 号桌', pv: 18 }
+  ]
+};
+
 function chartInstances(): ChartInstance[] {
   return echartsMock.init.mock.results.map(r => r.value as ChartInstance);
 }
@@ -274,6 +310,7 @@ beforeEach(() => {
   getHourlyReportMock.mockResolvedValue(hourlyFixture);
   getSettleMixMock.mockResolvedValue(mixFixture);
   getDiningDurationMock.mockResolvedValue(durationFixture);
+  getVisitStatsMock.mockResolvedValue(visitFixture);
 });
 
 afterEach(() => {
@@ -282,12 +319,12 @@ afterEach(() => {
 });
 
 describe('Report', () => {
-  it('挂载后渲染 6 个图表容器并初始化 echarts 实例,setOption 收到非空 option', async () => {
+  it('挂载后渲染 9 个图表容器并初始化 echarts 实例,setOption 收到非空 option', async () => {
     const wrapper = mountReport();
     await flushPromises();
 
-    expect(wrapper.findAll('.chart-canvas')).toHaveLength(6);
-    expect(echartsMock.init).toHaveBeenCalledTimes(6);
+    expect(wrapper.findAll('.chart-canvas')).toHaveLength(9);
+    expect(echartsMock.init).toHaveBeenCalledTimes(9);
 
     for (const inst of chartInstances()) {
       const hasRealOption = inst.setOption.mock.calls.some(call => call[0] !== EMPTY_OPTION);
@@ -333,11 +370,13 @@ describe('Report', () => {
     getSettleMixMock.mockResolvedValue([]);
     // 用餐时长为空回报示例「无任何已完成订单」:分布退化为 EMPTY_OPTION
     getDiningDurationMock.mockResolvedValue({});
+    // 访问统计同样为空:趋势/渠道/入口三张图退化为 EMPTY_OPTION
+    getVisitStatsMock.mockResolvedValue({});
 
     const wrapper = mountReport();
     await flushPromises();
 
-    expect(echartsMock.init).toHaveBeenCalledTimes(6);
+    expect(echartsMock.init).toHaveBeenCalledTimes(9);
     for (const inst of chartInstances()) {
       const calls = inst.setOption.mock.calls;
       expect(calls.length).toBeGreaterThan(0);
@@ -362,9 +401,11 @@ describe('Report', () => {
     expect(getDailyTrendMock).toHaveBeenCalledTimes(2);
     expect(getHourlyReportMock).toHaveBeenCalledTimes(2);
     expect(getSettleMixMock).toHaveBeenCalledTimes(2);
-    // 用餐时长同样随区间变化
+    // 用餐时长与访问统计同样随区间变化
     expect(getDiningDurationMock).toHaveBeenCalledTimes(2);
     expect(getDiningDurationMock).toHaveBeenLastCalledWith({ start: '2025-01-01', end: '2025-01-10' });
+    expect(getVisitStatsMock).toHaveBeenCalledTimes(2);
+    expect(getVisitStatsMock).toHaveBeenLastCalledWith({ start: '2025-01-01', end: '2025-01-10' });
     expect(getDailyTrendMock).toHaveBeenLastCalledWith({ start: '2025-01-01', end: '2025-01-10' });
 
     expect(getReportSummaryMock).toHaveBeenCalledTimes(1);

@@ -57,6 +57,9 @@ const (
 	EnvPrintAgentInsecure = "PRINT_AGENT_INSECURE"
 	// EnvAgentBinDir 是服务端存放门店打印代理产物的目录（供代理自助升级下载）。
 	EnvAgentBinDir = "AGENT_BIN_DIR"
+	// EnvCustomerOrderQueryRateLimit 是顾客端「按单号查订单」接口的单 IP 限流值
+	// （次/分钟）。该接口无鉴权，单号会出现在小票/照片/群聊里，零限流等于放任遍历。
+	EnvCustomerOrderQueryRateLimit = "CUSTOMER_ORDER_QUERY_RATE_LIMIT"
 )
 
 const (
@@ -88,6 +91,11 @@ const (
 	DefaultPrintAgentEnvFile = "agent.env"
 	// DefaultAgentBinDir 是代理产物默认目录（发布包内 print-agent/bin，与后端可执行文件同层级）。
 	DefaultAgentBinDir = "print-agent/bin"
+	// DefaultCustomerOrderQueryRateLimit 是顾客端按单号查订单接口的默认单 IP 限流
+	// （次/分钟）。取值依据:顾客端轮询 3s 一拍 = 20 次/分钟/桌，300 可覆盖同一
+	// 公网出口（门店 NAT）下约 15 桌同时轮询，又不给「遍历单号」留出可行空间
+	// （35bit 随机段 × 300 次/分钟，穷举需数十年）。
+	DefaultCustomerOrderQueryRateLimit = 300
 	// DefaultPrintAgentServer 是本地打印代理云端地址默认值。
 	DefaultPrintAgentServer = ""
 	// DefaultPrintAgentToken 是本地打印代理令牌默认值。
@@ -231,6 +239,26 @@ const (
 	DefaultAuditLogGet = "0"
 	// DefaultAuditRetentionDays 是操作审计日志默认保留天数。
 	DefaultAuditRetentionDays = "365"
+)
+
+// ==================== 访问统计 ====================
+
+const (
+	// EnvVisitStatEnabled 是访问统计总开关环境变量。
+	EnvVisitStatEnabled = "VISIT_STAT_ENABLED"
+	// EnvVisitRetentionDays 是访问明细保留天数环境变量(0 = 不清理)。
+	EnvVisitRetentionDays = "VISIT_RETENTION_DAYS"
+	// EnvVisitRatePerMin 是单 IP 每分钟打点上限环境变量。
+	EnvVisitRatePerMin = "VISIT_RATE_PER_MIN"
+)
+
+const (
+	// DefaultVisitStatEnabled 是访问统计总开关默认值(默认开启)。
+	DefaultVisitStatEnabled = "1"
+	// DefaultVisitRetentionDays 是访问明细默认保留天数。
+	DefaultVisitRetentionDays = "90"
+	// DefaultVisitRatePerMin 是单 IP 每分钟打点默认上限。
+	DefaultVisitRatePerMin = "60"
 )
 
 // ==================== 管理员 ====================

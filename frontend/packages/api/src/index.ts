@@ -5,6 +5,7 @@ export * from './customer';
 export * from './order';
 export * from './printer';
 export * from './report';
+export * from './visit';
 export * from './common';
 // 页面历史上习惯 `import { ORDER_STATUS } from '../api'`(字典与接口同源)，这里保留该出口。
 // 只转出 dicts，不做整包 `export * from '@dining/shared'` —— 后者会把存储键、金额工具等

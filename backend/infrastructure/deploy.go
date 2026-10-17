@@ -49,6 +49,7 @@ type DeployFile struct {
 	Security SecuritySection `yaml:"security"`
 	Log      LogSection      `yaml:"log"`
 	Admin    AdminSection    `yaml:"admin"`
+	Visit    VisitSection    `yaml:"visit"`
 }
 
 // ServerSection 对应 HTTP 服务与静态资源相关配置。
@@ -115,6 +116,13 @@ type LogSection struct {
 type AdminSection struct {
 	User *string `yaml:"user"` // -> ADMIN_USER,默认 admin
 	Pass *string `yaml:"pass"` // -> ADMIN_PASS,默认 admin123
+}
+
+// VisitSection 对应站点访问统计(见 docs/design-docs/visit-analytics/spec.md)。
+type VisitSection struct {
+	Enabled       *bool `yaml:"enabled"`        // -> VISIT_STAT_ENABLED,"1" / "0",默认开
+	RetentionDays *int  `yaml:"retention_days"` // -> VISIT_RETENTION_DAYS,明细保留天数,默认 90,0=不清理
+	RatePerMin    *int  `yaml:"rate_per_min"`   // -> VISIT_RATE_PER_MIN,单 IP 每分钟打点上限,默认 60
 }
 
 // DeployStats 描述配置加载结果,供启动日志与测试使用。
@@ -263,6 +271,12 @@ func (c *DeployFile) envPairs() map[string]string {
 
 	setStrPtr(m, conf.EnvAdminUser, c.Admin.User)
 	setStrPtr(m, conf.EnvAdminPass, c.Admin.Pass)
+
+	if c.Visit.Enabled != nil {
+		m[conf.EnvVisitStatEnabled] = boolFlag(*c.Visit.Enabled)
+	}
+	setStr(m, conf.EnvVisitRetentionDays, intToStr(c.Visit.RetentionDays))
+	setStr(m, conf.EnvVisitRatePerMin, intToStr(c.Visit.RatePerMin))
 
 	return m
 }

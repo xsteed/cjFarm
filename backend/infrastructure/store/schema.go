@@ -503,6 +503,63 @@ var schemaTemplate = []string{
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
+
+	// 访问明细(站点访问统计,见 docs/design-docs/visit-analytics/spec.md)。
+	//
+	// 定位与 tb_print_job 同构:「待办」性质 —— 日聚合台账(tb_visit_daily)落好后
+	// 即可按保留天数清理,渠道 UV 的窗口查询只覆盖保留期内的明细。
+	// 只插不改(无 update_time),与 tb_oper_log 一致。
+	//
+	// visitor_key 是 UV 去重键,三种前缀(见 spec 第 1 节):
+	//   m:<customer_id>      登录会员(小程序带顾客令牌),最可靠;
+	//   c:<visitorId>        前端生成并持久化的随机访客 ID(localStorage / wx.storage);
+	//   a:<ipHash>:<uaHash>  前两者都缺失时的兜底(存储被禁用的浏览器)。
+	// ip_hash / ua_hash 是 sha256(值 + pepper) 的前 32 位:库文件泄露也无法反推
+	// 原始 IP 与 UA,pepper 与配置加密同密钥体系(见 InitSecretKeys)。
+	//
+	// entry 存入口标识:H5 是桌台点餐码(哪张桌的二维码被扫了),小程序一期留空。
+	`CREATE TABLE IF NOT EXISTS tb_visit_log (
+		visit_id    {{PK}},
+		visit_date  VARCHAR(10)  NOT NULL,
+		channel     VARCHAR(16)  NOT NULL,
+		visitor_key VARCHAR(80)  NOT NULL,
+		is_member   INTEGER      DEFAULT 0,
+		customer_id INTEGER      DEFAULT 0,
+		entry       VARCHAR(16)  DEFAULT '',
+		ip_hash     VARCHAR(64)  DEFAULT '',
+		ua_hash     VARCHAR(64)  DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}}
+	){{OPTS}}`,
+
+	// 访客注册表(台账,长期保留):一行一个独立访客,主键即 visitor_key。
+	// 存在的意义是让「新访客」精确 —— first_visit_date 等于统计日即为当日新增;
+	// 没有它就只能靠明细窗口近似(访客上一次出现早于保留期时会被误判成新客)。
+	// 量级 = 累计独立访客数(单店数千行),永久保留无压力。
+	`CREATE TABLE IF NOT EXISTS tb_visitor (
+		visitor_key      VARCHAR(80) PRIMARY KEY,
+		first_visit_date VARCHAR(10) NOT NULL,
+		last_visit_date  VARCHAR(10) NOT NULL,
+		visit_count      INTEGER     DEFAULT 1,
+		is_member        INTEGER     DEFAULT 0,
+		customer_id      INTEGER     DEFAULT 0,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}}
+	){{OPTS}}`,
+
+	// 日聚合台账(长期保留):每日每个渠道一行(channel='all' 为跨渠道去重后的
+	// 全站合计行,各单渠道行之和不等于它 —— 同一访客可能两个渠道都来过)。
+	// rollup 采用「绝对重算」而非累加:同一 (visit_date, channel) 重复执行结果
+	// 一致,崩溃后可安全重跑;写入路径是先 UPDATE 后 INSERT(同 NextPickupNoTx),
+	// 不依赖 MySQL 的 ON DUPLICATE KEY / SQLite 的 ON CONFLICT。
+	`CREATE TABLE IF NOT EXISTS tb_visit_daily (
+		id         {{PK}},
+		visit_date VARCHAR(10) NOT NULL,
+		channel    VARCHAR(16) NOT NULL,
+		pv         INTEGER     DEFAULT 0,
+		uv         INTEGER     DEFAULT 0,
+		new_uv     INTEGER     DEFAULT 0,
+		member_uv  INTEGER     DEFAULT 0,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}}
+	){{OPTS}}`,
 }
 
 // schemaStatements 返回指定方言下的全部建表语句。
@@ -697,6 +754,15 @@ var indexDefs = []indexDef{
 	{Name: "idx_remember_token", Table: "tb_remember_token", Columns: "token", Unique: true},
 	// 名字唯一 = 同名内容幂等写入的前提。
 	{Name: "idx_image_name", Table: "tb_image", Columns: "img_name", Unique: true},
+	// 访问统计:按天扫明细(rollup 与清理)、按天+访客键去重(UV)、
+	// 按天+渠道+访客键(渠道 UV 窗口查询),见 docs/design-docs/visit-analytics/spec.md。
+	{Name: "idx_visitlog_date", Table: "tb_visit_log", Columns: "visit_date"},
+	{Name: "idx_visitlog_visitor", Table: "tb_visit_log", Columns: "visit_date, visitor_key"},
+	{Name: "idx_visitlog_channel", Table: "tb_visit_log", Columns: "visit_date, channel, visitor_key"},
+	// 访客注册表:新访客按首访日期圈选。
+	{Name: "idx_visitor_first", Table: "tb_visitor", Columns: "first_visit_date"},
+	// 日聚合台账:rollup「先 UPDATE 后 INSERT」的定位键,同时兜底并发重复行。
+	{Name: "idx_visit_daily_uk", Table: "tb_visit_daily", Columns: "visit_date, channel", Unique: true},
 }
 
 // indexStatements 返回指定方言下的全部建索引语句。

@@ -11,6 +11,7 @@ import {
   getPublicConfig,
   getRemarks,
   getTable,
+  reportVisit,
   urgeOrder
 } from '@dining/api';
 import type { MenuCategory, OrderDetail, PublicConfig, RemarkOption, TableInfo } from '@dining/types';
@@ -53,7 +54,9 @@ vi.mock('@dining/api', () => ({
   getOrderByNo: vi.fn(),
   urgeOrder: vi.fn(),
   createPay: vi.fn(),
-  queryPay: vi.fn()
+  queryPay: vi.fn(),
+  // 站点访问统计打点(挂载即上报一次,失败静默)
+  reportVisit: vi.fn(() => Promise.resolve())
 }));
 
 const getTableMock = vi.mocked(getTable);
@@ -64,6 +67,7 @@ const createOrderMock = vi.mocked(createOrder);
 const getOrderByNoMock = vi.mocked(getOrderByNo);
 const urgeOrderMock = vi.mocked(urgeOrder);
 const createPayMock = vi.mocked(createPay);
+const reportVisitMock = vi.mocked(reportVisit);
 
 // CartDrawer 只依赖 t-drawer 一个 TDesign 组件,用同名全局组件按 visible 渲染默认插槽即可稳定驱动内部交互。
 const TDrawerStub = defineComponent({
@@ -170,6 +174,18 @@ beforeEach(() => {
 });
 
 describe('OrderPage', () => {
+  it('挂载即上报一次访问统计（h5 渠道，带桌台码）', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(reportVisitMock).toHaveBeenCalledTimes(1);
+    const payload = reportVisitMock.mock.calls[0][0] as { channel?: string; entry?: string; visitorId?: string };
+    expect(payload.channel).toBe('h5');
+    expect(payload.entry).toBe('1');
+    expect(payload.visitorId).toBeTruthy();
+    wrapper.unmount();
+  });
+
   it('挂载后先展示 loading,再进入菜单视图', async () => {
     const wrapper = mountPage();
     expect(wrapper.find('.sk-wrap').exists()).toBe(true);
@@ -498,7 +514,7 @@ describe('OrderPage', () => {
 
       await vi.advanceTimersByTimeAsync(3000);
       await drainMicrotasks();
-      expect(getOrderByNoMock).toHaveBeenCalledWith('NO001');
+      expect(getOrderByNoMock).toHaveBeenCalledWith('NO001', 1);
       expect(wrapper.text()).toContain('已上齐');
 
       wrapper.unmount();

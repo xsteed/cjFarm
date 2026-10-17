@@ -59,6 +59,10 @@ func setupAPI(r *gin.Engine) {
 		api.GET("/customer/config", handler.CustomerSetting)
 		api.POST("/customer/order", handler.CustomerAuthOptional, handler.CustomerCreateOrder)
 		api.POST("/customer/order/append", handler.CustomerAuthOptional, handler.CustomerAppendOrder)
+		// 站点访问统计打点(公开):H5 点餐页与小程序启动时调用。带会员令牌则
+		// 访客升级为「会员身份」,不带则匿名;恒返回 200,失败不影响点餐
+		// (见 handler.VisitTrack 与 docs/design-docs/visit-analytics/spec.md)。
+		api.POST("/customer/visit", handler.CustomerAuthOptional, handler.VisitTrack)
 		// 顾客会员:一键注册/登录(自愿,未登录不影响点餐);登录态为 2h 短令牌,
 		// 过期由小程序端静默重登(见 docs/design-docs/customer-member/spec.md)。
 		api.POST("/customer/auth/login", handler.CustomerMemberLogin)
@@ -201,6 +205,8 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/report/settleMix", handler.ReportSettleMix)
 			// 用户用餐时长分析(翻台/排台参考)
 			admin.GET("/report/diningDuration", handler.ReportDiningDuration)
+			// 站点访问统计(PV/UV/新访客/渠道构成),同属 report:view
+			admin.GET("/report/visits", handler.ReportVisits)
 
 			// ---- 操作日志(审计留痕) ----
 			admin.GET("/log/list", handler.LogList)
@@ -321,6 +327,9 @@ func main() {
 	// 桌台遗留订单防护:按「跨日自动清台」配置开关后台巡检,把过期遗留单所在桌台
 	// 恢复空闲(订单与账务不动)。开关关闭时每轮直接跳过,不做查询。
 	service.StartStaleOrderGuard()
+	// 站点访问统计:批量写 worker + 日聚合补跑 + 明细清理(开关关闭时不起 worker)。
+	// 放在巡检任务之后:两者互不依赖,但日志上保持「后台任务」在同一段。
+	service.StartVisitRollup()
 	logger.Infof("[boot] 后台巡检与自检任务已就绪(%s)", sinceBoot(bootStart))
 
 	// 前端静态目录支持环境变量覆盖,便于打包部署到不同工作目录。

@@ -6,7 +6,7 @@
 import { mount } from '@vue/test-utils';
 import TDesign from 'tdesign-vue-next';
 import Dashboard from '../Dashboard.vue';
-import { getOrderBoard, getReportSummary, getStaleOrders } from '@dining/api';
+import { getOrderBoard, getReportSummary, getStaleOrders, getVisitStats } from '@dining/api';
 import { setAuth } from '@dining/auth';
 import { flushPromises, stubMatchMedia, stubResizeObserver, clearAllStorage } from '@shell/test/mocks.ts';
 import type { TableInfo } from '@dining/types';
@@ -23,7 +23,9 @@ vi.mock('@dining/api', () => ({
   getReportSummary: vi.fn(),
   getOrderBoard: vi.fn(),
   getStaleOrders: vi.fn(),
-  getProfile: vi.fn()
+  getProfile: vi.fn(),
+  // 首页「今日访问」卡片的数据源(与经营报表同属 report:view)
+  getVisitStats: vi.fn()
 }));
 
 const boardFixture: TableInfo[] = [
@@ -42,6 +44,9 @@ beforeEach(() => {
   vi.mocked(getReportSummary).mockResolvedValue({});
   vi.mocked(getOrderBoard).mockResolvedValue(boardFixture);
   vi.mocked(getStaleOrders).mockResolvedValue({ enabled: false, hours: 4, items: [] });
+  vi.mocked(getVisitStats).mockResolvedValue({
+    summary: { todayPv: 66, todayUv: 40, todayNewUv: 5, yesterdayPv: 58, yesterdayUv: 35 }
+  });
 });
 
 afterEach(() => {
@@ -123,6 +128,30 @@ describe('Dashboard · 未结账超时告警', () => {
     expect(w.find('.stale-line .lg').text()).toBe('跨日');
     // 25 小时不该说成「25 小时」以外的形态
     expect(w.text()).toContain('已 1 天 1 小时');
+    w.unmount();
+  });
+
+  it('展示「今日访问」卡片：UV 为主、PV 与新访客为副', async () => {
+    const w = mountDashboard();
+    await flushPromises();
+
+    expect(w.text()).toContain('今日访问');
+    // 主数字是独立访客数,副标题是访问次数与新访客
+    expect(w.text()).toContain('40');
+    expect(w.text()).toContain('66 次访问');
+    expect(w.text()).toContain('新访客 5');
+    w.unmount();
+  });
+
+  it('访问统计接口失败不影响经营 KPI 与桌台看板', async () => {
+    vi.mocked(getVisitStats).mockRejectedValue(new Error('没有操作权限'));
+
+    const w = mountDashboard();
+    await flushPromises();
+
+    // 卡片仍在(数字退化为 0),桌台看板照常渲染
+    expect(w.text()).toContain('今日访问');
+    expect(w.find('.table-grid').exists()).toBe(true);
     w.unmount();
   });
 

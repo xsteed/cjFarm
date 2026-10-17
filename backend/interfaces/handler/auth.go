@@ -154,6 +154,15 @@ func AdminLogin(c *gin.Context) {
 
 	WriteLoginLog(c, res.Auth.UserID, res.Username, true, "")
 
+	// 访问统计:管理端登录即一次「admin 渠道」访问(UV = 登录人数)。
+	// 旁路数据,失败只告警不影响登录(见 service.RecordVisit)。
+	service.RecordVisit(service.VisitInput{
+		Channel:    po.VisitChannelAdmin,
+		CustomerID: res.Auth.UserID,
+		IP:         ip,
+		UA:         c.GetHeader("User-Agent"),
+	})
+
 	out := buildLoginResult(res.Auth)
 	// 「记住我」:签发不透明令牌存库,前端凭它静默换发新登录态(免登录 7/30 天)。
 	if p.Remember {

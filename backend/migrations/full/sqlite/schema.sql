@@ -379,6 +379,37 @@ CREATE TABLE IF NOT EXISTS tb_image (
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
         update_time VARCHAR(32) DEFAULT NULL
     );
+CREATE TABLE IF NOT EXISTS tb_visit_log (
+        visit_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+        visit_date  VARCHAR(10)  NOT NULL,
+        channel     VARCHAR(16)  NOT NULL,
+        visitor_key VARCHAR(80)  NOT NULL,
+        is_member   INTEGER      DEFAULT 0,
+        customer_id INTEGER      DEFAULT 0,
+        entry       VARCHAR(16)  DEFAULT '',
+        ip_hash     VARCHAR(64)  DEFAULT '',
+        ua_hash     VARCHAR(64)  DEFAULT '',
+        create_time VARCHAR(32) DEFAULT (datetime('now','localtime'))
+    );
+CREATE TABLE IF NOT EXISTS tb_visitor (
+        visitor_key      VARCHAR(80) PRIMARY KEY,
+        first_visit_date VARCHAR(10) NOT NULL,
+        last_visit_date  VARCHAR(10) NOT NULL,
+        visit_count      INTEGER     DEFAULT 1,
+        is_member        INTEGER     DEFAULT 0,
+        customer_id      INTEGER     DEFAULT 0,
+        create_time VARCHAR(32) DEFAULT (datetime('now','localtime'))
+    );
+CREATE TABLE IF NOT EXISTS tb_visit_daily (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        visit_date VARCHAR(10) NOT NULL,
+        channel    VARCHAR(16) NOT NULL,
+        pv         INTEGER     DEFAULT 0,
+        uv         INTEGER     DEFAULT 0,
+        new_uv     INTEGER     DEFAULT 0,
+        member_uv  INTEGER     DEFAULT 0,
+        create_time VARCHAR(32) DEFAULT (datetime('now','localtime'))
+    );
 CREATE TRIGGER IF NOT EXISTS trg_tb_table_touch
         AFTER UPDATE ON tb_table FOR EACH ROW
         WHEN NEW.update_time IS OLD.update_time
@@ -545,3 +576,8 @@ CREATE INDEX IF NOT EXISTS idx_operlog_target ON tb_oper_log(target_type, target
 CREATE INDEX IF NOT EXISTS idx_operlog_status ON tb_oper_log(status, create_time);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_remember_token ON tb_remember_token(token);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_image_name ON tb_image(img_name);
+CREATE INDEX IF NOT EXISTS idx_visitlog_date ON tb_visit_log(visit_date);
+CREATE INDEX IF NOT EXISTS idx_visitlog_visitor ON tb_visit_log(visit_date, visitor_key);
+CREATE INDEX IF NOT EXISTS idx_visitlog_channel ON tb_visit_log(visit_date, channel, visitor_key);
+CREATE INDEX IF NOT EXISTS idx_visitor_first ON tb_visitor(first_visit_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_visit_daily_uk ON tb_visit_daily(visit_date, channel);

@@ -5,6 +5,7 @@
 // 这样 Web 端与未来的小程序端都能直接引用。
 export * from './authKeys';
 export * from './safeStorage';
+export * from './visitor';
 export * from './money';
 export * from './orderDisplay';
 export * from './h5Base';

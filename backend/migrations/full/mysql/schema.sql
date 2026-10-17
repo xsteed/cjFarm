@@ -391,6 +391,37 @@ CREATE TABLE IF NOT EXISTS tb_image (
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
         update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE IF NOT EXISTS tb_visit_log (
+        visit_id    INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        visit_date  VARCHAR(10)  NOT NULL,
+        channel     VARCHAR(16)  NOT NULL,
+        visitor_key VARCHAR(80)  NOT NULL,
+        is_member   INTEGER      DEFAULT 0,
+        customer_id INTEGER      DEFAULT 0,
+        entry       VARCHAR(16)  DEFAULT '',
+        ip_hash     VARCHAR(64)  DEFAULT '',
+        ua_hash     VARCHAR(64)  DEFAULT '',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE IF NOT EXISTS tb_visitor (
+        visitor_key      VARCHAR(80) PRIMARY KEY,
+        first_visit_date VARCHAR(10) NOT NULL,
+        last_visit_date  VARCHAR(10) NOT NULL,
+        visit_count      INTEGER     DEFAULT 1,
+        is_member        INTEGER     DEFAULT 0,
+        customer_id      INTEGER     DEFAULT 0,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE IF NOT EXISTS tb_visit_daily (
+        id         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        visit_date VARCHAR(10) NOT NULL,
+        channel    VARCHAR(16) NOT NULL,
+        pv         INTEGER     DEFAULT 0,
+        uv         INTEGER     DEFAULT 0,
+        new_uv     INTEGER     DEFAULT 0,
+        member_uv  INTEGER     DEFAULT 0,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 CREATE UNIQUE INDEX idx_order_no ON tb_order(order_no);
 CREATE UNIQUE INDEX idx_order_pickup ON tb_order(biz_date, pickup_no);
 CREATE INDEX idx_order_table ON tb_order(table_id);
@@ -425,3 +456,8 @@ CREATE INDEX idx_operlog_target ON tb_oper_log(target_type, target_id);
 CREATE INDEX idx_operlog_status ON tb_oper_log(status, create_time);
 CREATE UNIQUE INDEX idx_remember_token ON tb_remember_token(token);
 CREATE UNIQUE INDEX idx_image_name ON tb_image(img_name);
+CREATE INDEX idx_visitlog_date ON tb_visit_log(visit_date);
+CREATE INDEX idx_visitlog_visitor ON tb_visit_log(visit_date, visitor_key);
+CREATE INDEX idx_visitlog_channel ON tb_visit_log(visit_date, channel, visitor_key);
+CREATE INDEX idx_visitor_first ON tb_visitor(first_visit_date);
+CREATE UNIQUE INDEX idx_visit_daily_uk ON tb_visit_daily(visit_date, channel);

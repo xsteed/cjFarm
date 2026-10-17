@@ -70,6 +70,13 @@
         :rows="dailyRows"
         :total="rangeTotal"
       />
+      <!-- 站点访问统计:PV/UV/新访客趋势 + 渠道构成 + 扫码入口 Top -->
+      <VisitChart
+        :rows="visitRows"
+        :channels="visitChannels"
+        :entries="visitEntries"
+        :total="visitTotal"
+      />
       <HourlyMixCharts
         :hourly="hourlyRows"
         :mix="mixRows"
@@ -98,7 +105,8 @@ import {
   getHourlyReport,
   getMonthlyTrend,
   getReportSummary,
-  getSettleMix
+  getSettleMix,
+  getVisitStats
 } from '@dining/api';
 import type {
   DailyTrendRow,
@@ -107,7 +115,11 @@ import type {
   HourlyRow,
   MonthlyTrendRow,
   ReportSummary,
-  SettleMixRow
+  SettleMixRow,
+  VisitChannelRow,
+  VisitDailyRow,
+  VisitEntryRow,
+  VisitStats
 } from '@dining/types';
 import type { PageQuery } from '@dining/types';
 import { useEChart } from '../composables/useEChart';
@@ -122,6 +134,7 @@ import HourlyMixCharts from './report/HourlyMixCharts.vue';
 import MonthlyChart from './report/MonthlyChart.vue';
 import DishRankChart from './report/DishRankChart.vue';
 import DiningDurationChart from './report/DiningDurationChart.vue';
+import VisitChart from './report/VisitChart.vue';
 
 // ---------- 日期工具 ----------
 function fmtDay(d: Date): string {
@@ -142,6 +155,11 @@ const mixRows = ref<SettleMixRow[]>([]);
 const monthlyRows = ref<MonthlyTrendRow[]>([]);
 const rankRows = ref<DishRankRow[]>([]);
 const durationStats = ref<DiningDurationStats>({});
+// 站点访问统计(与经营报表同一区间;口径独立 —— PV/UV 不受订单影响)
+const visitRows = ref<VisitDailyRow[]>([]);
+const visitChannels = ref<VisitChannelRow[]>([]);
+const visitEntries = ref<VisitEntryRow[]>([]);
+const visitSummary = ref<VisitStats['summary']>({});
 const loading = ref(false);
 const updatedAt = ref('');
 const rankSort = ref<'qty' | 'amount'>('qty');
@@ -212,19 +230,27 @@ const rangeTotal = computed(() => {
 
 const mixTotal = computed(() => (mixRows.value || []).reduce((sum, m) => sum + Number(m.amount || 0), 0));
 
+// 访问图表的区间合计:用后端口径(区间 UV 是明细去重值,不能由逐日 UV 相加得出)
+const visitTotal = computed(() => ({
+  pv: Number(visitSummary.value?.pv || 0),
+  uv: Number(visitSummary.value?.uv || 0),
+  newUv: Number(visitSummary.value?.newUv || 0)
+}));
+
 // ---------- 数据加载 ----------
 async function loadAll(): Promise<void> {
   loading.value = true;
   try {
     // 各接口互不依赖，并行拉取；任一失败由 axios 拦截器统一提示
-    const [s, d, h, m, mo, r, du] = await Promise.all([
+    const [s, d, h, m, mo, r, du, v] = await Promise.all([
       getReportSummary(),
       getDailyTrend(rangeParams()),
       getHourlyReport(rangeParams()),
       getSettleMix(rangeParams()),
       getMonthlyTrend(),
       getDishRank({ limit: 10, sort: rankSort.value }),
-      getDiningDuration(rangeParams())
+      getDiningDuration(rangeParams()),
+      getVisitStats(rangeParams())
     ]);
     summary.value = s || {};
     dailyRows.value = d || [];
@@ -233,6 +259,7 @@ async function loadAll(): Promise<void> {
     monthlyRows.value = mo || [];
     rankRows.value = r || [];
     durationStats.value = du || {};
+    applyVisitStats(v);
     updatedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false });
   } catch {
     // 错误提示已由请求层统一处理，这里只需保证 loading 收尾
@@ -244,19 +271,29 @@ async function loadAll(): Promise<void> {
 /** 切换区间只重取「区间相关」的接口，汇总与月度、排行不受影响。 */
 async function loadRange(): Promise<void> {
   try {
-    const [d, h, m, du] = await Promise.all([
+    const [d, h, m, du, v] = await Promise.all([
       getDailyTrend(rangeParams()),
       getHourlyReport(rangeParams()),
       getSettleMix(rangeParams()),
-      getDiningDuration(rangeParams())
+      getDiningDuration(rangeParams()),
+      getVisitStats(rangeParams())
     ]);
     dailyRows.value = d || [];
     hourlyRows.value = h || [];
     mixRows.value = m || [];
     durationStats.value = du || {};
+    applyVisitStats(v);
   } catch {
     /* 同上 */
   }
+}
+
+/** 把访问统计接口出参落到三个图表的数据源(interface 内字段全可选,统一下兜底)。 */
+function applyVisitStats(v: VisitStats | undefined): void {
+  visitRows.value = v?.daily || [];
+  visitChannels.value = v?.channels || [];
+  visitEntries.value = v?.entries || [];
+  visitSummary.value = v?.summary || {};
 }
 
 async function loadRank(): Promise<void> {

@@ -32,6 +32,14 @@
           <div class="v">¥{{ $money(summary.todayAvgAmount) }}</div>
           <div class="d">今日 {{ summary.todayGuestCount || 0 }} 人次到店</div>
         </div>
+        <!-- 站点访问量:与营业额口径独立(没下单的扫码访客也计入),看「今天多少人来了」 -->
+        <div class="kpi">
+          <div class="l">今日访问</div>
+          <div class="v">{{ visit.todayUv || 0 }} <small>人</small></div>
+          <div class="d">
+            {{ visit.todayPv || 0 }} 次访问 · 新访客 {{ visit.todayNewUv || 0 }}
+          </div>
+        </div>
       </template>
       <div class="kpi">
         <div class="l">桌台占用</div>
@@ -175,10 +183,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { getReportSummary, getOrderBoard, getStaleOrders } from '@dining/api';
+import { getReportSummary, getOrderBoard, getStaleOrders, getVisitStats } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { durationText, money } from '@dining/shared';
-import type { OrderSummary, ReportSummary, StaleOrderAlert, TableInfo } from '@dining/types';
+import type { OrderSummary, ReportSummary, StaleOrderAlert, TableInfo, VisitStats } from '@dining/types';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
 import PullRefresh from '../components/PullRefresh.vue';
@@ -205,6 +213,8 @@ function goOrders(): void {
 const canReport = computed(() => hasPerm('report:view'));
 
 const summary = ref<ReportSummary>({});
+// 访问统计只取 today 字段,daily 数组不用于本页(看趋势去报表页)。
+const visit = ref<NonNullable<VisitStats['summary']>>({});
 const board = ref<TableInfo[]>([]);
 // 未结账超时告警。接口类型里三个字段都是可选的(兼容老后端),这里落地成必填:
 // items 恒为数组,模板就能直接 .length / v-for,不必到处写 || []。
@@ -246,6 +256,14 @@ async function load(): Promise<void> {
     // 无 report:view 时跳过报表请求,避免一次必然 403 的调用弹「没有操作权限」。
     if (canReport.value) {
       summary.value = await getReportSummary();
+      // 只取近 2 天:本页只用 today 字段,不必为一张卡拉整月逐日数据。
+      // 与 summary 串行是刻意的 —— 访问统计失败不该影响经营 KPI 的展示。
+      try {
+        const v = await getVisitStats({ days: 2 });
+        visit.value = v?.summary || {};
+      } catch {
+        /* 报表接口失败已由拦截器提示,这里保经营指标可用 */
+      }
     }
     // order/board 返回桌台数组(每桌带当前进行中订单),与 TableInfo 同形。
     board.value = await getOrderBoard();
@@ -309,7 +327,8 @@ onUnmounted(() => {
 /* KPI */
 .kpis {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* 有 report:view 时共 5 张卡(营业额/订单/客单价/今日访问/桌台占用),等宽平分 */
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   margin-bottom: 16px;
 }

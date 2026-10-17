@@ -118,6 +118,9 @@ cp .env.example .env                 # 两者可只用一个
 | `log.agent_path` | `LOG_AGENT_PATH` | 门店打印代理日志路径（设 `off` 并入主日志） | `<日志目录>/agent.log` |
 | `log.level` | `LOG_LEVEL` | 日志级别 `debug` / `info` / `warn` / `error` | `info` |
 | `log.max_size_mb` / `max_age_days` / `max_backups` | `LOG_MAX_SIZE_MB` / `LOG_MAX_AGE_DAYS` / `LOG_MAX_BACKUPS` | 轮转：单文件上限 / 保留天数 / 保留份数 | `50` / `30` / `7` |
+| `visit.enabled` | `VISIT_STAT_ENABLED` | 站点访问统计总开关 | `true` |
+| `visit.retention_days` | `VISIT_RETENTION_DAYS` | 访问明细保留天数（日聚合台账不受影响） | `90` |
+| `visit.rate_per_min` | `VISIT_RATE_PER_MIN` | 单 IP 每分钟打点上限 | `60` |
 
 两个文件都读**当前工作目录**（即从 `backend/` 启动），路径可用 `CONFIG_FILE` /
 `ENV_FILE` 覆盖。`config.yaml` 里出现模板之外的键名会**直接报错并提示行号**，
@@ -413,11 +416,11 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
   - 打印日志 `print/log/list`、`print/log/reprint`、`print/log/clear`（飞鹅云清空队列）
   - 配置 `config/list|save`
   - 订单 `order/list|get/:id|board|status|pay|settle|settle/cancel|credit/settle|finish|cancel|edit`
-  - 报表 `report/summary|dailyTrend|monthlyTrend|dishRank`
+  - 报表 `report/summary|dailyTrend|monthlyTrend|dishRank|hourly|settleMix|diningDuration|visits`（`visits` = 站点访问统计：PV/UV/新访客/渠道/扫码入口 Top）
   - 员工 `user/list|save|update|resetPassword/:id|status/:id|delete/:id`（改密/启停/删除）
   - 角色 `role/list|save|update|delete/:id`、权限点目录 `perm/catalog`
 - 打印代理 `/api/agent/print/*`（门店侧程序调用，代理令牌鉴权，不属于管理端）：`ping`、`pull`、`ack`（见 [`docs/print-agent.md`](docs/print-agent.md)）
-- 顾客端 `/api/customer/*`（公开）：`table/:id`（`id` 同时接受桌台稳定码或数字 ID）、`menu`、`remarks`、`config`、`order`、`order/no/:orderNo`、`pay/qr`
+- 顾客端 `/api/customer/*`（公开）：`table/:id`（`id` 同时接受桌台稳定码或数字 ID）、`menu`、`remarks`、`config`、`order`、`order/no/:orderNo`、`pay/qr`、`visit`（站点访问统计打点，恒 200、失败不影响点餐）
 - 上传 `/api/common/upload`（需登录且具备「菜品管理」或「系统配置修改」权限，仅限图片）
 
 > 鉴权失败状态码：**401** = 未登录/令牌失效（前端清登录态并跳登录页）；**403** = 已登录但无该操作权限（前端仅弹提示，不退出）。业务错误统一 **400**。

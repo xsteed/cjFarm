@@ -715,11 +715,12 @@ import {
   getOrderByNo,
   getPublicConfig,
   getRemarks,
-  getTable
+  getTable,
+  reportVisit
 } from '@dining/api';
 import QRCode from 'qrcode';
 import type { MenuCategory, OrderDetail, OrderSummary, PublicConfig, RemarkOption, TableInfo } from '@dining/types';
-import { isActiveStatus, safeSession, ui } from '@dining/shared';
+import { isActiveStatus, safeSession, ui, visitorId } from '@dining/shared';
 import { useCart, useOrderPolling, useUrge } from '@dining/customer-core';
 import type { ViewState } from '@dining/customer-core';
 import { setCustomerTitle } from './title';
@@ -1280,6 +1281,17 @@ function friendlyLoadError(e: unknown): string {
 }
 
 onMounted(load);
+
+// 站点访问统计:每位客人扫码进入即一次 PV(fire-and-forget,失败静默)。
+// entry 带桌台点餐码(老数字桌号也原样带上),报表里能看出「哪张桌的码被扫得最多」。
+// 口径与隐私说明见 docs/design-docs/visit-analytics/spec.md。
+try {
+  void reportVisit({ visitorId: visitorId(), channel: 'h5', entry: tableRef }).catch(() => {
+    /* 埋点失败绝不打扰点餐 */
+  });
+} catch {
+  /* 埋点同步异常(接口被替换/禁用)同样静默:统计永远不能挡住点餐 */
+}
 onUnmounted(() => {
   stopPolling();
   clearUrgeTimer();

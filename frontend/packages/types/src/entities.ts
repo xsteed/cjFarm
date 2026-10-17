@@ -384,6 +384,66 @@ export interface HourlyRow extends Extensible {
   guestCount?: number;
 }
 
+/** 站点访问统计(见 docs/design-docs/visit-analytics/spec.md)。 */
+
+/** 打点渠道:h5 扫码点餐页 / miniprogram 小程序启动 / admin 管理后台登录。 */
+export type VisitChannel = 'h5' | 'miniprogram' | 'admin';
+
+/** 打点请求体(公开接口 POST /api/customer/visit)。 */
+export interface VisitTrackPayload {
+  visitorId?: string;
+  channel: VisitChannel;
+  /** 入口标识:桌台点餐码(仅 H5 有)。 */
+  entry?: string;
+}
+
+/** 报表里一天的访问数据(分渠道 PV;UV/新访客为全站口径)。 */
+export interface VisitDailyRow extends Extensible {
+  date?: string;
+  pv?: number;
+  uv?: number;
+  newUv?: number;
+  h5Pv?: number;
+  mpPv?: number;
+  adminPv?: number;
+}
+
+/** 报表里一个渠道的访问数据。 */
+export interface VisitChannelRow extends Extensible {
+  channel?: VisitChannel;
+  label?: string;
+  pv?: number;
+  uv?: number;
+}
+
+/** 扫码入口排行的一行(桌台码被扫次数)。 */
+export interface VisitEntryRow extends Extensible {
+  entry?: string;
+  label?: string;
+  pv?: number;
+}
+
+/** GET /api/admin/report/visits 的完整出参。 */
+export interface VisitStats extends Extensible {
+  range?: { start?: string; end?: string };
+  summary?: {
+    pv?: number;
+    uv?: number;
+    newUv?: number;
+    memberUv?: number;
+    totalVisitors?: number;
+    memberCount?: number;
+    todayPv?: number;
+    todayUv?: number;
+    todayNewUv?: number;
+    yesterdayPv?: number;
+    yesterdayUv?: number;
+  };
+  daily?: VisitDailyRow[];
+  channels?: VisitChannelRow[];
+  entries?: VisitEntryRow[];
+}
+
 export interface SettleMixRow extends Extensible {
   settleType?: string;
   label?: string;

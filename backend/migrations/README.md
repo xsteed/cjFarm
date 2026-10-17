@@ -16,7 +16,7 @@ backend/migrations/
 │   └── mysql/
 │       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
 │       └── seed.sql
-└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 25 个，文件名一致）
+└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 26 个，文件名一致）
     ├── sqlite/
     │   ├── 20260920020000_tb_order_urge_create.sql                    # 01 催菜/加菜记录表
     │   ├── 20260920021000_tb_payment_refund_create.sql                # 02 支付/退款流水表
@@ -43,8 +43,14 @@ backend/migrations/
     │   ├── 20261009010000_tb_table_add_lock_status.sql                # 23 桌台补「人工可用性状态」列
     │   ├── 20261010000000_tb_dish_add_signature.sql                   # 24 菜品补「招牌菜」标记
     │   └── 20261013000000_tb_config_fix_shop_name_dot.sql             # 25 店铺名统一为「品牌 · 标语」
+│   ├── 20261015000000_tb_order_add_meal_time_columns.sql          # 26 订单用餐起止时间落库（incr/README.md 收录）
+│   ├── 20261015010000_tables_add_timestamp_columns.sql            # 27 11 张表补齐 create_time / update_time
+│   ├── 20261015020000_times_autofill_triggers.sql                 # 28 时间列改由数据库自动维护（触发器 / ON UPDATE）
+│   ├── 20261016000000_tb_print_log_add_snapshot_columns.sql       # 29 打印台账补「票据标识 + 票面快照」三列
+│   ├── 20261017000000_tb_order_drop_legacy_time_columns.sql       # 30 删除 tb_order 遗留 begin_time / end_time
+│   └── 20261017010000_tb_visit_log_visitor_daily_create.sql       # 31 站点访问统计三张表（明细 / 访客 / 日聚合）
     └── mysql/                                             # 与 sqlite/ 同名同序，内容按 MySQL 语法适配
-        └──（同上 25 个文件）
+        └──（同上 26 个文件）
 ```
 
 > 下文「归属脚本」中的 incr 编号即上表 01~25 的序号。
@@ -135,7 +141,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `IF EXISTS` 语法，重复执行报 `no such column` / `check that column/key exists`，
 > 属正常现象、可忽略（详见 `incr/README.md` 的幂等性说明）。
 
-## 四、表清单（共 22 张）
+## 四、表清单（共 25 张）
 
 | # | 表名 | 说明 | 种子数据 | 归属脚本 |
 |---|---|---|---|---|
@@ -161,6 +167,9 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 20 | `tb_image` | 图片内容表（菜品图 / 收款码 / 上传图二进制） | 启动时写入出厂图 | full |
 | 21 | `tb_day_seq` | 按营业日维护「当日取餐号」的计数器 | 运行时产生 | full + incr 22 |
 | 22 | `tb_customer` | 小程序会员（openid 建档，用于「我的订单」与会员归属） | 运行时产生 | full + incr 20/21 |
+| 23 | `tb_visit_log` | 访问明细（站点 PV/UV 打点，「待办」性质，按保留天数清理） | 运行时产生 | full + incr 31 |
+| 24 | `tb_visitor` | 访客注册表（独立访客档案，「新访客」精确口径，长期保留） | 运行时产生 | full + incr 31 |
+| 25 | `tb_visit_daily` | 日聚合台账（每日每渠道 PV/UV/新访客，报表主读，长期保留） | 运行时产生 | full + incr 31 |
 
 > `tb_print_job` 与 `tb_print_log` 的分工：前者是「待办」（送达即结案，可定期清理），
 > 后者是「台账」（给商家查「这单打了没」，长期保留），两者由 `print_log_id` 关联。
@@ -172,7 +181,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `tb_role` 的 4 个内置角色（admin / manager / cashier / staff）每次启动由
 > `store.SyncBuiltinRoles()` 幂等校准；其中 `admin` 的权限**强制恢复为全量**，防止误改锁死。
 
-## 五、索引清单（共 34 个）
+## 五、索引清单（共 39 个）
 
 | 索引名 | 表 | 类型 | 用途 |
 |---|---|---|---|
@@ -210,6 +219,11 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_operlog_status` | tb_oper_log | 普通（2 列） | 只看失败 / 被拒绝的操作 |
 | `idx_remember_token` | tb_remember_token | 部分唯一 | 记住我令牌唯一，查库裁决是否过期 |
 | `idx_image_name` | tb_image | UNIQUE | 图片文件名唯一 |
+| `idx_visitlog_date` | tb_visit_log | 普通 | 访问明细按天扫（rollup 与清理） |
+| `idx_visitlog_visitor` | tb_visit_log | 普通（2 列） | UV 去重：按天 + 访客键 |
+| `idx_visitlog_channel` | tb_visit_log | 普通（3 列） | 渠道 UV 窗口查询 |
+| `idx_visitor_first` | tb_visitor | 普通 | 新访客按首访日期圈选 |
+| `idx_visit_daily_uk` | tb_visit_daily | UNIQUE（2 列） | 日聚合定位键，rollup 幂等重算 |
 
 > **部分唯一索引的差异**：`idx_table_code` / `idx_user_username`
 > 在 SQLite 下是**部分唯一索引**（带 `WHERE` 条件，分别只约束非空桌台码、
@@ -312,14 +326,14 @@ SET GLOBAL max_allowed_packet=128M;
 
 **SQLite（3.53）**
 
-- `full/`：建库结果为 **22 表 / 34 索引**；种子数据 config 39、role 4、table 8、
+- `full/`：建库结果为 **25 表 / 39 索引**；种子数据 config 39、role 4、table 8、
   category 6、dish 21、spec 32、remark 6、printer 2（合计 118 行，`seed.sql` 不含图片数据）；
   `tb_order` 42 列齐全；重复执行数量不变（建表 `IF NOT EXISTS`、种子 `INSERT OR IGNORE`）。
 - `incr/`：在 24 列的旧结构 `tb_order` 上依次执行 01~04 后补齐至 42 列；历史回填正确
   （已支付订单 `settle_type='normal'`、`paid_amount=total_amount-refund_amount`）；
   05（`tb_user_role_create`）在旧库上建出员工/角色两表与 3 个索引。
 - **复核方式**：`go run ./cmd/gensql -check` 通过（磁盘脚本与 Go 定义一致）；
-  22 表 / 34 索引 / 118 行种子由 `schemaTemplate` 与 `SeedCounts()` 自动核对，
+  25 表 / 39 索引 / 118 行种子由 `schemaTemplate` 与 `SeedCounts()` 自动核对，
   `go test ./...` 中 `sqlgen_test.go` 会同步做这项一致性校验。
   > 计数以 `gensql -check` 的输出为准；上面的数字只是复核时的快照，加表加列后不必回来改这里。
 
@@ -332,7 +346,7 @@ SET GLOBAL max_allowed_packet=128M;
 - 后端以 `DB_DRIVER=mysql` 启动，完成「登录 → 菜单 → 下单 → 加菜 → 催菜 →
   改单重算 → 状态流转 → 结账 → 报表」全链路。
 - `scripts/sqlite2mysql.py` 搬运实测：与源库逐表一致，中文无乱码。
-- ⚠️ **待补测**：员工/角色两表、打印日志/代理表与图片表加入后（现为 22 表 / 34 索引），尚未在 MySQL 上
+- ⚠️ **待补测**：员工/角色两表、打印日志/代理表与图片表加入后（现为 25 表 / 39 索引），尚未在 MySQL 上
   重跑一次全量建库。注意 `tb_user` 的部分唯一索引在 MySQL 下会降级为普通索引，
   唯一性改由应用层保证（见第五节说明）；`tb_role` 的 `idx_role_key` 已升级为
   两库统一的全局唯一索引，不受此问题影响。
