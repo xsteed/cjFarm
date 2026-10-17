@@ -29,6 +29,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +155,59 @@ var logRawResponse = func(apiname, sn, raw string) {
 	logger.Infof("飞鹅接口返回: apiname=%s sn=%s raw=%s", apiname, sn, truncateRunes(raw, 500))
 }
 
+// logRequest 记录一次接口调用的请求入参(默认写主日志)。
+//
+// 与 logRawResponse 成对:只有返回原文时,排查 ret=-2(参数错误)、-3(签名/时间)、
+// 1003(打印机不在线)只能看到「云端说错了」,看不到「自己发了什么」—— 核对入参
+// (SN、份数、content 排版)是定位这些问题的第一步,「记成功却没出纸」时同样要先
+// 确认推上去的内容对不对。放在发送前调用:HTTP 层失败(超时/断连)时「试图发了
+// 什么」也要留痕,否则日志里只剩一句「连接飞鹅云失败」,无从核对。
+// 凭证不进日志:ukey 不在业务参数里,sig 由它派生同样不打(见 formatFeieParams)。
+var logRequest = func(apiname, sn string, params map[string]string) {
+	logger.Infof("飞鹅接口请求: apiname=%s sn=%s %s", apiname, sn, formatFeieParams(params))
+}
+
+// formatFeieParams 把业务参数整理成稳定的 key=value 串:按 key 排序,让同一接口
+// 的多次调用日志可以逐行 diff;识别码类字段先掩码(见 maskFeieSecret)—— 日志会
+// 落盘,设备识别码不该明文出现在里面。
+//
+// 不做截断:content 是核对小票内容的唯一依据,截断后排版问题(<BR>/<CUT> 切段
+// 边界、标签是否落地)恰恰看不出来;其长度由发送层的 MaxBytes 单次上限约束
+// (约 4800 字节),其余参数(SN/份数/日期/订单号)本就只有几十字符,不会失控。
+func formatFeieParams(params map[string]string) string {
+	if len(params) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+maskFeieSecret(k, params[k]))
+	}
+	return strings.Join(parts, " ")
+}
+
+// maskFeieSecret 掩码请求参数里的设备识别码:key(Open_getModel)整值掩掉,
+// printerContent(Open_printerAddlist)的第二个 # 段掩掉(官方格式:
+// 打印机编号#识别码#备注名称#流量卡号)。其余参数(SN/份数/日期/订单号)不涉密,
+// 原样打印 —— 它们正是核对时最需要的字段。
+func maskFeieSecret(k, v string) string {
+	switch k {
+	case "key":
+		return "***"
+	case "printerContent":
+		fields := strings.Split(v, "#")
+		if len(fields) > 1 && strings.TrimSpace(fields[1]) != "" {
+			fields[1] = "***"
+			return strings.Join(fields, "#")
+		}
+	}
+	return v
+}
+
 // callRaw 与 call 相同,额外返回云端返回的 JSON 原文。
 //
 // 为什么要把「原文」交给调用方:打印接口的调用方需要把它写进日志/台账 ——
@@ -175,6 +229,10 @@ func (c *Client) callRaw(apiname string, params map[string]string) (*resp, strin
 		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// 请求入参先落日志再发送:与下面的 logRawResponse 配对,「发了什么」与
+	// 「回了什么」才能对上;网络层失败时这句更是唯一痕迹(见 logRequest 注释)。
+	logRequest(apiname, params["sn"], params)
 
 	respHTTP, err := c.hc.Do(req)
 	if err != nil {

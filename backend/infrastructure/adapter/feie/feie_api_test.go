@@ -234,6 +234,96 @@ func TestCallRawLogsEveryResponse(t *testing.T) {
 	}
 }
 
+// TestCallRawLogsEveryRequest 飞鹅所有接口的请求入参都必须经 logRequest 落日志:
+// 「云端说错了」必须和「自己发了什么」配对才能核对 —— ret=-2/-3、1003、
+// 「记成功却没出纸」都得先确认入参(SN、份数、content)对不对。
+// 连接失败(请求根本没发出去)时同样要留痕:那是「试图发了什么」的唯一证据。
+func TestCallRawLogsEveryRequest(t *testing.T) {
+	orig := logRequest
+	t.Cleanup(func() { logRequest = orig })
+
+	type rec struct{ apiname, sn, params string }
+	var got []rec
+	logRequest = func(apiname, sn string, params map[string]string) {
+		got = append(got, rec{apiname, sn, formatFeieParams(params)})
+	}
+
+	srv := feieStub(t, func(apiname string, _ map[string]string) []byte {
+		if apiname == "Open_printMsg" {
+			return okResp(`"FEIE-1"`)
+		}
+		return []byte(`{"ret":-3,"msg":"bad"}`)
+	})
+	c := NewClient(Config{User: "u", Ukey: "k", APIURL: srv.URL})
+
+	if _, err := c.PrintMsg("sn1", "content", 1); err != nil {
+		t.Fatalf("PrintMsg 失败: %v", err)
+	}
+	if _, err := c.PrinterStatus("sn2"); err == nil {
+		t.Fatal("ret!=0 应返回错误")
+	}
+	if err := c.ClearQueue("sn3"); err == nil {
+		t.Fatal("ret!=0 应返回错误")
+	}
+	if len(got) != 3 {
+		t.Fatalf("三次调用都应记录请求入参, got %d 条: %+v", len(got), got)
+	}
+	if got[0].apiname != "Open_printMsg" || got[0].sn != "sn1" {
+		t.Fatalf("打印接口请求未记录: %+v", got[0])
+	}
+	if !strings.Contains(got[0].params, "content=content") || !strings.Contains(got[0].params, "times=1") {
+		t.Fatalf("打印接口入参缺失: %q", got[0].params)
+	}
+	if got[1].apiname != "Open_queryPrinterStatus" || got[1].sn != "sn2" {
+		t.Fatalf("状态查询请求未记录: %+v", got[1])
+	}
+	if got[2].apiname != "Open_delPrinterSqs" || got[2].sn != "sn3" {
+		t.Fatalf("清队列请求未记录: %+v", got[2])
+	}
+
+	// 连接失败时(请求没发出去)也要留下「试图发了什么」。
+	got = nil
+	badSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	badSrv.Close()
+	c2 := NewClient(Config{User: "u", Ukey: "k", APIURL: badSrv.URL})
+	if err := c2.ClearQueue("sn9"); err == nil {
+		t.Fatal("连接失败应报错")
+	}
+	if len(got) != 1 || got[0].apiname != "Open_delPrinterSqs" || got[0].sn != "sn9" {
+		t.Fatalf("连接失败也应记录请求入参, got %+v", got)
+	}
+}
+
+// TestFormatFeieParams 入参串必须稳定可读:按 key 排序(多次调用可逐行 diff)、
+// content 原样完整打印(截断会让排版问题看不出来)、识别码掩码 —— 日志会落盘,
+// 设备识别码不该明文出现在里面。
+func TestFormatFeieParams(t *testing.T) {
+	if s := formatFeieParams(nil); s != "" {
+		t.Fatalf("空参数应返回空串, got %q", s)
+	}
+	if s := formatFeieParams(map[string]string{"times": "2", "sn": "s1"}); s != "sn=s1 times=2" {
+		t.Fatalf("参数应按 key 排序, got %q", s)
+	}
+	// content 不截断:一张长单数千字节也要原样进日志 —— <BR>/<CUT> 切段与
+	// 标签落地是核对重点,截断后恰好看不出问题。
+	long := strings.Repeat("<BR>菜", 800) // 远超历史上 500 字符的截断线
+	want := "content=" + long + " times=1"
+	if s := formatFeieParams(map[string]string{"content": long, "times": "1"}); s != want {
+		t.Fatalf("content 应原样完整打印, got %d 字符, want %d 字符", len([]rune(s)), len([]rune(want)))
+	}
+	// 识别码掩码:key 整值、printerContent 的第二个 # 段。
+	if s := formatFeieParams(map[string]string{"key": "secretkey"}); s != "key=***" {
+		t.Fatalf("key 应掩码, got %q", s)
+	}
+	if s := formatFeieParams(map[string]string{"printerContent": "sn1#secretkey#前台#1234"}); s != "printerContent=sn1#***#前台#1234" {
+		t.Fatalf("printerContent 识别码段应掩码, got %q", s)
+	}
+	// 未超限的值原样打印(SN/份数正是核对时最需要的字段)。
+	if s := formatFeieParams(map[string]string{"sn": "961828266", "times": "2"}); s != "sn=961828266 times=2" {
+		t.Fatalf("普通参数应原样打印, got %q", s)
+	}
+}
+
 // TestPrintMsgRawReturnsRaw 成功时必须把云端返回原文交回调用方 ——
 // 排查「台账记成功、纸却没出来」时,这是唯一能确认飞鹅到底回了什么的证据。
 func TestPrintMsgRawReturnsRaw(t *testing.T) {
