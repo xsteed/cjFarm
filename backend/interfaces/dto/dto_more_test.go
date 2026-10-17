@@ -37,7 +37,6 @@ func TestDtoOrderMapping(t *testing.T) {
 		CreditStatus: 0, CreditAmount: 0, CreditSettleTime: nil, CreditSettleBy: "",
 		PaidAmount: 1100, FinishTime: &payTime,
 		OrderRemark: "", CancelReason: "",
-		BeginTime: nil, EndTime: nil,
 		CreateBy: "admin", CreateTime: "2024-01-01 00:00:00", UpdateBy: "admin", UpdateTime: "2024-01-01 00:00:00",
 		Remark: &remark,
 	}

@@ -9,6 +9,7 @@
 | 27 | `20261015010000_tables_add_timestamp_columns.sql` | 11 张缺 `create_time` / `update_time` 的表补齐这两个列 |
 | 28 | `20261015020000_times_*_autofill*.sql` | 时间列改由数据库自动维护：MySQL 换 `DATETIME` + `DEFAULT`/`ON UPDATE`；SQLite 建 22 个 `update_time` 触发器 |
 | 29 | `20261016000000_tb_print_log_add_snapshot_columns.sql` | 打印台账补「票据标识 + 票面快照」三列（`label` / `content` / `paper_width`），老记录留空、读侧回落重算 |
+| 30 | `20261017000000_tb_order_drop_legacy_time_columns.sql` | 删除 `tb_order` 遗留的 `begin_time` / `end_time` 两列（从未写入，已被 `meal_start_time` / `meal_end_time` 取代） |
 
 > 更早的 01~25 号脚本仅存在于 README 的历史演进记录里，本仓库实际未收录这些文件；
 > 老库补列主要由后端启动时 `store.alterCols` 自动完成（等价且幂等），
@@ -43,3 +44,8 @@
 ALTER TABLE ADD COLUMN 在两种数据库上都不支持 `IF NOT EXISTS`：列已存在时会报
 `duplicate column name`（SQLite）/ `Duplicate column name`（MySQL），属**可忽略的正常现象**，
 与启动补列被跳过是同一回事。回填 SQL 一律带 `IS NULL` 守卫，重复执行零变更。
+
+同理，`drop_*` 系列（30 号删 `tb_order.begin_time` / `end_time`）两种数据库也都没有
+`DROP COLUMN IF EXISTS`，**重复执行会报 `no such column`（SQLite）/
+`check that column/key exists`（MySQL），同样可忽略**。执行前自查：
+SQLite `PRAGMA table_info(tb_order);` / MySQL `SHOW COLUMNS FROM tb_order;`。

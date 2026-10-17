@@ -208,8 +208,6 @@ CREATE TABLE IF NOT EXISTS tb_order (
         finish_time VARCHAR(32) DEFAULT NULL,
         order_remark    VARCHAR(500) DEFAULT '',
         cancel_reason   VARCHAR(255) DEFAULT '',
-        begin_time VARCHAR(32) DEFAULT NULL,
-        end_time VARCHAR(32) DEFAULT NULL,
         create_by       VARCHAR(64)  DEFAULT '',
         update_by       VARCHAR(64)  DEFAULT '',
         remark          VARCHAR(500),

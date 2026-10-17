@@ -96,8 +96,6 @@ type Order struct {
 	MealEndTime   *string
 	OrderRemark   string
 	CancelReason  string
-	BeginTime     *string
-	EndTime       *string
 	CreateBy      string
 	CreateTime    string
 	UpdateBy      string

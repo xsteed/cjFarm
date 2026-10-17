@@ -130,6 +130,10 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > - MySQL：`SHOW COLUMNS FROM tb_order;`
 >
 > `create` 系列为纯建表（`IF NOT EXISTS`），可安全重复执行。
+>
+> ⚠️ `drop_*` 系列（如 30 号删 `tb_order.begin_time` / `end_time`）同样无
+> `IF EXISTS` 语法，重复执行报 `no such column` / `check that column/key exists`，
+> 属正常现象、可忽略（详见 `incr/README.md` 的幂等性说明）。
 
 ## 四、表清单（共 22 张）
 
@@ -142,7 +146,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 5 | `tb_remark` | 备注选项 | 6 项 | full |
 | 6 | `tb_printer` | 打印机（ESC/POS 网络 + 飞鹅云） | 2 台（停用） | full |
 | 7 | `tb_config` | 系统配置（键值对） | 39 项 | full |
-| 8 | `tb_order` | 订单主表（46 列） | 运行时产生 | full + incr 03/04/10/14/16/21/22/26（`meal_start_time`/`meal_end_time`） |
+| 8 | `tb_order` | 订单主表（42 列） | 运行时产生 | full + incr 03/04/10/14/16/21/22/26（`meal_start_time`/`meal_end_time`）/30（删遗留 `begin_time`/`end_time`） |
 | 9 | `tb_order_item` | 订单明细 | 运行时产生 | full + incr 15/19 |
 | 10 | `tb_order_urge` | 催菜/加菜记录 | 运行时产生 | incr 01 |
 | 11 | `tb_payment` | 支付流水（在线支付） | 运行时产生 | incr 02/10/14 |

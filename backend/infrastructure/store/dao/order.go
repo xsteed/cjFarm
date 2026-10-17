@@ -17,7 +17,7 @@ const OrderCols = `order_id, order_no, table_id, table_no, table_name, person_co
 	transaction_id, pay_channel, refund_amount, refund_time,
 	settle_type, settle_time, settle_operator, settle_remark,
 	credit_status, credit_amount, credit_settle_time, credit_settle_by, paid_amount, gift_amount,
-	finish_time, order_remark, cancel_reason, begin_time, end_time, create_by, create_time, update_by, update_time, remark,
+	finish_time, order_remark, cancel_reason, create_by, create_time, update_by, update_time, remark,
 	biz_date, pickup_no, meal_start_time, meal_end_time`
 
 // ScanOrder 扫描一行订单记录(不含明细)。
@@ -34,7 +34,6 @@ func ScanOrder(rows interface{ Scan(...interface{}) error }) (po.Order, error) {
 	var settleTime, settleOperator, settleRemark sql.NullString
 	var creditSettleTime, creditSettleBy sql.NullString
 	var finishTime, orderRemark, cancelReason sql.NullString
-	var beginTime, endTime sql.NullString
 	var createBy, createTime, updateBy, updateTime, remark sql.NullString
 	// biz_date 允许 NULL(历史行/手工补录行),故走 NullString 再回落为空串。
 	var bizDate sql.NullString
@@ -44,7 +43,7 @@ func ScanOrder(rows interface{ Scan(...interface{}) error }) (po.Order, error) {
 		&transactionID, &payChannel, &o.RefundAmount, TS(&refundTime),
 		&settleType, TS(&settleTime), &settleOperator, &settleRemark,
 		&o.CreditStatus, &o.CreditAmount, TS(&creditSettleTime), &creditSettleBy, &o.PaidAmount, &o.GiftAmount,
-		TS(&finishTime), &orderRemark, &cancelReason, TS(&beginTime), TS(&endTime), &createBy, TS(&createTime), &updateBy, TS(&updateTime), &remark,
+		TS(&finishTime), &orderRemark, &cancelReason, &createBy, TS(&createTime), &updateBy, TS(&updateTime), &remark,
 		&bizDate, &o.PickupNo, TS(&mealStartTime), TS(&mealEndTime))
 	if err != nil {
 		return o, err
@@ -59,7 +58,6 @@ func ScanOrder(rows interface{ Scan(...interface{}) error }) (po.Order, error) {
 	o.SettleTime, o.SettleOperator, o.SettleRemark = nsPtr(settleTime), settleOperator.String, settleRemark.String
 	o.CreditSettleTime, o.CreditSettleBy = nsPtr(creditSettleTime), creditSettleBy.String
 	o.FinishTime, o.OrderRemark, o.CancelReason = nsPtr(finishTime), orderRemark.String, cancelReason.String
-	o.BeginTime, o.EndTime = nsPtr(beginTime), nsPtr(endTime)
 	o.CreateBy, o.CreateTime, o.UpdateBy, o.UpdateTime = createBy.String, createTime.String, updateBy.String, updateTime.String
 	o.Remark = nsPtr(remark)
 	// 老数据列为 NULL 时兜底为正常收款,避免前端判断出现空值分支。

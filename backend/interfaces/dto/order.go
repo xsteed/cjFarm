@@ -89,29 +89,31 @@ type Order struct {
 	// 前端据此展示「退款中」并在退款到账前禁用「退款」按钮(否则点了必被后端拒)。
 	RefundingAmount float64 `json:"refundingAmount"`
 	// ---- 结算方式:免单 / 挂账 ----
-	SettleType       string      `json:"settleType"`       // normal 正常收款 / free 免单 / credit 挂账
-	SettleTime       *string     `json:"settleTime"`       // 结算(免单/挂账/收款)时间
-	SettleOperator   string      `json:"settleOperator"`   // 结算操作人
-	SettleRemark     string      `json:"settleRemark"`     // 免单原因 / 挂账人备注
-	CreditStatus     int         `json:"creditStatus"`     // 0 非挂账 1 挂账待收款 2 挂账已结清
-	CreditAmount     float64     `json:"creditAmount"`     // 挂账金额(元)
-	CreditSettleTime *string     `json:"creditSettleTime"` // 挂账核销时间
-	CreditSettleBy   string      `json:"creditSettleBy"`   // 挂账核销操作人
-	PaidAmount       float64     `json:"paidAmount"`       // 实收金额(元):免单=0,挂账核销前=0
-	GiftAmount       float64     `json:"giftAmount"`       // 赠送金额(元):赠送菜品原价合计,不计入应收
-	FinishTime       *string     `json:"finishTime"`
-	OrderRemark      string      `json:"orderRemark"`
-	CancelReason     string      `json:"cancelReason"`
-	BeginTime        *string     `json:"beginTime"`
-	EndTime          *string     `json:"endTime"`
-	CreateBy         string      `json:"createBy"`
-	CreateTime       string      `json:"createTime"`
-	UpdateBy         string      `json:"updateBy"`
-	UpdateTime       string      `json:"updateTime"`
-	Remark           *string     `json:"remark"`
-	PendingUrge      bool        `json:"pendingUrge"` // 是否存在未处理的催菜(运行时填充,不入库)
-	BatchCount       int         `json:"batchCount"`  // 加菜批次数(运行时填充,不入库):明细 distinct batch_no,1=未加过菜。列表接口填充,详情接口明细自带 batchNo 无需它
-	Items            []OrderItem `json:"items"`
+	SettleType       string  `json:"settleType"`       // normal 正常收款 / free 免单 / credit 挂账
+	SettleTime       *string `json:"settleTime"`       // 结算(免单/挂账/收款)时间
+	SettleOperator   string  `json:"settleOperator"`   // 结算操作人
+	SettleRemark     string  `json:"settleRemark"`     // 免单原因 / 挂账人备注
+	CreditStatus     int     `json:"creditStatus"`     // 0 非挂账 1 挂账待收款 2 挂账已结清
+	CreditAmount     float64 `json:"creditAmount"`     // 挂账金额(元)
+	CreditSettleTime *string `json:"creditSettleTime"` // 挂账核销时间
+	CreditSettleBy   string  `json:"creditSettleBy"`   // 挂账核销操作人
+	PaidAmount       float64 `json:"paidAmount"`       // 实收金额(元):免单=0,挂账核销前=0
+	GiftAmount       float64 `json:"giftAmount"`       // 赠送金额(元):赠送菜品原价合计,不计入应收
+	FinishTime       *string `json:"finishTime"`
+	// 用餐起止时间(落库值):开始=下单,结束=订单到终态(完成/取消);进行中为 NULL。
+	// 详情展示「结束时间」取 MealEndTime —— 取消单也有,finish_time 只覆盖已完成单。
+	MealStartTime *string     `json:"mealStartTime"`
+	MealEndTime   *string     `json:"mealEndTime"`
+	OrderRemark   string      `json:"orderRemark"`
+	CancelReason  string      `json:"cancelReason"`
+	CreateBy      string      `json:"createBy"`
+	CreateTime    string      `json:"createTime"`
+	UpdateBy      string      `json:"updateBy"`
+	UpdateTime    string      `json:"updateTime"`
+	Remark        *string     `json:"remark"`
+	PendingUrge   bool        `json:"pendingUrge"` // 是否存在未处理的催菜(运行时填充,不入库)
+	BatchCount    int         `json:"batchCount"`  // 加菜批次数(运行时填充,不入库):明细 distinct batch_no,1=未加过菜。列表接口填充,详情接口明细自带 batchNo 无需它
+	Items         []OrderItem `json:"items"`
 }
 
 // FromOrder 将持久化对象与运行时补算结果组装为 API 出参,金额由分转元。
@@ -149,10 +151,10 @@ func FromOrder(p po.Order, items []OrderItem, pendingUrge bool) Order {
 		PaidAmount:       po.ToYuan(p.PaidAmount),
 		GiftAmount:       po.ToYuan(p.GiftAmount),
 		FinishTime:       p.FinishTime,
+		MealStartTime:    p.MealStartTime,
+		MealEndTime:      p.MealEndTime,
 		OrderRemark:      p.OrderRemark,
 		CancelReason:     p.CancelReason,
-		BeginTime:        p.BeginTime,
-		EndTime:          p.EndTime,
 		CreateBy:         p.CreateBy,
 		CreateTime:       p.CreateTime,
 		UpdateBy:         p.UpdateBy,
@@ -243,10 +245,10 @@ func (o Order) ToPO() po.Order {
 		PaidAmount:       po.ToCents(o.PaidAmount),
 		GiftAmount:       po.ToCents(o.GiftAmount),
 		FinishTime:       o.FinishTime,
+		MealStartTime:    o.MealStartTime,
+		MealEndTime:      o.MealEndTime,
 		OrderRemark:      o.OrderRemark,
 		CancelReason:     o.CancelReason,
-		BeginTime:        o.BeginTime,
-		EndTime:          o.EndTime,
 		CreateBy:         o.CreateBy,
 		CreateTime:       o.CreateTime,
 		UpdateBy:         o.UpdateBy,
