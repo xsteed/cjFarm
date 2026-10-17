@@ -225,7 +225,7 @@
       </button>
       <button
         type="button"
-        class="ab ab-more"
+        class="ab ab-more ab-finish"
         :disabled="!canFinish"
         @click="emit('finish')"
       >
@@ -691,6 +691,11 @@ function refreshRefunds(): void {
   min-width: 88px;
   color: var(--ink-2);
   border-color: #dcdcdc;
+}
+
+.ab-finish {
+  color: #2ba471;
+  border-color: #a3ddc6;
 }
 
 /* ---- 退款记录 ---- */
