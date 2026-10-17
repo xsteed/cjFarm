@@ -853,6 +853,15 @@ svg.ic-svg {
   color: var(--ink);
 }
 
+/* 完整订单号一行:短号(取餐号)报给顾客,完整单号留给对账/查询 */
+.ocard-orderNo {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.3px;
+  word-break: break-all;
+}
+
 .ocard-meta {
   margin-top: 5px;
   font-size: 12px;

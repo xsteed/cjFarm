@@ -168,8 +168,9 @@
           <!-- 完整订单号:移动端没有桌面端表格的 title 悬浮提示,直接铺在卡上方便对账报号 -->
           <div class="ocard-orderNo">单号 {{ row.orderNo }}</div>
           <div class="ocard-meta">
-            <!-- 桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号 -->
-            {{ row.tableName || row.tableNo + ' 号桌' }} · {{ row.personCount }} 人 · {{ row.createTime }}
+            <!-- 桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号;加粗突出桌台 -->
+            <span class="ocard-table">{{ row.tableName || row.tableNo + ' 号桌' }}</span> · {{ row.personCount }} 人 ·
+            {{ row.createTime }}
             <t-tag
               v-if="row.pendingUrge"
               theme="danger"
@@ -327,6 +328,10 @@
       <template #totalAmount="{ row }">
         <!-- 结算状态(免单/挂账待收/挂账已结)已在「支付状态」列展示,金额列只展示金额,不再重复打角标 -->
         <span class="money">¥{{ $money(row.totalAmount) }}</span>
+      </template>
+      <template #mealEndTime="{ row }">
+        <!-- 结束时间:meal_end_time 仅在订单到终态(已完成/取消)时写入,进行中订单为空 -->
+        {{ row.mealEndTime || '-' }}
       </template>
       <template #op="{ row }">
         <t-space>
@@ -564,7 +569,10 @@ const columns = computed(() => {
     // 后端时间格式 conf.TimeLayout = "2006-01-02 15:04:05",共 19 个半角字符。
     // 14px 字号下文字约需 140px,加单元格左右各 16px 内边距共约 172px —— 原 170 在数字
     // 稍宽的字体下会折成两行,这里放宽到 195 留出余量。
-    { colKey: 'createTime', title: '下单时间', width: 195 }
+    { colKey: 'createTime', title: '下单时间', width: 195 },
+    // 结束时间:取 meal_end_time(订单到终态 4已完成/5已取消 时写入,取消单同样有),
+    // 进行中的订单该列为 NULL,展示「-」。与详情弹窗「结束时间」同口径。
+    { colKey: 'mealEndTime', title: '结束时间', width: 195 }
   ];
   // 操作列改为固定渲染全部 7 个按钮(不满足条件时置灰而非隐藏),宽度按最坏情况
   // 「详情/已催办/制作/上菜/结算/取消/退款」全可点估算:
@@ -879,6 +887,21 @@ onUnmounted(() => {
 .urgent-mini {
   margin-left: 6px;
   vertical-align: 1px;
+}
+
+/* 卡片左上角短号前的「短号」字样:小号弱化,号码本身仍是视觉主体;
+   与下方 ocard-orderNo 的完整「单号」对应,一眼分清两个号各是什么 */
+.ocard-no-label {
+  margin-right: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3, #8a8f99);
+}
+
+/* 卡片信息行里的桌台名字:加粗突出(收银先认桌再认人) */
+.ocard-table {
+  font-weight: 700;
+  color: var(--ink, #1a1a1a);
 }
 
 /* 移动端搜索栏右侧的筛选图标按钮:正方形 */
