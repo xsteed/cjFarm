@@ -36,9 +36,7 @@
         <div class="kpi">
           <div class="l">今日访问</div>
           <div class="v">{{ visit.todayUv || 0 }} <small>人</small></div>
-          <div class="d">
-            {{ visit.todayPv || 0 }} 次访问 · 新访客 {{ visit.todayNewUv || 0 }}
-          </div>
+          <div class="d">{{ visit.todayPv || 0 }} 次访问 · 新访客 {{ visit.todayNewUv || 0 }}</div>
         </div>
       </template>
       <div class="kpi">
@@ -53,6 +51,25 @@
           <template v-else> 空闲 {{ board.length - busyCount }} 桌 </template>
         </div>
       </div>
+
+      <!-- 待处理催菜。
+           其余 KPI 都是系统算出来的「结果指标」,只有这一条是顾客亲手按下按钮产生的
+           「不满信号」—— 菜没上、等太久,不处理就在几十分钟内升级成客诉与差评。
+           它是全页唯一一个有分钟级 SLA 的指标,因此占一张常驻卡。
+           点击进订单管理而不是就地标记已处理:催菜的正解是「把菜端上去」
+           (订单流转到已上齐时后端会自动消解催菜),在卡片上点一下等于把提醒按掉、
+           菜照样没上,反而把真实问题藏起来了。 -->
+      <button
+        type="button"
+        class="kpi urge"
+        :class="{ 'urge-alert': urgeTableCount > 0 }"
+        :aria-label="`待处理催菜 ${urgeTableCount} 桌`"
+        @click="goOrders"
+      >
+        <div class="l">待处理催菜</div>
+        <div class="v">{{ urgeTableCount }} <small>桌</small></div>
+        <div class="d">{{ urgeTableCount ? urgeSubText : '暂无催菜' }}</div>
+      </button>
     </div>
 
     <!-- 未结账超时告警:开关与阈值都由后端下发(见 handler.OrderStale)。
@@ -183,10 +200,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { getReportSummary, getOrderBoard, getStaleOrders, getVisitStats } from '@dining/api';
+import { getReportSummary, getOrderBoard, getStaleOrders, getVisitStats, listUrges } from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { durationText, money } from '@dining/shared';
-import type { OrderSummary, ReportSummary, StaleOrderAlert, TableInfo, VisitStats } from '@dining/types';
+import type { OrderSummary, ReportSummary, StaleOrderAlert, TableInfo, Urge, VisitStats } from '@dining/types';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
 import PullRefresh from '../components/PullRefresh.vue';
@@ -220,6 +237,8 @@ const board = ref<TableInfo[]>([]);
 // items 恒为数组,模板就能直接 .length / v-for,不必到处写 || []。
 type StaleState = { enabled: boolean; hours: number; items: StaleOrderAlert[] };
 const stale = ref<StaleState>({ enabled: false, hours: 0, items: [] });
+// 待处理催菜(status=0),与订单管理页「已催办」按钮同口径。
+const urges = ref<Urge[]>([]);
 
 // durationText 已抽到 @dining/shared(桌台管理页也用),此处直接导入。
 
@@ -246,6 +265,40 @@ function hasUrge(t: TableInfo): boolean {
   return !!(t.orders && t.orders.some(o => o.pendingUrge));
 }
 
+// ---- 待处理催菜卡片 ----
+// 顾客端催菜有 3 分钟冷却,同一桌仍可能连催多次;按「桌」去重才是店长关心的
+// 「几桌在催」,直接算条数会把一桌的重复催促当成多桌。
+const urgeTables = computed(() => {
+  const seen = new Map<string, string>();
+  urges.value.forEach(u => {
+    const key = `${u.tableId ?? ''}-${u.orderId ?? ''}`;
+    const label = u.tableName || u.tableNo || '';
+    if (label && !seen.has(key)) seen.set(key, label);
+  });
+  return [...seen.values()];
+});
+
+const urgeTableCount = computed(() => urgeTables.value.length);
+// 副行最多列 3 桌:再多会撑破卡片,剩下的量由主数字表达。
+const urgeTableText = computed(() => urgeTables.value.slice(0, 3).join(' · '));
+
+// 催了多久。后端下发服务端时间字符串,Safari 不认 'YYYY-MM-DD HH:mm:ss',统一斜杠化。
+function urgeMinutes(createTime?: string): number {
+  const t = new Date(String(createTime || '').replace(/-/g, '/')).getTime();
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, Math.round((Date.now() - t) / 60_000));
+}
+
+// 取「等得最久」的那一条 —— 决定今天服务口碑的不是催了几次,而是最久的那桌等了多久。
+const urgeOldestMinutes = computed(() => urges.value.reduce((max, u) => Math.max(max, urgeMinutes(u.createTime)), 0));
+
+// 副行文案。刚催出来不满 1 分钟时说「刚刚」,避免出现「最久 0 分钟」这种别扭说法。
+const urgeSubText = computed(() => {
+  if (!urgeTableCount.value) return '';
+  const wait = urgeOldestMinutes.value ? `最久 ${durationText(urgeOldestMinutes.value)}` : '刚刚';
+  return `${urgeTableText.value} 在催 · ${wait}`;
+});
+
 const STATUS: Record<number, string> = { 1: '已下单', 2: '制作中', 3: '已上齐', 4: '已完成', 5: '已取消' };
 function statusLabel(s?: number): string {
   return s === undefined ? '-' : STATUS[s] || '-';
@@ -270,6 +323,15 @@ async function load(): Promise<void> {
     // 告警开关关着时后端会直接返回 enabled=false 且不带数据,前端不必先判断配置。
     const alerts = await getStaleOrders();
     stale.value = { enabled: !!alerts.enabled, hours: Number(alerts.hours) || 0, items: alerts.items || [] };
+    // 催菜单独包一层:拿不到催菜不该让桌台看板和超时告警跟着空掉。
+    try {
+      // pageSize 给足:卡片只要「几桌在催 + 最久等多久」,不做分页。
+      // 真出现几十条未处理的极端情况,前 50 条也足以说明问题。
+      const u = await listUrges({ status: 0, pageSize: 50 });
+      urges.value = u?.items || [];
+    } catch {
+      urges.value = [];
+    }
   } catch {
     /* 失败已由拦截器统一 toast */
   }
@@ -327,16 +389,17 @@ onUnmounted(() => {
 /* KPI */
 .kpis {
   display: grid;
-  /* 有 report:view 时共 5 张卡(营业额/订单/客单价/今日访问/桌台占用),等宽平分 */
-  grid-template-columns: repeat(5, 1fr);
+
+  /* 有 report:view 时共 6 张卡(营业额/订单/客单价/今日访问/桌台占用/待处理催菜),等宽平分 */
+  grid-template-columns: repeat(6, 1fr);
   gap: 16px;
   margin-bottom: 16px;
 }
 
-/* 无 report:view 时只剩「桌台占用」一张卡,让它保持正常卡片宽度而不是撑满整行。
-   (.kpis.solo 的选择器权重高于下面的媒体查询,不必再逐档覆盖) */
+/* 无 report:view 时只剩「桌台占用」+「待处理催菜」两张,让它们保持正常卡片宽度而不是撑满整行。
+   (.kpis.solo 的选择器权重高于下面的媒体查询,窄屏那一档要显式再覆盖一次) */
 .kpis.solo {
-  grid-template-columns: minmax(0, 320px);
+  grid-template-columns: repeat(2, minmax(0, 320px));
 }
 
 .kpi {
@@ -388,6 +451,66 @@ onUnmounted(() => {
 .kpi.acc .v,
 .kpi.acc .v small {
   color: #fff;
+}
+
+/* 待处理催菜:整卡可点,直达订单管理。
+   常态刻意与其它白卡片保持一致 —— 没人催的时候不该抢注意力;
+   一旦有人催,换成告警底色 + 呼吸描边,把它从一排白卡片里拎出来。 */
+.kpi.urge {
+  display: block;
+  width: 100%;
+
+  /* 本工程没有全局 border-box(见 CartBar / Printers 里的同样处理):
+     width:100% 叠上 .kpi 的左右内边距与本卡的 1px 边框,content-box 下会戳出格子约 42px,
+     把 6 列网格挤乱。 */
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+
+  /* 常态就占好 1px 边框的位置:切到告警态时不会因多出边框而抖动 */
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.kpi.urge:hover {
+  border-color: var(--brand-soft);
+}
+
+.kpi.urge:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.kpi.urge-alert {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  animation: urge-card-breathe 1.6s ease-in-out infinite;
+}
+
+.kpi.urge-alert .l,
+.kpi.urge-alert .v,
+.kpi.urge-alert .v small {
+  color: var(--danger);
+}
+
+.kpi.urge-alert:hover {
+  border-color: var(--danger);
+}
+
+/* 呼吸的只有描边,底色与文字保持稳定 —— 整卡闪烁会干扰旁边 KPI 的阅读 */
+@keyframes urge-card-breathe {
+  0%,
+  100% {
+    box-shadow: var(--shadow-1);
+  }
+
+  50% {
+    box-shadow: 0 0 0 3px var(--danger-soft);
+  }
 }
 
 /* 未结账超时告警:用告警色把它从一屏白卡片里拎出来,但不做成弹窗 ——
@@ -530,6 +653,11 @@ onUnmounted(() => {
 .tg {
   position: relative;
   width: 100%;
+
+  /* 必须是 border-box:本工程没有全局 reset(见 CartBar / Printers 里的同样处理),
+     content-box 下 width:100% 会把 12px 水平内边距和 3px 边框加在列宽之外 ——
+     每个瓦片比网格列宽 15px,4 列时相邻瓦片重叠 5px、最右一个戳出面板。 */
+  box-sizing: border-box;
   border-radius: 10px;
   padding: 12px 6px;
   text-align: center;
@@ -711,9 +839,10 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
+/* 6 张卡在中屏排 3 列:排 2 列要占 3 行,会把下面的桌台看板顶出首屏 */
 @media (width <= 900px) {
   .kpis {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .panels {
@@ -758,6 +887,15 @@ onUnmounted(() => {
 
   .tg {
     padding: 10px 3px;
+  }
+}
+
+/* 手机窄屏:3 列会把「¥8,000」这类金额压到换行,回到 2 列。
+   .kpis.solo 权重高于本块里的 .kpis,故这里必须连带覆盖一次。 */
+@media (width <= 560px) {
+  .kpis,
+  .kpis.solo {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

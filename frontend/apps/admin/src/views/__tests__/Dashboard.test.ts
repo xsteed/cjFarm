@@ -6,7 +6,7 @@
 import { mount } from '@vue/test-utils';
 import TDesign from 'tdesign-vue-next';
 import Dashboard from '../Dashboard.vue';
-import { getOrderBoard, getReportSummary, getStaleOrders, getVisitStats } from '@dining/api';
+import { getOrderBoard, getReportSummary, getStaleOrders, getVisitStats, listUrges } from '@dining/api';
 import { setAuth } from '@dining/auth';
 import { flushPromises, stubMatchMedia, stubResizeObserver, clearAllStorage } from '@shell/test/mocks.ts';
 import type { TableInfo } from '@dining/types';
@@ -25,7 +25,9 @@ vi.mock('@dining/api', () => ({
   getStaleOrders: vi.fn(),
   getProfile: vi.fn(),
   // 首页「今日访问」卡片的数据源(与经营报表同属 report:view)
-  getVisitStats: vi.fn()
+  getVisitStats: vi.fn(),
+  // 首页「待处理催菜」卡片的数据源(与看板同属 order:view)
+  listUrges: vi.fn()
 }));
 
 const boardFixture: TableInfo[] = [
@@ -47,7 +49,15 @@ beforeEach(() => {
   vi.mocked(getVisitStats).mockResolvedValue({
     summary: { todayPv: 66, todayUv: 40, todayNewUv: 5, yesterdayPv: 58, yesterdayUv: 35 }
   });
+  vi.mocked(listUrges).mockResolvedValue({ total: 0, items: [] });
 });
+
+/** 造一个「N 分钟前」的服务端时间字符串,格式与后端 conf.TimeLayout 一致。 */
+function minutesAgo(m: number): string {
+  const d = new Date(Date.now() - m * 60_000);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 
 afterEach(() => {
   restoreMatchMedia();
@@ -171,6 +181,112 @@ describe('Dashboard · 未结账超时告警', () => {
 
     expect(w.find('.stale-bar').exists()).toBe(false);
     // 桌台看板照常渲染:提醒拿不到不该让整页空掉(瓦片显示的是桌号,不是桌名)
+    expect(w.find('.table-grid').exists()).toBe(true);
+    expect(w.text()).toContain('桌台看板');
+    w.unmount();
+  });
+});
+
+describe('Dashboard · 待处理催菜', () => {
+  it('有人催菜时列出在催的桌与最久等待', async () => {
+    vi.mocked(listUrges).mockResolvedValue({
+      total: 2,
+      items: [
+        {
+          urgeId: 1,
+          orderId: 101,
+          tableId: 1,
+          tableNo: '01',
+          tableName: '大厅01桌',
+          status: 0,
+          createTime: minutesAgo(8)
+        },
+        {
+          urgeId: 2,
+          orderId: 102,
+          tableId: 2,
+          tableNo: '02',
+          tableName: '大厅02桌',
+          status: 0,
+          createTime: minutesAgo(3)
+        }
+      ]
+    });
+
+    const w = mountDashboard();
+    await flushPromises();
+
+    const card = w.find('.kpi.urge');
+    expect(card.exists()).toBe(true);
+    // 进入告警态:底色/描边/数字都转成告警色
+    expect(card.classes()).toContain('urge-alert');
+    expect(card.text()).toContain('待处理催菜');
+    expect(card.text()).toContain('2');
+    expect(card.text()).toContain('大厅01桌 · 大厅02桌 在催');
+    // 取的是「等得最久」那一条,不是最新那一条
+    expect(card.text()).toContain('最久 8 分钟');
+    w.unmount();
+  });
+
+  // 顾客端催菜有 3 分钟冷却,同一桌完全可能连催多次。
+  // 按条数算会把一桌的重复催促当成多桌,把 1 桌的毛病报成 3 桌。
+  it('同一桌连催多次只算一桌', async () => {
+    vi.mocked(listUrges).mockResolvedValue({
+      total: 3,
+      items: [
+        { urgeId: 1, orderId: 101, tableId: 1, tableName: '大厅01桌', status: 0, createTime: minutesAgo(12) },
+        { urgeId: 2, orderId: 101, tableId: 1, tableName: '大厅01桌', status: 0, createTime: minutesAgo(8) },
+        { urgeId: 3, orderId: 101, tableId: 1, tableName: '大厅01桌', status: 0, createTime: minutesAgo(3) }
+      ]
+    });
+
+    const w = mountDashboard();
+    await flushPromises();
+
+    const card = w.find('.kpi.urge');
+    expect(card.find('.v').text()).toContain('1');
+    expect(card.text()).toContain('大厅01桌 在催');
+    expect(card.text()).not.toContain('大厅01桌 · 大厅01桌');
+    w.unmount();
+  });
+
+  it('没人催菜时是常态卡片，不抢注意力', async () => {
+    const w = mountDashboard();
+    await flushPromises();
+
+    const card = w.find('.kpi.urge');
+    expect(card.exists()).toBe(true);
+    expect(card.classes()).not.toContain('urge-alert');
+    expect(card.text()).toContain('暂无催菜');
+    w.unmount();
+  });
+
+  // 刚催出来不满 1 分钟时,「最久 0 分钟」读起来别扭,说「刚刚」。
+  it('刚催出来不满 1 分钟时说「刚刚」', async () => {
+    vi.mocked(listUrges).mockResolvedValue({
+      total: 1,
+      items: [{ urgeId: 1, orderId: 101, tableId: 1, tableName: '大厅01桌', status: 0, createTime: minutesAgo(0) }]
+    });
+
+    const w = mountDashboard();
+    await flushPromises();
+
+    const card = w.find('.kpi.urge');
+    expect(card.text()).toContain('刚刚');
+    expect(card.text()).not.toContain('最久 0 分钟');
+    w.unmount();
+  });
+
+  it('催菜接口失败不影响看板其余部分', async () => {
+    vi.mocked(listUrges).mockRejectedValue(new Error('网络异常'));
+
+    const w = mountDashboard();
+    await flushPromises();
+
+    // 卡片退化为「无人催菜」,而不是整页空掉
+    const card = w.find('.kpi.urge');
+    expect(card.exists()).toBe(true);
+    expect(card.classes()).not.toContain('urge-alert');
     expect(w.find('.table-grid').exists()).toBe(true);
     expect(w.text()).toContain('桌台看板');
     w.unmount();
