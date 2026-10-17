@@ -585,6 +585,14 @@ func CtxAgentErrorf(ctx context.Context, template string, args ...any) {
 // 反过来会成环):两边共用同一常量,杜绝「各写一份字面量、改一处就静默断链」。
 const GinRequestIDKey = "requestID"
 
+// GinUserKey 是当前登录者显示名(操作人)在 gin.Context 里的键,
+// 由 handler.AdminAuth 鉴权通过后随身份信息一并写入。
+//
+// 与 GinRequestIDKey 同款考虑:访问日志(GinLogger)要读操作人,但 logger 包
+// 不能反向依赖 handler 包(会成环),故键同样定义在 logger 这一侧。
+// 未登录 / 令牌无效的请求没有这个键,访问日志相应不带 user 字段。
+const GinUserKey = "authUser"
+
 // requestID 从 gin.Context 读取雪花 requestID(值类型 int64),返回十进制字符串;
 // 不存在或类型不符时返回空串。这里内联读取而非依赖 middleware 包,
 // 避免基础设施层反向依赖 HTTP 中间件层。
@@ -592,6 +600,17 @@ func requestID(c *gin.Context) string {
 	if v, ok := c.Get(GinRequestIDKey); ok {
 		if id, ok := v.(int64); ok {
 			return strconv.FormatInt(id, 10)
+		}
+	}
+	return ""
+}
+
+// ginUser 从 gin.Context 读取当前登录者显示名(优先中文姓名,未填则登录名);
+// 未登录、鉴权失败或类型不符时返回空串,访问日志相应省略 user 字段。
+func ginUser(c *gin.Context) string {
+	if v, ok := c.Get(GinUserKey); ok {
+		if name, ok := v.(string); ok {
+			return name
 		}
 	}
 	return ""
@@ -670,10 +689,17 @@ func isSensitiveQueryKey(key string) bool {
 
 // GinLogger 替代 gin.Logger():统一输出到 zap。
 //
-// 访问日志以「结构化字段」落盘(method/path/status/latency_ms/client_ip/query/
-// error/request_id),而不是把一列空格对齐文本拼进 msg —— app.log 的 JSON 因此能被
-// jq/ELK/Loki 直接按字段检索;终端则由 console 编码器把这些字段以 {...} 附在行尾。
-// 级别映射:5xx→Error、4xx→Warn、其余→Info。
+// 每条访问日志 = 一行人类可读摘要 msg + 一组结构化字段:
+//   - msg:「方法 路径 状态 耗时」,如 GET /api/admin/dish/list 200 3.2ms。
+//     部署后真正被消费的是日志文件(app.log → jq / Kibana / Loki),msg 是
+//     UI 消息列与 tail/grep 里唯一「不解析 JSON」就能读到的内容,必须自带
+//     结果(成败与快慢),而不是只重复 method/path 的前半截;
+//   - 其余全部进字段(user/method/path/status/latency_ms/client_ip/query/
+//     error/request_id),供采集端按字段检索与聚合。
+//
+// 摘要与字段的重复是刻意取舍(摘要 vs 明细):机器消费一律走字段,人走 msg;
+// 告警按 level + 字段,不受 msg 文案影响。终端侧 console 编码器把字段以
+// {...} 附在行尾,开发期同样可读。级别映射:5xx→Error、4xx→Warn、其余→Info。
 func GinLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if skipPath(c.Request.URL.Path) {
@@ -689,7 +715,15 @@ func GinLogger() gin.HandlerFunc {
 		latency := time.Since(start)
 		status := c.Writer.Status()
 
-		fields := make([]zap.Field, 0, 7)
+		fields := make([]zap.Field, 0, 9)
+		// user 排在本条日志自定义字段的最前面:运维扫日志时先确认「这次请求是谁干的」。
+		// 说明:zap 的 JSON 编码器固定按 level→ts→msg→自定义字段 的顺序输出,
+		// 字段插不进 ts 与 msg 之间,「最前」即紧跟 msg —— 这是该编码器能达到的最近位置。
+		// 未登录/令牌无效的请求没有该键,相应省略该字段;
+		// 显示名口径与审计表 OperLog.Operator 一致(优先中文姓名,未填回退登录名)。
+		if user := ginUser(c); user != "" {
+			fields = append(fields, zap.String("user", user))
+		}
 		fields = append(fields,
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),
@@ -717,8 +751,17 @@ func GinLogger() gin.HandlerFunc {
 			lvl = zapcore.WarnLevel
 		}
 
-		// msg 只保留人类可读的请求行;数据都在字段里,避免 JSON 里出现空格对齐噪音。
-		accessLog(agent, lvl, c.Request.Method+" "+path, fields)
+		// msg 是一行摘要:「方法 路径 状态 耗时」。日志文件才是主要消费对象,
+		// msg 要让人不解析 JSON 就看到「请求了什么、成败、多快」;耗时取到
+		// 微秒即可(精确值在 latency_ms 字段里),避免摘要出现过长的浮点噪音;
+		// 亚微秒的极快响应显示 <1µs,别输出误导性的 "0s"。
+		d := latency.Round(time.Microsecond)
+		dur := d.String()
+		if d <= 0 {
+			dur = "<1µs"
+		}
+		msg := fmt.Sprintf("%s %s %d %s", c.Request.Method, path, status, dur)
+		accessLog(agent, lvl, msg, fields)
 	}
 }
 

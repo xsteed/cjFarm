@@ -270,8 +270,16 @@ func RequireAnyPerm(perms ...string) gin.HandlerFunc {
 const ctxAuthKey = "dining.auth"
 
 // setAuth 由 AdminAuth 写入当前登录者信息。
+//
+// 同时按 logger.GinUserKey 写一份显示名:访问日志(GinLogger)要记「这次请求是谁干的」,
+// 但 logger 包不能反向依赖本包(会成环),故沿用 requestID 的做法——键定义在
+// logger 包,由身份校验方负责写入。显示名口径与审计表 OperLog.Operator 一致
+// (优先中文姓名,未填回退登录名),两边日志可直接对齐。
 func setAuth(c *gin.Context, auth *service.AuthInfo) {
 	c.Set(ctxAuthKey, auth)
+	if auth != nil {
+		c.Set(logger.GinUserKey, auth.DisplayName())
+	}
 }
 
 // currentAuth 取当前登录者信息(未登录返回 nil)。

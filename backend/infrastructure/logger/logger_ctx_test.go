@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -472,6 +473,11 @@ func TestGinLoggerStatusToLevel(t *testing.T) {
 		if !strings.Contains(out, "/t") {
 			t.Errorf("访问日志应含路径,实际: %s", out)
 		}
+		// msg 必须是自带结果的摘要:「GET /t <status> <耗时>」,
+		// 否则日志文件里 msg 只剩半截请求行,人读不到成败与快慢。
+		if !strings.Contains(out, `"msg":"GET /t `+strconv.Itoa(c.status)+` `) {
+			t.Errorf("msg 应为「GET /t %d 耗时」摘要,实际: %s", c.status, out)
+		}
 	}
 }
 
@@ -481,6 +487,36 @@ func TestGinLoggerCarriesRequestID(t *testing.T) {
 	out, _ := serveLogTest(GinLogger(), 200, false)
 	if !strings.Contains(out, "7788") {
 		t.Errorf("访问日志应带 requestID 7788,实际: %s", out)
+	}
+}
+
+// TestGinLoggerCarriesUser 已登录请求的访问日志必须带操作人 user 字段 ——
+// 否则「谁改坏了数据」在访问日志里查不到人,只能事后翻审计表。
+// 未登录(键未写入)时则不应出现该字段。
+func TestGinLoggerCarriesUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	run := func(setUser bool) string {
+		r := gin.New()
+		r.Use(func(c *gin.Context) { c.Set(GinRequestIDKey, int64(7788)) },
+			func(c *gin.Context) {
+				if setUser {
+					c.Set(GinUserKey, "张三")
+				}
+			},
+			GinLogger())
+		r.GET("/t", func(c *gin.Context) { c.Status(200) })
+		return captureLogs(func() {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t", nil))
+		})
+	}
+	if out := run(true); !strings.Contains(out, `"user":"张三"`) {
+		t.Errorf("已登录请求的访问日志应带 user=张三,实际: %s", out)
+	} else if i, j := strings.Index(out, `"user"`), strings.Index(out, `"method"`); i < 0 || j < 0 || i > j {
+		t.Errorf("user 应排在 method 之前(紧跟 msg),实际: %s", out)
+	}
+	if out := run(false); strings.Contains(out, `"user"`) {
+		t.Errorf("未登录请求的访问日志不应带 user 字段,实际: %s", out)
 	}
 }
 
