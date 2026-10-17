@@ -600,6 +600,22 @@ func UpdatePrintLogResult(printID int, status int, detail string, costMs int) er
 	return err
 }
 
+// ConfirmPrintLogFeie 人工刷新回写:把「失败」的飞鹅记录按最新云端回执改写。
+//
+// 与 UpdatePrintLogResult 相对的守卫差异:那边不允许改写「失败」——失败是必须可见的
+// 终态,迟到的成功回执不该抹平它,防的是「无人触发的迟到回执」。而本函数只由
+// 「打印记录」页的人工刷新触发(见 handler.PrintLogRefresh):商户主动追问飞鹅云端
+// 该次推送的最新结果,查到「已打印」时把失败回写为成功是准确记账,不是抹平。
+// 守卫 status IN (失败, 排队中) 保证只改写非成功态,已成功的记录不会被动到。
+func ConfirmPrintLogFeie(printID int, status int, detail string) error {
+	if printID <= 0 {
+		return nil
+	}
+	_, err := store.DB.Exec(`UPDATE tb_print_log SET status=?, detail=?, update_time=? WHERE print_id=? AND status IN (?,?)`,
+		status, truncateRunes(detail, 480), store.Now(), printID, po.PrintStatusFailed, po.PrintStatusQueued)
+	return err
+}
+
 // OldestPendingSec 返回最老未结案代理任务已等待的秒数;无积压或时间异常返回 0。
 func OldestPendingSec() int {
 	var oldest sql.NullString

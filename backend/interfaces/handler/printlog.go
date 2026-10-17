@@ -77,6 +77,70 @@ func PrintLogReprint(c *gin.Context) {
 	okMsg(c, "已重新发送到「"+entry.PrinterName+"」")
 }
 
+// PrintLogRefresh 刷新失败记录:按云端单号回查飞鹅该次推送的最新打印结果。
+//
+// 「失败」的飞鹅记录多半来自出纸确认超时:推送当时打印机离线/缺纸,任务被缓存
+// 在飞鹅云端;打印机恢复后飞鹅会自动补吐缓存任务 —— 纸可能已经出来了,但台账
+// 还停在失败。本接口按记录里的云端单号(Open_queryOrderState)追问一次最新结果:
+// 确认已打印则把台账回写为成功;仍为未打印则保持失败,是否补打由商户决定。
+// 刷新是纯回查:不会向打印机重推任务,不存在打出重复小票的风险。
+func PrintLogRefresh(c *gin.Context) {
+	var p struct {
+		PrintID int `json:"printId"`
+	}
+	if err := c.ShouldBindJSON(&p); err != nil || p.PrintID == 0 {
+		fail(c, "参数错误")
+		return
+	}
+	entry, err := service.LoadPrintLog(p.PrintID)
+	if err != nil {
+		fail(c, "打印记录不存在")
+		return
+	}
+	if entry.Provider != po.PrinterProviderFeie {
+		fail(c, "仅飞鹅云通道的记录支持刷新")
+		return
+	}
+	if entry.RemoteID == "" {
+		fail(c, "该记录没有云端单号(推送当时未受理),无法回查")
+		return
+	}
+	if entry.Status == po.PrintStatusSuccess {
+		fail(c, "该记录已是成功状态,无需刷新")
+		return
+	}
+	printer, perr := service.LoadPrinter(entry.PrinterID)
+	if perr != nil {
+		fail(c, "找不到该记录对应的打印机,无法回查")
+		return
+	}
+	sn := po.NormalizeFeieSN(printer.FeieSN)
+	if sn == "" {
+		fail(c, "该打印机未填写飞鹅编号(SN),无法回查")
+		return
+	}
+	client, cerr := print.NewFeieClient()
+	if cerr != nil {
+		fail(c, cerr.Error())
+		return
+	}
+	printed, _, qerr := client.QueryOrderState(sn, entry.RemoteID)
+	if qerr != nil {
+		fail(c, "查询飞鹅云端状态失败:"+qerr.Error())
+		return
+	}
+	if !printed {
+		okMsg(c, "飞鹅回执:仍未打印(任务可能仍在云端队列,稍后可再刷新;长时间未出纸可人工补打)")
+		return
+	}
+	detail := "人工刷新确认:飞鹅回执已打印(云端单号 " + entry.RemoteID + ")"
+	if err := service.ConfirmPrintLogFeie(entry.PrintID, po.PrintStatusSuccess, detail); err != nil {
+		fail(c, "回写打印记录失败:"+err.Error())
+		return
+	}
+	okMsg(c, "飞鹅回执:已打印,已回写为成功")
+}
+
 // previewLine 预览响应里的单行:文本 + 是否加粗强调(与 ESC/POS 出纸的 ESC E 重打、
 // 飞鹅云出纸的 <BOLD> 标签一致,前端按 font-weight 渲染)。
 type previewLine struct {

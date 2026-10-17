@@ -73,6 +73,12 @@ func UpdatePrintLogResult(printID, status int, detail string, costMs int) error 
 // LoadPrintLog 按 ID 读取一条打印日志。
 func LoadPrintLog(printID int) (po.PrintLog, error) { return dao.LoadPrintLog(printID) }
 
+// ConfirmPrintLogFeie 人工刷新回写:按飞鹅云端最新回执改写「失败」的打印记录
+// (确认已打印时改写为成功,见 handler.PrintLogRefresh)。
+func ConfirmPrintLogFeie(printID, status int, detail string) error {
+	return dao.ConfirmPrintLogFeie(printID, status, detail)
+}
+
 // PrintLogQuery 打印日志列表筛选条件;零值字段表示不限。
 type PrintLogQuery struct {
 	Status    *int

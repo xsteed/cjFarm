@@ -73,14 +73,19 @@ const { panelStyle } = useSheetSwipe(panelRef, toRef(props, 'modelValue'), close
 </script>
 
 <style scoped>
+/* 底部操作按钮:与弹层(移动端 t-dialog)footer 同风格 —— 靠右排布、
+   不铺满整行;面板自带 12px 侧边距,这里补 8px 凑齐 20px 视觉边距 */
 .bs-foot {
   flex-shrink: 0;
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
   margin-top: 14px;
+  padding: 0 8px;
 }
 
 .bs-foot :deep(.t-button) {
-  flex: 1;
+  flex: 0 0 auto;
+  min-width: 108px;
 }
 </style>

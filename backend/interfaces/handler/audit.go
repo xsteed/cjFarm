@@ -95,7 +95,9 @@ var routeAudit = map[string]auditMeta{
 	"DELETE /api/admin/printer/agent/:id":      {Module: "打印机管理", Action: "删除打印代理", Type: po.OperTypeDelete, Target: "print_agent", IDKey: "id"},
 
 	// ---- 打印留痕与补打 ----
-	"POST /api/admin/print/log/reprint":    {Module: "打印记录", Action: "补打小票", Type: po.OperTypePrint, Target: "print", IDKey: "printId"},
+	"POST /api/admin/print/log/reprint": {Module: "打印记录", Action: "补打小票", Type: po.OperTypePrint, Target: "print", IDKey: "printId"},
+	// 刷新失败记录:按云端单号回查飞鹅最新结果,确认已打印会把失败回写为成功。
+	"POST /api/admin/print/log/refresh":    {Module: "打印记录", Action: "刷新打印结果", Type: po.OperTypeOther, Target: "print", IDKey: "printId"},
 	"POST /api/admin/order/reprint":        {Module: "打印记录", Action: "补打订单小票", Type: po.OperTypePrint, Target: "order", IDKey: "orderId"},
 	"POST /api/admin/print/preview/sample": {Module: "打印记录", Action: "预览票据模板", Type: po.OperTypeOther, Target: "print"},
 

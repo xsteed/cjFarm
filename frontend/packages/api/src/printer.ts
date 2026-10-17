@@ -49,6 +49,9 @@ export const listPrintLogs = (params?: PageQuery): Promise<PageResult<PrintLog>>
 // 按日志重打(同订单、同打印机、同单据类型)
 export const reprintLog = (printId: Id): Promise<ApiResponse<unknown>> =>
   http.post<unknown, ApiResponse<unknown>>('/admin/print/log/reprint', { printId }, { timeout: 60000 });
+// 刷新失败的飞鹅记录:按云端单号回查最新打印结果,确认已打印则回写为成功(不出纸)
+export const refreshPrintLog = (printId: Id): Promise<ApiResponse<unknown>> =>
+  http.post<unknown, ApiResponse<unknown>>('/admin/print/log/refresh', { printId }, { timeout: 60000 });
 // 票据预览(后端重放渲染,不出纸):返回与出纸同一份代码生成的等宽文本行
 export const previewPrintLog = (printId: Id): Promise<TicketPreview> =>
   http.get<unknown, TicketPreview>('/admin/print/preview', { params: { printId } });

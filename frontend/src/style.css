@@ -250,18 +250,21 @@ svg.ic-svg {
     -webkit-overflow-scrolling: touch;
   }
 
-  /* 底部操作区固定在弹层底部,按钮铺满、方便点按 */
+  /* 底部操作区固定在弹层底部:「取消/确认」靠右排布、不铺满整行,
+     按钮保持自然宽度(留 108px 最小宽度保证可点),20px 侧边距与弹层边缘拉开 */
   .t-dialog__footer {
     flex-shrink: 0;
     display: flex;
+    justify-content: flex-end;
     gap: 10px;
     text-align: left;
-    padding: 12px 16px !important;
+    padding: 12px 20px !important;
     border-top: 1px solid var(--line);
   }
 
   .t-dialog__footer .t-button {
-    flex: 1;
+    flex: 0 0 auto;
+    min-width: 108px;
   }
 
   .t-dialog__footer .t-button + .t-button {

@@ -163,6 +163,8 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/print/preview", handler.PrintPreview)
 			admin.POST("/print/preview/sample", handler.PrintPreviewSample)
 			admin.POST("/print/log/reprint", handler.PrintLogReprint)
+			// 刷新失败的飞鹅记录:按云端单号回查最新打印结果(不出纸、不重推)
+			admin.POST("/print/log/refresh", handler.PrintLogRefresh)
 			admin.POST("/order/reprint", handler.OrderReprint)
 
 			admin.GET("/config/list", handler.SettingList)

@@ -88,11 +88,13 @@ export const listOperLogs = (params?: PageQuery): Promise<PageResult<OperLog>> =
 export const cleanOperLogs = (): Promise<ApiResponse<unknown>> =>
   http.post<unknown, ApiResponse<unknown>>('/admin/log/clean', {});
 
-// 上传
+// 上传。手机原图普遍 3~10MB,弱网下容易超过全局 15s 超时,单独放宽到 2 分钟;
+// 其他请求仍用 http 实例的全局 timeout。
 export const uploadFile = (file: File): Promise<UploadResult> => {
   const fd = new FormData();
   fd.append('file', file);
   return http.post<unknown, UploadResult>('/common/upload', fd, {
-    headers: { 'Content-Type': 'multipart/form-data' }
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
   });
 };

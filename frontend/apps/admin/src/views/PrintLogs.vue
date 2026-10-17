@@ -209,6 +209,22 @@
           >
             预览
           </t-button>
+          <!-- 刷新:与桌面操作列同口径 —— 常显,不可用时置灰并给出原因 -->
+          <t-tooltip
+            :content="refreshTip(row)"
+            :disabled="canRefresh(row)"
+            placement="top"
+          >
+            <t-button
+              theme="warning"
+              variant="text"
+              size="small"
+              :disabled="!canRefresh(row) || refreshingIds.has(Number(row.printId))"
+              @click="onRefresh(row)"
+            >
+              刷新
+            </t-button>
+          </t-tooltip>
           <span
             v-if="(row.orderId ?? 0) <= 0"
             class="tip"
@@ -322,30 +338,43 @@
           </t-tooltip>
         </template>
         <template #op="{ row }">
-          <t-button
-            v-if="(row.orderId ?? 0) > 0"
-            theme="primary"
-            variant="text"
-            size="small"
-            :disabled="reprintingIds.has(Number(row.printId))"
-            @click="onReprint(row)"
-          >
-            补打
-          </t-button>
-          <t-button
-            v-if="(row.orderId ?? 0) > 0"
-            theme="default"
-            variant="text"
-            size="small"
-            @click="onPreview(row)"
-          >
-            预览
-          </t-button>
-          <span
-            v-if="(row.orderId ?? 0) <= 0"
-            class="tip"
-            >—</span
-          >
+          <div class="op-cell">
+            <t-button
+              v-if="(row.orderId ?? 0) > 0"
+              theme="primary"
+              variant="text"
+              size="small"
+              :disabled="reprintingIds.has(Number(row.printId))"
+              @click="onReprint(row)"
+            >
+              补打
+            </t-button>
+            <t-button
+              v-if="(row.orderId ?? 0) > 0"
+              theme="default"
+              variant="text"
+              size="small"
+              @click="onPreview(row)"
+            >
+              预览
+            </t-button>
+            <!-- 刷新:始终显示,不可刷新时置灰并 hover 给出原因(移动端卡片同口径) -->
+            <t-tooltip
+              :content="refreshTip(row)"
+              :disabled="canRefresh(row)"
+              placement="top-left"
+            >
+              <t-button
+                theme="warning"
+                variant="text"
+                size="small"
+                :disabled="!canRefresh(row) || refreshingIds.has(Number(row.printId))"
+                @click="onRefresh(row)"
+              >
+                刷新
+              </t-button>
+            </t-tooltip>
+          </div>
         </template>
       </t-table>
 
@@ -435,6 +464,7 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import {
   listPrintLogs,
   reprintLog,
+  refreshPrintLog,
   previewPrintLog,
   PRINT_DOC_TYPE,
   PRINT_STATUS,
@@ -582,9 +612,11 @@ const columns = computed(() => {
     { colKey: 'detail', title: '说明', minWidth: 200 },
     { colKey: 'createTime', title: '时间', width: 176 }
   ];
-  // 操作列(补打/预览)只对 printer:edit 展示:预览返回完整票据(含金额),
+  // 操作列(补打/预览/刷新)只对 printer:edit 展示:预览返回完整票据(含金额),
   // 与补打同为写权限级别;printer:view 的只读用户看列表与失败原因即可。
-  if (canReprint.value) cols.push({ colKey: 'op', title: '操作', width: 112 });
+  // 刷新按钮常显(不可用时置灰),宽度按三个文字按钮单行不折行标定:
+  // 3 × 约40px + flex 间距 8px + 单元格左右内边距 32px。
+  if (canReprint.value) cols.push({ colKey: 'op', title: '操作', width: 172 });
   return cols;
 });
 
@@ -632,6 +664,42 @@ async function onReprint(row: PrintLogRow): Promise<void> {
     load();
   } finally {
     reprintingIds.value.delete(id);
+  }
+}
+
+// ============ 刷新失败记录(飞鹅云端回查) ============
+
+// 仅「失败 + 飞鹅通道」的记录可刷新:回查飞鹅该次推送的最新结果,确认已打印时
+// 后端把失败回写为成功。直连/代理通道没有云端单号可追问,不显示。
+// 不再要求 remoteId 非空:推送当时未受理的记录(发送即失败)没有云端单号,
+// 点刷新时后端会明确报「没有云端单号,无法回查」—— 按钮可见但给出解释,
+// 好过按钮不出现让商家以为功能缺失。
+function canRefresh(row: PrintLogRow): boolean {
+  return row.status === 0 && row.provider === 'feie';
+}
+
+// 刷新按钮置灰时的提示:说明为什么这条不能刷新,而不是让按钮哑着。
+// 可刷新时返回空串,浮层随之禁用。
+function refreshTip(row: PrintLogRow): string {
+  if (row.status !== 0) return '仅失败状态的记录支持刷新';
+  if (row.provider !== 'feie') return '仅飞鹅云通道的记录支持刷新';
+  return '';
+}
+
+// 逐行在途标记:回查要请求飞鹅接口(有状态缓存),连点拿不到新结果,纯浪费限流额度。
+const refreshingIds = ref<Set<number>>(new Set());
+async function onRefresh(row: PrintLogRow): Promise<void> {
+  const id = Number(row.printId);
+  if (refreshingIds.value.has(id)) return;
+  refreshingIds.value.add(id);
+  try {
+    const res = await refreshPrintLog(row.printId);
+    MessagePlugin.success(res?.msg || '已回查云端结果');
+    load();
+  } catch {
+    // 失败原因由请求拦截器统一弹出
+  } finally {
+    refreshingIds.value.delete(id);
   }
 }
 
@@ -705,6 +773,15 @@ onMounted(load);
   width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 操作列:文字按钮横向排布、禁止折行 —— 列宽(172px)已按三个按钮标定,
+   这里兜底保证任何字体度量误差下都不会把「刷新」挤到第二行。 */
+.op-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
 }
 

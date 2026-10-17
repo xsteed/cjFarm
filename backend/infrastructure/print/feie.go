@@ -221,9 +221,9 @@ var (
 	// 拿到的是推送瞬间的旧状态,必然误报「未打印」。
 	feieConfirmFirstDelay = 8 * time.Second
 	// feieConfirmRetryDelay 复核间隔:打印机走纸、或飞鹅向离线打印机补吐缓存任务,都要几秒。
-	feieConfirmRetryDelay = 15 * time.Second
-	// feieConfirmAttempts 含首次在内的确认次数(8s + 15s + 15s ≈ 38 秒的观察窗口)。
-	feieConfirmAttempts = 3
+	feieConfirmRetryDelay = 18 * time.Second
+	// feieConfirmAttempts 含首次在内的确认次数(8s + 18s × 3 ≈ 62 秒的观察窗口,覆盖一分钟以上)。
+	feieConfirmAttempts = 4
 )
 
 // confirmFeiePrinted 对一次「飞鹅已受理」的推送做落地确认:回查云端订单状态,

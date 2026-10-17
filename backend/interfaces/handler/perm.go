@@ -115,6 +115,8 @@ var routePerms = map[string]string{
 	"GET /api/admin/print/preview":         "printer:edit",
 	"POST /api/admin/print/preview/sample": "printer:edit",
 	"POST /api/admin/print/log/reprint":    "printer:edit",
+	// 刷新失败记录:回查飞鹅云端结果并可能把失败回写为成功(改台账,写权限)。
+	"POST /api/admin/print/log/refresh": "printer:edit",
 	// 票据预览(按当前设置模拟真实出纸 / kind=test 测试页)只读渲染,给 view 权限即可:
 	// 不会出纸,也不改任何状态。
 	"GET /api/admin/printer/preview/:id": "printer:view",

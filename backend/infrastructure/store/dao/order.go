@@ -209,12 +209,14 @@ func ListServingOrdersByTable(tableID int, guardBizDate string) []po.Order {
 // 只看本营业日:更早的属于跨日遗留单,那是「跨日自动清台」的职责(它们要么已被隔离、
 // 要么店家正拿着处理),混进超时告警里会让看板每天一早先响一片昨天的噪音。
 // create_time 为空的行跳过:算不出时长就无从判定是否超时。
+// 注意 SQL 里不能写 create_time<>'':MySQL 下该列是 DATETIME,与空串比较会报
+// Error 1525,空串过滤只能放在 Go 侧(见 ScanOrder 之后的循环)。
 func ListStaleUnpaidOrders(bizDate, beforeTime string) []po.Order {
 	rows, err := store.DB.Query(
 		// LIMIT 是防御性的:看板那条提醒条要一屏能读完,真有几十桌同时超时,
 		// 拉全部回来既撑爆界面也没人逐条看 —— 按开台时长从早到晚取前 50 条即可。
 		`SELECT `+OrderCols+` FROM tb_order WHERE order_status IN (1,2,3) AND pay_status=0
-			AND biz_date=? AND create_time IS NOT NULL AND create_time<>'' AND create_time<=?
+			AND biz_date=? AND create_time IS NOT NULL AND create_time<=?
 			ORDER BY create_time LIMIT 50`,
 		bizDate, beforeTime)
 	if err != nil {
@@ -228,6 +230,10 @@ func ListStaleUnpaidOrders(bizDate, beforeTime string) []po.Order {
 		if scanErr != nil {
 			logger.Warnf("[dao] 扫描未结账超时订单失败: %v", scanErr)
 			return nil
+		}
+		// SQLite 下 create_time 是 VARCHAR,历史数据可能落了空串:算不出时长,跳过。
+		if o.CreateTime == "" {
+			continue
 		}
 		list = append(list, o)
 	}

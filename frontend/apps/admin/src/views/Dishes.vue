@@ -503,13 +503,17 @@
           label="菜品图片"
           name="dishImage"
         >
-          <t-upload
-            v-model="form.imageFiles"
-            :auto-upload="false"
-            accept="image/*"
-            theme="image"
-            :max="1"
-          />
+          <div class="upload-row">
+            <t-upload
+              v-model="form.imageFiles"
+              :auto-upload="false"
+              accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,.jpg,.jpeg,.png,.gif,.webp,.bmp"
+              theme="image"
+              :max="1"
+            />
+            <!-- 与后端 upload_service.go 的白名单和 64MB 上限保持一致 -->
+            <div class="upload-hint">支持 jpg / png / gif / webp / bmp<br />单张不超过 64MB</div>
+          </div>
         </t-form-item>
         <t-form-item
           label="菜品描述"
@@ -907,7 +911,13 @@ async function save(): Promise<void> {
         const res = await uploadFile(picked.raw);
         form.dishImage = res.url;
       } catch {
-        return; // 上传失败:拦截器已弹提示,保持弹窗以便重试
+        // 拦截器已弹后端错误提示,这里补充所选文件的实际格式,便于定位
+        // 「iPhone 高效格式照片(.heic)被后端白名单拒收」这类移动端常见问题
+        const name = picked.name || picked.raw?.name || '';
+        const dot = name.lastIndexOf('.');
+        const ext = dot >= 0 ? name.slice(dot + 1).toUpperCase() : picked.raw?.type || '未知';
+        MessagePlugin.error(`所选文件「${name}」的格式为 ${ext}，仅支持 jpg/png/gif/webp/bmp`);
+        return; // 上传失败:保持弹窗以便重试
       }
     } else if (!picked) {
       // 用户在编辑态删除了原图且未重新选择 → 明确清空,否则旧路径残留
@@ -1325,6 +1335,20 @@ onMounted(() => {
   color: var(--ink-4);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* 图片上传位右侧的格式/大小说明:与缩略方块垂直居中,窄屏放不下时换行到下方 */
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.upload-hint {
+  color: var(--ink-4);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 @media (width <= 1200px) {
