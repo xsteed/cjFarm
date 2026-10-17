@@ -110,7 +110,12 @@ const settleDialogRef = ref<InstanceType<typeof SettleDialog> | null>(null);
 const creditDialogRef = ref<InstanceType<typeof CreditSettleDialog> | null>(null);
 const refundDialogRef = ref<InstanceType<typeof RefundDialog> | null>(null);
 
-const dialogTitle = computed(() => (detail.value?.tableNo ? `${detail.value.tableNo}号桌 · 订单详情` : '订单详情'));
+// 标题桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号;与信息行/列表同口径
+const dialogTitle = computed(() => {
+  const d = detail.value;
+  const table = d?.tableName || (d?.tableNo ? `${d.tableNo} 号桌` : '');
+  return table ? `${table} · 订单详情` : '订单详情';
+});
 
 // 请求序号:请求在途时弹窗被关闭、或被切换到另一单,旧响应不得写回已清空/新订单的状态。
 let reqSeq = 0;
@@ -237,14 +242,16 @@ function onSectionRefund(): void {
 function onSettleCancel(): void {
   const row = detail.value;
   if (!row) return;
-  const name = row.settleType === 'free' ? '免单' : '挂账';
+  // 免单订单的操作名与按钮保持一致:撤销免单;挂账仍称撤销结算
+  const isFree = row.settleType === 'free';
+  const name = isFree ? '免单' : '挂账';
   const dlg = DialogPlugin.confirm({
-    header: '撤销结算',
+    header: isFree ? '撤销免单' : '撤销结算',
     body: `确认撤销订单【${row.orderNo}】的${name}？撤销后订单恢复为未支付并回到「已上齐」，需重新结算。`,
     onConfirm: async () => {
       try {
         await cancelSettle({ orderId: row.orderId, reason: '撤销' + name });
-        MessagePlugin.success('已撤销结算');
+        MessagePlugin.success(isFree ? '已撤销免单' : '已撤销结算');
         dlg.hide();
         await refresh();
       } catch {

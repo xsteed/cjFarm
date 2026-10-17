@@ -154,7 +154,10 @@
           @keydown.space.prevent="openDetail(row)"
         >
           <div class="ocard-top">
-            <span class="ocard-no">#{{ row.shortNo || row.orderNo.slice(-6) }}</span>
+            <span class="ocard-no"
+              ><span class="ocard-no-label">短号</span
+              >#{{ row.shortNo || row.orderNo.slice(-6) }}</span
+            >
             <t-tag
               :theme="ORDER_STATUS[row.orderStatus]?.theme"
               variant="light"
@@ -189,17 +192,9 @@
           </div>
           <div class="ocard-amt">
             <span class="money">¥{{ $money(row.totalAmount) }}</span>
-            <span
-              v-if="row.settleType === 'free'"
-              class="settle-flag free"
-              >免单</span
-            >
-            <span
-              v-else-if="row.settleType === 'credit'"
-              class="settle-flag credit"
-            >
-              {{ row.creditStatus === 1 ? '挂账' : '挂账已结' }}
-            </span>
+            <!-- 结算状态(免单/挂账待收/挂账已结/已支付)统一由下方 payText 标签展示,
+                 与桌面端表格的「支付状态」列同口径;移动端卡片没有独立状态列,
+                 不再另铺 settle-flag 角标,否则免单会出现两个重复标记 -->
             <!-- 退款中优先展示:refundAmount 只在退款成功时累加,处理中的退款单不会体现在
                  已退款金额里 —— 不单独标出来,收银会看不出该单正在退款（并会去点「退款」） -->
             <t-tag
@@ -274,7 +269,7 @@
           @click="openDetail(row)"
           @keydown.enter="openDetail(row)"
           @keydown.space.prevent="openDetail(row)"
-          >{{ row.shortNo || row.orderNo.slice(-6) }}</span
+          >#{{ row.shortNo || row.orderNo.slice(-6) }}</span
         >
         <t-tag
           v-if="row.pendingUrge"
@@ -295,6 +290,9 @@
         >
           加菜×{{ row.batchCount! - 1 }}
         </t-tag>
+        <!-- 完整订单号:与移动端卡片同口径,短号(取餐号)报给顾客,完整单号留给对账/查询;
+             桌面端不再只藏在 title 悬浮提示里 -->
+        <div class="ono-full">{{ row.orderNo }}</div>
       </template>
       <template #orderStatus="{ row }">
         <t-tag
@@ -327,18 +325,8 @@
         <span class="money">¥{{ $money(row.seatFee) }}</span>
       </template>
       <template #totalAmount="{ row }">
+        <!-- 结算状态(免单/挂账待收/挂账已结)已在「支付状态」列展示,金额列只展示金额,不再重复打角标 -->
         <span class="money">¥{{ $money(row.totalAmount) }}</span>
-        <span
-          v-if="row.settleType === 'free'"
-          class="settle-flag free"
-          >免单</span
-        >
-        <span
-          v-else-if="row.settleType === 'credit'"
-          class="settle-flag credit"
-        >
-          {{ row.creditStatus === 1 ? '挂账' : '挂账已结' }}
-        </span>
       </template>
       <template #op="{ row }">
         <t-space>
@@ -563,7 +551,9 @@ const payTheme = payStatusTheme;
 
 const columns = computed(() => {
   const cols = [
-    { colKey: 'orderNo', title: '订单号', width: 165 },
+    // 该列实际渲染两行:首行取餐号/短号(#shortNo),第二行完整订单号(ono-full),
+    // 标题取「取餐号/单号」覆盖两者,避免只叫「订单号」让人以为漏了完整单号。
+    { colKey: 'orderNo', title: '取餐号/单号', width: 200 },
     { colKey: 'tableNo', title: '桌号', width: 70 },
     { colKey: 'personCount', title: '人数', width: 70 },
     { colKey: 'dishAmount', title: '菜品金额', width: 100 },
@@ -858,27 +848,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 列表里的免单 / 挂账角标 */
-.settle-flag {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 10.5px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-weight: 600;
-  vertical-align: 1px;
-}
-
-.settle-flag.free {
-  background: #fff3e0;
-  color: #d48a00;
-}
-
-.settle-flag.credit {
-  background: #e8f0ff;
-  color: #2b6cd4;
-}
-
 /* 短号：列表统一展示可口头报读的短号，避免收银喊单时报错流水号 */
 .ono {
   font-weight: 600;
@@ -886,14 +855,24 @@ onUnmounted(() => {
   letter-spacing: 0.4px;
 }
 
-/* 桌面端短号可点开详情:与「详情」按钮同能力 */
+/* 桌面端短号可点开详情:与「详情」按钮同能力;默认即链接蓝,hover/focus 加下划线 */
 .ono-link {
   cursor: pointer;
+  color: var(--td-brand-color, #0052d9);
 }
 
 .ono-link:hover,
 .ono-link:focus-visible {
-  color: var(--td-brand-color, #0052d9);
+  text-decoration: underline;
+}
+
+/* 订单号单元格第二行:完整订单号,与移动端卡片 ocard-orderNo 同口径 */
+.ono-full {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ink-3, #8a8f99);
+  letter-spacing: 0.3px;
+  word-break: break-all;
 }
 
 /* 移动端卡片里的催菜角标:贴住短号右侧,不另起一行 */

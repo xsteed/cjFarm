@@ -3,7 +3,7 @@
     v-if="detail"
     class="od"
   >
-    <!-- 关键信息：订单号/状态、桌号/人数/下单时间 -->
+    <!-- 关键信息：订单号/状态、桌台/人数/下单时间 -->
     <div class="od-info">
       <div class="od-row">
         <span class="od-k">订单号：</span>
@@ -20,8 +20,9 @@
       </div>
       <div class="od-row">
         <span class="od-pair">
-          <span class="od-k">桌号：</span>
-          <span class="od-v">{{ detail.tableNo }}号</span>
+          <!-- 桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号;与列表/移动端卡片同口径 -->
+          <span class="od-k">桌台：</span>
+          <span class="od-v">{{ detail.tableName || detail.tableNo + ' 号桌' }}</span>
         </span>
         <span class="od-pair od-gap">
           <span class="od-k">人数：</span>
@@ -296,11 +297,24 @@
       >
         完成订单
       </button>
+      <!-- 桌面端:撤销结算与「完成订单」同排(移动端排在下方条件操作行);
+           免单订单显示为「撤销免单」并用危险色,与「取消订单」同色系 -->
+      <button
+        v-if="!isMobile && canCancelSettleOrder"
+        type="button"
+        class="ab ab-more"
+        :class="{ 'ab-cancel-settle': detail.settleType === 'free' }"
+        @click="emit('cancel-settle')"
+      >
+        {{ detail.settleType === 'free' ? '撤销免单' : '撤销结算' }}
+      </button>
     </div>
 
-    <!-- 条件性操作：只有满足条件才出现，平时不占位置 -->
+    <!-- 条件性操作：只有满足条件才出现，平时不占位置。
+         桌面端「撤销结算/撤销免单」已并入上方次要操作行(与完成订单同排)，
+         本行只渲染移动端的撤销按钮与核销挂账/退款。 -->
     <div
-      v-if="canCreditSettleOrder || canCancelSettleOrder || canRefundOrder"
+      v-if="showExtraActions"
       class="od-actions od-actions-extra"
     >
       <button
@@ -312,12 +326,13 @@
         核销挂账
       </button>
       <button
-        v-if="canCancelSettleOrder"
+        v-if="isMobile && canCancelSettleOrder"
         type="button"
         class="ab ab-more"
+        :class="{ 'ab-cancel-settle': detail.settleType === 'free' }"
         @click="emit('cancel-settle')"
       >
-        撤销结算
+        {{ detail.settleType === 'free' ? '撤销免单' : '撤销结算' }}
       </button>
       <button
         v-if="canRefundOrder"
@@ -443,6 +458,15 @@ const statusOption = computed(() => {
   const status = props.detail?.orderStatus;
   return status != null ? ORDER_STATUS[status] : undefined;
 });
+
+// 条件操作行可见性:桌面端「撤销结算/撤销免单」已并入次要操作行(与完成订单同排),
+// 本行只剩核销挂账/退款;不按此统计,桌面端免单订单会余出一行空占位。
+const showExtraActions = computed(
+  () =>
+    canCreditSettleOrder.value ||
+    canRefundOrder.value ||
+    (isMobile.value && canCancelSettleOrder.value)
+);
 
 // 加菜批次标签(itemId → 首单/加菜N):计算逻辑收敛在 @dining/shared 的 batchLabels,
 // 与顾客端 H5/小程序同一口径 —— 只有多批次才打标,单批次订单不打。
@@ -796,6 +820,13 @@ function refreshRefunds(): void {
   min-width: 88px;
   color: var(--ink-2);
   border-color: #dcdcdc;
+}
+
+/* 撤销结算(免单订单显示为「撤销免单」):危险色,与「取消订单」同色系;
+   定义在 ab-more 之后,覆盖其中性文字/边框色 */
+.ab-cancel-settle {
+  color: #e34d59;
+  border-color: #f7c4c7;
 }
 
 /* 桌面端完成订单位于主操作组:恢复与主按钮一致的等宽铺满 */
