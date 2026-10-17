@@ -193,6 +193,15 @@ func TestSetTableLockRoundTrip(t *testing.T) {
 	if lock, _ := GetTableByID(int(id)); lock.LockStatus != po.TableLockNormal {
 		t.Fatalf("恢复正常后状态应为 0, got %d", lock.LockStatus)
 	}
+
+	// 已删除的桌台必须拒绝并报错:静默成功会让管理员以为锁已生效,
+	// 实际这张桌已经不存在(与 SetTableStatusTx 的删除守卫同口径)。
+	if err := DeleteTable(int(id)); err != nil {
+		t.Fatalf("删除桌台失败: %v", err)
+	}
+	if err := SetTableLock(int(id), po.TableLockDisabled, "已删桌"); err == nil {
+		t.Fatal("对已删除桌台加锁应报错")
+	}
 }
 
 // TestOccupyTableTxRejectsLocked 人工停用/预约的桌台拒绝占用。

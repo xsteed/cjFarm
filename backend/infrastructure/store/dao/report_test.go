@@ -72,3 +72,70 @@ func TestRangeAmountMoneyFlow(t *testing.T) {
 		t.Fatalf("今日退款额期望 10000(排除重复退回), got %d", got)
 	}
 }
+
+// TestHourlyStatsMoneyFlow 时段分布与营业额同口径:金额按钱到账时间归属
+// (pay_time / credit_settle_time / 退款 update_time),各小时合计 = RangeAmount,
+// 分时图与「今日营业额」不再对不上;订单数/客流仍按下单时间归属。
+func TestHourlyStatsMoneyFlow(t *testing.T) {
+	store.Init(filepath.Join(t.TempDir(), "hourly.db"))
+	defer func() { _ = store.DB.Close() }()
+
+	now := time.Now()
+	tStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	tEnd := tStart.AddDate(0, 0, 1)
+	f := func(v time.Time) string { return v.Format(conf.TimeLayout) }
+	at := func(hour int) string {
+		return time.Date(tStart.Year(), tStart.Month(), tStart.Day(), hour, 0, 0, 0, tStart.Location()).Format(conf.TimeLayout)
+	}
+	mustExec := func(query string, args ...interface{}) {
+		t.Helper()
+		if _, err := store.DB.Exec(query, args...); err != nil {
+			t.Fatalf("执行失败: %v\n%s", err, query)
+		}
+	}
+
+	// 10 点正常收款 100 元(2 人)。
+	mustExec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, person_count, order_status, total_amount,
+		pay_status, pay_time, settle_type, paid_amount, create_time, update_time)
+		VALUES('HB1', 1, 'T1', '桌1', 2, 4, 10000, 1, ?, 'normal', 10000, ?, ?)`,
+		at(10), at(10), at(10))
+	// 11 点挂账核销回款 50 元(下单时间回填 10 点,订单数应归到 10 点)。
+	mustExec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, person_count, order_status, total_amount,
+		pay_status, settle_type, credit_status, credit_amount, credit_settle_time, paid_amount, create_time, update_time)
+		VALUES('HB2', 2, 'T2', '桌2', 3, 4, 5000, 1, 'credit', 2, 5000, ?, 5000, ?, ?)`,
+		at(11), at(10), at(11))
+
+	var orderAID int
+	if err := store.DB.QueryRow(`SELECT order_id FROM tb_order WHERE order_no='HB1'`).Scan(&orderAID); err != nil {
+		t.Fatalf("查询订单失败: %v", err)
+	}
+	// 12 点对 HB1 退款 30 元。
+	mustExec(`INSERT INTO tb_refund(order_id, order_no, payment_id, refund_no, channel, amount, status, reason, operator, create_time, update_time)
+		VALUES(?, 'HB1', 0, 'HR1', 'wxpay', 3000, 1, '测试退款', 'tester', ?, ?)`, orderAID, at(12), at(12))
+
+	byHour, err := HourlyStats(f(tStart), f(tEnd))
+	if err != nil {
+		t.Fatalf("HourlyStats 失败: %v", err)
+	}
+	if got := byHour["10"].AmtCents; got != 10000 {
+		t.Fatalf("10 点营业额期望 10000(正常收款), got %d", got)
+	}
+	if got := byHour["11"].AmtCents; got != 5000 {
+		t.Fatalf("11 点营业额期望 5000(挂账核销), got %d", got)
+	}
+	if got := byHour["12"].AmtCents; got != -3000 {
+		t.Fatalf("12 点营业额期望 -3000(退款扣减), got %d", got)
+	}
+	// 各小时合计必须与 RangeAmount 一致 —— 这正是本次修复的目标(此前两者口径不同)。
+	var sum int64
+	for _, b := range byHour {
+		sum += b.AmtCents
+	}
+	if want := RangeAmount(f(tStart), f(tEnd)); sum != want {
+		t.Fatalf("分时合计 %d 应等于营业额 %d", sum, want)
+	}
+	// 订单数/客流按下单时间:两单都在 10 点下单。
+	if byHour["10"].Count != 2 || byHour["10"].Guests != 5 {
+		t.Fatalf("10 点订单数/客流期望 2/5, got %d/%d", byHour["10"].Count, byHour["10"].Guests)
+	}
+}

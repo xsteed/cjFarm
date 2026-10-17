@@ -22,7 +22,12 @@
 | M-4 | 配置逐项落库失败仍返回「保存成功」 | 中 | ✅ 已修复 |
 | M-5 | 跨日自动清台 check-then-act，可误清正在用餐的桌 | 中 | ✅ 已修复 |
 | M-6 | 删除分类无菜品守卫，菜品静默消失却仍可下单 | 中 | ✅ 已修复 |
-| L-1 ~ L-13 | 见第三节（健壮性与口径类） | 低 | ✅ 已逐条复核确认属实，⬜ 未修复（本轮范围外） |
+| L-1 | `EditOrder` 无用餐人数上限 | 低 | ✅ 已修复（10-18） |
+| L-4 | `SetTableLock` 无删除守卫 | 低 | ✅ 已修复（10-18） |
+| L-5 | `newDeliveryID` 随机源失败兜底可预测值 | 低 | ✅ 已修复（10-18） |
+| L-9 | `HourlyStats` 与营业额口径矛盾 | 低 | ✅ 已修复（10-18，统一为资金流口径） |
+| L-10 | 打印按份拆单除零 panic | 低 | ✅ 已修复（10-18） |
+| L-2、L-3、L-6、L-7、L-8、L-11、L-12、L-13 | 见第三节 | 低 | ✅ 已确认属实，⬜ 未修复（性价比低或待定口径） |
 | L-14 | 登录 `UsernameExists` 查询错误被吞 | 低 | ✅ 已随 M-2 修复 |
 
 ### 本轮改动文件
@@ -138,41 +143,50 @@
 
 ---
 
-## 三、低危（13 项：2026-10-18 逐条复核确认属实，本轮未修复）
+## 三、低危（13 项：2026-10-18 逐条复核确认属实；其中 5 项已修复，8 项未修复）
 
 > 复核方式：逐条读码确认（按函数名定位，避免行号漂移）。L-14 已随 M-2 修复，不在此列。
+>
+> **已修复**：L-1、L-4、L-5、L-9、L-10（均为 1~3 行改动，覆盖金额算错、写入已删数据、打印去重失效、panic、报表口径矛盾五类实害）。
+> **未修复**：L-2、L-3、L-6、L-7、L-8、L-11、L-12、L-13（收益/改动比低，或需先定产品口径）。
 
-### L-1 `EditOrder` 无用餐人数上限 ✅ 确认属实
-- **位置**：`application/service/order_service.go:588-590`（`EditOrder`）
-- **确认依据**：仅 `if personCount < 1 { personCount = 1 }`，无上限；而 `CustomerCreateOrder`（`:218`）与 `CustomerAppendOrder`（`:399`）都有 `> 100` 拒绝。
+### L-1 `EditOrder` 无用餐人数上限 ✅ 确认属实 → 已修复（10-18）
+- **位置**：`application/service/order_service.go:588`（`EditOrder`）
+- **确认依据**：原仅 `if personCount < 1 { personCount = 1 }`，无上限；而 `CustomerCreateOrder`（`customer_service.go:218`）与 `CustomerAppendOrder`（`:399`）都有 `> 100` 拒绝。
 - **影响**：茶位费开启时管理端改单传 `personCount=100000`，`seatFee = 人数 × 单价` 会算出巨额应收。
-- **建议**：补同一上限（>100 拒绝或夹紧到 100）。
+- **修复**：补上与下单侧同一上限——`personCount > 100` 时返回「用餐人数超出限制」（拒绝而非夹紧：误填大数属于异常输入，静默改成 100 会掩盖问题）。
 
-### L-2 满减用浮点除法取整，整除边界可少算一档 ✅ 确认属实
+### L-2 满减用浮点除法取整，整除边界可少算一档 ✅ 确认属实，⬜ 未修复
 - **位置**：`application/service/service.go:269-271`（`RecalcAmount`）
 - **确认依据**：`discount = po.Round2(math.Min(math.Floor(dishAmount/threshold)*d, dishAmount))`，`dishAmount/threshold` 是 float64 除法；`0.3/0.1 == 2.9999999999999996` 时 `floor` 少一档。金额已 `Round2`，但阈值/金额含小数且恰好整除时仍可触发。
 - **影响**：该享受的满减没享受到（顾客少优惠，不会多收）。
 - **建议**：改为 int64 分整数运算：`dishCents/thresholdCents*discountCents`。
 
-### L-3 `AgentAck` 响应计数违反自身不变式 ✅ 确认属实
+### L-3 `AgentAck` 响应计数违反自身不变式 ✅ 确认属实，⬜ 未修复（需与 print-agent 端协同）
 - **位置**：`interfaces/handler/agent.go:262-296`（`AgentAck`）
 - **确认依据**：`accepted++` 在 `:267` 无条件执行；`r.Ok == false` 且 `AckAgentJob` 成功时（`:289-295`），`failed/done/skipped` 均不增。而 `:298-299` 注释声称 `accepted = done+rejected+skipped`。
 - **影响**：代理程序若用 `accepted` 对账会平不了账（仅协议/排障层面，不影响打印结果）。
 - **建议**：增加 `retried` 计数，或把「上报失败」计入 `rejected`。
 
-### L-4 `SetTableLock` 无删除守卫、不查影响行数 ✅ 确认属实
-- **位置**：`infrastructure/store/dao/table.go:197-201`（`SetTableLock`）
-- **确认依据**：`UPDATE tb_table SET lock_status=?, lock_remark=?, update_time=? WHERE table_id=?`——无 `AND del_flag='0'`，也未检查 `RowsAffected`；对照 `SetTableStatusTx`（`:33`）带守卫。
+### L-4 `SetTableLock` 无删除守卫、不查影响行数 ✅ 确认属实 → 已修复（10-18）
+- **位置**：`infrastructure/store/dao/table.go:197`（`SetTableLock`）
+- **确认依据**：原 SQL 无 `AND del_flag='0'`，也未检查 `RowsAffected`；对照 `SetTableStatusTx`（`:33`）带守卫。
 - **影响**：可给已软删桌台加锁并返回成功，给管理员「已更新」的错误反馈。
-- **建议**：补 `del_flag='0'` 守卫并检查影响行数。
+- **修复**：补 `del_flag='0'` 守卫，并检查影响行数——命中 0 行时返回「桌台不存在或已删除」，让 handler 能如实提示，而不是静默报成功。
 
-### L-5 `newDeliveryID` 兜底值可预测且同秒撞号 ✅ 确认属实
-- **位置**：`infrastructure/store/dao/printjob.go:197-204`（`newDeliveryID`）
-- **确认依据**：crypto/rand 失败时 `return hex.EncodeToString([]byte(store.Now()))`；`store.Now()` 是 `2006-01-02 15:04:05`（秒级，见 `conf.TimeLayout`），注释却称「纳秒时间戳」。同秒入队的两条任务会得到相同 delivery_id，且值可从时间推断。
-- **影响**：破坏代理侧「回执丢失 → 凭 delivery_id 去重」的幂等语义（两张不同票据被判同一张而跳过打印）。仅在 crypto/rand 失败时可达（概率极低），但仍违背函数自身文档承诺的 128 位随机性。
-- **建议**：rand 失败时返回 error/让入队失败重试，不回退可预测值；或至少用 `time.Now().UnixNano()` + 进程内计数器。
+### L-5 `newDeliveryID` 兜底值可预测且同秒撞号 ✅ 确认属实 → 已修复（10-18）
+- **位置**：`infrastructure/store/dao/printjob.go:197`（`newDeliveryID`）
+- **确认依据**：原实现在 crypto/rand 失败时 `return hex.EncodeToString([]byte(store.Now()))`；`store.Now()` 是 `2006-01-02 15:04:05`（**秒级**，见 `conf.TimeLayout`），注释却称「纳秒时间戳」。同秒入队的两条任务会得到相同 delivery_id，且值可从时间推断。
+- **影响**：破坏代理侧「回执丢失 → 凭 delivery_id 去重」的幂等语义（两张不同票据被判同一张而跳过打印 = 静默丢票）。
+- **修复**：签名改为 `(string, error)`，随机源失败时上抛 error（由 `InsertPrintJob` 包装为「生成打印任务投递号失败」），杜绝下发可预测值。
 
-### L-6 列表查询扫描失败静默丢行、不查 `rows.Err()` ✅ 确认属实
+### L-9 `HourlyStats` 与其他报表口径矛盾 ✅ 确认属实 → 已修复（10-18，统一为资金流口径）
+- **位置**：`dao/report.go:283`（`HourlyStats`）
+- **确认依据**：原实现按 `create_time` 取小时 + `SUM(paid_amount)`，既不含挂账核销回款、也不扣退款；而 `RangeAmount`（`:44`）与 `DailyTrendStats`（`:76`）为资金流口径（`pay_time` / `credit_settle_time` / 退款 `update_time`）。
+- **影响**：分时图各小时金额合计 ≠ 今日营业额（存在挂账/退款时必然对不上），店长对账困惑。
+- **修复**：金额改为与 `DailyTrendStats` 完全同构的三路 UNION（正常收款按 `pay_time` 取 `paid_amount + refund_amount` 还原毛额；挂账核销按 `credit_settle_time` 取 `paid_amount`；退款按 `update_time` 取负值），再按 `substr(...,12,2)` 分组求和；订单数/客流仍按 `create_time` 分组，与日报趋势同一口径。修复后分时图合计 = 今日营业额。
+
+### L-6 列表查询扫描失败静默丢行、不查 `rows.Err()` ✅ 确认属实，⬜ 未修复（12 处分散，收益/改动比低）
 - **位置**（12 处，均为 `if err == nil` 丢行且无 `rows.Err()`）：
   - `dao/printjob.go`：`ListPrinters`（`:43`）、`ListEnabledPrinters`（`:66`）、`ClaimPrintJobs` 的 `pick`（`:272-284`，`return nil`）
   - `dao/printagent.go`：`ListPrintAgents`（`:101`）
@@ -185,13 +199,13 @@
 - **影响**：驱动级扫描错误时静默少返回数据且无日志——打印机被漏掉即该台**静默不打印**；取单候选被丢弃即少取任务。
 - **建议**：统一改为 `return nil, err` + `rows.Err()`；`ScanDish` 等可空列（`create_by/update_by` 未声明 NOT NULL）改用 `TS()`/`sql.NullString` 兜底。
 
-### L-7 LIKE 通配符 `%`/`_` 未转义 ✅ 确认属实
+### L-7 LIKE 通配符 `%`/`_` 未转义 ✅ 确认属实，⬜ 未修复
 - **位置**：`dao/table.go:132-133`（`ListTables` 的 `table_name`）、`dao/dish.go:44-45`（`dish_name`）、`dao/order.go:326-327/337-338/353-354`（`order_no`/`table_name`/`settle_remark`）、`dao/audit.go:72-73`（`operator`）
 - **确认依据**：均为 `"%"+输入+"%"` 直接绑定，无 `ESCAPE` 子句。非 SQL 注入（已参数化），是通配符语义问题。
 - **影响**：用户输入 `%` 可列出全表、`_` 匹配任意单字符，筛选结果与预期不符。
 - **建议**：对 `\`、`%`、`_` 转义并加 `ESCAPE '\'`。
 
-### L-8 关闭期后台任务与 `store.DB.Close()` 竞态 ✅ 确认属实
+### L-8 关闭期后台任务与 `store.DB.Close()` 竞态 ✅ 确认属实，⬜ 未修复（仅影响退出日志）
 - **位置**：`backend/main.go:417-431`（`srv.Shutdown` 后直接 `store.DB.Close()`）vs `infrastructure/print/agent.go:559-588`（`agentCleanup` 的 `time.Sleep` 常驻循环）、`application/service/stale_service.go:261-270`（`StartStaleOrderGuard` 同款循环）
 - **确认依据**：两个后台循环都无退出信号/`WaitGroup`；HTTP 关闭不等待它们。
 - **影响**：仅限进程退出过程——DB 关闭后残留循环抛一轮 "sql: database is closed"（agentCleanup 有 recover 吞 panic，但错误仍进日志），形成无头错误日志。
@@ -203,25 +217,25 @@
 - **影响**：分时图各小时金额合计 ≠ 今日营业额（含挂账/退款时必然对不上），店长对账困惑。
 - **建议**：改为资金流口径（三路 UNION 按小时分组），或在接口/前端明确标注口径不同、不可相加。
 
-### L-10 按份拆单两处除零 panic ✅ 确认属实
-- **位置**：`infrastructure/print/print.go:746`（`splitItemPortions`：`unit := it.Amount / int64(it.Quantity)`）、`:1388`（按份拆单：`one.Amount = it.Amount / int64(it.Quantity)`）
+### L-10 按份拆单两处除零 panic ✅ 确认属实 → 已修复（10-18）
+- **位置**：`infrastructure/print/print.go:746`（`splitItemPortions`）、`:1395`（`sampleDishGroups` 按份拆单）
 - **确认依据**：两处均未判 `Quantity <= 0`；正常写入路径已把 `Quantity<1` 归一为 1（`service.go:360-362`），但老库/手工插入 `quantity=0` 的历史行可达。
 - **影响**：预览链路在 HTTP handler 内直接调用，只能靠 gin recovery 变成 500；打印链路被 `runJobRecovered` 吞成「该票静默丢失、无台账」。
-- **建议**：`Quantity<=0` 时直接返回空/单份并记 Warn。
+- **修复**：两处入口均加 `Quantity <= 0` 防御——`splitItemPortions` 记 Warn 并返回空切片，`sampleDishGroups` 跳过该条；不再触达除法。
 
-### L-11 `UpdateDish` 对不属本菜品的 SpecID 静默 no-op ✅ 确认属实
+### L-11 `UpdateDish` 对不属本菜品的 SpecID 静默 no-op ✅ 确认属实，⬜ 未修复
 - **位置**：`dao/dish.go:146-152`（`UpdateDish`）
 - **确认依据**：`UPDATE tb_spec ... WHERE spec_id=? AND dish_id=?` 的 `RowsAffected` 未检查，且 `keep[s.SpecID] = true` 在 UPDATE 之前设置。
 - **影响**：传入别的菜品的 `specId` 时，该规格更新被静默丢弃且不会被删除；若提交的所有 SpecID 都不属本菜品，菜品最终 0 规格，而 `menu_service.go:76-78` 只校验 `len>=1` 拦不住。
 - **建议**：`RowsAffected()==0` 时返回「规格不存在或不属于该菜品」；或更新前按 `dish_id` 批量校验归属。
 
-### L-12 `AuditRetentionDays` 语义与调用方约定冲突 ✅ 确认属实
+### L-12 `AuditRetentionDays` 语义与调用方约定冲突 ✅ 确认属实，⬜ 未修复（待确认「-1 = 禁用」还是「非法值」）
 - **位置**：`dao/audit.go:175-181`（`AuditRetentionDays`：解析失败或 `n<0` 返回 365）vs `application/service/audit_service.go:82-93`（用 `days<=0` 判「禁用清理」）
 - **确认依据**：配置 `AUDIT_RETENTION_DAYS=-1` 或非数字时，dao 归一为 365，service 的「禁用」分支不可达，会按 365 天真删数据；同时 `dao.CleanExpiredOperLogs`（`:142-153`）只被测试引用，生产走 service 版，属死代码。
 - **影响**：误配置负值/非法值时审计日志被清理而非按预期禁用；语义两处不一致，后续维护易踩坑。
 - **建议**：非法/负值返回 0 并统一「`<=0` = 不清理」；删除 dao 版死代码。
 
-### L-13 `refundMu` 全局锁横跨渠道退款网络调用 ✅ 确认属实
+### L-13 `refundMu` 全局锁横跨渠道退款网络调用 ✅ 确认属实，⬜ 未修复（正确性已有 DB 行锁兜底）
 - **位置**：`interfaces/handler/pay.go:469-470`（`refundMu.Lock(); defer Unlock`）+ `:494`（锁内 `provider.Refund`）；wxpay HTTP 超时 15s（`wxpay.go:290`）
 - **确认依据**：锁覆盖「额度校验 → 落退款单 → 渠道退款」全过程，渠道调用失败/超时期间全店其他退款请求被阻塞。
 - **影响**：可用性问题（正确性已由 `CreateRefund` 的 DB 行锁兜底），渠道慢时收银员点击退款会「转圈」最长 15s+。
@@ -284,6 +298,29 @@
 - **L-6 的准确清单为 12 处**（原报告中的 `CancelPrintJobsByPrinter` / `ExpireOverduePrintJobs` 实际已正确检查 `rows.Err()`，已从清单排除）；
 - **L-5 额外确认**：注释称「纳秒时间戳」但 `store.Now()` 实为秒级（`conf.TimeLayout`），同秒撞号成立；
 - **L-13 行号更新**：`refundMu` 现位于 `pay.go:469-470`，渠道调用在 `:494`（锁内）。
+
+**4）低危修复（2026-10-18，共 5 项）**
+
+按「收益/改动比」选定 5 项修复，其余 8 项经评估暂不修（原因见第三节）：
+
+| 项 | 修复内容 | 改动 |
+|---|---|---|
+| L-1 | `EditOrder` 补 `personCount > 100` 拒绝，与下单/加菜同口径 | 5 行 |
+| L-4 | `SetTableLock` 补 `del_flag='0'` 守卫 + `RowsAffected==0` 报「桌台不存在或已删除」 | 10 行 |
+| L-5 | `newDeliveryID` 改为 `(string, error)`，随机源失败上抛，不再回退可预测值（`InsertPrintJob` 同步包装错误；单测同步更新） | 12 行 |
+| L-9 | `HourlyStats` 金额改资金流口径（`pay_time` / `credit_settle_time` / 退款 `update_time` 三路 UNION 按小时分组），订单/客流仍按 `create_time`；分时图合计 = 今日营业额 | 55 行 |
+| L-10 | `splitItemPortions` / `sampleDishGroups` 入口加 `Quantity<=0` 防御（前者 Warn + 返回空，后者跳过） | 11 行 |
+
+未修复的 8 项：L-2（满减浮点边界，触发概率极低）、L-3（需与代理端协同）、L-6（12 处分散，驱动级错误才触发）、L-7（体验优化）、L-8（仅退出日志）、L-11（需前端配合提示）、L-12（待定口径）、L-13（正确性已有行锁兜底）。
+
+新增回归测试：
+- `TestOrderSvcEditOrder/用餐人数超限拒绝`（L-1）
+- `TestSetTableLockRoundTrip` 增补「已删除桌台加锁必须报错」（L-4）
+- `TestKitchenSplitZeroQuantityNoPanic`（L-10：`quantity=0` 不 panic、不拆单）
+- `TestHourlyStatsMoneyFlow`（L-9：10 点收款/11 点挂账核销/12 点退款分别落到对应小时，且分时合计 = `RangeAmount`）
+- `newDeliveryID` 单测同步更新为新签名（L-5；随机源失败路径无法注入，未覆盖）
+
+验证：`go build` / `go vet` / `go test ./... -count=1` 17 个包全部通过。
 
 ### 2026-10-17 修复验证
 

@@ -494,6 +494,15 @@ func TestOrderSvcEditOrder(t *testing.T) {
 		}
 	})
 
+	// 与下单/加菜同一上限:茶位费开启时人数直接乘进金额,误填大数会算出巨额应收。
+	t.Run("用餐人数超限拒绝", func(t *testing.T) {
+		id := orderSvcInsertOrder(t, "OE7", OrderStatusPlaced, 0, 5000)
+		items := []dto.OrderItem{{DishID: dishID, SpecID: specID, Quantity: 1}}
+		if _, err := EditOrder(context.Background(), id, 101, "", items, "tester"); err == nil || !strings.Contains(err.Error(), "用餐人数超出限制") {
+			t.Fatalf("人数超限应被拒绝, got %v", err)
+		}
+	})
+
 	t.Run("无效规格拒绝", func(t *testing.T) {
 		id := orderSvcInsertOrder(t, "OE4", OrderStatusPlaced, 0, 5000)
 		items := []dto.OrderItem{{DishID: dishID, SpecID: 999999, Quantity: 1}}

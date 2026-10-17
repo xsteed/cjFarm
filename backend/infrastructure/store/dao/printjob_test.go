@@ -134,8 +134,12 @@ func TestPrintJobInsertAndLoad(t *testing.T) {
 	if len(got2.DeliveryID) != 32 {
 		t.Fatalf("自动生成的 delivery_id 应为 32 位, got %q", got2.DeliveryID)
 	}
-	if got := newDeliveryID(); len(got) != 32 {
-		t.Fatalf("newDeliveryID 应返回 32 位, got %q", got)
+	did, err2 := newDeliveryID()
+	if err2 != nil {
+		t.Fatalf("newDeliveryID 不应报错: %v", err2)
+	}
+	if len(did) != 32 {
+		t.Fatalf("newDeliveryID 应返回 32 位, got %q", did)
 	}
 
 	if _, err := LoadPrintJob(999999); err == nil {

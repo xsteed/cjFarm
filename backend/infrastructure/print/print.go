@@ -743,6 +743,12 @@ func kitchenTicketGroups(items []service.PrintOrderItemRow, mode string) [][]ser
 // 用单价反而会在票面上露出一个没在收的金额。份数不能整除时向下取整,误差 < 1 分,
 // 且只在开了「厨房单显示金额」时可见 —— 分盘出菜看的始终是菜名与数量。
 func splitItemPortions(it service.PrintOrderItemRow) []service.PrintOrderItemRow {
+	if it.Quantity <= 0 {
+		// 老库/手工插入可能出现 quantity=0,直接返回空:除零会 panic,
+		// 而打印链路的 recover 会把它吞成「该票静默丢失、无台账」。
+		logger.Warnf("[print][告警] 打印明细数量为 %d,跳过该条", it.Quantity)
+		return []service.PrintOrderItemRow{}
+	}
 	unit := it.Amount / int64(it.Quantity)
 	out := make([]service.PrintOrderItemRow, 0, it.Quantity)
 	for i := 0; i < it.Quantity; i++ {
@@ -1378,6 +1384,10 @@ func sampleDishGroups(items []po.OrderItem, mode string) [][]po.OrderItem {
 	if mode == po.KitchenSplitItem || mode == po.KitchenSplitPortion {
 		groups := make([][]po.OrderItem, 0, len(items))
 		for _, it := range items {
+			// 与 splitItemPortions 同一口径:数量为 0 的历史脏数据直接跳过,避免除零 panic。
+			if it.Quantity <= 0 {
+				continue
+			}
 			n := 1
 			if mode == po.KitchenSplitPortion {
 				n = it.Quantity

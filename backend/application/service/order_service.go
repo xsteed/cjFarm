@@ -588,6 +588,11 @@ func EditOrder(ctx context.Context, orderID, personCount int, orderRemark string
 	if personCount < 1 {
 		personCount = 1
 	}
+	// 与下单/加菜同一上限(customer_service.go):开启茶位费时,人数直接乘进茶位费,
+	// 一次误填就会算出巨额应收;这里必须拒绝而不是夹紧。
+	if personCount > 100 {
+		return EditOrderOutcome{}, fmt.Errorf("用餐人数超出限制")
+	}
 	// 改单用 ForEdit 版本:本单已占用的库存会在事务内先回补,售罄判定必须把它算进去,
 	// 否则「被自己买空的菜」连改人数/备注都保存不了(见 ResolveOrderItemsForEdit)。
 	resolved, err := ResolveOrderItemsForEdit(items, orderID)

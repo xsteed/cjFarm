@@ -194,10 +194,20 @@ func UpdateTable(t po.Table) error {
 }
 
 // SetTableLock 更新桌台人工状态(lock_status/lock_remark),幂等。
+//
+// 带未删除守卫:并发删除桌台时,这里必须拒绝并报错,而不是「更新成功」——
+// 否则管理员会看到「桌台状态已更新」,实际这张桌已经不存在(与 SetTableStatusTx 同口径)。
 func SetTableLock(id, lockStatus int, lockRemark string) error {
-	_, err := store.DB.Exec(`UPDATE tb_table SET lock_status=?, lock_remark=?, update_time=? WHERE table_id=?`,
+	res, err := store.DB.Exec(`UPDATE tb_table SET lock_status=?, lock_remark=?, update_time=? WHERE table_id=? AND del_flag='0'`,
 		lockStatus, lockRemark, store.Now(), id)
-	return err
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return errors.New("桌台不存在或已删除")
+	}
+	return nil
 }
 
 // DeleteTable 逻辑删除桌台。

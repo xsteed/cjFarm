@@ -16,7 +16,22 @@ import (
 	"testing"
 
 	"dining-system/domain/po"
+	"dining-system/infrastructure/store/dao"
 )
+
+// TestKitchenSplitZeroQuantityNoPanic 历史脏数据 quantity=0 不得触发除零 panic:
+// 打印链路的 recover 会把 panic 吞成「该票静默丢失、无台账」,比报错难排查得多。
+func TestKitchenSplitZeroQuantityNoPanic(t *testing.T) {
+	setupTestDB(t)
+
+	bad := dao.OrderItemRow{OrderItem: po.OrderItem{DishName: "历史脏行", Quantity: 0, Amount: 100}}
+	if got := splitItemPortions(bad); len(got) != 0 {
+		t.Fatalf("数量为 0 应返回空切片(不拆单), got %d", len(got))
+	}
+	if got := sampleDishGroups([]po.OrderItem{bad.OrderItem}, po.KitchenSplitPortion); len(got) != 0 {
+		t.Fatalf("数量为 0 的明细应按份拆单时被跳过, got %d 组", len(got))
+	}
+}
 
 // TestKitchenSplitModeWhitelistAndDefault 粒度配置的读取语义:
 // 默认(或键缺失)按整单;白名单内的取值原样返回;脏值一律回落整单。

@@ -173,7 +173,11 @@ const jobColsCoalesced = `job_id, printer_id, printer_name, printer_type, ip, po
 // 从根上消除「回执丢失 → 同一张票打两遍」。
 func InsertPrintJob(j po.PrintJob) (int, error) {
 	if j.DeliveryID == "" {
-		j.DeliveryID = newDeliveryID()
+		did, err := newDeliveryID()
+		if err != nil {
+			return 0, fmt.Errorf("生成打印任务投递号失败: %w", err)
+		}
+		j.DeliveryID = did
 	}
 	res, err := store.DB.Exec(`INSERT INTO tb_print_job(printer_id, printer_name, printer_type, ip, port,
 		doc_type, order_id, order_no, table_no, copies, print_log_id, delivery_id, payload,
@@ -194,13 +198,17 @@ func InsertPrintJob(j po.PrintJob) (int, error) {
 // newDeliveryID 生成 128 位随机数的 hex 串(32 字符)作为幂等投递号。
 // 用 crypto/rand 而非时间戳/自增:它只要求全局唯一、不要求可排序,
 // 随机保证两台后端实例并发入队时也不会撞号。
-func newDeliveryID() string {
+//
+// 随机源失败时返回 error 而不是退化为可预测值:
+// delivery_id 是代理侧去重的唯一凭据,同秒时间戳会让两张不同票据得到同一个号
+// (代理据此判为重复而跳过打印 = 静默丢票),且值可由时间推断出来。宁可入队失败
+// 重试,不下发一个「看起来合法但不可信」的号。
+func newDeliveryID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		// crypto/rand 失败几乎不可能;兜底用纳秒时间戳避免生成空号导致去重失效。
-		return hex.EncodeToString([]byte(store.Now()))
+		return "", err
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // LoadPrintJob 按 ID 读取一条任务(回执时用它取 print_log_id 与打印机地址)。

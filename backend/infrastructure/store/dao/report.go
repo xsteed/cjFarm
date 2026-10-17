@@ -280,14 +280,34 @@ func DishRank(orderCol string, limit int) ([]DishRankRow, error) {
 }
 
 // HourlyStats 按时段统计区间内的营业额/订单数/客流,key 为小时(00-23)。
+//
+// 口径与 RangeAmount / DailyTrendStats 保持一致(均为资金流,按「钱到账的时间」归属):
+//   - 营业额:正常收款按 pay_time、挂账核销按 credit_settle_time、退款按 update_time 扣减
+//     (子查询返回负值),三路先各自按小时分组再 UNION ALL 合并求和;
+//   - 订单数 / 客流仍按下单时间 create_time 归属 —— 与日报趋势同一口径。
+//
+// 为什么不按「下单时间 + 实收净额」:那样各小时金额加起来 ≠ 「今日营业额」,
+// 店长对账时两个数字对不上;统一资金流口径后,分时图合计与营业额一致。
+// 重复支付自动退回(is_duplicate=1)的钱从未计入营收,同样不参与扣减。
 func HourlyStats(start, end string) (map[string]HourlyBucket, error) {
-	rows, err := store.DB.Query(`SELECT substr(create_time,12,2) AS h,
-			COALESCE(SUM(CASE WHEN pay_status=1 THEN COALESCE(paid_amount,0) ELSE 0 END),0) AS amt,
-			COUNT(*) AS cnt,
-			COALESCE(SUM(person_count),0) AS guests
-		FROM tb_order
-		WHERE create_time>=? AND create_time<? AND order_status!=5
-		GROUP BY h`, start, end)
+	rows, err := store.DB.Query(`SELECT h, SUM(amt) FROM (
+		SELECT substr(pay_time,12,2) AS h,
+				COALESCE(SUM(COALESCE(paid_amount,0)+COALESCE(refund_amount,0)),0) AS amt
+			FROM tb_order
+			WHERE pay_time>=? AND pay_time<? AND order_status!=5 AND pay_status=1
+			  AND COALESCE(settle_type,'normal')<>'credit'
+			GROUP BY h
+		UNION ALL
+		SELECT substr(credit_settle_time,12,2) AS h, COALESCE(SUM(COALESCE(paid_amount,0)),0) AS amt
+			FROM tb_order
+			WHERE credit_settle_time>=? AND credit_settle_time<? AND order_status!=5 AND credit_status=2
+			GROUP BY h
+		UNION ALL
+		SELECT substr(update_time,12,2) AS h, -COALESCE(SUM(amount),0) AS amt
+			FROM tb_refund
+			WHERE update_time>=? AND update_time<? AND status=? AND COALESCE(is_duplicate,0)=0
+			GROUP BY h
+	) t GROUP BY h`, start, end, start, end, start, end, po.RefundStatusSuccess)
 	if err != nil {
 		return nil, err
 	}
@@ -296,11 +316,36 @@ func HourlyStats(start, end string) (map[string]HourlyBucket, error) {
 	byHour := make(map[string]HourlyBucket, 24)
 	for rows.Next() {
 		var h string
-		var b HourlyBucket
-		if err := rows.Scan(&h, &b.AmtCents, &b.Count, &b.Guests); err != nil {
+		var amt int64
+		if err := rows.Scan(&h, &amt); err != nil {
 			return nil, err
 		}
+		b := byHour[h]
+		b.AmtCents = amt
 		byHour[h] = b
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 订单数 / 客流:按下单时间分组(与 DailyTrendStats 的订单/客流口径一致)。
+	rows, err = store.DB.Query(`SELECT substr(create_time,12,2) AS h, COUNT(*) AS cnt,
+			COALESCE(SUM(person_count),0) AS guests
+		FROM tb_order WHERE create_time>=? AND create_time<? AND order_status!=5 GROUP BY h`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var h string
+		var b HourlyBucket
+		if err := rows.Scan(&h, &b.Count, &b.Guests); err != nil {
+			return nil, err
+		}
+		cur := byHour[h]
+		cur.Count = b.Count
+		cur.Guests = b.Guests
+		byHour[h] = cur
 	}
 	return byHour, rows.Err()
 }
