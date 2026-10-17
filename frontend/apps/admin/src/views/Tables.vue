@@ -296,7 +296,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { AddIcon, QrcodeIcon } from 'tdesign-icons-vue-next';
 import {
@@ -457,8 +457,10 @@ async function loadAll(force = false): Promise<void> {
   }
 }
 
-async function load(): Promise<void> {
-  loading.value = true;
+// silent=true 用于定时自动刷新:不点亮全页 loading 遮罩,避免每轮轮询都闪一下。
+// 手动刷新(按钮/下拉/搜索)仍走默认 false,保留可见的加载反馈。
+async function load(silent = false): Promise<void> {
+  if (!silent) loading.value = true;
   try {
     const res = await listTables({
       pageNum: pagination.current,
@@ -741,9 +743,48 @@ async function loadConfig(): Promise<void> {
   }
 }
 
+// ---- 停留在本页时自动刷新 ----
+// 桌台占用/锁定状态会随顾客点单、结账实时变化,靠人工点「刷新」容易看到过时桌况。
+// 每 10s 静默拉一次列表(含带 TTL 缓存的全量统计);切后台/锁屏暂停轮询,
+// 回到可见立即补一轮并恢复节奏(与「打印管理」页的代理轮询同策略)。
+const AUTO_REFRESH_MS = 10_000;
+let autoTimer: ReturnType<typeof setInterval> | null = null;
+
+function startAutoRefresh(): void {
+  stopAutoRefresh();
+  autoTimer = setInterval(() => {
+    // 编辑弹窗/订单详情打开、保存或行操作进行中时跳过本轮,避免后台刷新干扰用户操作。
+    if (dialogVisible.value || detailVisible.value || saving.value || loading.value) return;
+    load(true);
+  }, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh(): void {
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
+
+function onVisibilityChange(): void {
+  if (document.hidden) {
+    stopAutoRefresh();
+  } else {
+    load(true);
+    startAutoRefresh();
+  }
+}
+
 onMounted(async () => {
   await loadConfig();
   load();
+  startAutoRefresh();
+  document.addEventListener('visibilitychange', onVisibilityChange);
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
+  document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
 
