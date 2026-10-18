@@ -183,8 +183,9 @@ func PrinterDelete(c *gin.Context) {
 	okMsg(c, "删除成功")
 }
 
-// PrinterTest 打一张测试页(会真的出纸)。
-// 内容含当前通道信息(IP 或飞鹅 SN),便于确认改对了是哪台机器。
+// PrinterTest 打一张测试打印(会真的出纸)。
+// 内容与「票据预览」一致:顾客小票机出点菜单 + 结账小票,厨房机出厨房单 ——
+// 商家点它是想看真实票据,而不是通道信息页(见 print.SendTestPrint)。
 func PrinterTest(c *gin.Context) {
 	p, okp := loadPrinterParam(c)
 	if !okp {
@@ -194,7 +195,15 @@ func PrinterTest(c *gin.Context) {
 		fail(c, "测试打印失败:"+err.Error())
 		return
 	}
-	okMsg(c, "已向「"+p.PrinterName+"」("+printerTarget(p)+") 发送测试打印指令")
+	okMsg(c, "已向「"+p.PrinterName+"」("+printerTarget(p)+") 发送测试打印("+printerPreviewKindLabel(p)+")")
+}
+
+// printerPreviewKindLabel 测试打印会出哪几张纸,用于成功提示里说清楚。
+func printerPreviewKindLabel(p dto.Printer) string {
+	if p.PrinterType == po.PrinterTypeKitchen {
+		return "厨房单"
+	}
+	return "点菜单 + 结账小票"
 }
 
 // PrinterPreview 预览该打印机的票据(不出纸)。

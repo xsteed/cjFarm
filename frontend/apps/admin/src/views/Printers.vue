@@ -1102,7 +1102,7 @@ const previewMeta = computed((): string => {
     const split = SPLIT_LABEL[d.splitMode || 'whole'] || d.splitMode || '整单一张';
     return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，厨房单粒度「${split}」，每张纸即后厨收到的一张${cat}。`;
   }
-  return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，上下两张分别是下单与结账时实际会出的票。`;
+  return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，上下两张分别是下单与结账时实际会出的票（「测试打印」出的就是这两张）。`;
 });
 
 async function onPreview(row: PrinterRow): Promise<void> {

@@ -1042,7 +1042,10 @@ func isSeqSuffix(s string) bool {
 	return err1 == nil && err2 == nil && idx > 0 && total > 0 && idx <= total
 }
 
-// RenderTestTicket 渲染测试页:一眼能看出「这台机器是谁、走哪条通道」。
+// RenderTestTicket 渲染「设备信息页」:一眼能看出「这台机器是谁、走哪条通道」。
+//
+// 注意:「测试打印」按钮已改为出真实业务票(见 SendTestPrint),本页不再由它输出;
+// 保留给 printer/preview?kind=test,用于核对 IP/SN、纸宽与份数(不打印业务内容)。
 func RenderTestTicket(p po.Printer) []string {
 	w := LineWidth(p.PaperWidth)
 	route := "IP: " + addrOf(p.IP, p.Port)

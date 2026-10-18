@@ -206,7 +206,9 @@ func TestPrinterTestBranches(t *testing.T) {
 	}
 	id := prtSeedPrinter(t, po.PrinterProviderAgent, po.PrinterTypeGuest, "代理测试机", "192.168.1.9", "", 1)
 	code, res := prtCall(t, PrinterTest, http.MethodPost, "/test", "", map[string]string{"id": itoa(id)})
-	if code != http.StatusOK || !strings.Contains(res["msg"].(string), "发送测试打印指令") {
+	// 测试打印出的是业务票(与票据预览同源),成功提示要说明出哪几张。
+	if code != http.StatusOK || !strings.Contains(res["msg"].(string), "发送测试打印") ||
+		!strings.Contains(res["msg"].(string), "点菜单 + 结账小票") {
 		t.Fatalf("代理测试打印应成功, got %d(%v)", code, res)
 	}
 }

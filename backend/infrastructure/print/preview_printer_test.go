@@ -231,6 +231,91 @@ func TestPreviewPrinterTicketSettleLargeFont(t *testing.T) {
 	}
 }
 
+// TestTestPrintLinesMatchPreview 「测试打印」出的纸必须就是票据预览里看到的内容:
+// 顾客小票机 = 点菜单 + 结账小票(两张,中间切纸),不再出通道信息页。
+func TestTestPrintLinesMatchPreview(t *testing.T) {
+	setupTestDB(t)
+	guestID := insertPreviewPrinter(t, po.PrinterTypeGuest, "", 48)
+	guest, err := service.LoadPrinter(guestID)
+	if err != nil {
+		t.Fatalf("加载打印机失败: %v", err)
+	}
+
+	lines, labels, err := testPrintLines(guest)
+	if err != nil {
+		t.Fatalf("testPrintLines 失败: %v", err)
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"【顾客小票】", "【结账小票】"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("测试打印缺少 %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "测试打印") || strings.Contains(joined, "通道: ") {
+		t.Fatalf("测试打印不应再出通道信息页:\n%s", joined)
+	}
+	// 两张票之间必须切一刀,否则纸面上分不清是两张。
+	if got := strings.Count(joined, cutMarkPrefix); got != 1 {
+		t.Fatalf("点菜单与结账小票之间应有 1 个切纸行, got %d:\n%s", got, joined)
+	}
+	// 飞鹅通道落地后必须是 <CUT> 标签,而不是被转义成正文打出来。
+	if content := strings.Join(splitFeieContent(lines), ""); !strings.Contains(content, feieCutTag) {
+		t.Fatalf("飞鹅内容应在两张票之间落地 %s:\n%s", feieCutTag, content)
+	}
+	if len(labels) != 2 || labels[0] != "顾客小票" || labels[1] != "结账小票" {
+		t.Fatalf("日志标识应与票面一致, got %v", labels)
+	}
+
+	// 逐行等于预览:两段预览拼起来就是出纸内容(预览即所得)。
+	order, err := PreviewPrinterTicket(guestID, po.PrintTriggerOrder)
+	if err != nil {
+		t.Fatalf("预览点菜单失败: %v", err)
+	}
+	settle, err := PreviewPrinterTicket(guestID, po.PrintTriggerSettle)
+	if err != nil {
+		t.Fatalf("预览结账小票失败: %v", err)
+	}
+	want := append([]string{}, order.Chunks[0]...)
+	want = append(want, cutMarkLine())
+	want = append(want, settle.Chunks[0]...)
+	if joined != strings.Join(want, "\n") {
+		t.Fatalf("测试打印内容与预览不一致:\n打印:\n%s\n预览:\n%s", joined, strings.Join(want, "\n"))
+	}
+}
+
+// TestTestPrintLinesKitchenFollowsSplitMode 厨房机的测试打印按打印粒度出纸:
+// 一菜一单下 3 道菜 = 3 张,中间 2 个切纸行。
+func TestTestPrintLinesKitchenFollowsSplitMode(t *testing.T) {
+	setupTestDB(t)
+	printerID := insertPreviewPrinter(t, po.PrinterTypeKitchen, "", 48)
+	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitItem)
+	p, err := service.LoadPrinter(printerID)
+	if err != nil {
+		t.Fatalf("加载打印机失败: %v", err)
+	}
+
+	lines, labels, err := testPrintLines(p)
+	if err != nil {
+		t.Fatalf("testPrintLines 失败: %v", err)
+	}
+	joined := strings.Join(lines, "\n")
+	if got := strings.Count(joined, cutMarkPrefix); got != 2 {
+		t.Fatalf("3 张夹单之间应有 2 个切纸行, got %d:\n%s", got, joined)
+	}
+	if len(labels) != 3 || labels[0] != "【厨房单】1/3" {
+		t.Fatalf("日志标识应带拆单序号, got %v", labels)
+	}
+	for _, want := range []string{"【厨房单】1/3", "【厨房单】3/3"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("测试打印缺少 %q:\n%s", want, joined)
+		}
+	}
+	// 结账不出厨房单:厨房机只有厨房单。
+	if strings.Contains(joined, "结账小票") {
+		t.Fatalf("厨房机不应出结账小票:\n%s", joined)
+	}
+}
+
 // TestPreviewPrinterTicketKitchenIgnoresSettle 结账不出厨房单(见 PrintGuestTicket):
 // 厨房机即使请求 settle 也按下单形态预览,不能展示一张真实永远不会出现的票。
 func TestPreviewPrinterTicketKitchenIgnoresSettle(t *testing.T) {

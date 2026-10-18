@@ -1273,9 +1273,31 @@ type PreviewPrinterTicketResult struct {
 	LargeFontSupported bool
 }
 
+// demoJobs 按打印机当前设置构造「示例订单」的作业,票据预览与测试打印共用。
+//
+// 两者必须共用同一个入口:测试打印出的就是预览里看到的那张票,各写一套迟早漂移。
+// triggerBy 只对顾客小票机有意义 —— 结账不出厨房单(见 PrintGuestTicket),
+// 厨房机传 settle 也按下单形态渲染,并回传归一化后的值供调用方展示。
+func demoJobs(p po.Printer, triggerBy string) (jobs []job, docType, trigger string, err error) {
+	docType, title := po.PrintDocGuest, ""
+	if p.PrinterType == po.PrinterTypeKitchen {
+		docType, title = po.PrintDocKitchen, "【厨房单】"
+	}
+	if docType != po.PrintDocGuest || triggerBy != po.PrintTriggerSettle {
+		triggerBy = po.PrintTriggerOrder
+	}
+	o, rows := previewSampleRows()
+	jobs = jobsForPrinter(p, o, rows, docType, title, triggerBy, "", nil, nil)
+	if len(jobs) == 0 {
+		return nil, docType, triggerBy, errors.New(
+			"该打印机设置了「负责分类」,示例菜品都不在其负责的分类内 —— 真实下单时这台机器同样不会出纸;请调整分类或到订单详情按单补打")
+	}
+	return jobs, docType, triggerBy, nil
+}
+
 // PreviewPrinterTicket 按某台打印机的当前设置,用示例订单模拟「真实下单时它会收到什么」。
 //
-// 与出纸走完全同一份代码(jobsForPrinter + job.render + lineChunksFor):
+// 与出纸走完全同一份代码(demoJobs → jobsForPrinter + job.render + lineChunksFor):
 //   - 纸宽按该机配置(58/80mm)渲染;
 //   - 厨房单按 print_kitchen_split_mode 拆张:整单一张 / 一菜一单 / 按份数拆,
 //     每张带序号标题与放大菜名,与后厨实际收到的一叠一致;
@@ -1294,20 +1316,11 @@ func PreviewPrinterTicket(printerID int, triggerBy string) (PreviewPrinterTicket
 	if err != nil {
 		return PreviewPrinterTicketResult{}, errors.New("打印机不存在")
 	}
-	docType, title := po.PrintDocGuest, ""
-	if p.PrinterType == po.PrinterTypeKitchen {
-		docType, title = po.PrintDocKitchen, "【厨房单】"
-	}
-	if docType != po.PrintDocGuest || triggerBy != po.PrintTriggerSettle {
-		triggerBy = po.PrintTriggerOrder
-	}
-	o, rows := previewSampleRows()
 	// 放大开关只读一次:同一次预览里三处判断必须是同一个值。
 	largeEnabled := guestLargeFont()
-	jobs := jobsForPrinter(p, o, rows, docType, title, triggerBy, "", nil, nil)
-	if len(jobs) == 0 {
-		return PreviewPrinterTicketResult{}, errors.New(
-			"该打印机设置了「负责分类」,示例菜品都不在其负责的分类内 —— 真实下单时这台机器同样不会出纸;请调整分类或到订单详情按单补打")
+	jobs, docType, triggerBy, err := demoJobs(p, triggerBy)
+	if err != nil {
+		return PreviewPrinterTicketResult{}, err
 	}
 	chunks := make([][]string, 0, len(jobs))
 	for _, j := range jobs {
@@ -1514,27 +1527,66 @@ func effectivePort(port int) int {
 	return port
 }
 
-// SendTestPrint 发送测试打印页(同步,失败原因原样返回给前端)。
+// SendTestPrint 发送测试打印(同步,失败原因原样返回给前端)。
+//
+// 出纸内容与「票据预览」完全一致:顾客小票机出「点菜单 + 结账小票」两张,
+// 厨房机出厨房单(按打印粒度可能是一叠)—— 商家点测试打印就是想看真实票据长什么样。
+// 通道信息页(RenderTestTicket)不再由这个按钮出,保留给 kind=test 预览排障。
+//
 // agent 通道下「同步」的含义变为「已同步入队」——代理在线时几乎立刻出纸,
 // 离线则排队等它上线,与前端的交互仍是「点一下、马上有结果」。
 func SendTestPrint(ctx context.Context, p po.Printer) error {
 	log := logger.WithContext(ctx, zap.String("printer", p.PrinterName))
-	if p.IsAgent() {
-		return enqueueAgentTicket(
-			logger.AgentWithContext(ctx, zap.String("printer", p.PrinterName)),
-			job{p: p, docType: docTest, triggerBy: po.PrintTriggerTest})
-	}
-	lines := RenderTestTicket(p)
-	start := time.Now()
-	remoteID, detail, err := sendWithRetry(p, lines)
-	cost := int(time.Since(start).Milliseconds())
-	recordLog(log, job{p: p, docType: docTest, triggerBy: po.PrintTriggerTest}, lines, remoteID, detail, cost, err)
+	lines, labels, err := testPrintLines(p)
 	if err != nil {
-		log.Warnf("打印: 测试页发送失败 打印机[%s](%s): %v%s",
-			p.PrinterName, providerAddr(p), err, feieDetailSuffix(p, detail))
 		return err
 	}
-	log.Infof("打印: 已向打印机[%s](%s) 发送测试页%s",
-		p.PrinterName, providerAddr(p), feieDetailSuffix(p, detail))
+	j := job{
+		p: p, docType: docTest, triggerBy: po.PrintTriggerTest,
+		title: "测试打印", lines: lines,
+		log:      log,
+		agentLog: logger.AgentWithContext(ctx, zap.String("printer", p.PrinterName)),
+	}
+	if p.IsAgent() {
+		return enqueueAgentJob(j)
+	}
+	start := time.Now()
+	remoteID, detail, serr := sendWithRetry(p, lines)
+	cost := int(time.Since(start).Milliseconds())
+	recordLog(log, j, lines, remoteID, detail, cost, serr)
+	if serr != nil {
+		log.Warnf("打印: 测试打印发送失败 打印机[%s](%s) %s: %v%s",
+			p.PrinterName, providerAddr(p), strings.Join(labels, "、"), serr, feieDetailSuffix(p, detail))
+		return serr
+	}
+	log.Infof("打印: 已向打印机[%s](%s) 发送测试打印(%s)%s",
+		p.PrinterName, providerAddr(p), strings.Join(labels, "、"), feieDetailSuffix(p, detail))
 	return nil
+}
+
+// testPrintLines 构造测试打印的票面:与票据预览同源(demoJobs)。
+//
+// 顾客小票机两张 —— 点菜单 + 结账小票(真实经营中本就是两张不同的票);
+// 厨房机出厨房单(整单 / 一菜一单 / 按份拆,与配置一致)。
+// 票与票之间插入切纸控制行,一次发送、纸面上仍是各自切开的票
+// (飞鹅 <CUT>、ESC/POS 切纸指令),不会连成一张看不出边界的长纸。
+func testPrintLines(p po.Printer) (lines, labels []string, err error) {
+	triggers := []string{po.PrintTriggerOrder}
+	if p.PrinterType == po.PrinterTypeGuest {
+		triggers = append(triggers, po.PrintTriggerSettle)
+	}
+	for _, tr := range triggers {
+		jobs, _, _, jerr := demoJobs(p, tr)
+		if jerr != nil {
+			return nil, nil, jerr
+		}
+		for _, j := range jobs {
+			if len(lines) > 0 {
+				lines = append(lines, cutMarkLine())
+			}
+			lines = append(lines, j.render()...)
+			labels = append(labels, j.label())
+		}
+	}
+	return lines, labels, nil
 }
