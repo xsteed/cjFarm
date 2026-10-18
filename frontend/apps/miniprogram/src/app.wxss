@@ -38,7 +38,7 @@ page {
   /* 加号 / 步进器按钮的直径：一道菜「未点（单个加号）」与「已点（步进器）」
      是两个分支，直径必须一致，否则点一下按钮会明显跳一号。
      点餐页的 .plus / .st-btn 与购物车页的 .step 都用它。 */
-  --ops-btn: 56rpx;
+  --ops-btn: 48rpx;
 
   min-height: 100%;
   background: var(--bg);

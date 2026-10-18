@@ -339,8 +339,14 @@
 
 /* ---------- 本店招牌：置顶分组下的横滑卡片条（与首页橱窗同款） ----------
    标题由上方吸顶的分组标题承担，这里只画卡片本体：品牌浅底圈出一块，
-   与白底列表区分，也和招牌菜的品牌色呼应。 */
+   与白底列表区分，也和招牌菜的品牌色呼应。
+   position + z-index 是刻意的：给整条卡片建立一个低于吸顶标题（z-index 2）
+   的层级上下文 —— 角标在条内仍是 z-index 2 压住售罄遮罩（1），
+   但整条滑到吸顶标题底下时不会再盖到标题上（不建上下文的话，
+   角标的 z-index 2 会与标题同级、按 DOM 顺序反盖上去）。 */
 .sigstrip {
+  position: relative;
+  z-index: 1;
   margin: 12rpx 0 4rpx;
   padding: 16rpx 16rpx 14rpx;
   border-radius: var(--r-md);
@@ -811,9 +817,9 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 24rpx;
+  width: 20rpx;
   height: 4rpx;
-  margin: -2rpx 0 0 -12rpx;
+  margin: -2rpx 0 0 -10rpx;
   border-radius: 2rpx;
   background: currentColor;
   content: '';
@@ -825,8 +831,8 @@
   top: 50%;
   left: 50%;
   width: 4rpx;
-  height: 24rpx;
-  margin: -12rpx 0 0 -2rpx;
+  height: 20rpx;
+  margin: -10rpx 0 0 -2rpx;
   border-radius: 2rpx;
   background: currentColor;
   content: '';
@@ -877,16 +883,16 @@
 
 /* 横棒 */
 .plus::before {
-  width: 24rpx;
+  width: 20rpx;
   height: 4rpx;
-  margin: -2rpx 0 0 -12rpx;
+  margin: -2rpx 0 0 -10rpx;
 }
 
 /* 竖棒 */
 .plus::after {
   width: 4rpx;
-  height: 24rpx;
-  margin: -12rpx 0 0 -2rpx;
+  height: 20rpx;
+  margin: -10rpx 0 0 -2rpx;
 }
 
 /* 多规格菜品的份数：挂在加号右上角，不额外占一行宽度。
