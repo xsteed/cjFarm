@@ -83,8 +83,8 @@ func GetOrderByID(orderID int) (po.Order, error) {
 	return ScanOrder(store.DB.QueryRow(`SELECT `+OrderCols+` FROM tb_order WHERE order_id=?`, orderID))
 }
 
-// MarkOrderViewed 记录商家「第一次」查看/操作该订单的时间。
-// 条件里带 viewed_at IS NULL:只写首次时间,后续查看/操作不重复改写;
+// MarkOrderViewed 记录商家「第一次」实际操作该订单的时间(仅查看不算,见 handler.OrderGet)。
+// 条件里带 viewed_at IS NULL:只写首次时间,后续操作不重复改写;
 // 也正因为带条件,重复调用是无副作用的幂等操作。
 func MarkOrderViewed(orderID int) error {
 	_, err := store.DB.Exec(`UPDATE tb_order SET viewed_at=? WHERE order_id=? AND viewed_at IS NULL`,

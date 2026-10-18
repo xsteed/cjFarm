@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils';
 import TDesign from 'tdesign-vue-next';
 import Orders from '../Orders.vue';
-import { finishOrder, listOrders } from '@dining/api';
+import { changeOrderStatus, finishOrder, listOrders } from '@dining/api';
 import { setAuth } from '@dining/auth';
 import { clearAllStorage, flushPromises, stubResizeObserver } from '@shell/test/mocks.ts';
 import type { OrderSummary } from '@dining/types';
@@ -93,6 +93,7 @@ const iconStubs = {
 
 const listOrdersMock = vi.mocked(listOrders);
 const finishOrderMock = vi.mocked(finishOrder);
+const changeOrderStatusMock = vi.mocked(changeOrderStatus);
 
 function order(overrides: Partial<OrderSummary> = {}): OrderSummary {
   return {
@@ -240,7 +241,7 @@ describe('Orders 订单管理页 · 移动端订单卡片按钮矩阵', () => {
     wrapper.unmount();
   });
 
-  it('未查看的新单在卡片左上角显示「新」,点开详情即消解', async () => {
+  it('新单在卡片左上角显示「新」,仅点开详情查看不消解', async () => {
     payFirstState.value = false;
     listOrdersMock.mockResolvedValue({
       total: 2,
@@ -256,10 +257,52 @@ describe('Orders 订单管理页 · 移动端订单卡片按钮矩阵', () => {
     expect(badges).toHaveLength(1);
     expect(badges[0].text()).toBe('新');
 
-    // 打开详情 = 已查看,本地先消掉角标(后端在详情接口落下 viewed_at)
+    // 「新」= 未操作过:仅打开详情查看不清除,角标保留
     await wrapper.findAll('.ocard')[0].trigger('click');
     await flushPromises();
+    expect(wrapper.findAll('.ocard-new')).toHaveLength(1);
+    expect(wrapper.findAll('.ocard')[0].classes()).toContain('is-new');
+    wrapper.unmount();
+  });
+
+  it('操作后消解:点「开始制作」刷新列表,该卡「新」角标消失', async () => {
+    payFirstState.value = false;
+    listOrdersMock
+      .mockResolvedValueOnce({ total: 1, items: [order({ orderId: 1, isNew: true })] })
+      .mockResolvedValueOnce({ total: 1, items: [order({ orderId: 1, isNew: false })] });
+    const wrapper = mountOrders();
+    await flushPromises();
+    expect(wrapper.findAll('.ocard-new')).toHaveLength(1);
+
+    const btn = wrapper.findAll('.ocard-ft button').find(b => (b.text() || '').includes('开始制作'));
+    expect(btn).toBeTruthy();
+    await btn!.trigger('click');
+    await flushPromises();
+    expect(changeOrderStatusMock).toHaveBeenCalledWith({ orderId: 1, orderStatus: 2 });
     expect(wrapper.findAll('.ocard-new')).toHaveLength(0);
+    wrapper.unmount();
+  });
+
+  it('多张新单互不影响:点开其中一张,其余新单的角标与高亮保留', async () => {
+    payFirstState.value = false;
+    listOrdersMock.mockResolvedValue({
+      total: 2,
+      items: [
+        order({ orderId: 1, isNew: true }),
+        order({ orderId: 2, orderNo: 'NO20261017002', isNew: true })
+      ]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+    expect(wrapper.findAll('.ocard.is-new')).toHaveLength(2);
+    expect(wrapper.findAll('.ocard-new')).toHaveLength(2);
+
+    // 仅查看不消解:点第一张后,两张的角标与高亮都保留
+    await wrapper.findAll('.ocard')[0].trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('.ocard.is-new')).toHaveLength(2);
+    expect(wrapper.findAll('.ocard-new')).toHaveLength(2);
+    expect(wrapper.findAll('.ocard')[1].classes()).toContain('is-new');
     wrapper.unmount();
   });
 

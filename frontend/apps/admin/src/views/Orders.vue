@@ -155,19 +155,20 @@
           v-for="row in list"
           :key="row.orderId"
           class="ocard ocard-tap"
+          :class="{ 'is-new': row.isNew }"
           role="button"
           tabindex="0"
           @click="openDetail(row)"
           @keydown.enter="openDetail(row)"
           @keydown.space.prevent="openDetail(row)"
         >
+          <!-- 「新」badge:贴在卡片左上角,顾客刚下单、商家还没操作过的新单一眼可见(仅查看不消解) -->
+          <span
+            v-if="row.isNew"
+            class="ocard-new"
+            title="新订单，尚未处理"
+          >新</span>
           <div class="ocard-top">
-            <!-- 「新」角标:顾客刚下单、商家还没点开过/操作过的新单,左上角一眼可见 -->
-            <span
-              v-if="row.isNew"
-              class="ocard-new"
-              title="新订单，尚未查看"
-            >新</span>
             <span class="ocard-no"
               ><span class="ocard-no-label">短号(取餐号):</span
               >#{{ row.shortNo || row.orderNo.slice(-6) }}</span
@@ -281,7 +282,7 @@
       @page-change="onTablePageChange"
     >
       <template #orderNo="{ row }">
-        <!-- 「新」角标:与移动端卡片同口径(未查看的新单) -->
+        <!-- 「新」角标:与移动端卡片同口径(未操作过的新单) -->
         <t-tag
           v-if="row.isNew"
           theme="primary"
@@ -775,12 +776,12 @@ function onTablePageChange(pageInfo: PageInfo): void {
 }
 
 // openDetail 打开详情弹窗:只给组件 orderId,详情与退款记录由组件自行拉取。
+// 注意:「新」角标不在这里消解 —— 仅查看不算操作,「新」表示「未处理过」;
+// 只有实际操作(弹窗内操作 emit changed → 列表刷新,或列表行操作)后,
+// 服务端落下 viewed_at,下一轮列表刷新时角标才消失。
 function openDetail(row: OrderRow): void {
   detailOrderId.value = Number(row.orderId) || 0;
   detailVisible.value = true;
-  // 打开即视为「已查看」:本地先消掉「新」角标,后端在详情接口(OrderGet)里落下
-  // viewed_at,不必等下一轮 10s 轮询才变。标记失败时下一轮刷新会把它带回来。
-  if (row.isNew) row.isNew = false;
 }
 
 // afterRowAction 列表行操作后的收尾:详情弹窗开着就顺带刷新它(组件内部会 emit changed

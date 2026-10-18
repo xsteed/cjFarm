@@ -536,6 +536,9 @@ func PayRefund(c *gin.Context) {
 		fail(c, "订单未支付，无法在线退款")
 		return
 	}
+	// 发起退款即视为商家已实际处理这单:列表「新」角标随之消解(与制作/收款/结账等操作同口径)。
+	// 放在参数与状态校验之后:无效请求不标记;后续渠道退款无论成功/失败/转处理中,都算操作过。
+	service.MarkOrderViewed(p.OrderID)
 	// 找支付流水:已支付或(部分)已退款的流水都可用于继续退款,避免部分退款后剩余金额退不掉。
 	flow, flowErr := service.LastPaidPayment(orderNo)
 	if flowErr != nil {

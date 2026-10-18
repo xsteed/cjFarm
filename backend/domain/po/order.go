@@ -94,8 +94,8 @@ type Order struct {
 	// 历史行与进行中订单为 NULL,读取方回落到 create_time / finish_time。
 	MealStartTime *string
 	MealEndTime   *string
-	// ViewedAt 商家首次在平台查看/操作该订单的时间;NULL 表示新单还没人看过。
-	// 列表据此给「已下单」的未查看订单打「新」角标,查看详情或任意操作后写入(不再改写)。
+	// ViewedAt 商家首次实际操作该订单的时间(制作/收款/结账/取消/完成/改单/催办/补打/退款);NULL 表示还没操作过。
+	// 仅打开详情查看不算操作:列表据此给「已下单」的未操作订单打「新」角标,任意操作后写入(不再改写)。
 	ViewedAt     *string
 	OrderRemark  string
 	CancelReason string

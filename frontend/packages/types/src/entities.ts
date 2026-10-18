@@ -141,8 +141,8 @@ export interface OrderSummary extends Extensible {
   remark?: NullableString;
   pendingUrge?: boolean;
   /**
-   * 是否是商家还没查看/操作过的新单:服务端按「已下单 + 从未查看」计算。
-   * 仅列表接口返回(详情打开即视为已查看),前端据此在卡片左上角打「新」角标。
+   * 是否是商家还没操作过的新单:服务端按「已下单 + 从未操作」计算(仅查看不算)。
+   * 列表接口恒返回 true/false;前端据此在卡片左上角打「新」角标。
    */
   isNew?: boolean;
   /** 加菜批次数(明细 distinct batch_no):>1 表示本单加过菜,列表据此打「加菜×N」角标。列表接口填充 */

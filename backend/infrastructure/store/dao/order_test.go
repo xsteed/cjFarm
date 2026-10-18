@@ -77,10 +77,12 @@ func TestOrderInsertAndScanRoundTrip(t *testing.T) {
 	}
 }
 
-// 新单 viewed_at 为 NULL;MarkOrderViewed 只写首次时间,已有值时不再改写。
+// 新单 viewed_at 为 NULL;MarkOrderViewed 只写首次时间,已有值时不再改写;
+// 且标记严格按 order_id 生效,不影响同库的其它新单(列表「新」角标互不干扰的前提)。
 func TestMarkOrderViewedWritesFirstTimeOnly(t *testing.T) {
 	orderDaoInitDB(t)
 	id := orderDaoCreate(t, "D-VIEW-0001", 1)
+	otherID := orderDaoCreateAt(t, "D-VIEW-0002", 2, "02")
 
 	o, err := GetOrderByID(id)
 	if err != nil {
@@ -96,6 +98,15 @@ func TestMarkOrderViewedWritesFirstTimeOnly(t *testing.T) {
 	first, err := GetOrderByID(id)
 	if err != nil || first.ViewedAt == nil {
 		t.Fatalf("标记后应回读到查看时间, err=%v got=%v", err, first.ViewedAt)
+	}
+
+	// 另一张新单必须原封不动:这是「点一张卡只消一张角标」的数据层前提。
+	other, err := GetOrderByID(otherID)
+	if err != nil {
+		t.Fatalf("查询另一张新单失败: %v", err)
+	}
+	if other.ViewedAt != nil {
+		t.Fatalf("标记订单 %d 不应波及订单 %d, 其 viewed_at=%q", id, otherID, *other.ViewedAt)
 	}
 
 	// 手工改成更早的时间后再标一次:守卫 viewed_at IS NULL 应让它保持原值。

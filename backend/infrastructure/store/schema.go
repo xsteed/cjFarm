@@ -332,8 +332,8 @@ var schemaTemplate = []string{
 		-- 默认 NULL 而非空串:区分「还没结束」与「时间未知」,回填脚本与报警 SQL 一眼明了。
 		meal_start_time VARCHAR(32) DEFAULT NULL,
 		meal_end_time VARCHAR(32) DEFAULT NULL,
-		-- 商家首次查看/操作该订单的时间:NULL = 还没人看过。
-		-- 列表据此给「已下单」的未查看订单打「新」角标,打开详情或任意操作后写入,只写一次。
+		-- 商家首次实际操作该订单的时间:NULL = 还没操作过(仅打开详情查看不算)。
+		-- 列表据此给「已下单」的未操作订单打「新」角标,任意操作后写入,只写一次。
 		viewed_at VARCHAR(32) DEFAULT NULL,
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
@@ -905,7 +905,7 @@ var alterCols = []alterCol{
 	// finish_time 补齐；读侧一律 COALESCE 回落到这两列，保证升级前后统计口径一致。
 	{Table: "tb_order", Name: "meal_start_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_order", Name: "meal_end_time", Def: "VARCHAR(32) DEFAULT NULL"},
-	// 商家首次查看/操作时间:老库补列后为 NULL,历史订单不会被批量打上「新」角标
+	// 商家首次操作时间:老库补列后为 NULL,历史订单不会被批量打上「新」角标
 	// (角标条件还叠加了「已下单」,已完成/已取消的历史单本来就不会命中)。
 	{Table: "tb_order", Name: "viewed_at", Def: "VARCHAR(32) DEFAULT NULL"},
 	// ---- 通用记录时间补齐 ----

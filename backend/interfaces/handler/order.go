@@ -83,7 +83,9 @@ func OrderList(c *gin.Context) {
 		d.RefundingAmount = po.ToYuan(refunding[o.OrderID])
 		// 「新」角标:已下单且商家从未查看/操作过(viewed_at 为空)。
 		// 只在列表接口算:详情一打开就会被标记为已查看,顾客端也不需要这个内部状态。
-		d.IsNew = o.OrderStatus == service.OrderStatusPlaced && o.ViewedAt == nil
+		// 每行都显式填充(true/false 恒二选一),前端与联调不用猜「缺字段= false」。
+		isNew := o.OrderStatus == service.OrderStatusPlaced && o.ViewedAt == nil
+		d.IsNew = &isNew
 		out = append(out, d)
 	}
 	tableResult(c, total, out)
@@ -99,9 +101,8 @@ func OrderGet(c *gin.Context) {
 		fail(c, "订单不存在")
 		return
 	}
-	// 打开详情即视为「已查看」:列表的「新」角标随之消解(下一轮列表刷新生效)。
-	// 放在成功读取之后,读不到的订单不会被误标。
-	service.MarkOrderViewed(id)
+	// 注意:仅查看不消解「新」角标 —— 「新」的口径是「未操作过」,
+	// 商家点开看一眼不代表处理了这单;只有实际操作(制作/收款/结账/取消/完成/改单/催办/补打)才标记。
 	items := make([]dto.OrderItem, 0, len(poItems))
 	for _, it := range poItems {
 		items = append(items, dto.FromOrderItem(it))

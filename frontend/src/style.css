@@ -846,6 +846,8 @@ svg.ic-svg {
 
 /* ---- 订单卡片 ---- */
 .ocard {
+  /* relative:承载左上角的「新」badge */
+  position: relative;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -863,23 +865,54 @@ svg.ic-svg {
   gap: 8px;
 }
 
-/* 「新」角标:商家还没点开过/操作过的新单,卡片左上角的小胶囊。
-   用品牌色实心块(而非浅色标签)是为了在一屏卡片里第一眼就能扫到 */
+/* 「新」badge:贴在卡片左上角的实心小旗,左上圆角与卡片一致,像长在卡上。
+   缓慢的呼吸光环提示「这里有待处理」,系统开了「减少动态效果」时保持静止 */
 .ocard-new {
-  flex-shrink: 0;
-  margin-right: 6px;
-  padding: 0 6px;
-  border-radius: 6px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 2px 7px;
+  border-radius: 13px 0 10px;
   background: var(--brand);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
-  line-height: 17px;
+  line-height: 16px;
+  animation: ocard-new-pulse 2.4s ease-out infinite;
+}
+
+/* 新单整卡强调:浅品牌底 + 品牌色描边,与桌台瓦片「使用中」(m-tile.busy)同一套
+   视觉语言 —— 一屏多卡时整卡色块比 20px 小旗更容易被余光捕捉;
+   点开/操作后整卡褪回普通白卡,「消解」的对比一目了然 */
+.ocard.is-new {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+/* 有 badge 的卡片给首行让位,避免盖住短号;无 badge 的卡片布局不变 */
+.ocard.is-new .ocard-top {
+  padding-left: 29px;
+}
+
+@keyframes ocard-new-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(255 107 53 / 45%);
+  }
+
+  70%,
+  100% {
+    box-shadow: 0 0 0 6px rgb(255 107 53 / 0%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ocard-new {
+    animation: none;
+  }
 }
 
 .ocard-no {
-  /* 让短号占满中间空间:有没有「新」角标,右侧状态标签都恒靠右 */
-  margin-right: auto;
   font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.5px;
