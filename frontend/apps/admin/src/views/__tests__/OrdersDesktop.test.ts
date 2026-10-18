@@ -176,3 +176,28 @@ describe('Orders 订单管理页 · 桌面端桌台列', () => {
     wrapper.unmount();
   });
 });
+describe('Orders 订单管理页 · 桌面端「待完成」提示', () => {
+  it('待完成订单:状态列带「待完成」标签,且整行高亮', async () => {
+    // 先付模式下已收款、还差点「完成订单」归档释放桌台的进行中订单
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [{ ...oneOrder()[0], orderStatus: 2, payStatus: 1, needFinish: true }]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    // row-class-name 函数按 needFinish 给整行挂 is-need-finish(浅成功底)
+    expect(wrapper.find('tbody tr.is-need-finish').exists()).toBe(true);
+    expect(wrapper.find('table').text()).toContain('待完成');
+    wrapper.unmount();
+  });
+
+  it('普通订单:不高亮、无「待完成」标签', async () => {
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    expect(wrapper.find('tr.is-need-finish').exists()).toBe(false);
+    expect(wrapper.find('table').text()).not.toContain('待完成');
+    wrapper.unmount();
+  });
+});

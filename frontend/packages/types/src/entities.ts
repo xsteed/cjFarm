@@ -148,6 +148,12 @@ export interface OrderSummary extends Extensible {
    * 列表接口恒返回 true/false;前端据此在卡片左上角打「新」角标。
    */
   isNew?: boolean;
+  /**
+   * 是否是「已收款、还差一步完成订单」的订单(先付收款后到点完成之间的进行中状态):
+   * 桌台仍被占用,漏点「完成订单」就一直释放不了。列表接口恒返回 true/false;
+   * 前端据此在卡片右上角打「待完成」角标并高亮整卡,桌面表格同步标签 + 行高亮。
+   */
+  needFinish?: boolean;
   /** 加菜批次数(明细 distinct batch_no):>1 表示本单加过菜,列表据此打「加菜×N」角标。列表接口填充 */
   batchCount?: number;
 }

@@ -163,7 +163,7 @@
           v-for="row in list"
           :key="row.orderId"
           class="ocard ocard-tap"
-          :class="{ 'is-new': row.isNew }"
+          :class="{ 'is-new': row.isNew, 'is-need-finish': row.needFinish }"
           role="button"
           tabindex="0"
           @click="openDetail(row)"
@@ -176,6 +176,12 @@
             class="ocard-new"
             title="新订单，尚未处理"
           >新</span>
+          <!-- 「待完成」badge:右上角与「新」左右对称,先付已收款、还差点「完成订单」归档释放桌台 -->
+          <span
+            v-if="row.needFinish"
+            class="ocard-finish"
+            title="已收款，点「完成订单」归档并释放桌台"
+          >待完成</span>
           <div class="ocard-top">
             <span class="ocard-no"
               ><span class="ocard-no-label">短号(取餐号):</span
@@ -285,6 +291,7 @@
       :data="list"
       :columns="columns"
       row-key="orderId"
+      :row-class-name="rowClass"
       :loading="loading"
       :pagination="pagination"
       @page-change="onTablePageChange"
@@ -353,6 +360,17 @@
           variant="light"
         >
           {{ ORDER_STATUS[row.orderStatus]?.label }}
+        </t-tag>
+        <!-- 「待完成」:已收款、还差点「完成订单」归档释放桌台(success 浅绿,与移动端卡片同色系) -->
+        <t-tag
+          v-if="row.needFinish"
+          theme="success"
+          variant="light"
+          size="small"
+          style="margin-left: 6px"
+          title="已收款，点「完成订单」归档并释放桌台"
+        >
+          待完成
         </t-tag>
       </template>
       <template #payStatus="{ row }">
@@ -448,6 +466,17 @@
             @click="openRefund(row)"
           >
             退款
+          </t-button>
+          <!-- 完成订单:桌面端原先只有详情弹窗里有这个出口,先付收款后要释放桌台时
+               得先打开详情,补一个行内按钮;warning 琥珀与移动端卡片按钮同色(避开结账的 success 绿) -->
+          <t-button
+            theme="warning"
+            variant="text"
+            size="small"
+            :disabled="!canFinishRow(row)"
+            @click="onFinish(row)"
+          >
+            完成
           </t-button>
         </t-space>
       </template>
@@ -549,7 +578,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, h } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { listOrders, changeOrderStatus, cancelOrder, finishOrder, handleUrge, ORDER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
@@ -694,6 +723,12 @@ function canSettleRow(row: OrderRow): boolean {
 // 未支付订单点了仍会被后端拒绝(先收款/结账),所以这里只管状态与收款两道。
 function canFinishRow(row: OrderRow): boolean {
   return !!row && [1, 2, 3].includes(row.orderStatus) && row.payStatus === 1 && canOperate.value;
+}
+
+// 桌面表格行高亮:待完成(已收款未归档)的整行浅成功色,与移动端卡片高亮同口径。
+// t-table 的 row-class-name 传函数时收到的是 params 对象({ row, rowIndex, ... }),不是行数据本身。
+function rowClass(params: { row?: OrderRow }): string {
+  return params?.row?.needFinish ? 'is-need-finish' : '';
 }
 function canCancelRow(row: OrderRow): boolean {
   // 已支付订单不可直接取消(后端 CancelOrder 会拒绝并要求先退款),
@@ -864,11 +899,29 @@ function onCancel(row: OrderRow): void {
 
 // onFinish 完成订单:归档、计入今日统计并释放桌台。与详情弹窗的「完成订单」同一接口,
 // 确认文案保持一致;先付模式下顾客付款后单子常停在「已下单」,卡片上给个直接出口。
+// 先付单的小票已在「确认收款」时出过(printKitchenOnPaid),完成订单只是归档兜底动作,
+// 不再出纸。提示不能跟正文挤成一句话:正文留原样,出纸提示单独成块,样式与「确认收款」
+// 弹窗的出纸提示牌(SettleDialog .st-hint-print)完全一致 —— 品牌橙浅底、12px,
+// 「不会打印小票」加粗,两处出纸提示在收银眼里是同一种"会涉及出纸"的信号。
 function onFinish(row: OrderRow): void {
   if (acting.value) return;
+  const finishBody = payFirst.value
+    ? () =>
+        h('div', { style: 'display:flex;flex-direction:column;gap:10px;' }, [
+          h('div', '确认后订单将归档并计入今日统计，桌台释放为空闲。'),
+          h(
+            'div',
+            {
+              style:
+                'padding:8px 12px;border:1px solid #ffd5c4;border-radius:8px;background:var(--brand-ghost,#fff8f5);color:var(--brand-deep,#f0481f);font-size:12px;line-height:1.5;'
+            },
+            [h('strong', '先付模式下不会打印小票'), h('span', '，仅归档并释放桌台。')]
+          )
+        ])
+    : '确认后订单将归档并计入今日统计，桌台释放为空闲。';
   const dlg = DialogPlugin.confirm({
-    header: '确认完成',
-    body: '确认后订单将归档并计入今日统计，桌台释放为空闲。',
+    header: '确认完成订单，释放桌台',
+    body: finishBody,
     onConfirm: async () => {
       acting.value = true;
       try {
@@ -912,8 +965,10 @@ function cardActions(row: OrderRow): CardAction[] {
       });
     if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canCancel.value)
       items.push({ key: 'cancel', label: '取消订单', theme: 'danger', run: () => onCancel(row) });
+    // 完成订单用 warning(琥珀):与确认收款(success 绿)、取消(danger 红)、详情(primary 橙)
+    // 四色全区分 —— 收银一瞥即知哪个是「收尾」,不会跟「收款」看混。
     if (canFinishRow(row))
-      items.push({ key: 'finish', label: '完成订单', theme: 'primary', run: () => onFinish(row), disabled: acting.value });
+      items.push({ key: 'finish', label: '完成订单', theme: 'warning', run: () => onFinish(row), disabled: acting.value });
     return items;
   }
   // 后付模式:完整操作铺在卡片上(制作/上齐是厨房流程,催办/退款按行状态出现)。

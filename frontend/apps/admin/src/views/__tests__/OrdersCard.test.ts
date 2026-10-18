@@ -241,6 +241,62 @@ describe('Orders 订单管理页 · 移动端订单卡片按钮矩阵', () => {
     wrapper.unmount();
   });
 
+  it('先付模式·已收款待完成:右上角「待完成」badge + 整卡高亮,点完成后消失', async () => {
+    payFirstState.value = true;
+    listOrdersMock
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [order({ orderId: 1, orderStatus: 2, payStatus: 1, payType: '微信支付', needFinish: true })]
+      })
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [order({ orderId: 1, orderStatus: 2, payStatus: 1, payType: '微信支付', needFinish: false })]
+      });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    // badge + 整卡高亮(is-need-finish 驱动浅成功底与绿描边),与「新」单同款样式
+    const badge = wrapper.find('.ocard-finish');
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toBe('待完成');
+    expect(wrapper.find('.ocard').classes()).toContain('is-need-finish');
+
+    // 点「完成订单」→ 二次确认 → 归档 → 列表刷新:badge 与整卡高亮一并消失
+    const btn = wrapper.findAll('.ocard-ft button').find(b => (b.text() || '').includes('完成订单'));
+    await btn!.trigger('click');
+    await flushPromises();
+    const confirmBtn = document.querySelector('.t-dialog__confirm') as HTMLElement | null;
+    expect(confirmBtn).toBeTruthy();
+    confirmBtn!.click();
+    await flushPromises();
+    expect(finishOrderMock).toHaveBeenCalledWith({ orderId: 1 });
+    expect(wrapper.find('.ocard-finish').exists()).toBe(false);
+    expect(wrapper.find('.ocard').classes()).not.toContain('is-need-finish');
+    wrapper.unmount();
+  });
+
+  it('已收款的单不会再被标成「新」:needFinish 与 isNew 互斥渲染', async () => {
+    payFirstState.value = true;
+    listOrdersMock.mockResolvedValue({
+      total: 2,
+      items: [
+        order({ orderId: 1, orderStatus: 2, payStatus: 1, payType: '微信支付', isNew: false, needFinish: true }),
+        order({ orderId: 2, orderNo: 'NO20261017002', orderStatus: 1, payStatus: 0, isNew: true, needFinish: false })
+      ]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    const cards = wrapper.findAll('.ocard');
+    expect(cards[0].classes()).toContain('is-need-finish');
+    expect(cards[0].classes()).not.toContain('is-new');
+    expect(cards[1].classes()).toContain('is-new');
+    expect(cards[1].classes()).not.toContain('is-need-finish');
+    expect(wrapper.findAll('.ocard-finish')).toHaveLength(1);
+    expect(wrapper.findAll('.ocard-new')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
   it('新单在卡片左上角显示「新」,仅点开详情查看不消解', async () => {
     payFirstState.value = false;
     listOrdersMock.mockResolvedValue({

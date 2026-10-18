@@ -115,7 +115,13 @@ type Order struct {
 	// IsNew 是否是「商家还没操作过的新单」(运行时填充,不入库):
 	// 指针形态 —— 订单列表接口对每一行都填充(true/false 两值恒出现,联调时字段形态稳定);
 	// 详情/顾客端不填充(nil + omitempty → 字段整体不出现),内部状态不外泄。
-	IsNew      *bool       `json:"isNew,omitempty"`
+	IsNew *bool `json:"isNew,omitempty"`
+	// NeedFinish 是否是「已收款、还差一步完成订单」的订单(运行时填充,不入库):
+	// 先付模式下顾客付完款、订单仍是进行中(已下单/制作中/已上齐),桌台还被占着,
+	// 必须商家点「完成订单」才归档释放桌台 —— 这个中间态没有任何视觉提示,
+	// 收银很容易忘,桌台就这么一直占着。列表接口据此打「待完成」提示。
+	// 指针形态同 IsNew:列表每行恒填 true/false,详情/顾客端不出现。
+	NeedFinish *bool       `json:"needFinish,omitempty"`
 	BatchCount int         `json:"batchCount"` // 加菜批次数(运行时填充,不入库):明细 distinct batch_no,1=未加过菜。列表接口填充,详情接口明细自带 batchNo 无需它
 	Items      []OrderItem `json:"items"`
 }

@@ -895,6 +895,40 @@ svg.ic-svg {
   padding-left: 29px;
 }
 
+/* 「待完成」badge:贴在右上角,与「新」(左上橙)左右对称 —— 先付已收款、
+   还差点「完成订单」归档释放桌台。用成功色(绿):与「确认收款」同色系,
+   语义连贯(钱收好了、待收尾),右上圆角与卡片圆角吻合,像长在卡上 */
+.ocard-finish {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  padding: 2px 7px;
+  border-radius: 0 13px 0 10px;
+  background: var(--success);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+/* 待完成整卡强调:浅成功底 + 成功色描边,与「新」单同一套视觉语言(色系不同:
+   橙=有单没人动,绿=收了钱还没归档)。点「完成订单」(琥珀色按钮)后整卡褪回白卡 */
+.ocard.is-need-finish {
+  border-color: var(--success);
+  background: var(--success-soft);
+}
+
+/* 右上角有 badge 时给首行让位,避免盖住右侧状态标签 */
+.ocard.is-need-finish .ocard-top {
+  padding-right: 56px;
+}
+
+/* 桌面表格行高亮:与移动端卡片同口径(浅成功底) */
+tr.is-need-finish > td {
+  background: var(--success-soft);
+}
+
 @keyframes ocard-new-pulse {
   0% {
     box-shadow: 0 0 0 0 rgb(255 107 53 / 45%);

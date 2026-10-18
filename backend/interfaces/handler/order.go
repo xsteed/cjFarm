@@ -90,6 +90,10 @@ func OrderList(c *gin.Context) {
 		// 每行都显式填充(true/false 恒二选一),前端与联调不用猜「缺字段= false」。
 		isNew := o.OrderStatus == service.OrderStatusPlaced && o.ViewedAt == nil
 		d.IsNew = &isNew
+		// 「待完成」提示:已支付且订单仍是进行中(先付收款后到点「完成订单」归档之间的状态)。
+		// 这期间桌台仍被占用,漏点「完成订单」桌台就一直释放不了 —— 给列表一个显式提示。
+		needFinish := service.ActiveStatus(o.OrderStatus) && o.PayStatus == 1
+		d.NeedFinish = &needFinish
 		out = append(out, d)
 	}
 	tableResult(c, total, out)
