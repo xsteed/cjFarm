@@ -244,7 +244,8 @@ export interface TicketLine {
   center?: boolean;
   /**
    * 为真表示这一行按「放大」出纸(打印机 GS ! 倍宽倍高 / 飞鹅 <C><B> 或 <B>)。
-   * 放大行的字符网格已失效,前端不再按格渲染,直接用大字显示;
+   * 仍按字符网格渲染,只是字号与格宽翻倍 —— 整张票放大(结账小票)时,
+   * 「菜名 —— 金额」的两列对齐依赖 pad 出来的空格,按普通文本流会被折叠错位。
    * 是否居中看 bigLeft。
    */
   big?: boolean;
@@ -266,6 +267,12 @@ export interface TicketPreview {
   splitMode?: string;
   /** 触发场景:guest 单据靠它区分两种形态(顾客小票/结账小票),见 dicts.printDocLabel */
   triggerBy?: string;
+  /** 为 true 表示这份预览按「小票字体放大」出纸(整张倍宽倍高,仅飞鹅云通道) */
+  largeFont?: boolean;
+  /** 系统配置里的「小票字体放大」开关是否开启(未开启时上面恒为 false) */
+  largeFontEnabled?: boolean;
+  /** 该打印机通道是否支持整张放大(仅飞鹅云;直连/代理不支持) */
+  largeFontSupported?: boolean;
   orderNo?: string;
   printerName?: string;
   copies?: number;
@@ -280,6 +287,23 @@ export interface TicketPreview {
    * 菜品区退化为订单当前整单,UI 需要显式说明。
    */
   approximate?: boolean;
+}
+
+/**
+ * 票据预览弹窗里的一段:一张独立出纸的票(如顾客小票机的「点菜单」与「结账小票」)。
+ * 弹窗按段上下平铺,段与段之间留间距 —— 两种形态同时可见,不用来回切换。
+ */
+export interface TicketPreviewSection {
+  /** 段标题(如「点菜单（下单）」);不传则不显示标题行 */
+  title?: string;
+  /** 段说明(如「整单一张 · 未放大:仅飞鹅云通道生效」) */
+  note?: string;
+  /** 该票分段后的文本行,一段就是一张纸 */
+  chunks?: TicketLine[][] | null;
+  /** 该票的纸宽(58mm=32,80mm=48);缺省按 48 */
+  lineWidth?: number;
+  /** 打印份数;>1 时提示只展示其中一份 */
+  copies?: number;
 }
 
 export interface UserInfo extends Extensible {

@@ -58,11 +58,19 @@ export const previewPrintLog = (printId: Id): Promise<TicketPreview> =>
 
 // 票据预览(不出纸):默认按该机当前设置模拟真实出纸 —— 纸宽、负责分类、
 // 厨房单打印粒度(一菜一单等)、通道分段全部生效,一段就是实际出的一张纸;
-// kind='test' 渲染测试页(与「测试打印」出的那张一致)。
-export const previewPrinter = (id: Id, kind: 'ticket' | 'test' = 'ticket'): Promise<TicketPreview> =>
-  http.get<unknown, TicketPreview>(`/admin/printer/preview/${id}`, {
-    params: kind === 'test' ? { kind } : undefined
+// kind='test' 渲染测试页(与「测试打印」出的那张一致);
+// trigger='settle' 预览顾客小票机的结账形态(默认 'order' 出点菜单,厨房机忽略)。
+export const previewPrinter = (
+  id: Id,
+  opts: { kind?: 'ticket' | 'test'; trigger?: 'order' | 'settle' } = {}
+): Promise<TicketPreview> => {
+  const params: Record<string, string> = {};
+  if (opts.kind === 'test') params.kind = 'test';
+  if (opts.trigger === 'settle') params.trigger = 'settle';
+  return http.get<unknown, TicketPreview>(`/admin/printer/preview/${id}`, {
+    params: Object.keys(params).length ? params : undefined
   });
+};
 
 // 示例模板预览:不依赖真实订单,用示例数据 + 配置渲染「预计打印模板」;
 // 请求体可携带表单里未保存的值(footer/开关)即时覆盖,所见即所改。
@@ -71,6 +79,8 @@ export interface SamplePreviewPayload {
   paperWidth?: number;
   footer?: string;
   showDiscount?: boolean;
+  /** 结账小票整张放大开关覆盖(未保存的表单值也能预览) */
+  largeFont?: boolean;
   /** 小票末尾二维码开关覆盖(未保存的表单值也能预览) */
   qr?: boolean;
   kitchenShowPrice?: boolean;

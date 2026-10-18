@@ -81,6 +81,9 @@ var settingDefaults = map[string]string{
 	//   print_kitchen_show_price  厨房单是否带单价与金额(默认不打,后厨只看菜名和数量);
 	//   print_guest_footer        顾客小票页脚文案,清空则不打印页脚(门店可改成自己的口号);
 	//   print_guest_show_discount 结账小票是否显示优惠行(默认显示,有优惠时才出现该行;点菜单不出优惠行);
+	//   print_guest_large_font    结账小票是否整张放大一倍(默认关,仅飞鹅云通道);
+	//                             放大后行宽按半个纸宽重排,票面长度约翻倍 —— 菜品多的大单
+	//                             可能被顺带切成两次推送,费纸但看得清;
 	//   print_guest_on_append     加菜后是否向小票机出「加菜小票」(只列本次新菜,默认开);
 	//   print_guest_on_order      下单后是否向小票机出「点菜单」(默认开,嫌与结账小票重复可关)。
 	//   print_kitchen_split_mode  厨房单打印粒度:whole=整单一张(默认)/ item=一菜一单 /
@@ -92,6 +95,7 @@ var settingDefaults = map[string]string{
 	"print_kitchen_split_mode":  "whole",
 	"print_guest_footer":        "谢谢惠顾，欢迎再次光临！",
 	"print_guest_show_discount": "1",
+	"print_guest_large_font":    "0",
 	"print_guest_on_append":     "1",
 	"print_guest_on_order":      "1",
 	// 飞鹅云打印(provider=feie 的打印机使用)。

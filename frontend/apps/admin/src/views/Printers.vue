@@ -456,14 +456,14 @@
       </template>
     </t-table>
 
-    <!-- 票据预览:按该机当前设置模拟真实出纸,不出纸先核对版式 -->
+    <!-- 票据预览:按该机当前设置模拟真实出纸,不出纸先核对版式。
+         顾客小票机同时铺开「点菜单」与「结账小票」两张 —— 结账与下单出的是
+         两张内容不同的票(优惠/支付方式/结账时间),只给一张会让人以为漏打。 -->
     <TicketPreviewDialog
       v-model:visible="previewVisible"
       :title="previewTitle"
       :loading="previewLoading"
-      :chunks="previewData?.chunks"
-      :line-width="previewData?.lineWidth ?? 48"
-      :copies="previewRow?.copies"
+      :sections="previewSections"
     >
       <template #meta>
         {{ previewMeta }}
@@ -692,7 +692,14 @@ import { hasPerm } from '@dining/auth';
 import PullRefresh from '../components/PullRefresh.vue';
 import MobileFab from '../components/MobileFab.vue';
 import TicketPreviewDialog from '../components/TicketPreviewDialog.vue';
-import type { MenuCategory, PrintAgent, Printer, PrinterPayload, TicketPreview } from '@dining/types';
+import type {
+  MenuCategory,
+  PrintAgent,
+  Printer,
+  PrinterPayload,
+  TicketPreview,
+  TicketPreviewSection
+} from '@dining/types';
 
 // 列表行在模板/操作函数里要把 printerId 传给各打印机接口(参数为 number | string),
 // 并拿 provider 当字典下标,Printer 字段全可选,这里收紧为必填。
@@ -1028,8 +1035,10 @@ async function onTest(row: PrinterRow): Promise<void> {
 // 一段就是实际吐出的一张纸。
 const previewVisible = ref(false);
 const previewLoading = ref(false);
-const previewData = ref<TicketPreview | null>(null);
 const previewRow = ref<PrinterRow | null>(null);
+// 顾客小票机要两张:下单时的点菜单 + 结账时的结账小票(内容不同,见后端 triggerBy)。
+const previewOrderData = ref<TicketPreview | null>(null);
+const previewSettleData = ref<TicketPreview | null>(null);
 
 const previewTitle = computed(() =>
   previewRow.value ? `票据预览 · ${previewRow.value.printerName} · 按当前设置模拟出纸` : '票据预览'
@@ -1038,9 +1047,49 @@ const previewTitle = computed(() =>
 // 厨房单打印粒度中文名(与 po.KitchenSplitModes 同一套取值)
 const SPLIT_LABEL: Record<string, string> = { whole: '整单一张', item: '一菜一单', portion: '按份数拆' };
 
+// 结账小票那一段的说明:把「为什么没放大」直接写在纸上方 ——
+// 放大只对飞鹅云落地,且要系统配置里开启;不说清商家只会以为功能坏了。
+function settleNote(d: TicketPreview): string {
+  const base = '结账时出纸 · 整单一张';
+  if (d.largeFont) return `${base} · 已整张放大一倍（倍宽倍高）`;
+  if (d.largeFontSupported === false) return `${base} · 未放大：仅飞鹅云通道生效，当前为直连/代理打印机`;
+  if (d.largeFontEnabled === false) return `${base} · 未放大：系统配置「小票字体放大」未开启`;
+  return base;
+}
+
+// 上下平铺的段:一段一张独立的票,卡片之间由弹窗样式留出间距。
+const previewSections = computed<TicketPreviewSection[]>(() => {
+  const row = previewRow.value;
+  if (!row) return [];
+  const out: TicketPreviewSection[] = [];
+  const order = previewOrderData.value;
+  if (order) {
+    const kitchen = order.docType === 'kitchen';
+    const split = SPLIT_LABEL[order.splitMode || 'whole'] || order.splitMode || '整单一张';
+    out.push({
+      title: kitchen ? '厨房单' : '点菜单（下单）',
+      note: kitchen ? `下单时出纸 · ${split}` : '下单时出纸 · 整单一张',
+      chunks: order.chunks,
+      lineWidth: order.lineWidth,
+      copies: row.copies
+    });
+  }
+  const settle = previewSettleData.value;
+  if (settle) {
+    out.push({
+      title: '结账小票',
+      note: settleNote(settle),
+      chunks: settle.chunks,
+      lineWidth: settle.lineWidth,
+      copies: row.copies
+    });
+  }
+  return out;
+});
+
 // 底部说明:与打印记录页的 meta 同一行级短句,说清这份预览按哪些设置模拟。
 const previewMeta = computed((): string => {
-  const d = previewData.value;
+  const d = previewOrderData.value;
   if (!d) return '';
   const paper = d.lineWidth === 32 ? '58mm' : '80mm';
   const cat = previewRow.value?.categoryNames ? '，已按负责分类过滤菜品' : '';
@@ -1053,16 +1102,24 @@ const previewMeta = computed((): string => {
     const split = SPLIT_LABEL[d.splitMode || 'whole'] || d.splitMode || '整单一张';
     return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，厨房单粒度「${split}」，每张纸即后厨收到的一张${cat}。`;
   }
-  return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，点菜单形态，整单一张。`;
+  return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，上下两张分别是下单与结账时实际会出的票。`;
 });
 
 async function onPreview(row: PrinterRow): Promise<void> {
+  previewRow.value = row;
   previewVisible.value = true;
   previewLoading.value = true;
-  previewData.value = null;
-  previewRow.value = row;
+  previewOrderData.value = null;
+  previewSettleData.value = null;
   try {
-    previewData.value = await previewPrinter(row.printerId);
+    // 厨房机不出结账票(结账只出小票机,见后端 PrintGuestTicket),少发一次请求。
+    const isGuest = Number(row.printerType) === 2;
+    const [order, settle] = await Promise.all([
+      previewPrinter(row.printerId),
+      isGuest ? previewPrinter(row.printerId, { trigger: 'settle' }) : Promise.resolve(null)
+    ]);
+    previewOrderData.value = order;
+    previewSettleData.value = settle;
   } catch {
     // 失败原因由请求拦截器统一弹出
     previewVisible.value = false;

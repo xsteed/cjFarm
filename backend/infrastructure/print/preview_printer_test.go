@@ -26,7 +26,7 @@ func TestPreviewPrinterTicketKitchenFollowsSplitMode(t *testing.T) {
 	printerID := insertPreviewPrinter(t, po.PrinterTypeKitchen, "", 48)
 
 	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitItem)
-	res, err := PreviewPrinterTicket(printerID)
+	res, err := PreviewPrinterTicket(printerID, po.PrintTriggerOrder)
 	if err != nil {
 		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestPreviewPrinterTicketKitchenFollowsSplitMode(t *testing.T) {
 
 	// 按份拆:示例 2+1+1=4 份 → 4 张,每张 x1。
 	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitPortion)
-	res, err = PreviewPrinterTicket(printerID)
+	res, err = PreviewPrinterTicket(printerID, po.PrintTriggerOrder)
 	if err != nil {
 		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestPreviewPrinterTicketKitchenFollowsSplitMode(t *testing.T) {
 
 	// 整单:1 张,带份数汇总,不带序号。
 	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitWhole)
-	res, err = PreviewPrinterTicket(printerID)
+	res, err = PreviewPrinterTicket(printerID, po.PrintTriggerOrder)
 	if err != nil {
 		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestPreviewPrinterTicketCategoryFilter(t *testing.T) {
 	printerID := insertPreviewPrinter(t, po.PrinterTypeKitchen, strconv.Itoa(stapleID), 48)
 	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitItem)
 
-	res, err := PreviewPrinterTicket(printerID)
+	res, err := PreviewPrinterTicket(printerID, po.PrintTriggerOrder)
 	if err != nil {
 		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestPreviewPrinterTicketCategoryFilter(t *testing.T) {
 
 	// 授权一个示例菜品没有的分类:预览报错而不是出空白单。
 	missing := insertPreviewPrinter(t, po.PrinterTypeKitchen, "999", 48)
-	if _, err := PreviewPrinterTicket(missing); err == nil {
+	if _, err := PreviewPrinterTicket(missing, po.PrintTriggerOrder); err == nil {
 		t.Fatal("分类全不匹配时应报错(真实打印同样不会出纸)")
 	}
 }
@@ -126,7 +126,7 @@ func TestPreviewPrinterTicketGuest(t *testing.T) {
 	printerID := insertPreviewPrinter(t, po.PrinterTypeGuest, "", 48)
 	setPrintSetting(t, "print_kitchen_split_mode", po.KitchenSplitPortion)
 
-	res, err := PreviewPrinterTicket(printerID)
+	res, err := PreviewPrinterTicket(printerID, po.PrintTriggerOrder)
 	if err != nil {
 		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
 	}
@@ -141,5 +141,110 @@ func TestPreviewPrinterTicketGuest(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("点菜单预览缺少 %q:\n%s", want, got)
 		}
+	}
+}
+
+// TestPreviewPrinterTicketGuestSettle 顾客小票机的第二种形态:结账小票。
+// 结账与下单出的是两张不同的票(标题、优惠行、支付方式/结账时间),
+// 只预览点菜单会让商家以为结账时也只出那张。
+func TestPreviewPrinterTicketGuestSettle(t *testing.T) {
+	setupTestDB(t)
+	printerID := insertPreviewPrinter(t, po.PrinterTypeGuest, "", 48)
+
+	res, err := PreviewPrinterTicket(printerID, po.PrintTriggerSettle)
+	if err != nil {
+		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
+	}
+	if res.DocType != po.PrintDocGuest || res.TriggerBy != po.PrintTriggerSettle {
+		t.Fatalf("应返回 guest/settle, got %s/%s", res.DocType, res.TriggerBy)
+	}
+	if len(res.Chunks) != 1 {
+		t.Fatalf("结账小票应整单一张, got %d", len(res.Chunks))
+	}
+	got := strings.Join(res.Chunks[0], "\n")
+	for _, want := range []string{"【结账小票】", "优惠", "合计", "支付方式", "结账时间", "谢谢惠顾"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("结账小票预览缺少 %q:\n%s", want, got)
+		}
+	}
+	// 两种形态不能串味:结账票不出「当前合计」,也不该退回点菜单标题。
+	for _, bad := range []string{"当前合计", "【顾客小票】"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("结账小票预览不应包含 %q:\n%s", bad, got)
+		}
+	}
+	// 直连通道不参与「小票字体放大」,预览不应声称放大了。
+	if res.LargeFont {
+		t.Fatal("直连打印机的结账预览不应标记为放大")
+	}
+}
+
+// TestPreviewPrinterTicketSettleLargeFont 结账小票预览要如实反映「小票字体放大」:
+// 飞鹅机标记放大且整张都是放大行;直连机保持原版式(该开关只对飞鹅云落地)。
+func TestPreviewPrinterTicketSettleLargeFont(t *testing.T) {
+	setupTestDB(t)
+	setPrintSetting(t, "print_guest_large_font", "1")
+
+	feieID := insertPreviewPrinterAs(t, po.PrinterTypeGuest, "", 48, po.PrinterProviderFeie)
+	res, err := PreviewPrinterTicket(feieID, po.PrintTriggerSettle)
+	if err != nil {
+		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
+	}
+	if !res.LargeFont || !res.LargeFontEnabled || !res.LargeFontSupported {
+		t.Fatalf("飞鹅结账小票应标记为放大(开关开+通道支持), got %v/%v/%v",
+			res.LargeFont, res.LargeFontEnabled, res.LargeFontSupported)
+	}
+	for _, l := range res.Chunks[0] {
+		if _, big := bigTextOf(l); !big {
+			t.Fatalf("放大后的结账小票每行都应是放大行, got %q", l)
+		}
+	}
+
+	tcpID := insertPreviewPrinterAs(t, po.PrinterTypeGuest, "", 48, po.PrinterProviderTCP)
+	res, err = PreviewPrinterTicket(tcpID, po.PrintTriggerSettle)
+	if err != nil {
+		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
+	}
+	if res.LargeFont {
+		t.Fatal("直连通道不受放大开关影响")
+	}
+	// 前端靠这两个口径说明「为什么没放大」:开关是开的,但通道不支持。
+	if !res.LargeFontEnabled || res.LargeFontSupported {
+		t.Fatalf("直连应「开关开、通道不支持」, got enabled=%v supported=%v",
+			res.LargeFontEnabled, res.LargeFontSupported)
+	}
+	for _, l := range res.Chunks[0] {
+		if _, ok := SplitBigLeftLine(l); ok {
+			t.Fatalf("直连结账小票不应整张放大, got %q", l)
+		}
+	}
+
+	// 开关关掉时:飞鹅机也不放大,且三个口径合起来能区分「没开」与「通道不支持」。
+	setPrintSetting(t, "print_guest_large_font", "0")
+	res, err = PreviewPrinterTicket(feieID, po.PrintTriggerSettle)
+	if err != nil {
+		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
+	}
+	if res.LargeFont || res.LargeFontEnabled || !res.LargeFontSupported {
+		t.Fatalf("开关关闭时飞鹅机应是「未放大/未开启/支持」, got %v/%v/%v",
+			res.LargeFont, res.LargeFontEnabled, res.LargeFontSupported)
+	}
+}
+
+// TestPreviewPrinterTicketKitchenIgnoresSettle 结账不出厨房单(见 PrintGuestTicket):
+// 厨房机即使请求 settle 也按下单形态预览,不能展示一张真实永远不会出现的票。
+func TestPreviewPrinterTicketKitchenIgnoresSettle(t *testing.T) {
+	setupTestDB(t)
+	printerID := insertPreviewPrinter(t, po.PrinterTypeKitchen, "", 48)
+
+	res, err := PreviewPrinterTicket(printerID, po.PrintTriggerSettle)
+	if err != nil {
+		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
+	}
+	if res.DocType != po.PrintDocKitchen || res.TriggerBy != po.PrintTriggerOrder {
+		t.Fatalf("厨房机应强制按下单形态, got %s/%s", res.DocType, res.TriggerBy)
+	}
+	if got := strings.Join(res.Chunks[0], "\n"); !strings.Contains(got, "【厨房单】") {
+		t.Fatalf("厨房机预览应是厨房单:\n%s", got)
 	}
 }

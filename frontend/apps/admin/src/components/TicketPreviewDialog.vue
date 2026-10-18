@@ -14,81 +14,103 @@
     >
       正在生成预览…
     </div>
-    <template v-else-if="chunks && chunks.length">
-      <div class="paper-scroll">
-        <div
-          v-for="(chunk, i) in chunks"
-          :key="i"
-          class="paper-group"
+    <template v-else-if="hasContent">
+      <!-- 多段平铺:每段一张独立的票(打印机管理页同时展示点菜单与结账小票),
+           段与段之间留白并用细线分隔;单票场景(打印记录/示例预览)只有一段。 -->
+      <div class="preview-sections">
+        <section
+          v-for="(b, bi) in blocks"
+          :key="bi"
+          class="preview-section"
         >
           <div
-            v-if="chunks.length > 1"
-            class="preview-tip chunk-label"
+            v-if="b.title || b.note"
+            class="preview-section-head"
           >
-            第 {{ i + 1 }} / {{ chunks.length }} 张纸 · 实际出纸时按此顺序逐张送出
+            <span class="preview-section-title">{{ b.title }}</span>
+            <span
+              v-if="b.note"
+              class="preview-section-note"
+              >{{ b.note }}</span
+            >
+          </div>
+          <div class="paper-scroll">
+            <div
+              v-for="(chunk, i) in b.chunks || []"
+              :key="i"
+              class="paper-group"
+            >
+              <div
+                v-if="(b.chunks?.length ?? 0) > 1"
+                class="preview-tip chunk-label"
+              >
+                第 {{ i + 1 }} / {{ b.chunks?.length }} 张纸 · 实际出纸时按此顺序逐张送出
+              </div>
+              <div
+                class="ticket-paper"
+                :style="{ '--cols': b.lineWidth ?? 48 }"
+              >
+                <template
+                  v-for="(line, li) in chunk"
+                  :key="li"
+                >
+                  <!-- 二维码行:票据实际出的是打印机生成的二维码图形,这里用同内容
+                       的二维码图片还原,字符网格画不出来。
+                       当前没有票据会产出该行(小票二维码已下线:桌台上有点餐码),
+                       但整条链路保留 —— 票尾位置预留给小程序码(见后端
+                       print/appendGuestTicketTail 的实现提醒),届时预览同样按图片渲染。 -->
+                  <div
+                    v-if="line.qr"
+                    class="ticket-line qr-line"
+                  >
+                    <img
+                      v-if="qrOf(line.qr)"
+                      :src="qrOf(line.qr)"
+                      class="qr-img"
+                      alt="小票二维码"
+                    />
+                    <span
+                      v-else
+                      class="qr-placeholder"
+                      >{{ line.text }}</span
+                    >
+                  </div>
+                  <!-- 放大行(店名/夹单桌号/整张放大的结账小票):出纸时是倍宽倍高。
+                       仍然走同一套字符网格,只是每格与字号一起翻倍(见 .ticket-line.big)——
+                       整张票放大后「菜名 —— 金额」的两列对齐全靠 pad 出来的空格,
+                       若退化成普通文本流,连续空格会被 HTML 折叠,金额就贴到菜名后面。
+                       是否居中看 bigLeft。 -->
+                  <div
+                    v-else
+                    class="ticket-line"
+                    :class="{ bold: line.bold, center: line.center, big: line.big, left: line.bigLeft }"
+                  >
+                    <span
+                      v-for="(cell, ci) in cellsOf(line.text)"
+                      :key="ci"
+                      class="cell"
+                      :class="{ wide: cell.wide }"
+                      >{{ cell.ch }}</span
+                    >
+                  </div>
+                </template>
+              </div>
+            </div>
           </div>
           <div
-            class="ticket-paper"
-            :style="{ '--cols': lineWidth }"
+            v-if="(b.copies ?? 1) > 1"
+            class="preview-tip chunk-label"
           >
-            <template
-              v-for="(line, li) in chunk"
-              :key="li"
-            >
-              <!-- 二维码行:票据实际出的是打印机生成的二维码图形,这里用同内容
-                   的二维码图片还原,字符网格画不出来。
-                   当前没有票据会产出该行(小票二维码已下线:桌台上有点餐码),
-                   但整条链路保留 —— 票尾位置预留给小程序码(见后端
-                   print/appendGuestTicketTail 的实现提醒),届时预览同样按图片渲染。 -->
-              <div
-                v-if="line.qr"
-                class="ticket-line qr-line"
-              >
-                <img
-                  v-if="qrOf(line.qr)"
-                  :src="qrOf(line.qr)"
-                  class="qr-img"
-                  alt="小票二维码"
-                />
-                <span
-                  v-else
-                  class="qr-placeholder"
-                  >{{ line.text }}</span
-                >
-              </div>
-              <!-- 放大行(店名/夹单桌号/菜品行):出纸时是倍宽倍高,字符网格已失效,
-                   这里直接用大字渲染、不按格拆分;对齐按 bigLeft 区分 -->
-              <div
-                v-else-if="line.big"
-                class="ticket-line big"
-                :class="{ left: line.bigLeft }"
-              >
-                {{ line.text }}
-              </div>
-              <div
-                v-else
-                class="ticket-line"
-                :class="{ bold: line.bold, center: line.center }"
-              >
-                <span
-                  v-for="(cell, ci) in cellsOf(line.text)"
-                  :key="ci"
-                  class="cell"
-                  :class="{ wide: cell.wide }"
-                  >{{ cell.ch }}</span
-                >
-              </div>
-            </template>
+            该打印机一次打印 {{ b.copies }} 张,预览只展示其中一份。
           </div>
-        </div>
+        </section>
       </div>
-      <!-- 份数与「形态还原」提示:这两件事只靠看纸面是看不出来的 -->
+      <!-- 「形态还原」提示:只靠看纸面看不出来,留在纸面下方 -->
       <div
-        v-if="copiesHint || approximate"
+        v-if="approximate"
         class="preview-note"
       >
-        <div v-if="copiesHint">该打印机一次打印 {{ copiesHint }},预览只展示其中一份(上面这几张纸)。</div>
-        <div v-if="approximate">
+        <div>
           这条记录没有存下票面快照(升级前打的),加菜小票只能还原票据形态:
           <b>当时新增了哪些菜</b>已无从追溯,此处菜品区按订单<b>当前全部菜品</b>渲染, 金额是当前整单合计。
         </div>
@@ -115,11 +137,12 @@
 <script setup lang="ts">
 // 纸带式票据预览:逐字符按「字符网格」渲染,精确复刻热敏机的对齐模型
 // (全角字符占 2 格、半角占 1 格),浏览器字体宽度差异不会造成两列错位。
-// 加粗行(店名/标题/合计)与 ESC/POS 出纸的 ESC E 强调一致。
+// 加粗行(店名/标题/合计)与 ESC/POS 出纸的 ESC E 强调一致;放大行
+// (GS ! 倍宽倍高 / 飞鹅 <B>)同样走网格,只是每格宽与字号翻倍。
 // 打印记录页(回放某条记录当时存下的票面快照)与系统配置页(示例模板预览)共用。
 import { computed, ref, watch } from 'vue';
 import { renderQrDataUrl } from '../utils/tableQr';
-import type { TicketLine } from '@dining/types';
+import type { TicketLine, TicketPreviewSection } from '@dining/types';
 
 const props = defineProps<{
   visible: boolean;
@@ -127,6 +150,12 @@ const props = defineProps<{
   loading?: boolean;
   /** 分段后的文本行:每段就是实际吐出的一张纸,按先后顺序排列 */
   chunks?: TicketLine[][] | null;
+  /**
+   * 多段平铺:每段是一张独立的票(如顾客小票机的「点菜单」与「结账小票」),
+   * 按数组顺序上下排列、段间留白。传了它就忽略 chunks/lineWidth/copies
+   * (单票场景继续用那三个参数,调用方无需改动)。
+   */
+  sections?: TicketPreviewSection[] | null;
   /** 每行可容纳的半角字符数(58mm=32,80mm=48) */
   lineWidth?: number;
   /** 打印机配置的打印份数;>1 时提示「预览只展示其中一张」 */
@@ -157,11 +186,21 @@ const metaState = computed<'snapshot' | 'replayed' | 'plain'>(() => {
   return 'plain';
 });
 
-// 份数提示只在真的会多打时才出现(配 1 份时说它是废话)。
-const copiesHint = computed(() => {
-  const n = props.copies ?? 1;
-  return n > 1 ? `${n} 张` : '';
+// 渲染用的分段:多段平铺直接用 sections;单票场景包成一段,
+// 让模板只有一条渲染路径(少一份重复的纸面标记,也就少一处会漂移的地方)。
+const blocks = computed<TicketPreviewSection[]>(() => {
+  if (props.sections?.length) return props.sections;
+  return [
+    {
+      chunks: props.chunks ?? null,
+      lineWidth: props.lineWidth,
+      copies: props.copies
+    }
+  ];
 });
+
+// 没有任何一段有内容时不画空纸(加载失败/后端返回空数据)。
+const hasContent = computed(() => blocks.value.some(b => (b.chunks?.length ?? 0) > 0));
 
 interface CharCell {
   ch: string;
@@ -243,6 +282,46 @@ watch(
   line-height: 1.6;
 }
 
+/* 多段平铺:打印机管理页把点菜单与结账小票同时铺开。
+   段与段之间留白 + 一条细虚线,一眼能认出是两张不同的票而不是同一张的两页。 */
+.preview-section + .preview-section {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px dashed #e4e4e4;
+}
+
+.preview-section-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.preview-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.preview-section-note {
+  font-size: 12px;
+  color: #999;
+}
+
+/* 多段时整块滚动(两段各自 70vh 会让弹窗高到不可用),
+   横向仍由 .paper-scroll 负责,窄屏下能左右滑看完整纸宽。 */
+.preview-sections {
+  max-height: 74vh;
+  overflow-y: auto;
+}
+
+.preview-section .paper-scroll {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
 .preview-loading {
   padding: 24px 8px;
   color: #999;
@@ -321,16 +400,20 @@ watch(
   text-align: center;
 }
 
-/* 放大行:店名/夹单桌号/菜品行。出纸走 GS ! 倍宽倍高(飞鹅 <C><B> 或 <B>),
-   预览按同样观感放大,不再参与字符网格对齐。 */
+/* 放大行:店名/夹单桌号/菜品行/整张放大的结账小票。
+   出纸走 GS ! 倍宽倍高(飞鹅 <C><B> 或 <B>);预览仍按字符网格渲染,
+   只是字号与格宽一起翻倍 —— 格宽 0.62em 是相对本行字号算的,
+   2em 下每格正好变成 2 格宽,24 个半角字仍精确铺满 48 格纸。
+   这也是「整张小票放大」在预览里两列仍对齐的前提:pad 出的连续空格
+   按格子逐个占位;若改用普通文本流,HTML 会把连续空格折叠成一个。 */
 .ticket-line.big {
   font-weight: 700;
-  font-size: 1.7em;
-  line-height: 1.3;
-  height: auto;
+  font-size: 2em;
+  line-height: 1.25;
+  /* 高度沿用 .ticket-line 的 1.5em(相对 2em 字号 = 两倍行高):
+     空行也占位,和出纸时空行仍走一行纸的动作一致。 */
   padding: 2px 0;
   text-align: center;
-  white-space: normal;
 }
 
 /* 左对齐放大:整单厨房单的菜品清单(逐条编号)。出纸时编号在行首对齐,

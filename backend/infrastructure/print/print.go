@@ -126,6 +126,14 @@ func guestFooter() string { return strings.TrimSpace(service.GetSetting("print_g
 // 点菜单不读它 —— 下单时的优惠是预估口径,优惠行只出现在结账小票上。
 func guestShowDiscount() bool { return service.GetSetting("print_guest_show_discount") != "0" }
 
+// guestLargeFont 结账小票是否整张放大一倍(默认关)。
+//
+// 只看配置,不管通道:真正出纸时由 job.render 再按通道收窄(仅飞鹅云)。
+// 放大后的行由飞鹅内容落地为 <B>(官方「放大一倍」),排版按半个纸宽重算;
+// 直连 ESC/POS 与代理通道保持原版式 —— 那是另一套纸宽/字库假设,
+// 「门店开了放大」不该改变另一条通道的出纸长度。
+func guestLargeFont() bool { return service.GetSetting("print_guest_large_font") == "1" }
+
 // guestPrintOnAppend 加菜后是否向小票机重出一张加菜小票(默认开)。
 //
 // 沿用 show_seat_fee 的「!= "0"」语义:管理端关掉时写入明确的 "0",
@@ -398,7 +406,11 @@ func (j job) render() []string {
 		// 与 label 同一判定:结账触发出结账小票,其余触发(下单/补放下单)出点菜单。
 		// 快照补打走上面的 lines 直通,不受该判定影响。
 		if j.triggerBy == po.PrintTriggerSettle {
-			return RenderGuestTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
+			cfg := currentGuestTicketConfig()
+			// 整张放大只对飞鹅云落地:content 用 <B> 倍宽倍高,行宽按半个纸宽重排。
+			// 直连/代理通道(ESC/POS 字节流)保持原版式,见 guestLargeFont。
+			cfg.large = cfg.large && j.p.IsFeie()
+			return renderGuestTicketWith(j.o, toPOItems(j.items), j.p.PaperWidth, cfg, true)
 		}
 		return RenderGuestOrderTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
 	}
@@ -1244,10 +1256,21 @@ type PreviewPrinterTicketResult struct {
 	Chunks [][]string
 	// LineWidth 每行可容纳的半角字符数(58mm=32,80mm=48)。
 	LineWidth int
-	// DocType 模拟的单据类型:kitchen(厨房单)/ guest(顾客点菜单)。
+	// DocType 模拟的单据类型:kitchen(厨房单)/ guest(顾客小票)。
 	DocType string
+	// TriggerBy 模拟的触发场景:order(下单点菜单)/ settle(结账小票)。
+	// guest 单据靠它区分两种形态;厨房单恒为 order(结账不出厨房单)。
+	TriggerBy string
 	// SplitMode 厨房单打印粒度(whole/item/portion);guest 为空串。
 	SplitMode string
+	// LargeFont 这份预览是否按「小票字体放大」出纸(整张倍宽倍高,仅飞鹅云通道)。
+	LargeFont bool
+	// LargeFontEnabled 系统配置里的「小票字体放大」开关是否开启。
+	// 与 LargeFont 分开返回,管理端才能说明「为什么这张没放大」:
+	// 开关没开 / 通道不支持 / 已经放大,三种情况给出的提示完全不同。
+	LargeFontEnabled bool
+	// LargeFontSupported 该打印机通道是否支持整张放大(仅飞鹅云;直连/代理不支持)。
+	LargeFontSupported bool
 }
 
 // PreviewPrinterTicket 按某台打印机的当前设置,用示例订单模拟「真实下单时它会收到什么」。
@@ -1261,8 +1284,12 @@ type PreviewPrinterTicketResult struct {
 //   - 「厨房单显示金额」、店名等模板配置同样生效;
 //   - 通道发送上限(飞鹅字节/代理字符)对超长票的分段同样模拟。
 //
+// triggerBy 选择顾客小票的形态:order(默认)出点菜单,settle 出结账小票
+// (含优惠、支付方式、结账时间)。厨房单不参与结账出纸(见 PrintGuestTicket),
+// 传 settle 也按下单形态预览 —— 不能让后台预览出一张真实永远不会出现的票。
+//
 // 只渲染,不发送、不出纸、不记日志。
-func PreviewPrinterTicket(printerID int) (PreviewPrinterTicketResult, error) {
+func PreviewPrinterTicket(printerID int, triggerBy string) (PreviewPrinterTicketResult, error) {
 	p, err := service.LoadPrinter(printerID)
 	if err != nil {
 		return PreviewPrinterTicketResult{}, errors.New("打印机不存在")
@@ -1271,8 +1298,13 @@ func PreviewPrinterTicket(printerID int) (PreviewPrinterTicketResult, error) {
 	if p.PrinterType == po.PrinterTypeKitchen {
 		docType, title = po.PrintDocKitchen, "【厨房单】"
 	}
+	if docType != po.PrintDocGuest || triggerBy != po.PrintTriggerSettle {
+		triggerBy = po.PrintTriggerOrder
+	}
 	o, rows := previewSampleRows()
-	jobs := jobsForPrinter(p, o, rows, docType, title, po.PrintTriggerOrder, "", nil, nil)
+	// 放大开关只读一次:同一次预览里三处判断必须是同一个值。
+	largeEnabled := guestLargeFont()
+	jobs := jobsForPrinter(p, o, rows, docType, title, triggerBy, "", nil, nil)
 	if len(jobs) == 0 {
 		return PreviewPrinterTicketResult{}, errors.New(
 			"该打印机设置了「负责分类」,示例菜品都不在其负责的分类内 —— 真实下单时这台机器同样不会出纸;请调整分类或到订单详情按单补打")
@@ -1290,7 +1322,12 @@ func PreviewPrinterTicket(printerID int) (PreviewPrinterTicketResult, error) {
 		Chunks:    chunks,
 		LineWidth: LineWidth(p.PaperWidth),
 		DocType:   docType,
+		TriggerBy: triggerBy,
 		SplitMode: split,
+		// 放大只在飞鹅云落地(见 job.render),预览如实报告,前端才能说明「为什么没放大」。
+		LargeFont:          docType == po.PrintDocGuest && triggerBy == po.PrintTriggerSettle && largeEnabled && p.IsFeie(),
+		LargeFontEnabled:   largeEnabled,
+		LargeFontSupported: p.IsFeie(),
 	}, nil
 }
 
@@ -1299,6 +1336,9 @@ func PreviewPrinterTicket(printerID int) (PreviewPrinterTicketResult, error) {
 type SampleOverrides struct {
 	Footer       *string
 	ShowDiscount *bool
+	// LargeFont 结账小票是否整张放大一倍;nil 表示读当前配置。
+	// 只有结账形态(guest_settle)消费它,其余票种忽略。
+	LargeFont *bool
 	// KitchenShowPrice 厨房单是否带单价与金额;nil 表示读当前配置。
 	KitchenShowPrice *bool
 	// KitchenSplit 厨房单的打印粒度(whole/item/portion);nil 表示读当前配置。
@@ -1334,6 +1374,9 @@ func PreviewTicketSample(docType string, paperWidth int, ov SampleOverrides) ([]
 		}
 		if ov.ShowDiscount != nil {
 			cfg.showDiscount = *ov.ShowDiscount
+		}
+		if ov.LargeFont != nil {
+			cfg.large = *ov.LargeFont
 		}
 		// 点菜单样例把支付信息清掉:下单那一刻订单还没结账,样张要如实反映
 		// 「点菜单上没有支付方式/结账时间」,否则门店会以为出纸顺序出了问题。

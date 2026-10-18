@@ -483,6 +483,23 @@
               >
             </t-space>
           </t-form-item>
+          <t-form-item label="小票字体放大">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.print_guest_large_font"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后结账小票整张放大一倍（飞鹅云通道，倍宽倍高），客人对账更清楚。
+                排版会按半个纸宽重排、票面长度约翻倍，菜品多的大单更费纸；
+                58mm 纸放大后每行只剩 16 格，菜名与金额可能分成两行，建议 80mm 纸使用。
+                直连/代理打印机不受此开关影响。
+              </span>
+            </t-space>
+          </t-form-item>
           <t-form-item label="下单出点菜单">
             <t-space
               direction="vertical"
@@ -1355,6 +1372,8 @@ interface ConfigForm {
   print_kitchen_split_mode: string;
   print_guest_footer: string;
   print_guest_show_discount: string;
+  /** 结账小票整张放大一倍（仅飞鹅云通道） */
+  print_guest_large_font: string;
   print_guest_on_append: string;
   print_guest_on_order: string;
   feie_user: string;
@@ -1397,6 +1416,7 @@ type ConfigPayloadFull = ConfigData & {
   print_kitchen_split_mode?: string;
   print_guest_footer?: string;
   print_guest_show_discount?: string;
+  print_guest_large_font?: string;
   print_guest_on_append?: string;
   print_guest_on_order?: string;
   feie_user?: string;
@@ -1471,6 +1491,7 @@ const form = reactive<ConfigForm>({
   print_kitchen_split_mode: 'whole',
   print_guest_footer: '谢谢惠顾,欢迎再次光临',
   print_guest_show_discount: '1',
+  print_guest_large_font: '0',
   print_guest_on_append: '1',
   print_guest_on_order: '1',
   feie_user: '',
@@ -1526,6 +1547,7 @@ const FLAG_KEYS = [
   'print_enabled',
   'print_kitchen_show_price',
   'print_guest_show_discount',
+  'print_guest_large_font',
   'print_guest_on_append',
   'print_guest_on_order',
   'stale_release_enabled',
@@ -1773,6 +1795,7 @@ async function loadSamplePreview(): Promise<void> {
       paperWidth: samplePaperWidth.value,
       footer: form.print_guest_footer,
       showDiscount: form.print_guest_show_discount === '1',
+      largeFont: form.print_guest_large_font === '1',
       kitchenShowPrice: form.print_kitchen_show_price === '1',
       kitchenSplit: sampleDocType.value === 'kitchen' ? sampleKitchenSplit.value : undefined
     });

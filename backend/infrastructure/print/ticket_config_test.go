@@ -196,3 +196,128 @@ func TestPreviewReflectsTemplateConfig(t *testing.T) {
 		t.Fatalf("预览应反映优惠行关闭:\n%s", got)
 	}
 }
+
+// ============================================================================
+// 结账小票整张放大(print_guest_large_font)
+// ============================================================================
+
+// bigTextOf 返回一行是否放大行及其文本;居中放大与左对齐放大都算。
+func bigTextOf(line string) (string, bool) {
+	if t, ok := SplitBigLine(line); ok {
+		return t, true
+	}
+	if t, ok := SplitBigLeftLine(line); ok {
+		return t, true
+	}
+	return "", false
+}
+
+// TestGuestTicketLargeFont 整张放大后:每行都是放大行,且按半个纸宽排版
+// —— 倍宽倍高下每行只剩一半格数,再按 48 格排就会被机器硬折、两列散架。
+// 点菜单与加菜小票不放大:放大只回答「这张收银凭证看得清」,不是全票种改版。
+func TestGuestTicketLargeFont(t *testing.T) {
+	setupTestDB(t)
+	setPrintSetting(t, "print_guest_large_font", "1")
+
+	o, items := settledOrder()
+	lines := RenderGuestTicket(o, items, 48)
+	if len(lines) == 0 {
+		t.Fatal("结账小票不应为空")
+	}
+	for _, l := range lines {
+		text, big := bigTextOf(l)
+		if !big {
+			t.Fatalf("整张放大后每一行都应是放大行, got %q", l)
+		}
+		if displayWidth(text) > 24 {
+			t.Fatalf("放大行应按半纸宽(24 格)排版,超宽会被机器折行(%d 格): %q",
+				displayWidth(text), text)
+		}
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"【结账小票】", "凉拌青瓜 (份) x2", "56.00", "合计", "84.00", "支付方式", "谢谢惠顾"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("放大后的结账小票缺少 %q:\n%s", want, joined)
+		}
+	}
+
+	// 点菜单形态:即使开关打开也不放大(整张放大只作用于结账小票)。
+	// 正常版式只有店名一行是居中放大,不会出现左对齐放大的正文行。
+	orderLines := RenderGuestOrderTicket(o, items, 48)
+	for _, l := range orderLines {
+		if _, ok := SplitBigLeftLine(l); ok {
+			t.Fatalf("点菜单不应整张放大, got %q", l)
+		}
+	}
+	// 点菜单的行宽仍是 48 格:放大没有渗进来。
+	if !strings.Contains(strings.Join(orderLines, "\n"), strings.Repeat("-", 48)) {
+		t.Fatalf("点菜单分隔线仍应是 48 格:\n%s", strings.Join(orderLines, "\n"))
+	}
+}
+
+// TestGuestTicketLargeFontOnlyOnFeie 放大只在飞鹅云落地:
+// 同一份结账作业,飞鹅打印机拿到倍宽行(<B>/<C><B>),直连打印机仍是原版式。
+// 这是刻意的不对称 —— 飞鹅 content 的 <B> 与 ESC/POS 的字库假设不同,不做跨通道联动。
+func TestGuestTicketLargeFontOnlyOnFeie(t *testing.T) {
+	setupTestDB(t)
+	setPrintSetting(t, "print_guest_large_font", "1")
+	o, _ := settledOrder()
+
+	feieP := po.Printer{
+		PrinterName: "前台飞鹅", PrinterType: po.PrinterTypeGuest,
+		Provider: po.PrinterProviderFeie, FeieSN: "961828266", PaperWidth: 48, Copies: 1,
+	}
+	jobs := buildJobs(nil, nil, []po.Printer{feieP}, o, sampleRows(), po.PrintDocGuest, "", po.PrintTriggerSettle, "")
+	if len(jobs) != 1 {
+		t.Fatalf("应只给飞鹅小票机派一张, got %d", len(jobs))
+	}
+	lines := jobs[0].render()
+	for _, l := range lines {
+		if _, big := bigTextOf(l); !big {
+			t.Fatalf("飞鹅结账小票应整张放大, got %q", l)
+		}
+	}
+	// 落地到 content 后每行都必须带倍宽标签,不能有漏网的纯文本行
+	// (漏一行就是「整张票里突然夹一行小字」)。
+	content := strings.Join(splitFeieContent(lines), "")
+	for _, piece := range strings.Split(content, feieSep) {
+		if !strings.HasPrefix(piece, "<B>") && !strings.HasPrefix(piece, "<C><B>") {
+			t.Fatalf("放大票的每一行都应落地为倍宽标签, got %q", piece)
+		}
+	}
+	if !strings.Contains(content, "<C><B>【结账小票】</B></C>") {
+		t.Fatalf("单据名副标题应居中放大:\n%s", content)
+	}
+
+	tcpP := feieP
+	tcpP.Provider, tcpP.FeieSN, tcpP.IP, tcpP.Port = po.PrinterProviderTCP, "", "192.168.1.20", 9100
+	jobs = buildJobs(nil, nil, []po.Printer{tcpP}, o, sampleRows(), po.PrintDocGuest, "", po.PrintTriggerSettle, "")
+	if len(jobs) != 1 {
+		t.Fatalf("应只给直连小票机派一张, got %d", len(jobs))
+	}
+	tcpLines := jobs[0].render()
+	for _, l := range tcpLines {
+		if _, ok := SplitBigLeftLine(l); ok {
+			t.Fatalf("直连打印不应整张放大, got %q", l)
+		}
+	}
+	if !strings.Contains(strings.Join(tcpLines, "\n"), strings.Repeat("-", 48)) {
+		t.Fatalf("直连结账小票仍是 48 格版式:\n%s", strings.Join(tcpLines, "\n"))
+	}
+}
+
+// TestPreviewTicketSampleLargeFont 示例预览要能显示「未保存的放大开关」:
+// 门店勾上开关就能先看效果,不必真出一张纸。
+func TestPreviewTicketSampleLargeFont(t *testing.T) {
+	setupTestDB(t)
+	on := true
+	chunks, lineWidth := PreviewTicketSample(po.PrintDocGuestSettle, 48, SampleOverrides{LargeFont: &on})
+	if lineWidth != 48 {
+		t.Fatalf("纸宽口径不应因放大而变(仍按物理纸宽), got %d", lineWidth)
+	}
+	for _, l := range chunks[0] {
+		if _, big := bigTextOf(l); !big {
+			t.Fatalf("示例预览应整张放大, got %q", l)
+		}
+	}
+}

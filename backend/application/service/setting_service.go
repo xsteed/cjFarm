@@ -52,7 +52,7 @@ var ManagedSettingKeys = []string{
 	"alipay_enabled", "alipay_appid", "alipay_private_key_path",
 	"alipay_public_key", "alipay_notify_url",
 	"print_enabled", "print_kitchen_show_price", "print_kitchen_split_mode",
-	"print_guest_footer", "print_guest_show_discount",
+	"print_guest_footer", "print_guest_show_discount", "print_guest_large_font",
 	"print_guest_on_append", "print_guest_on_order",
 	"feie_user", "feie_api_url", "agent_latest_version",
 	// 桌台遗留订单防护与营业日定义(见 stale_service.go)
@@ -251,6 +251,8 @@ func ListSettings() dto.Settings {
 		// 顾客小票模板配置(页脚可清空,段落开关按「默认开」语义归一化,与渲染侧一致)
 		PrintGuestFooter:       dao.GetSetting("print_guest_footer"),
 		PrintGuestShowDiscount: SettingFlagDefaultOn("print_guest_show_discount"),
+		// 整张放大默认关:只有明确 "1" 才放大(飞鹅云 <B> 倍宽倍高,票会变长约一倍)
+		PrintGuestLargeFont: SettingFlag("print_guest_large_font"),
 		// 加菜重出小票默认开,与渲染侧 guestPrintOnAppend 的「!= "0"」语义一致
 		PrintGuestOnAppend: SettingFlagDefaultOn("print_guest_on_append"),
 		// 下单点菜单默认开,与渲染侧 guestPrintOnOrder 的「!= "0"」语义一致
@@ -345,6 +347,7 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		// 页脚是普通文本项,允许清空(清空=不打印页脚);段落开关归一化落库。
 		"print_guest_footer":        settings.PrintGuestFooter,
 		"print_guest_show_discount": normFlagValue(settings.PrintGuestShowDiscount),
+		"print_guest_large_font":    normFlagValue(settings.PrintGuestLargeFont),
 		"print_guest_on_append":     normFlagValue(settings.PrintGuestOnAppend),
 		"print_guest_on_order":      normFlagValue(settings.PrintGuestOnOrder),
 		"feie_user":                 settings.FeieUser,

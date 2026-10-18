@@ -109,11 +109,13 @@ func twoCol(left, right string, width int) []string {
 		return []string{left + strings.Repeat(" ", width-lw-rw) + right}
 	}
 	out := splitLines(left, width)
-	// 右段单独一行并右对齐;若右段自身超宽则退化为普通折行。
+	// 右段单独一行并右对齐;若右段自身超宽则折行。
 	if rw <= width {
 		out = append(out, lpad(right, width))
 	} else {
-		out = append(out, splitLines(right, width)...)
+		// 超宽右段优先在空格处断:结账时间是「2026-09-21 13:05:00」这类带空格的
+		// 定长值,硬按字符折会把「13:05」与「:00」拆到两行,读起来像两个数。
+		out = append(out, splitBigLines(right, width)...)
 	}
 	return out
 }
@@ -241,9 +243,11 @@ func splitBigLines(text string, max int) []string {
 // 台名过长放不下时退回单独一行)—— 先付模式下顾客结完账仍在等上菜,凭票上的取餐号
 // 对号、核对出菜进度,它不再只是「当面对号」的临时凭证;完整订单号太长,不与取餐号并排。
 // shopName 为店名快照(空串表示按当前配置读取),见 shopNameLines。
-func ticketHeader(o po.Order, width int, title, noLabel, shopName string, kitchen bool) []string {
+// large 表示整张票已放大(见 guestTicketConfig.large):店名不再额外放大一档
+// —— 正文已经是 2 倍,再套一层没有更大字号可用,居中即可。
+func ticketHeader(o po.Order, width int, title, noLabel, shopName string, kitchen, large bool) []string {
 	var lines []string
-	lines = append(lines, shopNameLines(shopName, width)...)
+	lines = append(lines, shopNameLines(shopName, width, large)...)
 	if strings.TrimSpace(title) != "" {
 		if kitchen {
 			// 厨房单单据名放大:与菜品/备注同一套放大行机制(bigL: 左对齐放大),
@@ -320,13 +324,18 @@ func ticketHeader(o po.Order, width int, title, noLabel, shopName string, kitche
 //
 // shopName 是调用方给的快照:同一次下单所有票的店名完全一致,逐票重新查库纯属浪费
 // —— 一菜一单会把「一道菜一次」放大成几十次单行查询。空串表示未提供,按当前配置读取。
-func shopNameLines(shopName string, width int) []string {
+func shopNameLines(shopName string, width int, large bool) []string {
 	name := strings.TrimSpace(shopName)
 	if name == "" {
 		name = strings.TrimSpace(service.GetSetting("shop_name"))
 	}
 	if name == "" {
 		return []string{pad("", width)}
+	}
+	if large {
+		// 整张票已是 2 倍字号:店名再走 bigMarkLine 也只是同一个字号,
+		// 于是改用机器居中(发送层落地为居中放大),不靠补位空格。
+		return []string{centerMarkLine(name)}
 	}
 	if displayWidth(name) <= width/2 {
 		return []string{bigMarkLine(name)}
@@ -436,7 +445,7 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts 
 	if title == "" {
 		title = "【厨房单】"
 	}
-	lines := ticketHeader(o, w, title, "单号", opts.ShopName, true)
+	lines := ticketHeader(o, w, title, "单号", opts.ShopName, true, false)
 	for i, it := range items {
 		label := itemQtyLabel(it)
 		row := itemNo(i, label, opts.SingleDish)
@@ -527,6 +536,11 @@ func lastTicketMark(w int) string {
 type guestTicketConfig struct {
 	footer       string // 页脚文案,空 = 不打印
 	showDiscount bool
+	// large 整张结账小票放大一倍(倍宽倍高)。铺开的是「整张票都是这个字号」,
+	// 因此行宽必须按半个纸宽重排,否则机器会把算好的两列对齐硬折行打散。
+	// 只有飞鹅云通道消费它(打印路径按通道二次收窄,见 print.job.render);
+	// 直连/代理仍出原版式 —— 那两条通道的字库与纸宽假设不同,不做跨通道联动。
+	large bool
 }
 
 // currentGuestTicketConfig 从配置读取当前快照(实际打印路径)。
@@ -534,6 +548,7 @@ func currentGuestTicketConfig() guestTicketConfig {
 	return guestTicketConfig{
 		footer:       guestFooter(),
 		showDiscount: guestShowDiscount(),
+		large:        guestLargeFont(),
 	}
 }
 
@@ -560,11 +575,18 @@ func RenderGuestOrderTicket(o po.Order, items []po.OrderItem, paperWidth int) []
 // settled 为真渲染结账形态,为假渲染点菜单形态(差异见 RenderGuestOrderTicket)。
 func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg guestTicketConfig, settled bool) []string {
 	w := LineWidth(paperWidth)
+	// 整张放大只作用于结账小票(见 guestTicketConfig.large):倍宽倍高后每行只剩
+	// 一半格数,故排版按半个纸宽算 —— 否则 pad/twoCol 算出的 48 格行会被机器硬折,
+	// 「菜名 —— 金额」的两列对齐全散。
+	large := cfg.large && settled
+	if large {
+		w /= 2
+	}
 	title := "【结账小票】"
 	if !settled {
 		title = "【顾客小票】"
 	}
-	lines := ticketHeader(o, w, title, "订单号", "", false)
+	lines := ticketHeader(o, w, title, "订单号", "", false, large)
 	for _, it := range items {
 		lines = append(lines, twoCol(itemQtyLabel(it), itemAmountText(it), w)...)
 		lines = appendItemRemark(lines, it, w)
@@ -621,7 +643,69 @@ func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg
 		}
 	}
 	lines = append(lines, guestSettleLines(o, w)...)
-	return appendGuestTicketTail(lines, w, cfg)
+	lines = appendGuestTicketTail(lines, w, cfg)
+	if large {
+		return enlargeGuestLines(lines, w)
+	}
+	return lines
+}
+
+// enlargeGuestLines 把结账小票的每一行升级为「放大行」,并按半纸宽 w 兜底折行。
+//
+// 整张票同一字号后,层级只能靠对齐表达:店名与单据名居中放大,正文(含合计/备注)
+// 左对齐放大 —— 与正常字号票的观感一一对应(正文在左,标题居中)。
+// 不在这里逐行判断「谁更重要」:字号已经是全局的,再叠 <BOLD>/<B> 只会让
+// 同一张票出现两种字宽、把 pad 出的列对齐弄坏。
+//
+// 为什么还要再折一次行:票头那几行(订单号 / 取餐号+桌号 / 下单时间)是按正常纸宽
+// 写死的长字符串,在 48 格纸里放得下、在半纸宽(24 格)里放不下 —— 不主动折,
+// 机器会按自己的断点硬折,「取餐号: 12  桌号: 03 …」可能断在数字中间。
+// 折行由渲染层做,断点可控,与菜品行的处理一致。
+//
+// 切纸/二维码是控制行而非正文,原样透传(套上放大标签会被当文本打出来)。
+func enlargeGuestLines(lines []string, w int) []string {
+	out := make([]string, 0, len(lines))
+	appendLine := func(text string, centered bool) {
+		parts := []string{text}
+		if displayWidth(text) > w {
+			// 超宽优先在空格处断(「订单号:」与单号分两行、时间不拦腰截断),
+			// 无空格可断的长串才按字符硬折。
+			parts = splitBigLines(text, w)
+		}
+		for _, part := range parts {
+			if centered {
+				out = append(out, bigMarkLine(part))
+			} else {
+				out = append(out, bigLeftMarkLine(part))
+			}
+		}
+	}
+	for _, l := range lines {
+		if SplitCutLine(l) {
+			out = append(out, l)
+			continue
+		}
+		if _, ok := SplitQRLine(l); ok {
+			out = append(out, l)
+			continue
+		}
+		if big, ok := SplitBigLine(l); ok {
+			// 店名本来就是放大行,保持居中放大。
+			appendLine(big, true)
+			continue
+		}
+		if ctr, ok := SplitCenterLine(l); ok {
+			// 单据名副标题:正常字号下居中,整张放大后仍是居中放大。
+			appendLine(ctr, true)
+			continue
+		}
+		if b, ok := SplitBoldLine(l); ok {
+			appendLine(b, false)
+			continue
+		}
+		appendLine(l, false)
+	}
+	return out
 }
 
 // trimTrailingHr 裁掉行尾残留的分隔线:金额/备注区收尾的 hr 若成为最后一行,
@@ -671,7 +755,7 @@ func appendGuestTicketTail(lines []string, w int, cfg guestTicketConfig) []strin
 // 「客人要走了」才该出现的东西 —— 加菜时人还在店里,见 appendGuestTicketTail。
 func RenderGuestAppendTicket(o po.Order, items []po.OrderItem, paperWidth int) []string {
 	w := LineWidth(paperWidth)
-	lines := ticketHeader(o, w, "【加菜小票】", "订单号", "", false)
+	lines := ticketHeader(o, w, "【加菜小票】", "订单号", "", false, false)
 	for _, it := range items {
 		lines = append(lines, twoCol(itemQtyLabel(it), itemAmountText(it), w)...)
 		lines = appendItemRemark(lines, it, w)

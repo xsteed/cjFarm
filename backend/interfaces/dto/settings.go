@@ -63,6 +63,8 @@ type Settings struct {
 	// 金额区按「有才打」渲染(茶位费/优惠/赠送),没有对应的展示开关。
 	PrintGuestFooter       string `json:"print_guest_footer"`        // 页脚文案,清空则不打印页脚
 	PrintGuestShowDiscount string `json:"print_guest_show_discount"` // 是否显示优惠行("1"=显示)
+	// 结账小票整张放大一倍("1"=放大):仅飞鹅云通道生效,行宽按半个纸宽重排。
+	PrintGuestLargeFont string `json:"print_guest_large_font"`
 	PrintGuestOnAppend     string `json:"print_guest_on_append"`     // 加菜后是否出加菜小票("1"=打印)
 	PrintGuestOnOrder      string `json:"print_guest_on_order"`      // 下单后是否出点菜单("1"=打印)
 	// 飞鹅云打印(feie_ukey 为敏感项:已配置回显 ****** 占位,原样带回或留空均表示不修改)

@@ -202,6 +202,8 @@ func PrinterTest(c *gin.Context) {
 // kind=ticket(默认):按该机当前设置用示例订单模拟「真实下单会出什么」——
 // 纸宽、负责分类、厨房单打印粒度(整单一张/一菜一单/按份数拆)、显示金额、
 // 通道分段全部与出纸同一份代码,一段就是一张纸。
+// trigger=order(默认)/settle:顾客小票机的两种形态 —— 点菜单 / 结账小票;
+// 厨房机忽略该参数(结账不出厨房单)。
 // kind=test:渲染测试页(通道信息页),与「测试打印」出的那张一致。
 func PrinterPreview(c *gin.Context) {
 	id, okid := idParam(c)
@@ -212,7 +214,7 @@ func PrinterPreview(c *gin.Context) {
 		previewTestPage(c, id)
 		return
 	}
-	res, err := print.PreviewPrinterTicket(id)
+	res, err := print.PreviewPrinterTicket(id, strings.TrimSpace(c.Query("trigger")))
 	if err != nil {
 		fail(c, err.Error())
 		return
@@ -225,7 +227,12 @@ func PrinterPreview(c *gin.Context) {
 		"chunks":    previewChunks,
 		"lineWidth": res.LineWidth,
 		"docType":   res.DocType,
+		"triggerBy": res.TriggerBy,
 		"splitMode": res.SplitMode,
+		// 放大三个口径一起下发:前端据此解释「为什么没放大」(开关没开 / 通道不支持)。
+		"largeFont":          res.LargeFont,
+		"largeFontEnabled":   res.LargeFontEnabled,
+		"largeFontSupported": res.LargeFontSupported,
 	})
 }
 
