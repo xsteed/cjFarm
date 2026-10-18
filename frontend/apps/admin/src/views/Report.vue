@@ -75,6 +75,9 @@
         :rows="visitRows"
         :channels="visitChannels"
         :entries="visitEntries"
+        :devices="visitDevices"
+        :oses="visitOses"
+        :browsers="visitBrowsers"
         :total="visitTotal"
       />
       <HourlyMixCharts
@@ -118,6 +121,7 @@ import type {
   SettleMixRow,
   VisitChannelRow,
   VisitDailyRow,
+  VisitDistRow,
   VisitEntryRow,
   VisitStats
 } from '@dining/types';
@@ -159,6 +163,9 @@ const durationStats = ref<DiningDurationStats>({});
 const visitRows = ref<VisitDailyRow[]>([]);
 const visitChannels = ref<VisitChannelRow[]>([]);
 const visitEntries = ref<VisitEntryRow[]>([]);
+const visitDevices = ref<VisitDistRow[]>([]);
+const visitOses = ref<VisitDistRow[]>([]);
+const visitBrowsers = ref<VisitDistRow[]>([]);
 const visitSummary = ref<VisitStats['summary']>({});
 const loading = ref(false);
 const updatedAt = ref('');
@@ -293,6 +300,9 @@ function applyVisitStats(v: VisitStats | undefined): void {
   visitRows.value = v?.daily || [];
   visitChannels.value = v?.channels || [];
   visitEntries.value = v?.entries || [];
+  visitDevices.value = v?.devices || [];
+  visitOses.value = v?.oses || [];
+  visitBrowsers.value = v?.browsers || [];
   visitSummary.value = v?.summary || {};
 }
 

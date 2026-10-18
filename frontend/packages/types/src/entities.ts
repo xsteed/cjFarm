@@ -407,8 +407,17 @@ export type VisitChannel = 'h5' | 'miniprogram' | 'admin';
 export interface VisitTrackPayload {
   visitorId?: string;
   channel: VisitChannel;
-  /** 入口标识:桌台点餐码(仅 H5 有)。 */
+  /** 入口标识:桌台点餐码(H5 路由参数 / 小程序码 scene)。 */
   entry?: string;
+  /** 端上直传的设备信息(仅小程序能精确提供;H5 不传,服务端解析 UA 兜底)。 */
+  client?: {
+    /** 形如 "iOS 16.6"(wx.getDeviceInfo().system)。 */
+    system?: string;
+    /** ios / android / windows / mac。 */
+    platform?: string;
+    /** 机型,如 "iPhone 14 Pro"。 */
+    model?: string;
+  };
 }
 
 /** 报表里一天的访问数据(分渠道 PV;UV/新访客为全站口径)。 */
@@ -428,6 +437,12 @@ export interface VisitChannelRow extends Extensible {
   label?: string;
   pv?: number;
   uv?: number;
+}
+
+/** 终端构成分布的一行(设备类型/操作系统/浏览器)。 */
+export interface VisitDistRow extends Extensible {
+  name?: string;
+  pv?: number;
 }
 
 /** 扫码入口排行的一行(桌台码被扫次数)。 */
@@ -456,6 +471,10 @@ export interface VisitStats extends Extensible {
   daily?: VisitDailyRow[];
   channels?: VisitChannelRow[];
   entries?: VisitEntryRow[];
+  /** 终端构成:分布各项之和 = 区间总 PV(含「未知」项)。 */
+  devices?: VisitDistRow[];
+  oses?: VisitDistRow[];
+  browsers?: VisitDistRow[];
 }
 
 export interface SettleMixRow extends Extensible {

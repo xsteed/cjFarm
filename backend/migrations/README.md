@@ -171,7 +171,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 20 | `tb_image` | 图片内容表（菜品图 / 收款码 / 上传图二进制） | 启动时写入出厂图 | full |
 | 21 | `tb_day_seq` | 按营业日维护「当日取餐号」的计数器 | 运行时产生 | full + incr 22 |
 | 22 | `tb_customer` | 会员档案（账号，与登录方式无关；用于「我的订单」与订单归属）。`openid` 列已由 incr 33 删除 | 运行时产生 | full + incr 20/21/33 |
-| 23 | `tb_visit_log` | 访问明细（站点 PV/UV 打点，「待办」性质，按保留天数清理） | 运行时产生 | full + incr 31 |
+| 23 | `tb_visit_log` | 访问明细（站点 PV/UV 打点，「待办」性质，按保留天数清理） | 运行时产生 | full + incr 31/32 |
 | 24 | `tb_visitor` | 访客注册表（独立访客档案，「新访客」精确口径，长期保留） | 运行时产生 | full + incr 31 |
 | 25 | `tb_visit_daily` | 日聚合台账（每日每渠道 PV/UV/新访客，报表主读，长期保留） | 运行时产生 | full + incr 31 |
 | 26 | `tb_customer_identity` | 会员登录方式（provider + external_id 绑定，账号与登录方式解耦；为 App/网站预留） | 运行时产生 | full + incr 32 |

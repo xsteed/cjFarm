@@ -121,6 +121,7 @@ cp .env.example .env                 # 两者可只用一个
 | `visit.enabled` | `VISIT_STAT_ENABLED` | 站点访问统计总开关 | `true` |
 | `visit.retention_days` | `VISIT_RETENTION_DAYS` | 访问明细保留天数（日聚合台账不受影响） | `90` |
 | `visit.rate_per_min` | `VISIT_RATE_PER_MIN` | 单 IP 每分钟打点上限 | `60` |
+| `visit.ip2region_path` | `IP2REGION_PATH` | IP 城市库（ip2region）路径，缺文件时 city 字段为空 | `data/ip2region.xdb` |
 
 两个文件都读**当前工作目录**（即从 `backend/` 启动），路径可用 `CONFIG_FILE` /
 `ENV_FILE` 覆盖。`config.yaml` 里出现模板之外的键名会**直接报错并提示行号**，

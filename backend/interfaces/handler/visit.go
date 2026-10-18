@@ -37,6 +37,13 @@ func VisitTrack(c *gin.Context) {
 		VisitorID string `json:"visitorId"`
 		Channel   string `json:"channel"`
 		Entry     string `json:"entry"`
+		// Client 是端上直传的设备信息(仅小程序能精确提供;H5 不传,由服务端
+		// 解析 User-Agent 兜底)。字段长度在 service 侧截断,防任意长文本入库。
+		Client struct {
+			System   string `json:"system"`
+			Platform string `json:"platform"`
+			Model    string `json:"model"`
+		} `json:"client"`
 	}
 	if err := c.ShouldBindJSON(&p); err != nil {
 		// 埋点请求体非法:记一条 warn 供排查,对顾客仍返回成功。
@@ -45,12 +52,15 @@ func VisitTrack(c *gin.Context) {
 		return
 	}
 	service.RecordVisit(service.VisitInput{
-		Channel:    p.Channel,
-		VisitorID:  p.VisitorID,
-		CustomerID: customerIDFrom(c), // 0 = 匿名;带合法会员令牌时为会员 ID
-		Entry:      p.Entry,
-		IP:         c.ClientIP(),
-		UA:         c.GetHeader("User-Agent"),
+		Channel:        p.Channel,
+		VisitorID:      p.VisitorID,
+		CustomerID:     customerIDFrom(c), // 0 = 匿名;带合法会员令牌时为会员 ID
+		Entry:          p.Entry,
+		IP:             c.ClientIP(),
+		UA:             c.GetHeader("User-Agent"),
+		ClientSystem:   p.Client.System,
+		ClientPlatform: p.Client.Platform,
+		ClientModel:    p.Client.Model,
 	})
 	ok(c, nil)
 }
@@ -80,5 +90,9 @@ func ReportVisits(c *gin.Context) {
 		"channels": s.Channels,
 		// 扫码入口排行(桌台码):一期就要展示「哪张桌的码被扫得最多」。
 		"entries": s.Entries,
+		// 终端构成:设备类型 / 操作系统 / 浏览器分布(明细窗口内)。
+		"devices":  s.Devices,
+		"oses":     s.Oses,
+		"browsers": s.Browsers,
 	})
 }

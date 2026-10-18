@@ -120,9 +120,10 @@ type AdminSection struct {
 
 // VisitSection 对应站点访问统计(见 docs/design-docs/visit-analytics/spec.md)。
 type VisitSection struct {
-	Enabled       *bool `yaml:"enabled"`        // -> VISIT_STAT_ENABLED,"1" / "0",默认开
-	RetentionDays *int  `yaml:"retention_days"` // -> VISIT_RETENTION_DAYS,明细保留天数,默认 90,0=不清理
-	RatePerMin    *int  `yaml:"rate_per_min"`   // -> VISIT_RATE_PER_MIN,单 IP 每分钟打点上限,默认 60
+	Enabled       *bool   `yaml:"enabled"`         // -> VISIT_STAT_ENABLED,"1" / "0",默认开
+	RetentionDays *int    `yaml:"retention_days"`  // -> VISIT_RETENTION_DAYS,明细保留天数,默认 90,0=不清理
+	RatePerMin    *int    `yaml:"rate_per_min"`    // -> VISIT_RATE_PER_MIN,单 IP 每分钟打点上限,默认 60
+	IP2RegionPath *string `yaml:"ip2region_path"`  // -> IP2REGION_PATH,IP 城市库路径,默认 data/ip2region.xdb
 }
 
 // DeployStats 描述配置加载结果,供启动日志与测试使用。
@@ -277,6 +278,7 @@ func (c *DeployFile) envPairs() map[string]string {
 	}
 	setStr(m, conf.EnvVisitRetentionDays, intToStr(c.Visit.RetentionDays))
 	setStr(m, conf.EnvVisitRatePerMin, intToStr(c.Visit.RatePerMin))
+	setStrPtr(m, conf.EnvVisitIP2RegionPath, c.Visit.IP2RegionPath)
 
 	return m
 }

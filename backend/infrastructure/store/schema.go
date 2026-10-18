@@ -612,6 +612,16 @@ var schemaTemplate = []string{
 		entry       VARCHAR(16)  DEFAULT '',
 		ip_hash     VARCHAR(64)  DEFAULT '',
 		ua_hash     VARCHAR(64)  DEFAULT '',
+		-- 终端与来源信息(2026-10-18 增补):IP 明文用于排查与展示(明细 90 天清理,
+		-- 与操作日志 oper_ip 明文同一取舍);城市来自 ip2region 离线库
+		-- (data/ip2region.xdb,缺文件时为空);OS/浏览器/设备类型为归一后的展示值
+		-- (iOS/微信/手机…),具体机型仅小程序能精确直传,H5 只能到品牌档位。
+		ip          VARCHAR(45)  DEFAULT '',
+		city        VARCHAR(64)  DEFAULT '',
+		os          VARCHAR(16)  DEFAULT '',
+		browser     VARCHAR(16)  DEFAULT '',
+		device      VARCHAR(8)   DEFAULT '',
+		model       VARCHAR(64)  DEFAULT '',
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}}
 	){{OPTS}}`,
 
@@ -962,6 +972,13 @@ var alterCols = []alterCol{
 	// 商家首次操作时间:老库补列后为 NULL,历史订单不会被批量打上「新」角标
 	// (角标条件还叠加了「已下单」,已完成/已取消的历史单本来就不会命中)。
 	{Table: "tb_order", Name: "viewed_at", Def: "VARCHAR(32) DEFAULT NULL"},
+	// 访问明细补终端与来源列(2026-10-18):上线时的 tb_visit_log 没有这些列。
+	{Table: "tb_visit_log", Name: "ip", Def: "VARCHAR(45) DEFAULT ''"},
+	{Table: "tb_visit_log", Name: "city", Def: "VARCHAR(64) DEFAULT ''"},
+	{Table: "tb_visit_log", Name: "os", Def: "VARCHAR(16) DEFAULT ''"},
+	{Table: "tb_visit_log", Name: "browser", Def: "VARCHAR(16) DEFAULT ''"},
+	{Table: "tb_visit_log", Name: "device", Def: "VARCHAR(8) DEFAULT ''"},
+	{Table: "tb_visit_log", Name: "model", Def: "VARCHAR(64) DEFAULT ''"},
 	// ---- 通用记录时间补齐 ----
 	// 早期只给「主数据表」(桌台/菜品/订单/员工/角色…)留了 create_time/update_time,
 	// 其余表按需加了单列甚至没有,排查问题时无从判断「这行什么时候进来的、最后动过没」。

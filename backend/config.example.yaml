@@ -136,6 +136,9 @@ visit:
   # retention_days: 90
   # 单 IP 每分钟打点上限（默认 60），防刷
   # rate_per_min: 60
+  # IP 城市库（ip2region 离线库，约 11MB）路径，默认 data/ip2region.xdb；
+  # 文件缺失时访问记录的 city 字段为空，不影响其余统计
+  # ip2region_path: data/ip2region.xdb
 
 # ---------------------------------------------------------------------------
 # 管理端初始账号

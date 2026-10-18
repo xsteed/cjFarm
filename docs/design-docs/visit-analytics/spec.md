@@ -381,3 +381,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_visit_daily_uk ON tb_visit_daily(visit_dat
 | D2 | 一期是否上 Dashboard 卡片 | **上**：管理首页新增「今日访问」KPI（UV 为主、PV 与新访客为副，随 `report:view` 显隐） |
 | D3 | 小程序打点是否带会员身份 | **带**：`onLaunch` 打点经会员拦截器自动附顾客令牌，后端升级为 `m:<customerId>` 会员访客键；令牌过期时按匿名记录（`CustomerAuthOptional` 不拦截） |
 | D4 | 桌台码入口是否一期展示 | **展示**：报表页新增「扫码入口 Top」横向条形图（桌名 · 桌号，Top 8） |
+
+---
+
+## 15. 增补：终端与来源信息（2026-10-18，已实施）
+
+店家反馈想看到「客人都用什么手机、从哪来的」。一期只存了 IP/UA 的哈希（够 UV 去重、
+不够排查），本期在 `tb_visit_log` 补六个列,采集双通道:
+
+| 列 | H5 / 管理端 | 小程序 | 说明 |
+|---|---|---|---|
+| `ip` | 服务端 `ClientIP()`（可信代理已配） | 同左 | **明文**,与操作日志 `oper_ip` 同一取舍;明细 90 天清理,有限期暴露 |
+| `city` | ip2region 离线库解析 | 同左 | 格式「中国 江苏省 南京市」/「内网」;**缺 xdb 文件时为空**,不影响其余统计 |
+| `os` | UA 解析（iOS/Android/Windows/macOS/鸿蒙/Linux/其他） | 端上 `system` 直传（更准） | 归一展示值,不带版本号(版本进不了分布统计,机型列有详情) |
+| `browser` | UA 解析（微信/支付宝/QQ浏览器/Chrome/Safari/Edge/Firefox/其他） | 固定「微信小程序」 | H5 能识别微信内打开(`MicroMessenger`) |
+| `device` | UA 解析（手机/平板/电脑/其他） | 端上 `platform` 归一 | Android 平板的 UA 不含 Mobile,据此区分 |
+| `model` | 留空(UA 只能到品牌档,不准的不存) | 端上 `model` 直传（如 iPhone 15 Pro） | **只信小程序渠道**:H5 正常请求拿不到机型,带上的一律是伪造 |
+
+实现要点:
+
+- **UA 解析手写**（`service.parseUA`）,不引第三方库:分布统计只需要粗粒度结论。
+  判定顺序敏感——浏览器先于 Safari/Chrome(Edge/Opera 的 UA 带 Chrome 关键字),
+  平板先于手机(Android 平板的 UA 不含 Mobile)。
+- **城市用 ip2region v2 离线库**（`infrastructure/geoip`）:纯内存查询、无外呼,
+  文件路径 `visit.ip2region_path`（默认 `data/ip2region.xdb`,gitignored 运行期资产,
+  从 ip2region v2.11.0 release 下载）;缺文件时 city 为空、只告警一次。
+- **分布查询走维度白名单**（`dao.VisitDistribution`）:GROUP BY 的列名不能来自
+  用户输入;空值行不过滤、原样返回,由上层归一「未知」——分布各项之和恒等于
+  区间总 PV,「未知」占比即采集覆盖率的直观呈现。
+- 报表页新增「终端构成」三张小图(设备类型/操作系统/浏览器),横条 Top 6。
+- **隐私**:小程序「用户隐私保护指引」需补「设备信息」声明(`wx.getDeviceInfo`
+  属于收集设备信息,上线硬前置);IP 明文的取舍与操作日志一致,报表本就仅
+  `report:view` 可见。
+
+历史行(增补上线前)六个列均为空,不做回填。

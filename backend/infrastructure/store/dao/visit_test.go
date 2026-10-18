@@ -453,3 +453,48 @@ func TestVisitListTableIdentities(t *testing.T) {
 		t.Fatalf("已删除桌台不应返回: %+v", ids)
 	}
 }
+
+// TestVisitDistribution 终端分布:按维度白名单聚合、空值行返回(上层归一「未知」)、
+// 白名单之外的维度拒绝(防注入)。
+func TestVisitDistribution(t *testing.T) {
+	visitInit(t)
+
+	const day = "2026-10-15"
+	logs := []po.VisitLog{
+		func() po.VisitLog { l := visitLog(day, po.VisitChannelH5, "c:a"); l.OS = "iOS"; l.Browser = "微信"; l.Device = "手机"; return l }(),
+		func() po.VisitLog { l := visitLog(day, po.VisitChannelH5, "c:b"); l.OS = "iOS"; l.Browser = "微信"; l.Device = "手机"; return l }(),
+		func() po.VisitLog { l := visitLog(day, po.VisitChannelH5, "c:c"); l.OS = "Android"; l.Browser = "Chrome"; l.Device = "手机"; return l }(),
+		func() po.VisitLog { l := visitLog(day, po.VisitChannelAdmin, "c:d"); l.OS = "Windows"; l.Browser = "Edge"; l.Device = "电脑"; return l }(),
+		visitLog(day, po.VisitChannelH5, "c:e"), // 三列全空:各维度都归一行
+	}
+	if err := WriteVisitBatch(logs, nil); err != nil {
+		t.Fatalf("WriteVisitBatch: %v", err)
+	}
+
+	rows, err := VisitDistribution(day, day, "os")
+	if err != nil {
+		t.Fatalf("VisitDistribution(os): %v", err)
+	}
+	got := map[string]int{}
+	for _, r := range rows {
+		got[r.Name] = r.PV
+	}
+	if got["iOS"] != 2 || got["Android"] != 1 || got["Windows"] != 1 || got[""] != 1 {
+		t.Fatalf("OS 分布 = %v", got)
+	}
+	if len(rows) == 0 || rows[0].Name != "iOS" || rows[0].PV != 2 {
+		t.Fatalf("分布应按 PV 倒序: %+v", rows)
+	}
+
+	rows, err = VisitDistribution(day, day, "browser")
+	if err != nil {
+		t.Fatalf("VisitDistribution(browser): %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("浏览器分布行数 = %d, 期望 4", len(rows))
+	}
+
+	if _, err := VisitDistribution(day, day, "entry; DROP TABLE tb_visit_log"); err == nil {
+		t.Fatal("白名单之外的维度应被拒绝")
+	}
+}

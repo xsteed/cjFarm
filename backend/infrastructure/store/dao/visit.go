@@ -11,6 +11,7 @@ package dao
 
 import (
 	"database/sql"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -82,14 +83,16 @@ func insertVisitLogsTx(tx *sql.Tx, logs []po.VisitLog) error {
 		}
 		chunk := logs[start:end]
 		var b strings.Builder
-		b.WriteString(`INSERT INTO tb_visit_log(visit_date, channel, visitor_key, is_member, customer_id, entry, ip_hash, ua_hash, create_time) VALUES `)
-		args := make([]interface{}, 0, len(chunk)*9)
+		b.WriteString(`INSERT INTO tb_visit_log(visit_date, channel, visitor_key, is_member, customer_id, entry,
+			ip_hash, ua_hash, ip, city, os, browser, device, model, create_time) VALUES `)
+		args := make([]interface{}, 0, len(chunk)*15)
 		for i, l := range chunk {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			b.WriteString(`(?,?,?,?,?,?,?,?,?)`)
-			args = append(args, l.VisitDate, l.Channel, l.VisitorKey, l.IsMember, l.CustomerID, l.Entry, l.IPHash, l.UAHash, l.CreateTime)
+			b.WriteString(`(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+			args = append(args, l.VisitDate, l.Channel, l.VisitorKey, l.IsMember, l.CustomerID, l.Entry,
+				l.IPHash, l.UAHash, l.IP, l.City, l.OS, l.Browser, l.Device, l.Model, l.CreateTime)
 		}
 		if _, err := tx.Exec(b.String(), args...); err != nil {
 			return err
@@ -352,6 +355,46 @@ func DistinctVisitorsInRange(start, end string) (int, error) {
 	err := store.DB.QueryRow(`SELECT COUNT(DISTINCT visitor_key) FROM tb_visit_log
 		WHERE visit_date>=? AND visit_date<=?`, start, end).Scan(&n)
 	return n, err
+}
+
+// VisitDistRow 终端构成分布的一行(设备类型/操作系统/浏览器共用)。
+type VisitDistRow struct {
+	Name string
+	PV   int
+}
+
+// visitDistColumns 分布维度白名单:GROUP BY 的列名不能来自用户输入,
+// 这里显式枚举,枚举之外的维度一律拒绝。
+var visitDistColumns = map[string]bool{
+	"os":      true,
+	"browser": true,
+	"device":  true,
+}
+
+// VisitDistribution 区间内某个终端维度的分布(含首尾日期,按 PV 倒序)。
+// 空值行原样返回(名称为空串),由上层归一为「未知」展示 —— 不在 SQL 里过滤:
+// 分布各项之和恒等于区间总 PV,「未知」占比本身就是采集覆盖率的直观呈现。
+func VisitDistribution(start, end, column string) ([]VisitDistRow, error) {
+	if !visitDistColumns[column] {
+		return nil, fmt.Errorf("不支持的分布维度: %s", column)
+	}
+	// 列名来自上面的白名单,并非用户输入拼接。
+	rows, err := store.DB.Query(`SELECT `+column+`, COUNT(*) AS pv FROM tb_visit_log
+		WHERE visit_date>=? AND visit_date<=?
+		GROUP BY `+column+` ORDER BY pv DESC, `+column, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []VisitDistRow{}
+	for rows.Next() {
+		var r VisitDistRow
+		if err := rows.Scan(&r.Name, &r.PV); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // DistinctMemberVisitorsInRange 区间会员访客数(登录会员的去重访客,含首尾日期)。

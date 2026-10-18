@@ -2,6 +2,7 @@ package service
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -343,5 +344,93 @@ func TestVisitStatsEntries(t *testing.T) {
 	}
 	if got := byEntry["8YG3Q335"].Label; got != "8YG3Q335" {
 		t.Fatalf("关联不到桌台时应回退码值, got %q", got)
+	}
+}
+
+// TestVisitParseUA UA 解析的关键判定:顺序敏感(Edge 的 UA 带 Chrome、
+// Safari 的 UA 带 Chrome)、平板与手机的分界(Android 平板不含 Mobile)。
+func TestVisitParseUA(t *testing.T) {
+	cases := []struct {
+		name           string
+		ua             string
+		device, osName string
+		browser        string
+	}{
+		{
+			name: "微信内 iPhone H5",
+			ua:   "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.49",
+			device: "手机", osName: "iOS", browser: "微信",
+		},
+		{
+			name: "Android Chrome",
+			ua:   "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
+			device: "手机", osName: "Android", browser: "Chrome",
+		},
+		{
+			name: "Android 平板(UA 不含 Mobile)",
+			ua:   "Mozilla/5.0 (Linux; Android 12; SM-T220) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+			device: "平板", osName: "Android", browser: "Chrome",
+		},
+		{
+			name: "桌面 Edge(UA 带 Chrome,必须判成 Edge)",
+			ua:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36 Edg/120",
+			device: "电脑", osName: "Windows", browser: "Edge",
+		},
+		{
+			name: "桌面 Safari",
+			ua:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+			device: "电脑", osName: "macOS", browser: "Safari",
+		},
+		{
+			name: "未知 UA",
+			ua:   "curl/8.4",
+			device: "其他", osName: "其他", browser: "其他",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			device, osName, browser := parseUA(c.ua)
+			if device != c.device || osName != c.osName || browser != c.browser {
+				t.Fatalf("parseUA = (%q,%q,%q), 期望 (%q,%q,%q)", device, osName, browser, c.device, c.osName, c.browser)
+			}
+		})
+	}
+}
+
+// TestVisitEnrichDevice 小程序端直传优先于 UA;浏览器栏固定「微信小程序」;
+// platform 归一设备类型;文本超长截断。
+func TestVisitEnrichDevice(t *testing.T) {
+	in := VisitInput{
+		Channel:        po.VisitChannelMiniprogram,
+		UA:             "MicroMessenger UA(不应被采用)",
+		ClientSystem:   "iOS 16.6",
+		ClientPlatform: "ios",
+		ClientModel:    "iPhone 14 Pro",
+	}
+	device, osName, browser, model := enrichDevice(in)
+	if device != "手机" || osName != "iOS" || browser != "微信小程序" || model != "iPhone 14 Pro" {
+		t.Fatalf("enrichDevice = (%q,%q,%q,%q)", device, osName, browser, model)
+	}
+
+	// 电脑端微信小程序:platform=windows 归一为电脑
+	dev2, os2, br2, _ := enrichDevice(VisitInput{Channel: po.VisitChannelMiniprogram,
+		ClientSystem: "Windows 11", ClientPlatform: "windows", ClientModel: "Surface"})
+	if dev2 != "电脑" || os2 != "Windows" || br2 != "微信小程序" {
+		t.Fatalf("windows 小程序 = (%q,%q,%q)", dev2, os2, br2)
+	}
+
+	// H5:UA 兜底,机型留空
+	device, osName, browser, model = enrichDevice(VisitInput{Channel: po.VisitChannelH5,
+		UA: "iPhone; MicroMessenger/8.0", ClientModel: "伪造机型不应生效"})
+	if model != "" || browser != "微信" || osName != "iOS" || device != "手机" {
+		t.Fatalf("H5 兜底 = (%q,%q,%q,%q)", device, osName, browser, model)
+	}
+
+	// 超长截断:model 列 64 字符
+	long := strings.Repeat("机", 100)
+	_, _, _, model = enrichDevice(VisitInput{Channel: po.VisitChannelMiniprogram,
+		ClientSystem: "iOS", ClientPlatform: "ios", ClientModel: long})
+	if got := len([]rune(model)); got != 64 {
+		t.Fatalf("机型应截断到 64 字符, got %d", got)
 	}
 }

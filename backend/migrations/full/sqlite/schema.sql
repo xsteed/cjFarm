@@ -436,6 +436,16 @@ CREATE TABLE IF NOT EXISTS tb_visit_log (
         entry       VARCHAR(16)  DEFAULT '',
         ip_hash     VARCHAR(64)  DEFAULT '',
         ua_hash     VARCHAR(64)  DEFAULT '',
+        -- 终端与来源信息(2026-10-18 增补):IP 明文用于排查与展示(明细 90 天清理,
+        -- 与操作日志 oper_ip 明文同一取舍);城市来自 ip2region 离线库
+        -- (data/ip2region.xdb,缺文件时为空);OS/浏览器/设备类型为归一后的展示值
+        -- (iOS/微信/手机…),具体机型仅小程序能精确直传,H5 只能到品牌档位。
+        ip          VARCHAR(45)  DEFAULT '',
+        city        VARCHAR(64)  DEFAULT '',
+        os          VARCHAR(16)  DEFAULT '',
+        browser     VARCHAR(16)  DEFAULT '',
+        device      VARCHAR(8)   DEFAULT '',
+        model       VARCHAR(64)  DEFAULT '',
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime'))
     );
 CREATE TABLE IF NOT EXISTS tb_visitor (

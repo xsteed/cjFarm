@@ -103,7 +103,7 @@ func TestReportVisits(t *testing.T) {
 		t.Fatalf("访问报表应返回 200, got %d(%v)", code, res)
 	}
 	data := res["data"].(map[string]interface{})
-	for _, key := range []string{"range", "summary", "daily", "channels", "entries"} {
+	for _, key := range []string{"range", "summary", "daily", "channels", "entries", "devices", "oses", "browsers"} {
 		if _, ok := data[key]; !ok {
 			t.Fatalf("访问报表缺少字段 %q: %v", key, data)
 		}

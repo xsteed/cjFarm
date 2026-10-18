@@ -45,26 +45,72 @@
         ></div>
       </div>
     </div>
+
+    <!-- 终端构成:设备类型 / 操作系统 / 浏览器三张小图 -->
+    <div class="trio">
+      <div class="page-card chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">设备类型</div>
+            <div class="chart-sub">手机 / 平板 / 电脑</div>
+          </div>
+        </div>
+        <div
+          ref="deviceEl"
+          class="chart-canvas trio-canvas"
+        ></div>
+      </div>
+      <div class="page-card chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">操作系统</div>
+            <div class="chart-sub">小程序为端上直传，H5 由 UA 解析</div>
+          </div>
+        </div>
+        <div
+          ref="osEl"
+          class="chart-canvas trio-canvas"
+        ></div>
+      </div>
+      <div class="page-card chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">浏览器 / 宿主</div>
+            <div class="chart-sub">小程序记为「微信小程序」，H5 能识别微信内打开</div>
+          </div>
+        </div>
+        <div
+          ref="browserEl"
+          class="chart-canvas trio-canvas"
+        ></div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
-import type { VisitChannelRow, VisitDailyRow, VisitEntryRow } from '@dining/types';
+import { onMounted, ref, watch, type Ref } from 'vue';
+import type { VisitChannelRow, VisitDailyRow, VisitDistRow, VisitEntryRow } from '@dining/types';
 import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
-import { AXIS_COLOR, AXIS_LINE, SPLIT_LINE, BRAND, GREEN, BLUE, pickTooltipParam } from './reportShared';
+import { AXIS_COLOR, AXIS_LINE, SPLIT_LINE, BRAND, GREEN, BLUE, AMBER, pickTooltipParam } from './reportShared';
 
 const props = defineProps<{
   rows: VisitDailyRow[];
   channels: VisitChannelRow[];
   entries: VisitEntryRow[];
+  devices: VisitDistRow[];
+  oses: VisitDistRow[];
+  browsers: VisitDistRow[];
   total: { pv: number; uv: number; newUv: number };
 }>();
 
 const trendEl = ref<HTMLElement | null>(null);
 const channelEl = ref<HTMLElement | null>(null);
 const entryEl = ref<HTMLElement | null>(null);
+const deviceEl = ref<HTMLElement | null>(null);
+const osEl = ref<HTMLElement | null>(null);
+const browserEl = ref<HTMLElement | null>(null);
 const { isMobile } = useIsMobile();
 
 // 趋势:PV(面积线)/ UV / 新访客三条线共用「次数」量纲，不做双轴。
@@ -308,14 +354,72 @@ function renderEntries(): void {
   c.setOption(option);
 }
 
+// 终端小图的通用渲染:横向条形,Top 6,空数据显示「暂无数据」。
+function renderDist(key: string, el: Ref<HTMLElement | null>, rows: VisitDistRow[], color: string, title: string): void {
+  const c = chart(key, el.value);
+  if (!c) return;
+  c.clear();
+  const list = (rows || []).filter(x => (x.pv || 0) > 0).slice(0, 6);
+  if (!list.length) {
+    c.setOption(EMPTY_OPTION);
+    return;
+  }
+  // ECharts 的类目轴自下而上排列,先反转让最大值在最上方
+  const ordered = [...list].reverse();
+  const option: EChartOption = {
+    tooltip: {
+      trigger: 'axis',
+      confine: true,
+      axisPointer: { type: 'shadow' },
+      formatter: ps => {
+        const p = pickTooltipParam(ps);
+        const row: VisitDistRow = ordered[p.dataIndex] || {};
+        return `${row.name || '未知'}<br/><b>${row.pv || 0}</b> 次`;
+      }
+    },
+    grid: { left: 8, right: 24, top: 10, bottom: 4, containLabel: true },
+    xAxis: {
+      type: 'value',
+      minInterval: 1,
+      splitLine: { lineStyle: { color: SPLIT_LINE } },
+      axisLabel: { color: AXIS_COLOR, fontSize: 11 }
+    },
+    yAxis: {
+      type: 'category',
+      data: ordered.map(x => x.name || '未知'),
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: AXIS_LINE } },
+      axisLabel: { color: AXIS_COLOR, fontSize: 11, width: 72, overflow: 'truncate' }
+    },
+    series: [
+      {
+        name: title,
+        type: 'bar',
+        barMaxWidth: 14,
+        data: ordered.map(x => Number(x.pv || 0)),
+        itemStyle: { color, borderRadius: [0, 4, 4, 0] },
+        label: { show: true, position: 'right', color: AXIS_COLOR, fontSize: 11 }
+      }
+    ]
+  };
+  c.setOption(option);
+}
+
+function renderTerminals(): void {
+  renderDist('visitDevice', deviceEl, props.devices || [], GREEN, '设备类型');
+  renderDist('visitOs', osEl, props.oses || [], BLUE, '操作系统');
+  renderDist('visitBrowser', browserEl, props.browsers || [], AMBER, '浏览器');
+}
+
 function renderAll(): void {
   renderTrend();
   renderChannels();
   renderEntries();
+  renderTerminals();
 }
 
 onMounted(renderAll);
-watch(() => [props.rows, props.channels, props.entries], renderAll);
+watch(() => [props.rows, props.channels, props.entries, props.devices, props.oses, props.browsers], renderAll);
 // 切换手机/桌面宽度时用不同的 option 重绘
 watch(isMobile, renderAll);
 </script>
@@ -371,12 +475,23 @@ watch(isMobile, renderAll);
   margin-top: 16px;
 }
 
+.trio {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
 .duo-canvas {
   height: 260px;
 }
 
 @media (width <= 900px) {
   .duo {
+    grid-template-columns: 1fr;
+  }
+
+  .trio {
     grid-template-columns: 1fr;
   }
 }
@@ -387,6 +502,10 @@ watch(isMobile, renderAll);
   }
 
   .duo {
+    gap: 12px;
+  }
+
+  .trio {
     gap: 12px;
   }
 }

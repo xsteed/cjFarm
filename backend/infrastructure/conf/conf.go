@@ -250,6 +250,8 @@ const (
 	EnvVisitRetentionDays = "VISIT_RETENTION_DAYS"
 	// EnvVisitRatePerMin 是单 IP 每分钟打点上限环境变量。
 	EnvVisitRatePerMin = "VISIT_RATE_PER_MIN"
+	// EnvVisitIP2RegionPath 是 IP 城市库(ip2region xdb)路径环境变量。
+	EnvVisitIP2RegionPath = "IP2REGION_PATH"
 )
 
 const (
@@ -259,6 +261,8 @@ const (
 	DefaultVisitRetentionDays = "90"
 	// DefaultVisitRatePerMin 是单 IP 每分钟打点默认上限。
 	DefaultVisitRatePerMin = "60"
+	// DefaultVisitIP2RegionPath 是 IP 城市库默认路径(相对工作目录)。
+	DefaultVisitIP2RegionPath = "data/ip2region.xdb"
 )
 
 // ==================== 管理员 ====================

@@ -11,6 +11,7 @@ import (
 
 	"dining-system/domain/po"
 	"dining-system/infrastructure"
+	"dining-system/infrastructure/geoip"
 	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/store"
 	"dining-system/infrastructure/store/dao"
@@ -31,8 +32,14 @@ type VisitInput struct {
 	VisitorID  string // 前端生成并持久化的随机访客 ID(可空)
 	CustomerID int    // 登录会员 ID(0 = 匿名),只认服务端从令牌解析的值
 	Entry      string // 入口标识:桌台点餐码(H5)
-	IP         string // 来源 IP(不明文入库,只存哈希)
-	UA         string // User-Agent(不明文入库,只存哈希)
+	IP         string // 来源 IP(哈希入库供去重;明文另存一列用于排查展示)
+	UA         string // User-Agent(哈希入库供去重;另解析出 OS/浏览器/设备类型)
+
+	// 端上直传的设备信息(仅小程序能精确提供:H5 拿不到机型,服务端 UA 兜底)。
+	// system 形如 "iOS 16.6";platform 为 ios/android/windows/mac;model 为机型。
+	ClientSystem   string
+	ClientPlatform string
+	ClientModel    string
 }
 
 // hashVisitValue 返回 sha256(登录令牌密钥|value) 的 hex 前 32 位。
@@ -96,6 +103,127 @@ func sanitizeEntry(entry string) string {
 		}
 	}
 	return b.String()
+}
+
+// ============================================================================
+// 终端信息(UA 解析 + 小程序直传)
+// ============================================================================
+
+// clampText 文本入库前的兜底截断(按字符数,防 MySQL 严格模式拒收整条 INSERT)。
+func clampText(s string, max int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
+
+// parseUA 从 User-Agent 解析出设备类型 / 操作系统 / 浏览器(尽力而为)。
+//
+// 手写轻量解析而非引入第三方库:这里只求「分布统计够用」的粗粒度结论
+// (iOS / Android / 微信 / 手机…),不追求机型级精确 —— 精确机型只有小程序
+// 端能拿到,走端上直传(见 enrichDevice)。判定顺序有讲究:
+//   - 浏览器判定必须先于 Safari(Safari 的 UA 里含 Chrome 关键字的另有其人)、
+//     先于 Chrome(Edge/Opera 的 UA 里也带 Chrome);
+//   - 平板判定先于手机(Android 平板的 UA 不含 Mobile,手机才含)。
+func parseUA(ua string) (device, osName, browser string) {
+	u := strings.ToLower(ua)
+	// ---- 设备类型 ----
+	switch {
+	case strings.Contains(u, "ipad"), strings.Contains(u, "tablet"):
+		device = "平板"
+	case strings.Contains(u, "android") && !strings.Contains(u, "mobile"):
+		device = "平板"
+	case strings.Contains(u, "mobile"), strings.Contains(u, "iphone"):
+		device = "手机"
+	case strings.Contains(u, "android"):
+		device = "手机"
+	case strings.Contains(u, "windows"), strings.Contains(u, "macintosh"),
+		strings.Contains(u, "mac os x"), strings.Contains(u, "x11"), strings.Contains(u, "linux"):
+		device = "电脑"
+	default:
+		device = "其他"
+	}
+	// ---- 操作系统 ----
+	switch {
+	case strings.Contains(u, "iphone"):
+		osName = "iOS"
+	case strings.Contains(u, "ipad"):
+		osName = "iPadOS"
+	case strings.Contains(u, "android"):
+		osName = "Android"
+	case strings.Contains(u, "harmonyos"):
+		osName = "鸿蒙"
+	case strings.Contains(u, "windows"):
+		osName = "Windows"
+	case strings.Contains(u, "macintosh"), strings.Contains(u, "mac os x"):
+		osName = "macOS"
+	case strings.Contains(u, "linux"), strings.Contains(u, "x11"):
+		osName = "Linux"
+	default:
+		osName = "其他"
+	}
+	// ---- 浏览器/宿主(顺序敏感,见函数注释) ----
+	switch {
+	case strings.Contains(u, "micromessenger"):
+		browser = "微信"
+	case strings.Contains(u, "alipayclient"):
+		browser = "支付宝"
+	case strings.Contains(u, "qq/"), strings.Contains(u, "mqqbrowser"):
+		browser = "QQ浏览器"
+	case strings.Contains(u, "edg/"):
+		browser = "Edge"
+	case strings.Contains(u, "opr/"), strings.Contains(u, "opera"):
+		browser = "Opera"
+	case strings.Contains(u, "firefox"), strings.Contains(u, "fxios"):
+		browser = "Firefox"
+	case strings.Contains(u, "crios"), strings.Contains(u, "chrome"):
+		browser = "Chrome"
+	case strings.Contains(u, "safari"):
+		browser = "Safari"
+	default:
+		browser = "其他"
+	}
+	return device, osName, browser
+}
+
+// enrichDevice 汇总一次访问的终端信息(设备类型/OS/浏览器/机型)。
+//
+// 小程序端走 wx.getDeviceInfo 直传,比 UA 精确得多(尤其机型),因此小程序
+// 渠道优先采用端上值,UA 只做兜底;浏览器栏固定为「微信小程序」—— 小程序
+// 没有"浏览器"概念,真要看宿主版本,端上直传的 system 已足够区分。
+func enrichDevice(in VisitInput) (device, osName, browser, model string) {
+	device, osName, browser = parseUA(in.UA)
+	// 机型只信小程序直传:H5 正常请求拿不到机型,带上的一律是伪造
+	// (打点接口公开无鉴权,不设防会污染机型分布)。
+	if in.Channel != po.VisitChannelMiniprogram {
+		return device, osName, browser, ""
+	}
+	model = clampText(in.ClientModel, 64)
+	browser = "微信小程序"
+	// system 形如 "iOS 16.6" / "Android 13":取首个空格前的词归一。
+	if first := strings.Fields(strings.TrimSpace(in.ClientSystem)); len(first) > 0 {
+		switch strings.ToLower(first[0]) {
+		case "ios":
+			osName = "iOS"
+		case "android":
+			osName = "Android"
+		case "windows":
+			osName = "Windows"
+		case "mac":
+			osName = "macOS"
+		case "harmonyos", "ohos":
+			osName = "鸿蒙"
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(in.ClientPlatform)) {
+	case "ios", "android":
+		device = "手机"
+	case "windows", "mac":
+		device = "电脑"
+	}
+	return device, osName, browser, model
 }
 
 // normalizeChannel 归一化渠道:白名单之外的取值按 h5 记并告警
@@ -282,6 +410,7 @@ func RecordVisit(in VisitInput) {
 	if in.CustomerID > 0 && channel != po.VisitChannelAdmin {
 		isMember, customerID = 1, in.CustomerID
 	}
+	device, osName, browser, model := enrichDevice(in)
 	j := visitJob{
 		log: po.VisitLog{
 			VisitDate:  visitDate,
@@ -293,6 +422,13 @@ func RecordVisit(in VisitInput) {
 			IPHash:     ipHash,
 			UAHash:     uaHash,
 			CreateTime: now,
+
+			IP:      clampText(in.IP, 45),
+			City:    geoip.CityOf(in.IP),
+			OS:      osName,
+			Browser: browser,
+			Device:  device,
+			Model:   model,
 		},
 		visitor: po.Visitor{
 			VisitorKey:     key,
@@ -435,6 +571,16 @@ type VisitStats struct {
 	Channels []VisitChannelRow
 	// Entries 扫码入口排行:哪张桌的二维码被扫得最多(仅 H5,一期就要展示)。
 	Entries []VisitEntryRow
+	// 终端构成(设备类型/操作系统/浏览器),来自明细,受保留期约束。
+	Devices  []VisitDistRow
+	Oses     []VisitDistRow
+	Browsers []VisitDistRow
+}
+
+// VisitDistRow 终端构成分布的一行(报表出参)。
+type VisitDistRow struct {
+	Name string `json:"name"`
+	PV   int    `json:"pv"`
 }
 
 // VisitEntryRow 扫码入口排行的一行。
@@ -604,6 +750,26 @@ func VisitStatsOf(startStr, endStr, daysStr string) VisitStats {
 			}
 			out.Entries = append(out.Entries, VisitEntryRow{Entry: c.Entry, Label: label, PV: c.PV})
 		}
+	}
+
+	// 终端构成:三个维度各自 GROUP BY(列名走 dao 白名单);空值归一为「未知」。
+	for dim, dst := range map[string]*[]VisitDistRow{
+		"device": &out.Devices, "os": &out.Oses, "browser": &out.Browsers,
+	} {
+		rows, err := dao.VisitDistribution(startDay, endDay, dim)
+		if err != nil {
+			logger.Warnf("[visit] 统计终端分布(%s)失败: %v", dim, err)
+			continue
+		}
+		out2 := make([]VisitDistRow, 0, len(rows))
+		for _, r := range rows {
+			name := r.Name
+			if strings.TrimSpace(name) == "" {
+				name = "未知"
+			}
+			out2 = append(out2, VisitDistRow{Name: name, PV: r.PV})
+		}
+		*dst = out2
 	}
 
 	if n, err := dao.CountVisitors(); err == nil {

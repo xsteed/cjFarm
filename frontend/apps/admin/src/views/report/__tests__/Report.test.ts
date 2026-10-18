@@ -282,6 +282,23 @@ const visitFixture: VisitStats = {
   entries: [
     { entry: 'K7M3PQ9X', label: '大厅 A · 1 号桌', pv: 26 },
     { entry: '8YG3Q335', label: '大厅 B · 2 号桌', pv: 18 }
+  ],
+  devices: [
+    { name: '手机', pv: 360 },
+    { name: '电脑', pv: 40 },
+    { name: '未知', pv: 20 }
+  ],
+  oses: [
+    { name: 'iOS', pv: 200 },
+    { name: 'Android', pv: 160 },
+    { name: 'Windows', pv: 40 },
+    { name: '未知', pv: 20 }
+  ],
+  browsers: [
+    { name: '微信', pv: 300 },
+    { name: 'Chrome', pv: 60 },
+    { name: '微信小程序', pv: 40 },
+    { name: '未知', pv: 20 }
   ]
 };
 
@@ -319,12 +336,12 @@ afterEach(() => {
 });
 
 describe('Report', () => {
-  it('挂载后渲染 9 个图表容器并初始化 echarts 实例,setOption 收到非空 option', async () => {
+  it('挂载后渲染 12 个图表容器并初始化 echarts 实例,setOption 收到非空 option', async () => {
     const wrapper = mountReport();
     await flushPromises();
 
-    expect(wrapper.findAll('.chart-canvas')).toHaveLength(9);
-    expect(echartsMock.init).toHaveBeenCalledTimes(9);
+    expect(wrapper.findAll('.chart-canvas')).toHaveLength(12);
+    expect(echartsMock.init).toHaveBeenCalledTimes(12);
 
     for (const inst of chartInstances()) {
       const hasRealOption = inst.setOption.mock.calls.some(call => call[0] !== EMPTY_OPTION);
@@ -376,7 +393,7 @@ describe('Report', () => {
     const wrapper = mountReport();
     await flushPromises();
 
-    expect(echartsMock.init).toHaveBeenCalledTimes(9);
+    expect(echartsMock.init).toHaveBeenCalledTimes(12);
     for (const inst of chartInstances()) {
       const calls = inst.setOption.mock.calls;
       expect(calls.length).toBeGreaterThan(0);

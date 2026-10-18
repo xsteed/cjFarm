@@ -24,9 +24,19 @@ type VisitLog struct {
 	IsMember   int    // 1 = 登录会员访客
 	CustomerID int    // 会员访客的 customer_id,匿名为 0
 	Entry      string // 入口标识:桌台点餐码(h5);小程序场景值一期留空
-	IPHash     string // sha256(ip+pepper) 前 32 位,不存明文 IP
+	IPHash     string // sha256(ip+pepper) 前 32 位,供 UV 去重;明文 IP 在 IP 列
 	UAHash     string // sha256(ua+pepper) 前 32 位
 	CreateTime string
+
+	// 终端与来源(2026-10-18 增补)。IP 明文与操作日志 oper_ip 同一取舍:
+	// 明细按保留天数清理,有限期暴露;城市来自 ip2region 离线库,缺库为空;
+	// OS/浏览器/设备为归一展示值(iOS/微信/手机…);机型仅小程序精确,H5 留空。
+	IP      string
+	City    string
+	OS      string
+	Browser string
+	Device  string
+	Model   string
 }
 
 // Visitor 访客注册表一行(tb_visitor),主键即 VisitorKey。
