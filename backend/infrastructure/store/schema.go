@@ -658,10 +658,16 @@ var schemaTemplate = []string{
 }
 
 // schemaStatements 返回指定方言下的全部建表语句。
+// MySQL 分支额外注入表/列 COMMENT(注释定义见 schema_comment.go);
+// SQLite 没有注释语法,原样返回,生成的脚本与历史版本保持一致。
 func schemaStatements(d Dialect) []string {
 	out := make([]string, 0, len(schemaTemplate))
 	for _, tpl := range schemaTemplate {
-		out = append(out, expandDialectPlaceholders(tpl, d))
+		stmt := expandDialectPlaceholders(tpl, d)
+		if d == DialectMySQL {
+			stmt = applySQLComments(stmt)
+		}
+		out = append(out, stmt)
 	}
 	return out
 }

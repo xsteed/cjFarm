@@ -100,10 +100,17 @@ func TestSchemaSQLBothDialects(t *testing.T) {
 			t.Errorf("MySQL 脚本不应包含 %q", bad)
 		}
 	}
-	for _, bad := range []string{"AUTO_INCREMENT", "ENGINE=InnoDB"} {
+	for _, bad := range []string{"AUTO_INCREMENT", "ENGINE=InnoDB", "COMMENT"} {
 		if strings.Contains(sqlite, bad) {
 			t.Errorf("SQLite 脚本不应包含 %q", bad)
 		}
+	}
+
+	// 字段注释规范:MySQL 每表每列都带 COMMENT(逐列覆盖率由
+	// TestSQLCommentsCoverEveryColumn 保证),这里只锁「生成时确实注入了」;
+	// SQLite 无注释语法,列说明由模板内 -- 注释与 README 承担。
+	if !strings.Contains(mysql, "COMMENT '") || !strings.Contains(mysql, "COMMENT='") {
+		t.Error("MySQL 脚本应包含列级 COMMENT 与表级 COMMENT=")
 	}
 
 	// 每条建表语句都必须以分号结尾,且 MySQL 必须显式声明引擎与字符集。
@@ -137,6 +144,42 @@ func TestSchemaSQLBothDialects(t *testing.T) {
 	// 已由上面的 names 相等断言覆盖;这里再确认生成器没有漏掉/多出建表语句。
 	if got, wantN := len(names(mysql)), len(schemaTemplate); got != wantN {
 		t.Errorf("生成脚本的表数应与 schemaTemplate 一致: 期望 %d,实际 %d", wantN, got)
+	}
+}
+
+// TestSQLCommentsCoverEveryColumn 字段注释规范:每张表、每一列都必须在
+// schema_comment.go 登记注释(以 表名.列名 为键),漏登记直接失败。
+// 注释文本统一不允许出现英文单引号/反斜杠(生成时会转义,但规范上直接避免)。
+func TestSQLCommentsCoverEveryColumn(t *testing.T) {
+	for _, tpl := range schemaTemplate {
+		// 用 SQLite 方言展开占位符:列清单与列名与 MySQL 完全一致,且不注入注释,便于按行解析。
+		stmt := expandDialectPlaceholders(tpl, DialectSQLite)
+		m := createTableRe.FindStringSubmatch(stmt)
+		if m == nil {
+			t.Fatalf("未能从模板解析出表名:\n%.80s", stmt)
+		}
+		table := m[1]
+		if tc := tableComments[table]; tc == "" {
+			t.Errorf("表 %s 缺少表级注释(tableComments)", table)
+		} else if strings.ContainsAny(tc, "'\\") {
+			t.Errorf("表 %s 的表级注释含单引号/反斜杠:%q", table, tc)
+		}
+		for _, line := range strings.Split(stmt, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "--") ||
+				strings.HasPrefix(trimmed, ")") || strings.HasPrefix(trimmed, "CREATE") {
+				continue
+			}
+			col := strings.Fields(trimmed)[0]
+			cmt, ok := columnComment(table, col)
+			if !ok {
+				t.Errorf("列 %s.%s 缺少注释(columnComments)", table, col)
+				continue
+			}
+			if strings.ContainsAny(cmt, "'\\") {
+				t.Errorf("列 %s.%s 的注释含单引号/反斜杠:%q", table, col, cmt)
+			}
+		}
 	}
 }
 
