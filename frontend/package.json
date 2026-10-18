@@ -19,12 +19,14 @@
     "mp:test": "npm run test -w @dining/app-miniprogram",
     "mp:verify": "npm run verify -w @dining/app-miniprogram",
     "mp:precheck": "npm run precheck -w @dining/app-miniprogram",
+    "android:apk": "bash ../deploy/build-android-shell.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "lint:style": "stylelint \"src/**/*.{vue,css,less}\" \"apps/**/*.{vue,css,less}\" \"packages/**/*.{vue,css,less}\""
   },
   "dependencies": {
+    "@capacitor/core": "^6.2.2",
     "axios": "^1.7.7",
     "echarts": "^5.5.1",
     "qrcode": "^1.5.4",
@@ -34,6 +36,8 @@
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/cli": "^6.2.2",
     "@eslint/js": "^9.0.0",
     "@types/node": "^20.11.1",
     "@vitejs/plugin-vue": "^5.1.4",

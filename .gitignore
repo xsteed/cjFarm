@@ -127,6 +127,17 @@ release/
 outputs/
 *.local
 
+# ---------------- 安卓壳 (Capacitor) ----------------
+# npx cap add android 生成的完整安卓工程(可随时重新生成,不入库)
+frontend/android/
+# 壳的 APK 产物(SERVER_URL 指向线上站点,产物只在本地交付)
+frontend/dist-android/
+# 签名材料:丢失后无法对已安装的 App 发更新,必须本地长期保存,绝不入库
+frontend/android-release.keystore
+frontend/android-release.keystore.properties
+# 壳构建的本地配置(服务器地址等),模板是 android-shell.env.example
+deploy/android-shell.env
+
 # ---------------- 小程序 ----------------
 # 开发者工具 TS 编译插件写在源码旁的产物（原生 TS 项目的标准行为），不入库
 frontend/apps/miniprogram/src/**/*.js

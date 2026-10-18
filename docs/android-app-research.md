@@ -119,6 +119,10 @@ npm run build && npx cap add android
 npx cap open android   # 用 Android Studio 打开，配置允许明文流量后打 APK
 ```
 
+> **本仓库已实现，无需手工操作**：`SERVER_URL=http://111.230.154.50 bash deploy/build-android-shell.sh`
+> 自动完成依赖安装、工程生成、明文放行、签名与出包，产物在 `frontend/dist-android/`。
+> 详见 [`docs/harmonyos-app-research.md`](harmonyos-app-research.md)「2.0 一键构建」。
+
 关键配置（因为加载 HTTP 明文地址）：
 - `android/app/src/main/AndroidManifest.xml` 加 `android:usesCleartextTraffic="true"`（或 network security config 只对 `111.230.154.50` 放行明文，更安全）。
 - WebView 的文件上传需处理 `WebChromeClient.onShowFileChooser`（Capacitor 已内置）。
@@ -135,38 +139,44 @@ npx cap open android   # 用 Android Studio 打开，配置允许明文流量后
 
 ## 鸿蒙（HarmonyOS）支持情况
 
-结论先行：**鸿蒙老系统（4.x 及以前）完全支持；鸿蒙 NEXT（5.0+ 纯血鸿蒙）能加桌面图标一键打开，但无法保证 Chrome-less 全屏独立窗口。**
+> 更详尽的版本选型、Capacitor/ArkWeb 工程步骤与本仓库改造点，见独立文档 **[`docs/harmonyos-app-research.md`](harmonyos-app-research.md)**（2026-10 整理）。
 
-| 鸿蒙版本 | 内核 | PWA 支持度 | 预期体验 |
+**结论先行：能不能装 APK，取决于设备鸿蒙版本——这是分水岭。**
+
+| 鸿蒙版本 | 能否装 APK | 能否装 HAP | 推荐路线 |
 |---|---|---|---|
-| HarmonyOS 4.x 及以前（含 EMUI/MagicUI） | AOSP，可装 Chrome | **完整支持**，与安卓完全一致 | standalone 全屏、返回键、安全区全部等同安卓 |
-| HarmonyOS 5.0 / NEXT（纯血鸿蒙） | 无 AOSP，只有华为浏览器等原生应用 | **部分支持**：能加桌面，但无完整 PWA 安装承诺 | 桌面图标一键打开可用；是否去掉浏览器 UI 不确定 |
+| **4.x 及更早（含 4.3、EMUI/MagicUI）** | ✅ 直接侧载/应用市场装（保留 AOSP 兼容层） | — | 本文方案 3（Capacitor 安卓壳 APK）直接可用 |
+| **5.0 NEXT / 6 / 7（纯血鸿蒙）** | ❌ 不能装 APK | ✅ 只认 HAP | 鸿蒙原生 ArkWeb 壳 HAP；或方案 3 的 APK 借「卓易通」容器运行 |
 
-### HarmonyOS NEXT 实测口径（华为官方支持页 + 公开资料）
+> 截至 2026-10：HarmonyOS 6 装机 7000 万+，HarmonyOS 7 已于 2026-09 公测。新购华为设备基本是纯血鸿蒙。
+> 查版本：设置 → 关于本机 → 版本号。
 
-1. **能加桌面**：华为浏览器「网页添加至桌面」在 HarmonyOS NEXT 5.0.0.123 SP19 + 华为浏览器 5.0.8.300 以上版本提供，入口在网页底部「∷ → 添加至桌面」。HarmonyOS 5.0 以下系统同样支持（EMUI 5.0 ~ HarmonyOS 4.x 均覆盖）。
-2. **PWA 站点有特殊处理**：华为官方 FAQ 明确说明——支持 PWA 的网页加桌面后，系统会通过**快应用（Quick App）**创建快捷方式（图标带蓝色小闪电标），不影响功能使用。说明 NEXT 对 manifest 有识别能力。
-3. **全屏独立窗口不保证**：公开教程与官方文档均只描述为「网页快捷方式 / 一键直达此网页」，**没有承诺 `display: standalone` 的全屏无浏览器 UI 效果**；Service Worker、离线、Web Push 的支持情况华为无公开承诺。鸿蒙 6 的浏览器 PWA 支持在华为开发者论坛有用户提问（2025-12），尚无官方明确结论。
-4. **安全区**：NEXT 华为浏览器基于 Web 标准内核，`env(safe-area-inset-*)` 大概率有效，但无官方文档背书，**需真机验证**（建议拿到鸿蒙真机后按 iOS 的检查清单走一遍：顶栏是否被状态栏压、底部是否多白边）。
+### 各路线在鸿蒙上的实际表现
 
-### 鸿蒙上的原生 App 正路
+- **PWA 添加至桌面（方案 1）**：
+  - 4.x：浏览器（Chrome/Edge/Via 等）打开站点 → 添加至主屏幕 → 可得 `standalone` 全屏独立窗口，与安卓一致。
+  - 纯血鸿蒙：华为浏览器「添加至桌面」只生成**网页快捷方式**，**不兑现 `display: standalone`**——点开仍带浏览器地址栏/标签栏。图标若带蓝色小闪电标说明走了快应用通道，但实测仍带浏览器 UI。网页侧没有任何 API 能移除宿主浏览器 UI。
+- **TWA（方案 2）**：本质是 Chrome Custom Tab，纯血鸿蒙没有 Chrome，路线失效；4.x 上同安卓。
+- **WebView 壳 APK（方案 3，Capacitor）**：
+  - **4.x：直接装，全屏原生体验**，本文首选。WebView 指向线上站点即可，前端零改动（见下）。
+  - 纯血鸿蒙：应用市场搜「卓易通」（华为官方安卓兼容容器，iSulad 引擎）安装 → 导入 APK → 安装。限制：图标归集在卓易通文件夹、不能移到桌面；依赖容器版本；部分能力（如微信登录）受容器限制。仅应急。
 
-若要在鸿蒙 NEXT 上获得确定的原生 App 体验，只能走鸿蒙自己的生态：
+### 方案 3 在鸿蒙上的要点（4.x 直接可用）
 
-- **鸿蒙原生应用（ArkTS）**：唯一完整体验（Web 组件内嵌网页或原生重写）。
-- **元服务 / 快应用**： HarmonyOS 的轻应用形态，可分发到桌面，但需按快应用标准（rpk 包）开发。
-- **注意**：NEXT 不能运行 APK，所以「安卓 WebView 壳 APK」路线在鸿蒙 NEXT 上直接失效；HarmonyOS 4.x 及以前则 APK 路线可用。
+1. **WebView 直接加载线上 `http://服务器IP`**，不要内置 dist 离线跑——这样 `baseURL: '/api'` 同源、CORS 不涉及、路由 `createWebHistory` 由 Nginx 回退兜底，本仓库代码零改动。
+2. **放行 HTTP 明文**：`AndroidManifest.xml` 的 `<application>` 加 `android:usesCleartextTraffic="true"`（或更精细的 Network Security Config 只对服务器 IP 放行）。
+3. **签名**：`cd android && ./gradlew assembleRelease`，需长期保存 keystore。
+4. **安装**：4.x 设备先关闭「纯净模式（增强防护）」再点 APK 安装。
 
-### 建议
+### 纯血鸿蒙的正路（NEXT/6/7）
 
-- 存量鸿蒙 4.x 用户：现有 PWA 方案直接可用，无需任何改动。
-- 鸿蒙 NEXT 用户：引导其用华为浏览器打开并「添加至桌面」，至少获得桌面图标一键打开；全屏效果以真机为准。
-- 若鸿蒙 NEXT 用户占比高且对体验要求强，再评估鸿蒙原生/快应用路线。
-
+要走确定全屏 + 可批量分发，只能做鸿蒙原生 ArkWeb 壳 HAP（DevEco Studio + AGC 签名；调试签名仅限登记 UDID 的设备，批量需企业证书/MDM）。完整步骤见 `docs/harmonyos-app-research.md`「路线 B」。
 
 
-- **短期（当前 IP + HTTP）**：方案 1 的改动已就位——HTTP 下桌面快捷方式依然可用（有图标、一键打开，仅带浏览器 UI）；若要全屏 App 体验，走**方案 3（Capacitor 壳）**。
-- **中期（申请域名 + 备案 + HTTPS 后）**：方案 1 自动升级为完整 PWA 安装体验；如仍需发 APK，用**方案 2（Bubblewrap/PWABuilder）**半天即可完成，且一次打包长期复用。
+
+- **短期（当前 IP + HTTP，鸿蒙 4.x 设备）**：方案 1 的改动已就位——HTTP 下桌面快捷方式仍带浏览器 UI；要全屏 App 体验，直接走**方案 3（Capacitor 安卓壳 APK）**，4.x 可原生安装，WebView 指向线上站点即可零前端改动。
+- **短期（纯血鸿蒙 NEXT/6/7 设备）**：PWA 加桌面只给网页快捷方式（带浏览器 UI）；要全屏只能做鸿蒙原生 ArkWeb 壳 HAP（见 `docs/harmonyos-app-research.md`），或用方案 3 的 APK 借「卓易通」应急。
+- **中期（申请域名 + 备案 + HTTPS 后）**：方案 1 在 4.x 上自动升级为完整 PWA 安装体验；如仍需发 APK，用**方案 2（Bubblewrap/PWABuilder）**半天即可完成，且一次打包长期复用。HTTPS 还能顺手抹平各路线的明文放行配置。
 - 不建议：自签证书路线；以及在没有 HTTPS 前提下强推 TWA。
 
 ## 后续实施清单（可选）

@@ -12,7 +12,7 @@
 #   make clean       清理两个 module 的产物
 # ============================================================================
 
-.PHONY: test test-race vet build clean help
+.PHONY: test test-race vet build clean apk help
 
 ## test: 运行全部测试(backend + print-agent)
 test:
@@ -48,6 +48,10 @@ clean:
 	$(MAKE) -C backend clean
 	@echo "==> print-agent"
 	$(MAKE) -C print-agent clean
+
+## apk: 构建安卓壳 APK（地址取自 deploy/android-shell.env，产物在 frontend/dist-android/）
+apk:
+	@bash deploy/build-android-shell.sh
 
 ## help: 列出所有构建目标
 help:

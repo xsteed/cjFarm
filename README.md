@@ -183,6 +183,36 @@ npm run mp:verify    # 类型检查 + lint + WXML/WXSS 审计 + 单测 + 产物�
 > ⚠️ 当前只是**第一版实现，不能直接上线**：还需要 HTTPS 备案域名 + 合法域名白名单（AppID 已配置），
 > 在线支付（JSAPI）与订阅消息尚未接入。**完整清单见 [`docs/miniprogram.md`](docs/miniprogram.md)。**
 
+### 5. 安卓壳 APK（安卓设备 / 鸿蒙 4.x）
+
+把管理端做成一个桌面图标的 App：APK 内只有一个全屏 WebView，直接加载线上前端地址
+（与 `/api` 同源，**前端后端都不用改**，刷新即最新）。
+
+```bash
+# 一次性配置服务器地址（本机私有，不入库；不配则用默认地址）
+cp deploy/android-shell.env.example deploy/android-shell.env
+
+# 之后任意时候一条命令
+make apk
+# 产物：frontend/dist-android/dining-admin-<时间戳>.apk
+```
+
+临时换地址不必改文件：`SERVER_URL=http://192.168.1.9 make apk`
+
+需要 Node ≥ 18、JDK 17、Android SDK（platform 34 + build-tools 34）。首次运行会自动安装
+Capacitor 依赖、生成安卓工程与签名库。**签名材料 `frontend/android-release.keystore`
+必须备份**，丢失后无法对已安装的 App 发更新。
+
+应用图标取自 `frontend/public/favicon-512x512.png`，由 `deploy/gen-android-icons.py`
+自动生成各密度（mdpi~xxxhdpi）与自适应图标；**换 Logo 只需替换这张图**再重新打包。
+
+- 支持：所有安卓手机/平板/POS 机、HarmonyOS 4.x 及更早（带 AOSP 兼容层）。
+- 不支持：纯血鸿蒙（HarmonyOS 5.0 NEXT / 6 / 7）装不了 APK，需走 ArkWeb 壳 HAP 或「卓易通」。
+- 已知限制：WebView 里 `window.print()` 无效、`blob:` 下载部分机型不生效（桌牌打印/导出改用浏览器）。
+
+完整选型、签名与鸿蒙路线见 [`docs/harmonyos-app-research.md`](docs/harmonyos-app-research.md)、
+[`docs/android-app-research.md`](docs/android-app-research.md)。
+
 ## 后端打包（Makefile）
 
 `backend/Makefile` 提供完整构建/打包能力，二进制统一输出到 `backend/bin/`：
