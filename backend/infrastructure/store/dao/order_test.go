@@ -77,6 +77,43 @@ func TestOrderInsertAndScanRoundTrip(t *testing.T) {
 	}
 }
 
+// 新单 viewed_at 为 NULL;MarkOrderViewed 只写首次时间,已有值时不再改写。
+func TestMarkOrderViewedWritesFirstTimeOnly(t *testing.T) {
+	orderDaoInitDB(t)
+	id := orderDaoCreate(t, "D-VIEW-0001", 1)
+
+	o, err := GetOrderByID(id)
+	if err != nil {
+		t.Fatalf("按 ID 查询订单失败: %v", err)
+	}
+	if o.ViewedAt != nil {
+		t.Fatalf("新单 viewed_at 应为 nil, got %q", *o.ViewedAt)
+	}
+
+	if err := MarkOrderViewed(id); err != nil {
+		t.Fatalf("标记已查看失败: %v", err)
+	}
+	first, err := GetOrderByID(id)
+	if err != nil || first.ViewedAt == nil {
+		t.Fatalf("标记后应回读到查看时间, err=%v got=%v", err, first.ViewedAt)
+	}
+
+	// 手工改成更早的时间后再标一次:守卫 viewed_at IS NULL 应让它保持原值。
+	if _, err := store.DB.Exec(`UPDATE tb_order SET viewed_at='2026-01-01 00:00:00' WHERE order_id=?`, id); err != nil {
+		t.Fatalf("写入测试用查看时间失败: %v", err)
+	}
+	if err := MarkOrderViewed(id); err != nil {
+		t.Fatalf("重复标记失败: %v", err)
+	}
+	again, err := GetOrderByID(id)
+	if err != nil {
+		t.Fatalf("回读订单失败: %v", err)
+	}
+	if again.ViewedAt == nil || *again.ViewedAt != "2026-01-01 00:00:00" {
+		t.Fatalf("重复标记不应改写首次查看时间, got %v", again.ViewedAt)
+	}
+}
+
 func TestGetActiveOrderByTable(t *testing.T) {
 	orderDaoInitDB(t)
 

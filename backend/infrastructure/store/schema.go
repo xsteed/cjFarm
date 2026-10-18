@@ -996,9 +996,10 @@ func migrate(stmts []string) {
 			if _, err := DB.Exec(`UPDATE tb_order SET viewed_at = COALESCE(update_time, create_time) WHERE viewed_at IS NULL`); err != nil {
 				logger.Warnf("[db] 回填订单已查看时间失败: %v", err)
 			}
-			// 连 create_time 都为空的历史脏行:用哨兵时间兜底,否则空串会被读侧当成 NULL,
-			// 升级后这些老单仍会挂着「新」角标。
-			if _, err := DB.Exec(`UPDATE tb_order SET viewed_at='1970-01-01 00:00:00' WHERE viewed_at IS NULL OR viewed_at=''`); err != nil {
+			// 空串 / MySQL 历史零值('0000-00-00 …')都会被读侧(dao.TS)折叠成 NULL,
+			// 这类脏行同样会挂着「新」角标,统一用哨兵时间兜底。
+			if _, err := DB.Exec(`UPDATE tb_order SET viewed_at='1970-01-01 00:00:00'
+				WHERE viewed_at IS NULL OR viewed_at='' OR viewed_at LIKE '0000-00-00%'`); err != nil {
 				logger.Warnf("[db] 兜底回填订单已查看时间失败: %v", err)
 			}
 		}

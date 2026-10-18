@@ -240,6 +240,29 @@ describe('Orders 订单管理页 · 移动端订单卡片按钮矩阵', () => {
     wrapper.unmount();
   });
 
+  it('未查看的新单在卡片左上角显示「新」,点开详情即消解', async () => {
+    payFirstState.value = false;
+    listOrdersMock.mockResolvedValue({
+      total: 2,
+      items: [
+        order({ orderId: 1, isNew: true }),
+        order({ orderId: 2, orderNo: 'NO20261017002', orderStatus: 2, isNew: false })
+      ]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    const badges = wrapper.findAll('.ocard-new');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].text()).toBe('新');
+
+    // 打开详情 = 已查看,本地先消掉角标(后端在详情接口落下 viewed_at)
+    await wrapper.findAll('.ocard')[0].trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('.ocard-new')).toHaveLength(0);
+    wrapper.unmount();
+  });
+
   it('后付模式:卡片保持 详情 / 开始制作 / 后付款结账 / 取消订单', async () => {
     payFirstState.value = false;
     listOrdersMock.mockResolvedValue({ total: 1, items: [order({ orderStatus: 1, payStatus: 0 })] });

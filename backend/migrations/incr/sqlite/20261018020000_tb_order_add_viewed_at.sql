@@ -1,4 +1,4 @@
--- 订单「商家已查看」时间落库（incr 33）
+-- 订单「商家已查看」时间落库（incr 34）
 --
 -- 背景：订单列表需要区分「顾客刚下、商家还没看过」的新单与已经处理过的单，
 -- 让收银一眼看到哪些新单还没点开/操作过（此前只能靠 order_status=1 猜）。
@@ -17,5 +17,7 @@
 ALTER TABLE tb_order ADD COLUMN viewed_at VARCHAR(32) DEFAULT NULL;
 
 UPDATE tb_order SET viewed_at = COALESCE(update_time, create_time) WHERE viewed_at IS NULL;
--- 连 create_time 都为空的历史脏行：用哨兵时间兜底，否则空串会被读侧当成 NULL。
-UPDATE tb_order SET viewed_at = '1970-01-01 00:00:00' WHERE viewed_at IS NULL OR viewed_at = '';
+-- 空串 / MySQL 历史零值（'0000-00-00 …'）都会被读侧折叠成 NULL，同样会挂「新」角标，
+-- 统一用哨兵时间兜底。
+UPDATE tb_order SET viewed_at = '1970-01-01 00:00:00'
+	WHERE viewed_at IS NULL OR viewed_at = '' OR viewed_at LIKE '0000-00-00%';

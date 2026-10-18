@@ -102,22 +102,22 @@ type Order struct {
 	FinishTime       *string `json:"finishTime"`
 	// 用餐起止时间(落库值):开始=下单,结束=订单到终态(完成/取消);进行中为 NULL。
 	// 详情展示「结束时间」取 MealEndTime —— 取消单也有,finish_time 只覆盖已完成单。
-	MealStartTime *string     `json:"mealStartTime"`
-	MealEndTime   *string     `json:"mealEndTime"`
-	OrderRemark   string      `json:"orderRemark"`
-	CancelReason  string      `json:"cancelReason"`
-	CreateBy      string      `json:"createBy"`
-	CreateTime    string      `json:"createTime"`
-	UpdateBy      string      `json:"updateBy"`
-	UpdateTime    string      `json:"updateTime"`
-	Remark        *string     `json:"remark"`
-	PendingUrge   bool        `json:"pendingUrge"` // 是否存在未处理的催菜(运行时填充,不入库)
+	MealStartTime *string `json:"mealStartTime"`
+	MealEndTime   *string `json:"mealEndTime"`
+	OrderRemark   string  `json:"orderRemark"`
+	CancelReason  string  `json:"cancelReason"`
+	CreateBy      string  `json:"createBy"`
+	CreateTime    string  `json:"createTime"`
+	UpdateBy      string  `json:"updateBy"`
+	UpdateTime    string  `json:"updateTime"`
+	Remark        *string `json:"remark"`
+	PendingUrge   bool    `json:"pendingUrge"` // 是否存在未处理的催菜(运行时填充,不入库)
 	// IsNew 是否是「商家还没看过/操作过的新单」(运行时填充,不入库):
 	// 仅在订单列表接口按「已下单 + viewed_at 为空」置 true,详情/顾客端恒为 false。
 	// 用 omitempty:顾客端出参与无关场景不带这个字段,不制造无意义噪音。
-	IsNew bool `json:"isNew,omitempty"`
-	BatchCount    int         `json:"batchCount"`  // 加菜批次数(运行时填充,不入库):明细 distinct batch_no,1=未加过菜。列表接口填充,详情接口明细自带 batchNo 无需它
-	Items         []OrderItem `json:"items"`
+	IsNew      bool        `json:"isNew,omitempty"`
+	BatchCount int         `json:"batchCount"` // 加菜批次数(运行时填充,不入库):明细 distinct batch_no,1=未加过菜。列表接口填充,详情接口明细自带 batchNo 无需它
+	Items      []OrderItem `json:"items"`
 }
 
 // FromOrder 将持久化对象与运行时补算结果组装为 API 出参,金额由分转元。

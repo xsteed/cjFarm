@@ -12,6 +12,12 @@
 | 30 | `20261017000000_tb_order_drop_legacy_time_columns.sql` | 删除 `tb_order` 遗留的 `begin_time` / `end_time` 两列（从未写入，已被 `meal_start_time` / `meal_end_time` 取代） |
 | 31 | `20261017010000_tb_visit_log_visitor_daily_create.sql` | 站点访问统计三张表：`tb_visit_log` / `tb_visitor` / `tb_visit_daily` |
 | 32 | `20261018000000_tb_customer_identity_create.sql` | 顾客会员身份表 `tb_customer_identity`（账号与登录方式解耦），并把存量 `tb_customer.openid` 搬迁为 `provider='wx_mp'` 的身份记录 |
+| 33 | `20261018010000_tb_customer_drop_openid.sql` | 退役 `tb_customer.openid`：再搬一次（兼容跳过 32 号的库）→ 删唯一索引 → 删列。**删列后非微信登录才能建档** |
+| 34 | `20261018020000_tb_order_add_viewed_at.sql` | 订单补「商家首次查看/操作时间」`viewed_at`（NULL = 新单未查看，列表据此打「新」角标），存量订单回填为已查看 |
+
+> 32/33 两号是配套的：32 建身份表并首次搬迁，33 删掉 `openid` 列。
+> 只跑 32 不跑 33 也能用（P0 状态），但第二个登录方式仍会被 `openid` 的唯一索引挡住。
+> 常规升级**不需要手工执行**：后端启动时的 `store.migrateCustomerOpenid` 做同等且幂等的迁移。
 
 > 更早的 01~25 号脚本仅存在于 README 的历史演进记录里，本仓库实际未收录这些文件；
 > 老库补列主要由后端启动时 `store.alterCols` 自动完成（等价且幂等），

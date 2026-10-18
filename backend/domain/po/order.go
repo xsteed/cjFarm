@@ -96,12 +96,12 @@ type Order struct {
 	MealEndTime   *string
 	// ViewedAt 商家首次在平台查看/操作该订单的时间;NULL 表示新单还没人看过。
 	// 列表据此给「已下单」的未查看订单打「新」角标,查看详情或任意操作后写入(不再改写)。
-	ViewedAt    *string
-	OrderRemark string
-	CancelReason  string
-	CreateBy      string
-	CreateTime    string
-	UpdateBy      string
-	UpdateTime    string
-	Remark        *string
+	ViewedAt     *string
+	OrderRemark  string
+	CancelReason string
+	CreateBy     string
+	CreateTime   string
+	UpdateBy     string
+	UpdateTime   string
+	Remark       *string
 }
