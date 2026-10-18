@@ -427,7 +427,6 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   justify-content: space-between;
   align-items: center;
   padding: 11px 0;
-  border-bottom: 1px solid #f7f5f2;
 }
 
 .ci-info {

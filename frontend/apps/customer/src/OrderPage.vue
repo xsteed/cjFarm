@@ -141,6 +141,7 @@
           :jump-to="jumpTo"
           :handle-scroll="handleScroll"
           :keyword="keyword"
+          :sig-cards="sigCards"
           :open-sheet="openSheet"
           @fly="onFly"
         />
@@ -642,6 +643,7 @@
           :jump-to="jumpTo"
           :handle-scroll="handleScroll"
           :keyword="keyword"
+          :sig-cards="sigCards"
           :open-sheet="openSheet"
           @fly="onFly"
         />
@@ -719,9 +721,11 @@
       :selected="sheetRemark.selected"
       :custom="sheetRemark.custom"
       :in-cart-qty="sheetInCartQty"
+      :qty="sheetQty"
       @pick-spec="pickSheetSpec"
       @toggle-remark="toggleSheetRemark"
       @update:custom="sheetRemark.custom = $event"
+      @update:qty="sheetQty = $event"
       @close="closeSheet"
       @confirm="confirmSheet"
     />
@@ -806,7 +810,7 @@ import {
 import QRCode from 'qrcode';
 import type { MenuCategory, OrderDetail, OrderSummary, PublicConfig, RemarkOption, TableInfo } from '@dining/types';
 import { isActiveStatus, safeSession, ui, visitorId } from '@dining/shared';
-import { useCart, useOrderPolling, useUrge } from '@dining/customer-core';
+import { useCart, useOrderPolling, useUrge, signatureDishes, SIG_CAT_ID } from '@dining/customer-core';
 import { PERSON_MAX, PERSON_MIN, isValidPerson } from '@dining/customer-core';
 import type { ViewState } from '@dining/customer-core';
 import { setCustomerTitle } from './title';
@@ -926,6 +930,7 @@ const {
   sheetSpecId,
   sheetRemark,
   sheetInCartQty,
+  sheetQty,
   openSheet,
   closeSheet,
   pickSheetSpec,
@@ -941,7 +946,16 @@ const { startPolling, stopPolling } = useOrderPolling({
   clearUrgeTimer,
   onPaid: showPayDone
 });
-const { activeCat, setListRef, setGroupRef, jumpTo, handleScroll } = useScrollSpy(menu);
+// 招牌菜卡片：与小程序端同一份提取算法（customer-core），左栏第一项 + 右栏置顶分组都靠它。
+// 没有招牌菜时整项不出现（不留一个空组的入口）。
+const sigCards = computed(() => signatureDishes(menu.value));
+// 滚动联动用的分类列表：非搜索态且存在招牌菜时，把「本店招牌」合成分类插到最前
+// （categoryId = SIG_CAT_ID = -1，不会与真实正整数分类撞车）。
+const categories = computed<MenuCategory[]>(() => {
+  const base = menu.value;
+  return sigCards.value.length ? [{ categoryId: SIG_CAT_ID, categoryName: '本店招牌' }, ...base] : base;
+});
+const { activeCat, setListRef, setGroupRef, jumpTo, handleScroll } = useScrollSpy(categories);
 // 刷新/重进不丢购物车:菜单到位后再按当前菜单复核恢复。
 // key 带本桌订单号 —— 换单/清台后订单号变了,上一批客人没提交的车不会被带出来。
 const { restore: restoreCart } = useCartPersist(
@@ -1433,7 +1447,7 @@ async function load(): Promise<void> {
         if (d.specs && d.specs.length) selectedSpec[d.dishId as number] = currentSpec(d).specId as number;
       })
     );
-    if (m.length) activeCat.value = m[0].categoryId ?? null;
+    if (categories.value.length) activeCat.value = categories.value[0].categoryId ?? null;
     // 桌台已有未结账订单 → 先确认归属再进订单页;已付款但出餐未完成则进已结账视图。
     // 没有本桌订单时,被停用/预约的桌台进「锁定」页,不进菜单。
     if (tb && tb.currentOrder) {

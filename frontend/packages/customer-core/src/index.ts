@@ -9,6 +9,7 @@
 // 留在 apps/customer 内，不进本包。
 export * from './person';
 export * from './search';
+export * from './signature';
 export * from './spec';
 export * from './useCart';
 export * from './useOrderPolling';

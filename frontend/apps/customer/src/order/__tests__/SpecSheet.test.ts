@@ -16,7 +16,13 @@ const remarks: RemarkOption[] = [
 ];
 
 function mountSheet(
-  over: Partial<{ selectedSpecId: number; selected: string[]; custom: string; inCartQty: number }> = {}
+  over: Partial<{
+    selectedSpecId: number;
+    selected: string[];
+    custom: string;
+    inCartQty: number;
+    qty: number;
+  }> = {}
 ) {
   return mount(SpecSheet, {
     props: {
@@ -27,6 +33,7 @@ function mountSheet(
       selected: [],
       custom: '',
       inCartQty: 0,
+      qty: 1,
       ...over
     }
   });
@@ -86,5 +93,29 @@ describe('SpecSheet', () => {
     await w.find('.sp-btn').trigger('click');
     expect(w.emitted('confirm')).toHaveLength(1);
     expect(w.emitted('close')).toBeUndefined();
+  });
+
+  describe('数量步进器', () => {
+    it('默认 1 份，步进器渲染当前份数', () => {
+      const w = mountSheet({ qty: 1 });
+      expect(w.find('.ft-num').text()).toBe('1');
+      expect(w.find('.ft-minus').classes()).toContain('off'); // 已是最小,减号置灰
+    });
+
+    it('加号抛出 update:qty 加 1，减号在大于 1 时可减', async () => {
+      const w = mountSheet({ qty: 3 });
+      expect(w.find('.ft-minus').classes()).not.toContain('off');
+      await w.find('.ft-plus').trigger('click');
+      expect(w.emitted('update:qty')?.[0]).toEqual([4]);
+      await w.find('.ft-minus').trigger('click');
+      expect(w.emitted('update:qty')?.[1]).toEqual([2]);
+    });
+
+    it('份数提示随 qty 变化（确定 = 再加 N 份）', () => {
+      expect(mountSheet({ qty: 1 }).find('.spec-hint').exists()).toBe(false);
+      expect(mountSheet({ inCartQty: 2, qty: 3 }).find('.spec-hint').text()).toBe(
+        '购物车已有 2 份，点「确定」会再加 3 份'
+      );
+    });
   });
 });

@@ -166,6 +166,8 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
   const sheetRemark = reactive({ selected: [] as string[], custom: '' });
   /** 该菜在购物车里的份数(同菜多规格合计,与小程序 cartDishQty 同口径) */
   const sheetInCartQty = ref(0);
+  /** 弹层里的购买数量:招牌菜 / 多规格菜都走弹层,下单位数在这里定,默认 1 */
+  const sheetQty = ref(1);
   /** 防重入:连点「确定」会来多次 confirm,每收一次就多加一份 */
   let sheetConfirming = false;
 
@@ -187,6 +189,7 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     sheetRemark.selected = parsed.selected;
     sheetRemark.custom = parsed.custom;
     sheetInCartQty.value = cart.value.filter(i => i.dishId === d.dishId).reduce((s, i) => s + i.quantity, 0);
+    sheetQty.value = 1;
     sheetVisible.value = true;
   }
 
@@ -197,6 +200,7 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     sheetRemark.selected = [];
     sheetRemark.custom = '';
     sheetInCartQty.value = 0;
+    sheetQty.value = 1;
     sheetConfirming = false;
   }
 
@@ -212,12 +216,12 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     else sheetRemark.selected.push(name);
   }
 
-  /** 加一份;同一 dish+spec 合并成一行(与小程序 cartAdd 同规则:合并时覆盖备注)。 */
-  function addToCart(d: Dish, spec: DishSpec, remark?: string): void {
+  /** 加购;同一 dish+spec 合并成一行(与小程序 cartAdd 同规则:合并时覆盖备注)。qty 默认 1(弹层可选多份)。 */
+  function addToCart(d: Dish, spec: DishSpec, remark?: string, qty = 1): void {
     const key = `${d.dishId}-${spec.specId || 0}`;
     const exist = cart.value.find(i => i.key === key);
     if (exist) {
-      exist.quantity += 1;
+      exist.quantity += qty;
       if (remark !== undefined) exist.remark = remark;
       return;
     }
@@ -228,7 +232,7 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
       specId: spec.specId as number,
       specName: spec.specName || '',
       price: Number(spec.price) || 0,
-      quantity: 1,
+      quantity: qty,
       remark: remark ?? ''
     });
   }
@@ -244,7 +248,7 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     if (custom) parts.push(custom);
     // 弹层里选的规格就是这道菜之后的「当前规格」:行内 chip / 价格 / 步进器都要跟着走
     selectedSpec[d.dishId as number] = sheetSpecId.value;
-    addToCart(d, spec, parts.join('、'));
+    addToCart(d, spec, parts.join('、'), sheetQty.value);
     ui.success('已加入购物车');
     closeSheet();
   }
@@ -273,6 +277,7 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     sheetSpecId,
     sheetRemark,
     sheetInCartQty,
+    sheetQty,
     openSheet,
     closeSheet,
     pickSheetSpec,

@@ -210,3 +210,51 @@ describe('MenuView 沽清菜品的步进器', () => {
     expect(openSheet).not.toHaveBeenCalled();
   });
 });
+
+describe('MenuView 本店招牌（对齐小程序端 sigstrip）', () => {
+  const sigCards = [
+    { dishId: 1, dishName: '牛肉面', image: '', priceText: 18, manySpecs: false, soldOut: false },
+    { dishId: 3, dishName: '可乐', image: '', priceText: 3, manySpecs: true, soldOut: false }
+  ];
+
+  function mountWithSig(extra: Record<string, unknown> = {}) {
+    return mount(MenuView, { props: { ...commonProps(), sigCards, ...extra } });
+  }
+
+  it('非搜索态且有招牌菜：左栏置顶「本店招牌」、右栏出现横滑卡片条', () => {
+    const w = mountWithSig();
+    const sideNames = w.findAll('.op-cat').map(c => c.text());
+    expect(sideNames[0]).toContain('本店招牌');
+    expect(w.find('.op-sigstrip').exists()).toBe(true);
+    expect(w.findAll('.op-sigcard')).toHaveLength(2);
+  });
+
+  it('招牌卡片点击打开规格弹层（按 dishId 找回完整菜品）', async () => {
+    const w = mountWithSig();
+    await w.findAll('.op-sigcard')[0].trigger('click');
+    expect(openSheet).toHaveBeenCalledTimes(1);
+    const arg = openSheet.mock.calls[0][0] as { dishId?: number };
+    expect(arg.dishId).toBe(1);
+  });
+
+  it('搜索态下隐藏招牌条与左栏', async () => {
+    const w = mountWithSig({ keyword: '牛肉' });
+    expect(w.find('.op-sigstrip').exists()).toBe(false);
+    expect(w.find('.op-side').exists()).toBe(false);
+  });
+
+  it('没有招牌菜（sigCards 为空）时不渲染招牌条，左栏不含「本店招牌」', () => {
+    const w = mountView();
+    expect(w.find('.op-sigstrip').exists()).toBe(false);
+    expect(w.findAll('.op-cat').map(c => c.text())).not.toContain('本店招牌');
+  });
+
+  it('招牌分类角标显示已点/购物车合计份数', () => {
+    const w = mountWithSig({
+      orderedQty: (id?: number) => (id === 1 ? 2 : 0),
+      cart: [{ dishId: 3, quantity: 1 }] as never
+    });
+    const sigCat = w.findAll('.op-cat').find(c => c.text().includes('本店招牌'))!;
+    expect(sigCat.find('.cat-badge').text()).toBe('3'); // 已点 2 + 购物车 1
+  });
+});

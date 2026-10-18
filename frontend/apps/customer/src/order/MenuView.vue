@@ -7,7 +7,7 @@
         class="op-side"
       >
         <div
-          v-for="c in menu"
+          v-for="c in cats"
           :key="c.categoryId"
           class="op-cat"
           :class="{ on: activeCat === c.categoryId }"
@@ -42,30 +42,95 @@
         >
           菜单暂时为空，请联系店员
         </div>
+
+        <!-- 本店招牌：横滑卡片条（与小程序端 sigstrip 同款，图带「招牌」角标）。
+             招牌菜在这里是橱窗不是菜品列表，点卡片进规格弹层；
+             只在本店招牌分类存在时（非搜索态 + 有招牌菜）置顶渲染。 -->
+        <template v-if="showSig">
+          <!-- 整组(标题+卡片条)包进 op-cat-group：标题 position:sticky 的停顿区间
+               被限制在本组，下一组滚上来时会把本组标题「顶」上去，得到原生分节头手感 -->
+          <!-- ref 挂在组容器上而不是标题上：标题是 sticky,被位移后 rect.top 不再等于
+               文档流位置,scroll-spy/jumpTo 拿它算偏移会算错(点「本店招牌」会滚过头,
+               卡片条刚好滚出视口)。组容器是普通块级元素,rect 恒为文档流位置 -->
+          <div
+            :ref="el => setGroupRef(SIG_CAT_ID, el)"
+            class="op-cat-group"
+          >
+            <div class="op-group-t">
+              {{ SIG_CAT_NAME }}
+            </div>
+            <div class="op-sigstrip">
+              <div class="op-sigrow">
+                <div
+                  v-for="card in sigCards"
+                  :key="card.dishId"
+                  class="op-sigcard"
+                  @click="onOpenSig(card.dishId)"
+                >
+                  <div class="op-sig-media">
+                    <!-- 招牌角标：贴图片左上角，与菜品行的 op-signature 同视觉 -->
+                    <span class="op-sig-tag">招牌</span>
+                    <img
+                      v-if="card.image && !imgErr(card.dishId)"
+                      :src="card.image"
+                      :alt="card.dishName"
+                      loading="lazy"
+                      @error="onImgErr(card.dishId)"
+                    />
+                    <div
+                      v-else
+                      class="op-sig-fallback"
+                    >
+                      <span>暂无图片</span>
+                    </div>
+                    <!-- 售罄蒙版：盖住图片，与菜名后的「售罄」标签互相印证 -->
+                    <div
+                      v-if="card.soldOut"
+                      class="op-sig-mask"
+                    >
+                      售罄
+                    </div>
+                  </div>
+                  <div class="op-sig-name">{{ card.dishName }}</div>
+                  <!-- 价格整段不允许折行：规格多时显示最低价 +「起」 -->
+                  <div class="op-sig-price">
+                    <span class="cny">¥</span>{{ money(card.priceText) }}<small v-if="card.manySpecs">起</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <template
           v-for="c in filteredMenu"
           :key="c.categoryId"
         >
+          <!-- 每个分类包进 op-cat-group：标题 sticky 的停顿区间被限制在本组，
+               滚到下一组时本组标题会被「顶」上去（原生分节头手感），与小程序一致。
+               ref 挂组容器不挂标题,理由同上：sticky 标题的 rect 不是文档流位置,
+               挂组上 scroll-spy 的偏移测量才恒定可靠 -->
           <div
             :ref="el => setGroupRef(c.categoryId, el)"
-            class="op-group-t"
+            class="op-cat-group"
           >
-            {{ c.categoryName }}
-          </div>
-          <div
-            v-if="!c.dishes || !c.dishes.length"
-            class="empty-group"
-          >
-            暂无菜品
-          </div>
+            <div class="op-group-t">
+              {{ c.categoryName }}
+            </div>
+            <div
+              v-if="!c.dishes || !c.dishes.length"
+              class="empty-group"
+            >
+              暂无菜品
+            </div>
 
-          <!-- 整行可点 = 打开规格/备注弹层(与小程序一致);行内的 chip 与加减号各自 .stop 拦掉冒泡 -->
-          <div
-            v-for="d in c.dishes || []"
-            :key="d.dishId"
-            class="op-dish"
-            @click="openSheet(d)"
-          >
+            <!-- 整行可点 = 打开规格/备注弹层(与小程序一致);行内的 chip 与加减号各自 .stop 拦掉冒泡 -->
+            <div
+              v-for="d in c.dishes || []"
+              :key="d.dishId"
+              class="op-dish"
+              @click="openSheet(d)"
+            >
             <div class="op-img">
               <img
                 v-if="d.dishImage && !imgErr(d.dishId)"
@@ -141,12 +206,8 @@
               </div>
 
               <div class="op-bottom">
-                <div class="op-price">
-                  ¥{{ priceText(d) }}
-                  <small v-if="d.specs && d.specs.length === 1">/{{ singleSpecName(d) }}</small>
-                  <!-- 规格多到行内放不下:先给最低价,具体选哪个进弹层(与小程序同口径) -->
-                  <small v-else-if="isManySpecs(d)">起</small>
-                </div>
+                <!-- 价格整段不折行:单规格显示「¥价格/规格名」,多规格显示最低价 +「起」(与小程序同口径) -->
+                <div class="op-price">¥{{ priceText(d) }}<small v-if="d.specs && d.specs.length === 1">/{{ singleSpecName(d) }}</small><small v-else-if="isManySpecs(d)" class="op-from">起</small></div>
                 <!-- 已在购物车里的菜：即使随后沽清也要显示步进器 ——
                      「−」在购物车层面本来就是允许的（见 useCart.changeQty，减号不受沽清影响），
                      把加减号整体换成「售罄」会让顾客在卡片上减不掉，只能进购物车抽屉删。
@@ -216,6 +277,7 @@
               </div>
             </div>
           </div>
+          </div>
         </template>
         <!-- 菜单全量渲染,滚到底就是真到底了:给一句小提示,顾客不会以为还没加载完 -->
         <div
@@ -231,18 +293,30 @@
 
 <script setup lang="ts">
 import { computed, nextTick, shallowRef, watch } from 'vue';
-import { INLINE_SPEC_MAX, filterMenu, isManySpecs, isOrderable, isSearching, isSoldOut } from '@dining/customer-core';
-import type { CartItem } from '@dining/customer-core';
+import {
+  INLINE_SPEC_MAX,
+  SIG_CAT_ID,
+  SIG_CAT_NAME,
+  filterMenu,
+  isManySpecs,
+  isOrderable,
+  isSearching,
+  isSoldOut
+} from '@dining/customer-core';
+import type { CartItem, SigCard } from '@dining/customer-core';
 import { money } from '@dining/shared/money';
 import type { Dish, DishSpec, MenuCategory } from '@dining/types';
 
 // cart 可选:分类角标只是锦上添花,调用方(含单测)不传也不该渲染失败
-const props = defineProps<{
-  menu: MenuCategory[];
-  /** 购物车条目:用于计算各分类的已点份数角标 */
-  cart?: CartItem[];
-  /** 搜索关键词：由页面层持有（搜索框在白卡顶部），这里只负责按它过滤 */
-  keyword: string;
+const props = withDefaults(
+  defineProps<{
+    menu: MenuCategory[];
+    /** 购物车条目:用于计算各分类的已点份数角标 */
+    cart?: CartItem[];
+    /** 搜索关键词：由页面层持有（搜索框在白卡顶部），这里只负责按它过滤 */
+    keyword: string;
+    /** 招牌菜卡片（由页面层用 customer-core 的 signatureDishes 提取）：非空时在左栏置顶「本店招牌」、右栏置顶横滑卡片条 */
+    sigCards?: SigCard[];
   selectedSpec: Record<number, number>;
   imgErrs: Set<number>;
   showTabbar: boolean;
@@ -260,7 +334,11 @@ const props = defineProps<{
   handleScroll: () => void;
   /** 打开规格/备注弹层（多规格菜点「+」或点菜名时） */
   openSheet: (d: Dish) => void;
-}>();
+}>(),
+  {
+    sigCards: () => []
+  }
+);
 
 const emit = defineEmits<{
   /** 直接加菜成功:把「+」的点击坐标抛给页面层,做小球飞入购物车动画 */
@@ -271,6 +349,13 @@ const emit = defineEmits<{
 // 只有真的输入了内容才算搜索态:由此决定左栏是否收起(见模板的 op-side)
 const searching = computed(() => isSearching(props.keyword));
 const filteredMenu = computed(() => filterMenu(props.menu, props.keyword));
+
+// 「本店招牌」合成分类只在非搜索态出现：搜索结果是扁平的命中列表，不该再混进一个招牌橱窗。
+const showSig = computed(() => !searching.value && (props.sigCards?.length ?? 0) > 0);
+// 左栏分类：非搜索态存在招牌菜时，把「本店招牌」插到最前（id = SIG_CAT_ID = -1）。
+const cats = computed<MenuCategory[]>(() =>
+  showSig.value ? [{ categoryId: SIG_CAT_ID, categoryName: SIG_CAT_NAME }, ...props.menu] : props.menu
+);
 
 // 列表容器:scroll-spy 也要(setListRef),这里再留一份引用给「改关键词后置顶」
 const listBox = shallowRef<HTMLElement | null>(null);
@@ -319,6 +404,18 @@ const catQtyMap = computed(() => {
   for (const it of props.cart || []) {
     const cid = dishCat.get(it.dishId);
     if (cid !== undefined) m.set(cid, (m.get(cid) || 0) + it.quantity);
+  }
+  // 「本店招牌」合成分类的角标：招牌菜的份数在真实分类里已各计过一次，
+  // 这里再给合成分类计一次。角标语义是「这个组里我点了多少份」——
+  // 同一道菜同时在招牌组和真实分类里，两边都亮（与美团/饿了么同口径，
+  // 顾客不会把角标加总去对订单）。
+  const sigIds = (props.sigCards || []).map(c => c.dishId);
+  if (sigIds.length) {
+    const inSig = new Set(sigIds);
+    let q = 0;
+    for (const id of sigIds) q += props.orderedQty(id);
+    for (const it of props.cart || []) if (inSig.has(it.dishId)) q += it.quantity;
+    if (q) m.set(SIG_CAT_ID, q);
   }
   return m;
 });
@@ -370,6 +467,25 @@ function onAdd(d: Dish, e?: MouseEvent): void {
   }
   props.changeQty(d, 1);
   if (e) emit('fly', e.clientX, e.clientY);
+}
+
+/** 在整份菜单里按 dishId 找回完整菜品（招牌卡片只有展示字段，开弹层需要完整规格信息）。 */
+function findDish(dishId: number): Dish | undefined {
+  for (const c of props.menu) {
+    const hit = (c.dishes || []).find(d => Number(d.dishId) === dishId);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * 点「本店招牌」卡片：与点菜品行同一路径（开规格 / 备注弹层）。
+ * 顾客已经在菜单里、桌台已确认，不需要像首页那样先引导扫码进桌；
+ * 售罄与「没有规格」由 openSheet（页面层 useCart）统一提示。
+ */
+function onOpenSig(id: number): void {
+  const d = findDish(id);
+  if (d) props.openSheet(d);
 }
 </script>
 
@@ -485,12 +601,28 @@ function onAdd(d: Dish, e?: MouseEvent): void {
   text-align: center;
 }
 
-/* 右栏分类分组标题:与小程序 .sec 一致——品牌色竖条 + 深灰加粗,取代原来的浅灰小字 */
+/* 每个分类的包裹容器:让分组标题的 sticky 停顿区间被限制在本组,
+   下一组滚上来时会把本组标题「顶」上去,得到原生分节头手感(对齐小程序 .sec) */
+.op-cat-group {
+  display: block;
+}
+
+/* 右栏分类分组标题:与小程序 .sec 一致——品牌色竖条 + 深灰加粗,取代原来的浅灰小字。
+   关键:position: sticky + top:0,滚动到顶部时停留,直到本组(标题+菜品)滚完
+   被下一组顶走上滑消失。负号外扩抵消 .op-list 的左右 12px 内边距,
+   让标题白底铺满整行(否则两侧会露出底下菜品)。 */
 .op-group-t {
+  position: sticky;
+  top: 0;
+  /* 高于卡片内的招牌角标(z-index 1)、售罄蒙版(z-index 3)等图层:
+     否则标题 sticky 停在顶部时,底下滚过的卡片图 tag / 蒙版会透到标题之上 */
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 2px 6px;
+  margin: 0 -12px;
+  padding: 10px 12px 6px;
+  background: #fff;
   color: var(--ink-2);
   font-size: 13px;
   font-weight: 700;
@@ -698,10 +830,16 @@ function onAdd(d: Dish, e?: MouseEvent): void {
 }
 
 .op-price small {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
   color: var(--ink-4);
+}
+
+/* 「起」：多规格菜显示最低价的提示(与小程序同口径)。基线对齐 + 右侧留一小段间距,
+   读起来像「¥28 起」；这里单独成类,避免和单规格的「/规格名」共用左间距 */
+.op-price small.op-from {
   margin-left: 3px;
+  vertical-align: baseline;
 }
 
 .op-add {
@@ -769,5 +907,134 @@ function onAdd(d: Dish, e?: MouseEvent): void {
     width: 76px;
     height: 76px;
   }
+}
+
+/* ---------- 本店招牌横滑卡片条（对齐小程序端 sigstrip） ---------- */
+
+/* 外层画品牌浅底色块（与小程序 .sigstrip 同款：--brand-ghost 圈出一块，
+   与白底列表区分，也和招牌菜的品牌色呼应）；横滑交给内层 .op-sigrow，
+   背景不随横向滚动走（滚动容器自带 padding 时右端留白在部分内核不可靠） */
+.op-sigstrip {
+  position: relative;
+  z-index: 1;
+  margin: 6px 0 2px;
+  padding: 8px 12px 7px;
+  border-radius: var(--r-md);
+  background: var(--brand-ghost);
+}
+
+/* 卡片横排：真正的横滑层，gap 与卡片宽度固定，露出更多靠横向滚动；不换行 */
+.op-sigrow {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.op-sigrow::-webkit-scrollbar {
+  display: none;
+}
+
+/* 单张招牌卡：固定宽度、行内不可换行，整张可点（同菜品行=开弹层） */
+.op-sigcard {
+  flex: 0 0 auto;
+  width: 96px;
+  cursor: pointer;
+}
+
+.op-sig-media {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: #f5f5f5;
+}
+
+.op-sig-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 招牌角标：贴图片左上角，与菜品行的 op-signature 同视觉 */
+.op-sig-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 0 0 var(--r-md) 0;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 1px;
+}
+
+/* 暂无图片占位：与菜品行的 img-fallback 同款 */
+.op-sig-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: #f7f5f2;
+}
+
+.op-sig-fallback span {
+  font-size: 10px;
+  color: var(--ink-4);
+}
+
+/* 售罄蒙版：半透明盖住图片，居中白字「售罄」，层级高于招牌角标 */
+.op-sig-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(26 26 26 / 55%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.op-sig-name {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 价格：品牌色加粗，与菜品行价格同色系；「起」用浅色小字 */
+.op-sig-price {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--brand-deep);
+  white-space: nowrap;
+}
+
+.op-sig-price .cny {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.op-sig-price small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-4);
+  margin-left: 3px;
+  vertical-align: baseline;
 }
 </style>

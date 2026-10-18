@@ -20,6 +20,9 @@ export function useScrollSpy(menu: Ref<MenuCategory[]>) {
     if (categoryId === undefined) return;
     // el 为 null 表示标题被卸载(搜索过滤掉该分类时就会发生):必须删掉这一项,
     // 否则失效的旧元素会一直留在表里,滚动联动拿它算出的偏移全是 0,高亮会错。
+    // 注意:el 必须是「分组容器」而非分组标题——标题是 position:sticky,被位移后
+    // rect.top 不再等于文档流位置,groupOffsetInList 会算出错误偏移
+    // (点分类会滚过头,整组内容刚好滚出视口)。
     if (!el) {
       delete groupRefs[categoryId];
       return;

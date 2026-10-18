@@ -66,15 +66,30 @@
         </div>
       </div>
 
-      <!-- 已在购物车里的菜再点开：明确告知「确定」是加一份，改备注请去购物车 -->
+      <!-- 已在购物车里的菜再点开：明确告知「确定」是加几份，改备注请去购物车 -->
       <div
         v-if="inCartQty"
         class="spec-hint"
       >
-        购物车已有 {{ inCartQty }} 份，点「确定」会再加 1 份
+        购物车已有 {{ inCartQty }} 份，点「确定」会再加 {{ qty }} 份
       </div>
 
       <div class="spec-foot">
+        <!-- 数量步进器:招牌菜 / 多规格菜都走弹层,下单位数在这里定(默认 1,最小 1,最大 99) -->
+        <div class="ft-stepper">
+          <span
+            class="ft-minus"
+            :class="{ off: qty <= 1 }"
+            @click="setQty(qty - 1)"
+            >−</span
+          >
+          <span class="ft-num">{{ qty }}</span>
+          <span
+            class="ft-plus"
+            @click="setQty(qty + 1)"
+            >+</span
+          >
+        </div>
         <div class="ft-price"><i>¥</i>{{ priceText }}</div>
         <button
           class="sp-btn"
@@ -100,12 +115,15 @@ const props = defineProps<{
   selected: string[];
   custom: string;
   inCartQty: number;
+  /** 弹层内购买数量:父层 useCart.sheetQty,默认 1 */
+  qty: number;
 }>();
 
 const emit = defineEmits<{
   'pick-spec': [specId: number];
   'toggle-remark': [name: string];
   'update:custom': [value: string];
+  'update:qty': [value: number];
   close: [];
   confirm: [];
 }>();
@@ -113,6 +131,13 @@ const emit = defineEmits<{
 // 与小程序 syncPrice 同口径：跟着「当前选中的规格」走，切规格价格立刻变
 const cur = computed(() => props.specs.find(s => Number(s.specId) === props.selectedSpecId));
 const priceText = computed(() => money(cur.value?.price));
+
+const QTY_MIN = 1;
+const QTY_MAX = 99;
+function setQty(n: number): void {
+  const v = Math.max(QTY_MIN, Math.min(QTY_MAX, Math.floor(n) || QTY_MIN));
+  emit('update:qty', v);
+}
 
 function onCustomInput(e: Event): void {
   emit('update:custom', (e.target as HTMLInputElement).value);
@@ -254,6 +279,47 @@ function onCustomInput(e: Event): void {
   align-items: center;
   gap: 12px;
   margin-top: 16px;
+}
+
+/* 数量步进器:左栏固定,价格占剩余,「确定」靠右(与小程序 spec-sheet 底栏一致) */
+.ft-stepper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ft-minus,
+.ft-plus {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--brand);
+  color: var(--brand-deep);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 已到最小份:减号置灰且点不动,不允许把下单数减到 0(要减去购物车里改) */
+.ft-minus.off {
+  border-color: #e3e0da;
+  color: #cfc9c0;
+  cursor: not-allowed;
+}
+
+.ft-num {
+  min-width: 20px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .ft-price {
