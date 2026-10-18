@@ -59,9 +59,15 @@
 }
 
 /* ---------- 首页：房子 ----------
-   屋顶是「旋转 45° 的描边方块」，只露上半两条斜边；屋身用白底盖住方块下半部分，
-   两者拼出描边式的房子。屋身底色必须写成 #fff（tabbar 就是白底），
-   否则旋转方块的底角会从屋身里透出来。 */
+   屋身是「左右 + 底」三边描边（上开口）；屋顶只给 border-top / border-left 两条邻边，
+   旋转 45° 后正好是一条「Λ」，两个自由端落进屋身两根竖线的顶端并被它们盖住
+   （::after 后画，压在屋顶上），接缝看不出拼接痕迹。
+
+   早先的写法是「旋转 45° 的四方块 + 白底屋身遮挡下半」：依赖 tabbar 恰好是白底，
+   且方块的底角会从屋身侧面探出几像素，边缘发毛。现在这套不依赖任何底色。
+
+   改几何时注意：屋顶顶点被 transform-origin: top left 钉死，left 决定顶点的水平位置，
+   边长（width/height）决定两条斜线的落点 —— 27rpx 时落点正好收在竖线顶端内侧。 */
 .ic-home {
   position: relative;
   width: 40rpx;
@@ -69,31 +75,32 @@
 }
 
 .ic-home::before {
-  /* 屋顶 */
+  /* 屋顶：只画上、左两条边，旋转后成为「Λ」 */
   position: absolute;
-  top: 6rpx;
-  left: 10rpx;
-  width: 22rpx;
-  height: 22rpx;
-  border: 4rpx solid currentColor;
-  border-radius: 4rpx;
+  top: 0;
+  left: 20rpx;
+  width: 27rpx;
+  height: 27rpx;
+  border-top: 4rpx solid currentColor;
+  border-left: 4rpx solid currentColor;
   box-sizing: border-box;
   transform: rotate(45deg);
+  transform-origin: top left;
   content: '';
 }
 
 .ic-home::after {
-  /* 屋身：无上边框，顶边被屋身白底压住，视觉上与屋顶连成一体 */
+  /* 屋身：左右竖线 + 底边，上开口接屋顶 */
   position: absolute;
-  bottom: 1rpx;
-  left: 4rpx;
-  width: 32rpx;
-  height: 21rpx;
-  border: 4rpx solid currentColor;
-  border-top: none;
+  bottom: 0;
+  left: 0;
+  width: 40rpx;
+  height: 22rpx;
+  border-right: 4rpx solid currentColor;
+  border-bottom: 4rpx solid currentColor;
+  border-left: 4rpx solid currentColor;
   border-radius: 0 0 6rpx 6rpx;
   box-sizing: border-box;
-  background: #fff;
   content: '';
 }
 

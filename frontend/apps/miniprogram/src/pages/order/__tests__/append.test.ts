@@ -94,5 +94,27 @@ describe('订单页 · 加载失败重试', () => {
 
     expect(page.data.error).toBe('没有找到进行中的订单');
     expect(page.data.canRetry).toBe(false);
+    // 没有订单走插画空态（与 H5 一致），不再渲染那句干巴巴的灰字
+    expect(page.data.noOrder).toBe(true);
+  });
+
+  it('空态在拉到订单后退出（插画让位给订单内容）', async () => {
+    page = await mount();
+
+    await page.recover();
+    expect(page.data.noOrder).toBe(true);
+
+    // 期间这桌下单成功了：本地有了订单号，重试拉到详情后退出空态
+    persistOrder('D001');
+    wxMock.reply({
+      code: 200,
+      msg: 'ok',
+      data: { orderNo: 'D001', orderStatus: 1, payStatus: 0, personCount: 1, items: [] }
+    });
+    page.onRetry();
+    await flush();
+
+    expect(page.data.noOrder).toBe(false);
+    expect(page.data.error).toBe('');
   });
 });

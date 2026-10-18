@@ -272,15 +272,21 @@
   white-space: nowrap;
 }
 
+/* 价格行走 flex + 垂直居中：¥ / 价格 / 「起」字号不同（26 / 26 / 20rpx），
+   按 inline 排会因基线差异看起来高低不齐；center 让它们对齐在同一条水平面上。 */
 .sig-price {
+  display: flex;
+  align-items: center;
   margin-top: 4rpx;
   color: var(--brand-deep);
   font-size: 26rpx;
   font-weight: 700;
 }
 
+/* 「起」与价格之间留一点空隙：紧贴在一起会看成「48.00起」一个整体字，
+   这里取 6rpx —— 能看出是后缀标注，又不会松散到像另一个字段。 */
 .sig-from {
-  margin-left: 2rpx;
+  margin-left: 6rpx;
   color: var(--ink-3);
   font-size: 20rpx;
   font-weight: 400;

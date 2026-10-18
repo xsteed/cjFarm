@@ -44,6 +44,50 @@
     </view>
   </view>
 
+  <!-- 没有进行中的订单：与 H5 订单空态同一套内容与动画（见 OrderPage.vue 的 .order-empty）。
+       插画 = 菜单卡 + 筷子 + 冒热气的茶杯，整体上下浮动、投影同步收放、星点闪烁、热气错拍升腾 -->
+  <view
+    wx:elif="{{noOrder}}"
+    class="order-empty"
+  >
+    <view class="empty-illo">
+      <view class="illo-shadow"></view>
+      <view class="illo-spark s1"></view>
+      <view class="illo-spark s2"></view>
+
+      <!-- 单页菜单卡：品牌色标题栏 + 三行菜品占位 -->
+      <view class="illo-card">
+        <view class="illo-card-hd">
+          <view class="illo-hd-dot"></view>
+          <view class="illo-hd-line"></view>
+        </view>
+        <view class="illo-row r1"><view class="illo-dot"></view><view class="illo-line"></view></view>
+        <view class="illo-row r2"><view class="illo-dot"></view><view class="illo-line short"></view></view>
+        <view class="illo-row r3"><view class="illo-dot"></view><view class="illo-line mid"></view></view>
+      </view>
+
+      <!-- 托碟先画、杯子压在其上，形成「坐落」关系；杯口一点浅茶色交代杯内有水 -->
+      <view class="illo-saucer"></view>
+      <view class="illo-cup"></view>
+      <view class="illo-tea"></view>
+
+      <!-- 三缕热气：错拍升腾 -->
+      <view class="illo-steam st1"></view>
+      <view class="illo-steam st2"></view>
+      <view class="illo-steam st3"></view>
+
+      <!-- 筷子：前端浅橙 → 末端深橙，两根等长微倾 -->
+      <view class="illo-chop c1"></view>
+      <view class="illo-chop c2"></view>
+    </view>
+    <view class="empty-title">上桌啦，点起来吧</view>
+    <view class="empty-sub">还没有进行中的订单，先去挑几道想吃的菜吧</view>
+    <view
+      class="empty-btn"
+      bindtap="onGoMenu"
+    >去点餐</view>
+  </view>
+
   <view
     wx:elif="{{error}}"
     class="state"

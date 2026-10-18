@@ -74,6 +74,351 @@
   text-align: center;
 }
 
+/* ---------- 订单空态：与 H5 OrderPage.vue 的 .order-empty 一致 ----------
+   插画原型是 H5 里那段 SVG（viewBox 120×96），这里按 208rpx × 168rpx 等比换算成纯 CSS：
+   整体上下浮动、桌面投影同步收放、星点轮流闪烁、三缕热气错拍升腾。
+   改任何坐标/时长前先对照 H5，两边构图与节奏必须保持一致（见 docs/miniprogram.md 第七节）。
+   H5 用 prefers-reduced-motion 收掉动画，WXSS 没有对应能力，故此处不做降级。 */
+.order-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 48rpx 80rpx;
+  text-align: center;
+}
+
+.empty-illo {
+  position: relative;
+  width: 208rpx;
+  height: 168rpx;
+  animation: empty-float 2.4s ease-in-out infinite;
+}
+
+/* 桌面投影：整图浮动时影子同步收放，保持「落地」错觉 */
+.illo-shadow {
+  position: absolute;
+  bottom: 4rpx;
+  left: 24rpx;
+  width: 160rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background: #ffb27d;
+  animation: shadow-breathe 2.4s ease-in-out infinite;
+}
+
+/* 星点：H5 是 SVG 的 ✦ 路径（四角尖、腰内凹），这里用 clip-path 八点多边形精确复刻。
+   别用「双椭圆正交」拼：横瓣一旦忘了垂直居中就渲染成蘑菇，而且椭圆相交只能是
+   「加号」轮廓，拼不出 ✦ 的内凹腰。clip-path 属于样式基线（iOS 14.5+）能力，真机可用。
+   多边形取值即 H5 路径的归一化坐标（腰位 33.3% / 66.7%），颜色刻意不走 token。 */
+.illo-spark {
+  position: absolute;
+  width: 27rpx;
+  height: 27rpx;
+  background: #ffb27d;
+  clip-path: polygon(
+    50% 0%,
+    66.7% 33.3%,
+    100% 50%,
+    66.7% 66.7%,
+    50% 100%,
+    33.3% 66.7%,
+    0% 50%,
+    33.3% 33.3%
+  );
+  animation: spark-twinkle 1.8s ease-in-out infinite;
+}
+
+.illo-spark.s1 {
+  top: 24rpx;
+  left: 11rpx;
+}
+
+/* 小的那枚偏高、偏右，且比大星点瘦长（比例同 H5 路径），与大星点错开 */
+.illo-spark.s2 {
+  top: 17rpx;
+  left: 129rpx;
+  width: 19rpx;
+  height: 27rpx;
+  animation-delay: 0.9s;
+}
+
+/* 单页菜单卡：白底 + 品牌色描边，标题栏压在三行菜品占位上方 */
+.illo-card {
+  position: absolute;
+  top: 38rpx;
+  left: 42rpx;
+  width: 97rpx;
+  height: 83rpx;
+  border: 7rpx solid var(--brand);
+  border-radius: 9rpx;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+.illo-card-hd {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  height: 21rpx;
+  padding: 0 6rpx;
+  border-radius: 3rpx 3rpx 0 0;
+  background: var(--brand);
+}
+
+.illo-hd-dot {
+  flex: none;
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.illo-hd-line {
+  width: 44rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background: #fff;
+}
+
+/* 三行菜品占位：橙点 + 灰色短线（长度对应 H5 的三行，第二行最短） */
+.illo-row {
+  position: absolute;
+  left: 8rpx;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  height: 10rpx;
+}
+
+.illo-row.r1 {
+  top: 25rpx;
+}
+
+.illo-row.r2 {
+  top: 42rpx;
+}
+
+.illo-row.r3 {
+  top: 59rpx;
+}
+
+.illo-dot {
+  flex: none;
+  width: 10rpx;
+  height: 10rpx;
+  border-radius: 50%;
+  background: #ffb27d;
+}
+
+.illo-line {
+  width: 38rpx;
+  height: 5rpx;
+  border-radius: 3rpx;
+  background: var(--ink-4);
+}
+
+.illo-line.short {
+  width: 28rpx;
+}
+
+.illo-line.mid {
+  width: 35rpx;
+}
+
+/* 托碟：宽浅椭圆，先画让杯子压在其上 */
+.illo-saucer {
+  position: absolute;
+  top: 104rpx;
+  left: 146rpx;
+  width: 56rpx;
+  height: 14rpx;
+  border: 5rpx solid var(--brand);
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+/* 茶杯：上开口的白瓷杯（无上边框），杯口一点浅茶色 */
+.illo-cup {
+  position: absolute;
+  top: 82rpx;
+  left: 159rpx;
+  width: 30rpx;
+  height: 28rpx;
+  border: 6rpx solid var(--brand);
+  border-top: none;
+  border-radius: 0 0 10rpx 10rpx;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+.illo-tea {
+  position: absolute;
+  top: 79rpx;
+  left: 163rpx;
+  width: 21rpx;
+  height: 6rpx;
+  border-radius: 50%;
+  background: #f7c9a8;
+}
+
+/* 三缕热气：每缕是上下两段弧首尾相接的 S 形（对应 H5 那段 `c` 曲线路径），
+   不是一根直棍。上段左凸、下段右凸，两端落在同一竖线上。
+   用「单边 border + 大圆角」画弧：只设 border-left 时，左边会连成一条光滑的「(」。 */
+.illo-steam {
+  position: absolute;
+  top: 62rpx;
+  width: 12rpx;
+  height: 16rpx;
+  animation: steam-rise 2.2s ease-in-out infinite;
+}
+
+.illo-steam::before {
+  /* 上段：左凸弧 */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12rpx;
+  height: 8rpx;
+  border-left: 4rpx solid #ffb27d;
+  border-radius: 30%;
+  box-sizing: border-box;
+  content: '';
+}
+
+.illo-steam::after {
+  /* 下段：右凸弧，左移 5rpx 与上段首尾相接 */
+  position: absolute;
+  top: 8rpx;
+  left: -5rpx;
+  width: 12rpx;
+  height: 8rpx;
+  border-right: 4rpx solid #ffb27d;
+  border-radius: 30%;
+  box-sizing: border-box;
+  content: '';
+}
+
+.illo-steam.st1 {
+  left: 163rpx;
+}
+
+.illo-steam.st2 {
+  left: 172rpx;
+  animation-delay: 0.7s;
+}
+
+.illo-steam.st3 {
+  left: 180rpx;
+  animation-delay: 1.4s;
+}
+
+/* 筷子：整根单段 + 渐变着色（前端浅、末端深，无接缝），微倾压在菜单卡前 */
+.illo-chop {
+  position: absolute;
+  width: 87rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background: linear-gradient(to right, #ff9c66 0%, var(--brand-deep) 100%);
+  transform-origin: left center;
+}
+
+.illo-chop.c1 {
+  top: 136rpx;
+  left: 35rpx;
+  transform: rotate(-4.6deg);
+}
+
+.illo-chop.c2 {
+  top: 144rpx;
+  left: 38rpx;
+  transform: rotate(-4.6deg);
+}
+
+.empty-title {
+  margin-top: 32rpx;
+  color: var(--ink);
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.empty-sub {
+  max-width: 520rpx;
+  margin-top: 16rpx;
+  color: var(--ink-3);
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+.empty-btn {
+  margin-top: 48rpx;
+  padding: 22rpx 72rpx;
+  border-radius: var(--r-pill);
+  background: var(--grad-brand-soft);
+  box-shadow: 0 8rpx 18rpx rgb(240 72 31 / 28%);
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+@keyframes empty-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-16rpx);
+  }
+}
+
+/* 桌面投影：整图浮动时影子同步收放，保持「落地」错觉 */
+@keyframes shadow-breathe {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scaleX(1);
+  }
+
+  50% {
+    opacity: 0.2;
+    transform: scaleX(0.88);
+  }
+}
+
+/* 星点轮流闪烁：四角星本身已轴对齐，缩放不再需要带旋转 */
+@keyframes spark-twinkle {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes steam-rise {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(2rpx);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-4rpx);
+  }
+}
+
 /* 首张卡（菜品明细）与左右边距对齐：上下都是 24rpx，卡片不贴住顶部 */
 .body {
   flex: 1;

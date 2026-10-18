@@ -383,7 +383,7 @@ POST /api/customer/pay/jsapi
 | `src/pages/cart/__tests__/remark.test.ts`（5） | 就地改单项备注：只改文字不加份数；老基础库拿不到输入内容时不清掉已有备注；下单成功但详情回拉失败时带 `orderNo` 跳订单页兜底 |
 | `src/pages/index/__tests__/entry.test.ts`（5） | 首屏失败后「重新加载」用的是本次解析出的桌台码；`append=1` 时留在菜单页；平时进入遇进行中订单直接跳订单页；快速「+」不抹掉已填备注；坏图重建后不闪回破图 |
 | `src/pages/index/__tests__/menu-interact.test.ts`（11） | 搜索：按菜名/描述过滤、顺序包含（红肉→红烧肉）、搜不到给空态、清空恢复。行内规格：按数量分档（≤3 出行内 chip、更多进弹层、无规格标不可点）、切规格后价格/选中态/份数跟着走、「+」加的是**所选**规格、规格太多只开弹层。售罄：仍展示但不可下单（orderable 与 soldOut 分离）、「+」/点菜名都提示已售罄 |
-| `src/pages/order/__tests__/append.test.ts`（4） | 加菜跳转（页面栈里没有菜单页时不能死循环）、首屏加载失败的重试 |
+| `src/pages/order/__tests__/append.test.ts`（6） | 加菜跳转（页面栈里没有菜单页时不能死循环）、首屏加载失败的重试、无订单时进入空态并在拉到订单后退出 |
 | `src/pages/pay/__tests__/paid.test.ts`（2） | 支付成功先落「已付款」再回拉详情；延时跳转期间顾客手动返回不重复导航 |
 | `src/components/spec-sheet/__tests__/confirm.test.ts`（3） | 弹层「确定」的防重入：连点只加一份 |
 | `src/pages/home/__tests__/home.test.ts`（9） | 默认主页：扫码进菜单（用 navigateTo，首页留在栈里）、扫到无关内容提示重扫 / 取消不提示、上次桌台**确认存在才显示**续用入口（拉不到桌台详情就收起）、进行中订单卡片（已完成的单不进）、招牌菜只取 `signature=1` 且多规格给最低价 |
@@ -444,6 +444,7 @@ POST /api/customer/pay/jsapi
 | 订单恢复 | 依赖 `table.currentOrder` | 同左，另加本地缓存 `tableCode/orderNo` 兜底 |
 | 没带桌台码 | 落到点餐页，提示扫码（H5 本身就在浏览器里，通常由二维码带着码进） | 落到**默认主页**：微信内扫码进桌 + 上次桌台/进行中订单续用 + 招牌菜；从点餐 tab 误入菜单时，错误态也能就地扫码 |
 | 出餐中订单 | 顶部提示条只展示，点不动 | 提示条可点击，带 `orderNo` 进订单页看出餐进度 |
+| 订单空态 | 插画（菜单卡 + 筷子 + 冒热气的茶杯）浮动 + 星点闪烁 + 热气升腾，文案「上桌啦，点起来吧」+ 去点餐 | 与 H5 一致：同一段 SVG 的 CSS 复刻（`pages/order/index.wxss`），动画节奏相同；WXSS 无 `prefers-reduced-motion`，不做降级 |
 
 ---
 

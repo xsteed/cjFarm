@@ -126,6 +126,12 @@ Page({
     showServingList: false,
     servingRows: [] as ServingRow[],
     /**
+     * 本桌没有进行中的订单：展示与 H5 一致的空态（插画 + 文案 + 去点餐）。
+     * error 仍保留那句「没有找到进行中的订单」作为原因（onShow 靠它决定不轮询），
+     * 但**不再直接渲染它** —— 干巴巴一行灰字换成插画空态，见 index.wxml。
+     */
+    noOrder: false,
+    /**
      * 左上角返回按钮。小程序切 tab 走 redirectTo（页面栈深 1），原生导航栏没有返回箭头；
      * 而从菜单页「出餐中」标签 navigateTo 进来时原生箭头已在，不再重复画一个。
      */
@@ -202,6 +208,7 @@ Page({
       loading: false,
       error: '',
       canRetry: false,
+      noOrder: false,
       showServingList: true,
       servingRows: rows
     });
@@ -212,7 +219,7 @@ Page({
   onOpenServing(e: WechatMiniprogram.TouchEvent): void {
     const orderNo = String(e.currentTarget.dataset.no || '');
     if (!orderNo) return;
-    this.setData({ showServingList: false, orderNo, fromServingList: true });
+    this.setData({ showServingList: false, orderNo, fromServingList: true, noOrder: false });
     void this.recover(orderNo);
   },
 
@@ -239,14 +246,19 @@ Page({
   async recover(explicit?: string) {
     const orderNo = String(explicit || '').trim() || readPersisted().orderNo;
     if (!orderNo) {
-      this.setData({ loading: false, error: '没有找到进行中的订单', canRetry: false });
+      this.setData({
+        loading: false,
+        error: '没有找到进行中的订单',
+        canRetry: false,
+        noOrder: true
+      });
       return;
     }
     try {
       const order = (await getOrderByNo(orderNo)) as OrderDetail;
       applyOrder(order);
       this.render(order);
-      this.setData({ loading: false, canRetry: false });
+      this.setData({ loading: false, canRetry: false, noOrder: false });
       // 刚刚拉过一次，别再立刻补一拍
       this.startPolling(false);
     } catch (e) {
@@ -255,7 +267,8 @@ Page({
       this.setData({
         loading: false,
         error: err?.friendlyMessage || err?.message || '加载订单失败',
-        canRetry: true
+        canRetry: true,
+        noOrder: false
       });
       // 先停轮询：错误态下每 3s 打一次注定失败的请求（失败还被 poller 静默吞掉）
       this.stopPolling();
