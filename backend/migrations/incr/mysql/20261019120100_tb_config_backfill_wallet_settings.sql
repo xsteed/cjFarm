@@ -26,10 +26,4 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_balance_max_name
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_realname_required', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_adjust_max', '1000');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_rules_version', '2026.1');
-INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_rules_text', '一、适用范围：储值余额仅限本店堂食消费抵扣，不找零、不兑现、不计息、不可转赠他人。
-二、有效期：储值余额不设有效期，长期有效。
-三、实名与限额：未绑定手机号的账户为不记名账户，余额上限 1000 元；完成手机号绑定后为记名账户，余额上限 5000 元。
-四、退款：本金余额可随时向门店申请退回；充值赠送的金额（赠金）仅可用于消费，不可退现。
-五、注销：注销会员前须先将余额退回或消费完毕，余额未清零时无法注销。
-六、凭证与查询：本店完整保存每一笔储值流水，顾客可在本页随时查询余额与明细。
-七、安全提示：余额支付视同本人消费，请妥善保管微信账号，如有异常请及时联系门店。');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_rules_text', '一、适用范围：储值余额仅限本店堂食消费抵扣，不找零、不兑现、不计息、不可转赠他人。二、有效期：储值余额不设有效期，长期有效。三、实名与限额：未绑定手机号的账户为不记名账户，余额上限 1000 元；完成手机号绑定后为记名账户，余额上限 5000 元。四、退款：本金余额可随时向门店申请退回；充值赠送的金额（赠金）仅可用于消费，不可退现。五、注销：注销会员前须先将余额退回或消费完毕，余额未清零时无法注销。六、凭证与查询：本店完整保存每一笔储值流水，顾客可在本页随时查询余额与明细。七、安全提示：余额支付视同本人消费，请妥善保管微信账号，如有异常请及时联系门店。');
