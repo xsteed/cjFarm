@@ -271,7 +271,8 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 
 ```bash
 cd backend
-# 1) 修改 infrastructure/store 里的表结构 / 种子数据定义
+# 1) 修改 infrastructure/store 里的表结构 / 种子数据定义,
+#    并在 schema_comment.go 登记新表/新列的注释(测试强制)
 # 2) 重新生成两库的 full 脚本
 go run ./cmd/gensql
 # 3) 跑测试
@@ -333,6 +334,15 @@ go test ./...
    `AFTER` 的取值以 `full/mysql/schema.sql` 中该列实际位置为准（如 `viewed_at AFTER meal_end_time`）。
    SQLite 不支持 `AFTER` 且加列只能追加末尾，**无需也不能写**；两库最终列顺序都以
    `full/schema.sql` 为单一事实来源。曾落盘的增量脚本均有 `AFTER` 示范（见 git 历史）。
+8. **字段注释规范**：MySQL 建表语句的每张表、每一列都带 `COMMENT` 简释字段含义
+   （枚举值直接写进注释，如 `order_status` 的「1已下单 2制作中…」），DBA / 运维
+   `SHOW CREATE TABLE` 即可看懂结构。注释定义在
+   `infrastructure/store/schema_comment.go` 的 `tableComments` / `columnComments`
+   两张 map（键为 `表名` / `表名.列名`），由生成器在 MySQL 方言下注入；
+   **新增表 / 列必须同步登记，`sqlgen_test.go` 的 `TestSQLCommentsCoverEveryColumn`
+   强制覆盖率**。注释文本不写英文单引号。
+   SQLite 无注释语法，同一份 DDL 不生成 `COMMENT`；字段说明以建表模板里的 `--`
+   行内注释与本文档为准（因此两库脚本除注释外逐字符一致）。
 
 ### MySQL 大图写入注意
 
