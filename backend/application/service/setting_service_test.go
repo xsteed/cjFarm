@@ -41,6 +41,44 @@ func TestNormalizeAmountValue(t *testing.T) {
 	}
 }
 
+// TestNormalizeYuanIntValue 整数元配置的归一化:必须落成整数,否则读取侧 Atoi
+// 会静默失败并回落默认值 —— 门店调了限额却以为生效,是最难发现的一类差错。
+func TestNormalizeYuanIntValue(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"1", "1"},
+		{"1000", "1000"},
+		{" 2000 ", "2000"},
+		// 小数收敛为整数(四舍五入),而不是原样落库让 Atoi 失败。
+		{"1000.5", "1001"},
+		{"999.4", "999"},
+		// 非法值回落空串 → 读取侧回落到出厂默认值(不锁死在 1 元)。
+		{"0", ""},
+		{"-5", ""},
+		{"abc", ""},
+		{"NaN", ""},
+		{"Inf", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := NormalizeYuanIntValue(c.in); got != c.want {
+			t.Fatalf("NormalizeYuanIntValue(%q)=%q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestNormalizeYuanIntValueRoundTrip 归一化后的值必须能被读取侧正确解析 ——
+// 这条不变式才是这个函数存在的理由(写进去的 == 读出来的)。
+func TestNormalizeYuanIntValueRoundTrip(t *testing.T) {
+	settingInitDB(t)
+	if err := dao.SetSetting(SettingWalletBalanceMax, NormalizeYuanIntValue("1234.6")); err != nil {
+		t.Fatalf("写入配置失败: %v", err)
+	}
+	// 该会员未绑手机号 → 走不记名额度(wallet_balance_max)。
+	if got := walletBalanceMaxCents(1000000); got != 123500 {
+		t.Fatalf("余额上限应为 1235 元(123500 分), got %d", got)
+	}
+}
+
 // TestPayFirstEnabledDefaultOff 先付模式默认必须是「关」(后付):
 // 误开会让没收到钱的订单永不出单,风险远大于多出几张晚付的单。
 func TestPayFirstEnabledDefaultOff(t *testing.T) {

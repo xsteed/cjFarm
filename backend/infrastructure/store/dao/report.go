@@ -29,6 +29,32 @@ type SettleMixRow struct {
 	Count       int
 }
 
+// RangeWalletConsume 统计区间 [start, end) 用储值余额核销的营业额(单位分)。
+//
+// 口径:窗口内已支付订单的「储值流水金额」减去同期退回储值的金额。
+// 「储值核销」是营业额的**子集**,两者相减即当天真实到账资金 ——
+// 少了这一列,老板看到的「今日营业额」里混着以前收过的钱(储值属负债转收入,
+// 当天并没有现金流入)。
+//
+// 为什么不再用 tb_order.pay_channel='wallet':混合支付(余额 + 微信补差)的订单
+// 结算渠道是微信,但它同样有一半钱来自储值,按订单渠道统计会把这部分漏掉。
+// 退回到储值的钱不计入核销(它也没产生现金流出),与 RangeAmount 的退款口径配套。
+func RangeWalletConsume(start, end string) int64 {
+	var v int64
+	store.DB.QueryRow(`SELECT
+		(SELECT COALESCE(SUM(p.amount),0) FROM tb_payment p
+		 JOIN tb_order o ON o.order_no=p.order_no
+		 WHERE o.pay_time>=? AND o.pay_time<? AND o.order_status!=5 AND o.pay_status=1
+		   AND COALESCE(o.settle_type,'normal')<>'credit'
+		   AND p.channel=? AND p.status IN (?,?))
+		- (SELECT COALESCE(SUM(r.amount),0) FROM tb_refund r
+		   WHERE r.update_time>=? AND r.update_time<? AND r.status=? AND COALESCE(r.is_duplicate,0)=0
+		     AND r.channel=?)`,
+		start, end, "wallet", PayStatusPaid, PayStatusRefunded,
+		start, end, po.RefundStatusSuccess, "wallet").Scan(&v)
+	return v
+}
+
 // RangeAmount 统计区间 [start, end) 的营业额(实收资金流,单位分)。
 //
 // 口径(资金流,按「钱到账的时间」归属):

@@ -177,9 +177,9 @@ if (!currentCustomerToken()) return;   // 走到这里时令牌恒为空 → 永
    - 入口由 `wxpay_jsapi_enabled` 控制，未开通时按钮根本不出现（fail-closed）；
    - 未开通时降级到「收款码 + 前台结账」并有明确提示。
 6. **储值 / 预付资质** —— `pages/wallet` 的余额充值属预付资金，涉及《单用途商业预付卡管理办法》，且平台对部分类目有限制。当前默认值是关闭（`wallet/index.ts` 双重 fail-closed）。
-   **要开放自助充值，必须先完成 [`../compliance/prepaid-card.md`](../compliance/prepaid-card.md) 第 0 节的 10 项清单**（备案判断、规则发布、限额与实名、退卡通道、微信侧类目资质、隐私指引、发票口径）。
+   **要开放自助充值，必须先完成 [`compliance/prepaid-card.md`](compliance/prepaid-card.md) 第 0 节的 10 项清单**（备案判断、规则发布、限额与实名、退卡通道、微信侧类目资质、隐私指引、发票口径）。
    系统侧已具备的合规能力（限额校验、规则同意留痕、退余额、注销清零、充值补账）见
-   [`../design-docs/customer-wallet/spec.md`](../design-docs/customer-wallet/spec.md)。
+   [`design-docs/customer-wallet/spec.md`](design-docs/customer-wallet/spec.md)。
 
 ---
 
@@ -221,7 +221,7 @@ if (!currentCustomerToken()) return;   // 走到这里时令牌恒为空 → 永
   [ ] 配 request + downloadFile 两张合法域名白名单
   [ ] 类目 = 餐饮，上传营业执照 + 食品经营许可证
   [ ] 主体认证；确认微信支付商户号已绑定
-  [ ] 决定储值自助充值是否开放（开放前按 [`../compliance/prepaid-card.md`](../compliance/prepaid-card.md) 第 0 节逐项确认资质与类目）
+  [ ] 决定储值自助充值是否开放（开放前按 [`compliance/prepaid-card.md`](compliance/prepaid-card.md) 第 0 节逐项确认资质与类目）
 
 阶段 3 · 提审前
   [ ] config.ts 的 PROD_API_ORIGIN 换成已备案 HTTPS 域名（只需填一次，不用再切换）

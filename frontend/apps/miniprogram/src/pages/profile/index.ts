@@ -261,8 +261,33 @@ Page({
   /**
    * 注销会员（不可撤销）：档案与登录方式由后端物理删除，
    * 历史订单留在门店但归属置 0（不再出现在「我的订单」）。
+   *
+   * 储值余额必须先清零：注销会连储值账户一起删，带着余额注销等于把顾客的
+   * 预付款直接抹掉。后端会拒绝，这里先查一次余额把话说在前面 ——
+   * 「点了注销才弹一句报错」比「点之前就告诉他该怎么办」糟糕得多。
    */
-  onDeleteAccount(): void {
+  async onDeleteAccount(): Promise<void> {
+    let balance = 0;
+    let gift = 0;
+    try {
+      const w = await getWallet();
+      balance = Number(w.balance) || 0;
+      gift = Number(w.balanceGift) || 0;
+    } catch {
+      // 拉不到余额就按 0 处理:后端注销时仍会再校验一次,不会因此漏掉余额。
+    }
+    if (balance > 0 || gift > 0) {
+      wx.showModal({
+        title: '储值余额未清零',
+        content:
+          `你的储值账户还有本金 ${money(balance)} 元` +
+          (gift > 0 ? `、赠金 ${money(gift)} 元` : '') +
+          '。注销会一并删除储值账户，请先到门店办理退余额或继续消费后再注销。',
+        confirmText: '我知道了',
+        showCancel: false
+      });
+      return;
+    }
     wx.showModal({
       title: '注销会员',
       content:

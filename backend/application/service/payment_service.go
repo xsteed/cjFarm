@@ -62,7 +62,14 @@ func CreatePayment(orderID int, orderNo, channel string, amountCents int64, prep
 		if err != nil {
 			return fmt.Errorf("订单不存在")
 		}
-		if o.TotalAmount != amountCents {
+		// 应收校验按「本笔 + 已用其它渠道付掉的部分」= 订单总额:
+		// 纯渠道支付时后者为 0(与旧行为完全一致);混合支付时后者是已扣的储值金额,
+		// 本笔只收差额 —— 若仍拿本笔直接比订单总额,混合支付永远无法出码。
+		paidOther, err := dao.SumPaidPaymentsExceptTx(tx, orderNo, channel)
+		if err != nil {
+			return err
+		}
+		if o.TotalAmount != amountCents+paidOther {
 			return ErrOrderAmountChanged
 		}
 		return dao.InsertPaymentTx(tx, orderNo, channel, amountCents, prepayID)
@@ -72,6 +79,14 @@ func CreatePayment(orderID int, orderNo, channel string, amountCents int64, prep
 // ErrOrderAmountChanged 表示落支付流水前重读发现订单应收金额已变(加菜/改单抬价):
 // 渠道收款码是按旧金额生成的,必须关掉旧码、请顾客重新发起。
 var ErrOrderAmountChanged = errors.New("订单金额已变更，请重新发起支付")
+
+// PaidPaymentsExcept 订单在「除该渠道之外」已入账的金额合计(分)。
+//
+// 混合支付(余额抵扣 + 渠道补差)的金额防线靠它:渠道回调只覆盖差额,
+// 判据是「本笔 + 其它渠道已入账 == 订单总额」,而不是「本笔 == 订单总额」。
+func PaidPaymentsExcept(orderNo, channel string) int64 {
+	return dao.SumPaidPaymentsExcept(orderNo, channel)
+}
 
 // GetPayment 查询某订单某渠道最近一条支付流水(仅填充 PaymentID/Status/Amount)。
 func GetPayment(orderNo, channel string) (po.Payment, error) {
@@ -384,6 +399,123 @@ func CreateRefund(ctx context.Context, orderID int, orderNo string, paymentID in
 		return refundNo, 0, 0, err
 	}
 	return refundNo, refundID, refundCents, nil
+}
+
+// RefundPart 一次退款请求按支付流水分摊出的一部分。
+//
+// 混合支付(余额 + 渠道)的订单有多笔已入账流水,退款必须回到各自的渠道:
+// 全退给渠道等于把微信的钱多退一次,全退给余额则把顾客的微信付款留在店里。
+type RefundPart struct {
+	RefundNo  string
+	RefundID  int
+	PaymentID int
+	Channel   string
+	// Amount 本次退给这笔流水的金额(分)。
+	Amount int64
+	// PaymentTotal 该笔流水的原始支付金额(分):渠道退款接口的 total 参数,
+	// 必须是「原交易金额」而不是订单总额 —— 混合支付时两者不等。
+	PaymentTotal int64
+}
+
+// CreateRefundParts 在事务内完成「锁订单行 → 重算可退额度 → 按流水分摊 → 逐笔落退款单」。
+//
+// 分摊顺序按 payment_id 倒序(最近付的先退),确定性且可复现;
+// 钱包流水的可退额额外受「本金余额」限制(赠金不退,见 OrderConsumeComposition)。
+func CreateRefundParts(ctx context.Context, orderID int, orderNo string, totalCents int64, amountYuan float64, reason, operator string) ([]RefundPart, error) {
+	var parts []RefundPart
+	err := store.WithTx(func(tx *sql.Tx) error {
+		if err := dao.TouchOrderTx(tx, orderID); err != nil {
+			return err
+		}
+		refunded, err := dao.SumRefundedInclPendingTx(tx, orderNo)
+		if err != nil {
+			return err
+		}
+		refundCents, err := calcRefundCents(totalCents, refunded, amountYuan)
+		if err != nil {
+			return err
+		}
+		payments, err := dao.ListPaidPaymentsTx(tx, orderNo)
+		if err != nil {
+			return err
+		}
+		if len(payments) == 0 {
+			return errors.New("未找到在线支付流水，该订单为线下收款，请人工退款")
+		}
+		byPayment, err := dao.SumRefundedByPaymentTx(tx, orderNo)
+		if err != nil {
+			return err
+		}
+		// 钱包流水的可退上限还要看「这笔单有多少是本金消费的」:
+		// 赠金部分不退,否则「充 100 送 10 → 退款」可以套现。
+		walletPrincipal := int64(-1) // -1 表示不适用(无钱包流水/无消费流水)
+		if comp, found, e := dao.OrderConsumeComposition(tx, orderNo); e != nil {
+			return e
+		} else if found {
+			walletPrincipal = comp.Principal - comp.Refunded
+			if walletPrincipal < 0 {
+				walletPrincipal = 0
+			}
+		}
+
+		remaining := refundCents
+		for _, p := range payments {
+			if remaining <= 0 {
+				break
+			}
+			avail := p.Amount - byPayment[p.PaymentID]
+			if p.Channel == PayChannelWallet && walletPrincipal >= 0 {
+				if avail > walletPrincipal {
+					avail = walletPrincipal
+				}
+			}
+			if avail <= 0 {
+				continue
+			}
+			take := avail
+			if take > remaining {
+				take = remaining
+			}
+			if p.Channel == PayChannelWallet && walletPrincipal >= 0 {
+				walletPrincipal -= take
+			}
+			refundNo := GenRefundNo(RefundNoRefund)
+			refundID, e := dao.InsertRefundTx(tx, po.Refund{
+				OrderID:   orderID,
+				OrderNo:   orderNo,
+				PaymentID: p.PaymentID,
+				RefundNo:  refundNo,
+				Channel:   p.Channel,
+				Amount:    take,
+				Status:    po.RefundStatusProcessing,
+				Reason:    reason,
+				Operator:  operator,
+			})
+			if e != nil {
+				return e
+			}
+			parts = append(parts, RefundPart{
+				RefundNo: refundNo, RefundID: refundID, PaymentID: p.PaymentID,
+				Channel: p.Channel, Amount: take, PaymentTotal: p.Amount,
+			})
+			remaining -= take
+		}
+		if remaining > 0 {
+			// 走到这里说明「订单级可退额度」与「流水分摊」对不上,
+			// 最常见的原因就是该单含赠金(赠金不退,能退的本金少于申请金额)。
+			if comp, found, e := dao.OrderConsumeComposition(tx, orderNo); e == nil && found && comp.Gift > 0 {
+				return fmt.Errorf("该单储值消费含赠金 %s 元（赠金不退），最多可退 %s 元",
+					po.FormatYuan(comp.Gift), po.FormatYuan(refundCents-remaining))
+			}
+			return fmt.Errorf("可退额度与支付流水不匹配，请人工核对（还差 %s 元）", po.FormatYuan(remaining))
+		}
+		return nil
+	})
+	if err != nil {
+		logger.CtxWarnf(ctx, "[pay] 退款分摊事务失败 订单%s: %v", orderNo, err)
+		return nil, err
+	}
+	return parts, nil
 }
 
 // InsertRefund 登记一笔退款单。

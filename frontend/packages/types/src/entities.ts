@@ -364,6 +364,10 @@ export interface ReportSummary extends Extensible {
   lastMonthSamePeriodOrderCount?: number;
   todayFreeAmount?: number;
   todayGiftAmount?: number;
+  /** 今日营业额中用储值余额核销的部分（以前收过的钱，当天没有现金流入）。 */
+  todayWalletAmount?: number;
+  /** 今日实际到账资金 = 今日营业额 - 储值核销。 */
+  todayCashAmount?: number;
   creditPendingAmount?: number;
   creditPendingCount?: number;
   todayCreditAmount?: number;

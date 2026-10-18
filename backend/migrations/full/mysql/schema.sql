@@ -389,19 +389,22 @@ CREATE TABLE IF NOT EXISTS tb_customer_identity (
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='会员登录方式';
 CREATE TABLE IF NOT EXISTS tb_wallet (
         customer_id    INTEGER PRIMARY KEY COMMENT '会员ID(主键,1:1)',
-        balance        INTEGER      DEFAULT 0 COMMENT '余额(分,只由事务内DAO增减,守卫不为负)',
+        balance        INTEGER      DEFAULT 0 COMMENT '本金余额(分,只由事务内DAO增减,守卫不为负,可退)',
+        balance_gift   INTEGER      DEFAULT 0 COMMENT '赠金余额(分,充值赠送/活动赠送,只可消费不可退现)',
         total_recharge INTEGER      DEFAULT 0 COMMENT '累计充值(分)',
         total_consume  INTEGER      DEFAULT 0 COMMENT '累计消费(分)',
         total_gift     INTEGER      DEFAULT 0 COMMENT '累计赠送(分)',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间(数据库自动填)',
         update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='会员储值账户';
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='会员储值账户(本金与赠金分桶)';
 CREATE TABLE IF NOT EXISTS tb_wallet_txn (
         txn_id         INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '流水ID(自增主键)',
         customer_id    INTEGER      NOT NULL COMMENT '会员ID',
-        biz_type       VARCHAR(16)  NOT NULL COMMENT '业务类型 recharge/consume/refund/gift/adjust',
+        biz_type       VARCHAR(16)  NOT NULL COMMENT '业务类型 recharge/consume/refund/gift/gift_void/gift_back/adjust/withdraw',
         amount         INTEGER      NOT NULL COMMENT '变动金额(分,带符号,正入负出)',
-        balance_after  INTEGER      NOT NULL COMMENT '变动后余额(分,逐行累加必须等于当前余额)',
+        balance_after  INTEGER      NOT NULL COMMENT '变动后本金余额(分,逐行累加必须等于当前本金)',
+        gift_amount    INTEGER      DEFAULT 0 COMMENT '本笔变动中赠金部分(分,带符号;退款据此算可退本金)',
+        gift_after     INTEGER      DEFAULT 0 COMMENT '变动后赠金余额(分)',
         order_no       VARCHAR(32)  DEFAULT '' COMMENT '关联订单号',
         payment_no     VARCHAR(64)  DEFAULT '' COMMENT '关联支付单号',
         reason         VARCHAR(255) DEFAULT '' COMMENT '变动原因',
@@ -409,12 +412,20 @@ CREATE TABLE IF NOT EXISTS tb_wallet_txn (
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间(数据库自动填)',
         update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='储值流水(只增不改)';
+CREATE TABLE IF NOT EXISTS tb_wallet_agreement (
+        customer_id    INTEGER PRIMARY KEY COMMENT '会员ID(主键,1:1)',
+        rules_ver      VARCHAR(16)  NOT NULL COMMENT '同意的规则版本号',
+        agreed_time DATETIME DEFAULT NULL COMMENT '同意时间',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间(数据库自动填)',
+        update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='储值规则同意留痕(合规:发卡须明示章程)';
 CREATE TABLE IF NOT EXISTS tb_recharge (
         recharge_id      INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '充值单ID(自增主键)',
         recharge_no      VARCHAR(32)  NOT NULL COMMENT '充值单号(R开头,与订单D开头靠前缀分流回调)',
         customer_id      INTEGER      NOT NULL COMMENT '会员ID',
-        amount           INTEGER      NOT NULL COMMENT '充值金额(分)',
-        status           INTEGER      DEFAULT 0 COMMENT '0待支付 1已入账(回调条件更新做幂等)',
+        amount           INTEGER      NOT NULL COMMENT '充值金额(分,本金)',
+        gift_amount      INTEGER      DEFAULT 0 COMMENT '本笔赠送额(分,建单时冻结,入账进赠金桶)',
+        status           INTEGER      DEFAULT 0 COMMENT '0待支付 1已入账(回调条件更新做幂等) 2已关闭(终态,回调不入账)',
         channel          VARCHAR(16)  DEFAULT '' COMMENT '支付渠道',
         channel_trade_no VARCHAR(64)  DEFAULT '' COMMENT '渠道交易号',
         pay_time        VARCHAR(32) DEFAULT NULL COMMENT '支付时间',

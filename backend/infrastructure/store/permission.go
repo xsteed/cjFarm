@@ -83,7 +83,8 @@ var permGroups = []PermGroup{
 	// 储值:动钱,与会员查看分开收口 —— 能看会员的人未必能调账。
 	{Key: "wallet", Name: "储值", Perms: []PermDef{
 		{Code: "wallet:view", Name: "储值查看(余额/流水)"},
-		{Code: "wallet:edit", Name: "储值调账(赠送/扣减)"},
+		// 退余额也在 edit 里:它比调账更重(钱真的出店),不能给只有查看权的人。
+		{Code: "wallet:edit", Name: "储值调账(赠送/扣减/退余额)"},
 	}},
 	{Key: "config", Name: "系统配置", Perms: []PermDef{
 		{Code: "config:view", Name: "系统配置查看"},

@@ -64,7 +64,10 @@ dining-system/
 ├── docs/                   # 文档
 │   ├── mysql-migration.md  #   切换到 MySQL 操作手册
 │   ├── print-agent.md      #   云部署 + 门店 9100 打印机的本地代理方案
-│   └── remember-login-design.md  # 「记住我(免登录)」机制:两级令牌/环境绑定/登录设备管理
+│   ├── remember-login-design.md  # 「记住我(免登录)」机制:两级令牌/环境绑定/登录设备管理
+│   ├── compliance/         #   合规:prepaid-card.md = 储值(单用途商业预付卡)资质与上线清单
+│   ├── design-docs/        #   功能设计:customer-member / customer-member-identity / customer-wallet
+│   └── miniprogram-release-audit.md  # 小程序提审前的自查清单
 ├── start.bat / stop.bat    # Windows 一键启动 / 停止后端（双击运行）
 └── README.md              
 ```

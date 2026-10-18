@@ -76,7 +76,16 @@ func TestDescribeSettingChange(t *testing.T) {
 		"stale_alert_enabled":   "0",
 		"stale_alert_hours":     "4",
 		"biz_date_cutoff_hour":  "0",
-		"feie_ukey":             "new-secret-value", // 敏感项只记键名,值不落日志
+		// 储值合规参数:同样是出厂默认值,不补齐会进摘要把 shop_name 的断言挤掉。
+		"wallet_recharge_min":      "1",
+		"wallet_recharge_max":      "1000",
+		"wallet_balance_max":       "1000",
+		"wallet_balance_max_named": "5000",
+		"wallet_realname_required": "1",
+		"wallet_adjust_max":        "1000",
+		"wallet_rules_version":     "2026.1",
+		"wallet_rules_text":        store.SettingDefault("wallet_rules_text"),
+		"feie_ukey":                "new-secret-value", // 敏感项只记键名,值不落日志
 	})
 	SettingSave(c2)
 	if w2.Code != http.StatusOK {
@@ -243,6 +252,11 @@ func TestManagedSettingKeysComplete(t *testing.T) {
 		PayFirstEnabled: "1",
 		// 会员功能总闸:后加入的受管键,fixture 必须同步覆盖(见本测试的守护说明)。
 		MemberEnabled: "1",
+		// 储值合规参数:后加入的受管键,fixture 必须同步覆盖(见本测试的守护说明)。
+		WalletRechargeMin: "1", WalletRechargeMax: "1000",
+		WalletBalanceMax: "1000", WalletBalanceMaxNamed: "5000",
+		WalletRealnameRequired: "1", WalletAdjustMax: "1000",
+		WalletRulesVersion: "2026.1", WalletRulesText: "规则测试",
 	}
 	w, c := newSaveContext(cfg)
 	SettingSave(c)

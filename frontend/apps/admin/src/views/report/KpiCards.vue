@@ -8,6 +8,16 @@
           <span class="hero-date">{{ today }}</span>
         </div>
         <div class="hero-value">¥{{ money(summary.todayAmount) }}</div>
+        <!-- 储值是「以前收过的钱」：当天确认收入但没有现金流入。
+             不拆出来，老板会把「营业额 8000」当成「今天到账 8000」去安排进货/发工资。 -->
+        <div
+          v-if="Number(summary.todayWalletAmount) > 0"
+          class="hero-split"
+        >
+          其中储值核销 ¥{{ money(summary.todayWalletAmount) }} · 实际到账 ¥{{
+            money(summary.todayCashAmount)
+          }}
+        </div>
         <div
           v-if="deltas.todayAmount !== null"
           class="hero-delta"
@@ -236,6 +246,14 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   line-height: 1.2;
   margin-top: 8px;
   letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 营业额拆分:储值核销 + 实际到账。字号小于主数值,不抢主指标的位置。 */
+.hero-split {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgb(255 255 255 / 82%);
   font-variant-numeric: tabular-nums;
 }
 

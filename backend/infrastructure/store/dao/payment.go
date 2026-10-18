@@ -173,6 +173,128 @@ func GetRefundOrderInfo(orderID int) (po.Order, error) {
 	return o, err
 }
 
+// SumPaidPaymentsExcept 订单在「除某渠道之外」已入账的支付金额合计(分)。
+//
+// 混合支付(余额抵扣 + 渠道支付剩余)的金额防线全靠它:
+// 渠道回调的金额只覆盖「剩余部分」,拿它跟订单总额比必然不相等;
+// 正确的判据是「本笔 + 其它渠道已入账 = 订单总额」。
+func SumPaidPaymentsExcept(orderNo, exceptChannel string) int64 {
+	var v int64
+	_ = store.DB.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_payment
+		WHERE order_no=? AND channel<>? AND status IN (?,?)`,
+		orderNo, exceptChannel, PayStatusPaid, PayStatusRefunded).Scan(&v)
+	return v
+}
+
+// SumPaidPaymentsTx 事务内统计订单已入账(已支付/已退款)的支付合计(分)。
+// 混合支付据此算「还差多少」:订单总额 - 已入账合计。
+func SumPaidPaymentsTx(tx *sql.Tx, orderNo string) (int64, error) {
+	var v int64
+	err := tx.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_payment
+		WHERE order_no=? AND status IN (?,?)`,
+		orderNo, PayStatusPaid, PayStatusRefunded).Scan(&v)
+	return v, err
+}
+
+// SumPaidPaymentsExceptTx 是 SumPaidPaymentsExcept 的事务版本。
+func SumPaidPaymentsExceptTx(tx *sql.Tx, orderNo, exceptChannel string) (int64, error) {
+	var v int64
+	err := tx.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_payment
+		WHERE order_no=? AND channel<>? AND status IN (?,?)`,
+		orderNo, exceptChannel, PayStatusPaid, PayStatusRefunded).Scan(&v)
+	return v, err
+}
+
+// ListPaidPayments 订单已入账(已支付 / 已退款)的支付流水,按 payment_id 倒序。
+// 退款分摊按「最近的支付先退」遍历它。
+func ListPaidPayments(orderNo string) ([]po.Payment, error) {
+	rows, err := store.DB.Query(`SELECT payment_id, order_no, channel, COALESCE(channel_trade_no,''), amount, status
+		FROM tb_payment WHERE order_no=? AND status IN (?,?) ORDER BY payment_id DESC`,
+		orderNo, PayStatusPaid, PayStatusRefunded)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []po.Payment{}
+	for rows.Next() {
+		var p po.Payment
+		if err := rows.Scan(&p.PaymentID, &p.OrderNo, &p.Channel, &p.ChannelTradeNo, &p.Amount, &p.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SumRefundedByPayment 按支付流水汇总「已成功 + 处理中」的退款金额(分)。
+// 处理中的退款同样占用额度 —— 与订单级可退额度的口径保持一致。
+func SumRefundedByPayment(orderNo string) (map[int]int64, error) {
+	rows, err := store.DB.Query(`SELECT payment_id, COALESCE(SUM(amount),0) FROM tb_refund
+		WHERE order_no=? AND status IN (?,?) AND COALESCE(is_duplicate,0)=0 GROUP BY payment_id`,
+		orderNo, po.RefundStatusProcessing, po.RefundStatusSuccess)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int]int64{}
+	for rows.Next() {
+		var pid int
+		var amount int64
+		if err := rows.Scan(&pid, &amount); err != nil {
+			return nil, err
+		}
+		out[pid] = amount
+	}
+	return out, rows.Err()
+}
+
+// ListPaidPaymentsTx 是 ListPaidPayments 的事务版本。
+func ListPaidPaymentsTx(tx *sql.Tx, orderNo string) ([]po.Payment, error) {
+	rows, err := tx.Query(`SELECT payment_id, order_no, channel, COALESCE(channel_trade_no,''), amount, status
+		FROM tb_payment WHERE order_no=? AND status IN (?,?) ORDER BY payment_id DESC`,
+		orderNo, PayStatusPaid, PayStatusRefunded)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []po.Payment{}
+	for rows.Next() {
+		var p po.Payment
+		if err := rows.Scan(&p.PaymentID, &p.OrderNo, &p.Channel, &p.ChannelTradeNo, &p.Amount, &p.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SumRefundedByPaymentTx 是 SumRefundedByPayment 的事务版本。
+func SumRefundedByPaymentTx(tx *sql.Tx, orderNo string) (map[int]int64, error) {
+	rows, err := tx.Query(`SELECT payment_id, COALESCE(SUM(amount),0) FROM tb_refund
+		WHERE order_no=? AND status IN (?,?) AND COALESCE(is_duplicate,0)=0 GROUP BY payment_id`,
+		orderNo, po.RefundStatusProcessing, po.RefundStatusSuccess)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int]int64{}
+	for rows.Next() {
+		var pid int
+		var amount int64
+		if err := rows.Scan(&pid, &amount); err != nil {
+			return nil, err
+		}
+		out[pid] = amount
+	}
+	return out, rows.Err()
+}
+
+// MarkPaymentStatusTx 是 MarkPaymentStatus 的事务版本。
+func MarkPaymentStatusTx(tx *sql.Tx, paymentID, status int) error {
+	_, err := tx.Exec(`UPDATE tb_payment SET status=?, update_time=? WHERE payment_id=?`, status, store.Now(), paymentID)
+	return err
+}
+
 // LastPaidPayment 查询订单最近一条已支付或(部分)已退款的支付流水。
 //
 // 只填充 po.Payment 的 PaymentID/Channel 两列,其余为零值。

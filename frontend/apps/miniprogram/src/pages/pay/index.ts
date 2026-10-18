@@ -8,7 +8,15 @@
 // 未开通时提供与 H5 一致的降级路径：展示门店收款码 + 引导到前台结账，
 // 并轮询订单支付状态（商家在后台收款后顾客能立刻看到）。
 // 详见 docs/miniprogram.md 4.1 节。
-import { getOrderByNo, getWallet, payJsapi, payOrderByWallet, queryPay } from '../../api/client';
+import {
+  cancelMixedByWallet,
+  getOrderByNo,
+  getWallet,
+  payJsapi,
+  payMixedByWallet,
+  payOrderByWallet,
+  queryPay
+} from '../../api/client';
 import type { PayJsapiResult } from '../../api/client';
 import { mediaUrl } from '../../config';
 import { applyOrder, readPersisted, sessionState } from '../../store/session';
@@ -48,6 +56,14 @@ Page({
     canJsapi: false,
     /** 储值余额支付：登录会员且余额足够时出现（与 JSAPI 按钮并存，顾客自己选）。 */
     canWallet: false,
+    /** 混合支付：有余额但不够付本单，且小程序支付已开通时出现。 */
+    canMixed: false,
+    /** 混合支付按钮文案（如「余额 10.00 + 微信 18.00」）。 */
+    mixedText: '',
+    /** 本单实际可用的余额（元，不超过订单金额）。 */
+    walletUsable: 0,
+    /** 订单金额（元，数值型：混合支付要算差额，不能从展示串反解）。 */
+    totalValue: 0,
     /** 登录会员有余额但不够付本单：显示一条「余额不足」提示（不可点，纯告知）。 */
     walletShort: false,
     walletBalanceText: '0.00'
@@ -146,6 +162,7 @@ Page({
       orderNo: String(order.orderNo || ''),
       shortNo: String(order.shortNo || order.orderNo || ''),
       totalText: money(order.totalAmount),
+      totalValue: Number(order.totalAmount) || 0,
       statusText: ORDER_STATUS[Number(order.orderStatus)]?.label || '处理中',
       qrImage: mediaUrl(qr),
       hasQr,
@@ -174,14 +191,24 @@ Page({
     }
     try {
       const w = await getWallet();
+      // 可用余额 = 本金 + 赠金:赠金不能退现,但买单和本金一样好使。
+      const available = (Number(w.balance) || 0) + (Number(w.balanceGift) || 0);
+      // 混合支付只在「有钱但不够」且小程序支付已开通时出现:
+      // 没有 JSAPI 就没有补差通道,这时给按钮只会把人引到死路。
+      const usable = Math.min(available, total);
+      const canMixed = total > 0 && available > 0 && available < total && this.data.canJsapi;
       this.setData({
-        walletBalanceText: money(w.balance),
-        canWallet: w.balance >= total && total > 0,
+        walletBalanceText: money(available),
+        canWallet: available >= total && total > 0,
+        canMixed,
+        // 按分取整:展示与下单金额必须一致,不能出现「显示 10.005 元」。
+        walletUsable: Math.floor(usable * 100) / 100,
+        mixedText: canMixed ? `余额 ${money(usable)} + 微信 ${money(total - usable)}` : '',
         // 有余额但不够付:提示「去充值」,比默默隐藏按钮更能让会员知道储值的存在。
-        walletShort: w.balance > 0 && w.balance < total && total > 0
+        walletShort: available > 0 && available < total && total > 0
       });
     } catch {
-      this.setData({ canWallet: false, walletShort: false });
+      this.setData({ canWallet: false, canMixed: false, walletShort: false });
     }
   },
 
@@ -194,6 +221,18 @@ Page({
     if (this.data.paid || this.querying) return;
     const orderNo = this.data.orderNo;
     if (!orderNo) return;
+    // 二次确认:微信支付有收银台这一步,余额支付却没有 —— 点一下就把钱扣了。
+    // 少了它,同桌误触或手机被别人拿着时,扣款既无感知也无撤销入口。
+    const confirmed = await new Promise<boolean>(resolve => {
+      wx.showModal({
+        title: '储值余额支付',
+        content: `将使用储值余额支付 ${this.data.totalText} 元（当前余额 ${this.data.walletBalanceText} 元）`,
+        confirmText: '确认支付',
+        success: r => resolve(!!r.confirm),
+        fail: () => resolve(false)
+      });
+    });
+    if (!confirmed) return;
     this.querying = true;
     this.setData({ checking: true });
     try {
@@ -205,6 +244,71 @@ Page({
       this.querying = false;
       this.setData({ checking: false });
       toast.error(String((e as Error)?.message || '余额支付失败'));
+    }
+  },
+
+  /**
+   * 混合支付：余额抵扣 + 微信补差。
+   *
+   * 后端**先扣余额再返回调起参数**，所以顾客取消或拉起失败时必须立刻通知后端
+   * 释放（pay-cancel），否则这笔钱要等 15 分钟的超时巡检才回来 ——
+   * 对顾客来说那就是「点了取消钱却没了」。
+   */
+  async onPayMixed(): Promise<void> {
+    if (this.data.paid || this.querying) return;
+    const orderNo = this.data.orderNo;
+    const useWallet = Number(this.data.walletUsable) || 0;
+    const total = Number(this.data.totalValue) || 0;
+    if (!orderNo || useWallet <= 0 || total <= 0) return;
+
+    const confirmed = await new Promise<boolean>(resolve => {
+      wx.showModal({
+        title: '余额 + 微信支付',
+        content: `将先扣储值余额 ${money(useWallet)} 元，剩余 ${money(total - useWallet)} 元用微信支付。`,
+        confirmText: '去支付',
+        success: r => resolve(!!r.confirm),
+        fail: () => resolve(false)
+      });
+    });
+    if (!confirmed) return;
+
+    this.querying = true;
+    this.setData({ checking: true });
+    try {
+      const code = await this.loginCode();
+      const res = await payMixedByWallet({ orderNo, code, walletAmount: useWallet });
+      // 余额恰好够付清：后端已把订单置为已支付，不需要拉起收银台。
+      if (res.paid) {
+        this.querying = false;
+        const confirmedPaid = await this.checkPaid(true);
+        if (!confirmedPaid) toast.info('支付结果确认中，请稍等');
+        return;
+      }
+      await this.requestPayment({
+        timeStamp: res.timeStamp || '',
+        nonceStr: res.nonceStr || '',
+        package: res.package || '',
+        signType: (res.signType || 'RSA') as 'MD5' | 'HMAC-SHA256' | 'RSA',
+        paySign: res.paySign || ''
+      });
+      this.querying = false;
+      const confirmedPaid = await this.checkPaid(true);
+      if (!confirmedPaid) toast.info('支付结果确认中，请稍等');
+    } catch (e) {
+      this.querying = false;
+      this.setData({ checking: false });
+      const msg = String((e as { errMsg?: string } | null)?.errMsg || '');
+      if (/cancel/i.test(msg)) {
+        try {
+          await cancelMixedByWallet(orderNo);
+          toast.info('已取消，储值余额已退回');
+        } catch {
+          toast.info('已取消，储值余额将稍后自动退回');
+        }
+      } else {
+        toast.error(String((e as Error)?.message || '支付失败，储值余额将稍后自动退回'));
+      }
+      await this.refreshWallet(total);
     }
   },
 

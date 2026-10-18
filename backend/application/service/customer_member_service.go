@@ -209,8 +209,18 @@ func CustomerUpdateProfile(customerID int, nickname string) (*po.Customer, error
 //
 // 语义见 spec §2.6:档案与登录方式物理删除,历史订单保留但归属置 0(变回匿名单)。
 // 令牌无状态,注销后下一次请求会因为查不到档案而 401,不需要额外的吊销逻辑。
+//
+// 前置闸门:储值余额必须先清零。注销会连储值账户一起删,带着余额注销等于
+// 把顾客的预付款直接抹掉 —— 这是法律和口碑上都无法接受的结果,故一律拒绝,
+// 并把「还剩多少、该怎么处理」说清楚(合规依据见 docs/compliance/prepaid-card.md)。
 func CustomerDeleteAccount(customerID int) error {
-	if err := dao.DeleteCustomerAccount(customerID); err != nil {
+	err := dao.DeleteCustomerAccount(customerID)
+	if errors.Is(err, dao.ErrWalletBalanceRemaining) {
+		principal, gift, _ := WalletBalanceCents(customerID)
+		return fmt.Errorf("储值余额未清零（本金 %s 元 / 赠金 %s 元），请先到门店办理退余额或继续消费后再注销",
+			po.FormatYuan(principal), po.FormatYuan(gift))
+	}
+	if err != nil {
 		logger.Warnf("[member] 注销会员失败(id=%d): %v", customerID, err)
 		return errors.New("注销失败，请稍后再试")
 	}

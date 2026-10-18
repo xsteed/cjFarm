@@ -106,11 +106,19 @@
       >
         余额支付（¥{{walletBalanceText}}）
       </view>
+      <!-- 余额不够付全款但有钱：给「余额 + 微信」的组合付，而不是只让他去充值 -->
       <view
-        wx:if="{{!paid && !canWallet && walletShort}}"
+        wx:if="{{!paid && canMixed}}"
+        class="btn-primary foot-main {{checking ? 'dim' : ''}}"
+        bindtap="onPayMixed"
+      >
+        {{checking ? '支付中…' : mixedText}}
+      </view>
+      <view
+        wx:if="{{!paid && !canWallet && !canMixed && walletShort}}"
         class="foot-wallet-tip"
       >
-        储值余额 ¥{{walletBalanceText}}，不足以支付本单，可在「我的 → 储值余额」充值
+        储值余额 ¥{{walletBalanceText}}，不足以支付本单，可到「我的 → 储值余额」充值
       </view>
       <view
         wx:if="{{!paid && canJsapi}}"

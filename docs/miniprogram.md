@@ -315,7 +315,11 @@ POST /api/customer/pay/jsapi
   见 [`docs/design-docs/customer-member-identity/spec.md`](design-docs/customer-member-identity/spec.md)。
 - **上线动作**：公众平台「用户隐私保护指引」补声明（openid / 昵称 / 头像）—— 即硬前置第 7 项；
   后端需配置小程序 AppID + AppSecret（与桌牌码共用）。
-- **二期候选**：手机号绑定（需企业认证、按次收费）、积分/储值/优惠券、管理端会员管理页、注销入口。
+- **已实现（2026-10-19）**：手机号绑定（`getPhoneNumber`，企业主体 + 按次收费）、
+  储值（含余额支付，本金 / 赠金分桶）、注销会员入口。
+  储值设计与合规约束见 [`design-docs/customer-wallet/spec.md`](design-docs/customer-wallet/spec.md)
+  与 [`compliance/prepaid-card.md`](compliance/prepaid-card.md)。
+- **二期候选**：积分、优惠券、会员等级、H5 端会员（无静默 openid 路径，不做）。
 
 ### 4.3 订阅消息（出餐通知）
 

@@ -17,9 +17,16 @@ backend/migrations/
 │       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
 │       └── seed.sql
 └── incr/                                                  # 增量脚本（正本）：老库按文件名时间前缀的字典序升级；到期（90 天）同步进 full 后清理
-    ├── sqlite/                                            #   增量脚本（当前为空，以 .gitkeep 占位）
-    └── mysql/                                             #   增量脚本（当前为空，以 .gitkeep 占位）
+    ├── sqlite/                                            #   当前：2026-10-19 储值合规改造（见第三节）
+    └── mysql/                                             #   同名脚本，方言差异仅体现在 ALTER/索引语法
 ```
+
+> **当前在册的增量脚本**（`incr/` 与 `full/` 各一份同名副本）：
+>
+> | 时间戳 | 文件 | 内容 |
+> |---|---|---|
+> | `20261019120000` | `tb_wallet_txn_recharge_agreement_gift.sql` | 储值本金 / 赠金分桶（`tb_wallet.balance_gift`、`tb_wallet_txn.gift_amount/gift_after`、`tb_recharge.gift_amount`）+ 新表 `tb_wallet_agreement`（《储值规则》同意留痕） |
+> | `20261019120100` | `tb_config_backfill_wallet_settings.sql` | 储值合规参数与出厂规则文案的种子（`INSERT IGNORE`，不覆盖门店已改过的值） |
 
 > 本 README 只记录**固定规范与约定**，不收录增量脚本逐条流水；
 > 脚本的作用见其头部注释，历史演进以 git 提交记录为准。
@@ -108,9 +115,17 @@ mysql -u root -p dining < migrations/full/mysql/seed.sql
 
 增量脚本正本在 `incr/{sqlite,mysql}/`，按文件名时间顺序依次执行。
 
-> 最近一批增量脚本已到期清理，等效变更已内联进 `full/` 建表 / 种子脚本（见 git 历史）。
-> 当前 `incr/` 为空，老库升级由后端启动时的自动迁移（`store.alterCols` 等，幂等）兜底；
-> 后续新增增量脚本时，下述执行方式继续适用。
+> 更早的增量脚本已到期清理，等效变更已内联进 `full/` 建表 / 种子脚本（见 git 历史）。
+> 当前在册的脚本见第一节的「当前在册的增量脚本」表（2026-10-19 储值合规改造）。
+>
+> **两条升级路径等价，任选其一即可**：
+> ① 由 DBA 按文件名顺序执行 `incr/` 下的脚本（离线、可审核、不依赖进程重启）；
+> ② 直接重启后端，由启动时的自动迁移兜底（`migrate()` 建缺失表、
+>    `store.alterCols` 补缺失列，均幂等）—— 这也是**默认部署方式**，
+>    绝大多数门店升级走的是这条。
+>
+> 两条路径同时存在不会冲突：自动补列会跳过已存在的列；
+> `CREATE TABLE IF NOT EXISTS` 也保证建表幂等。
 
 **SQLite**
 
@@ -177,9 +192,10 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 24 | `tb_visitor` | 访客注册表（独立访客档案，「新访客」精确口径，长期保留） | 运行时产生 |
 | 25 | `tb_visit_daily` | 日聚合台账（每日每渠道 PV/UV/新访客，报表主读，长期保留） | 运行时产生 |
 | 26 | `tb_customer_identity` | 会员登录方式（provider + external_id 绑定，账号与登录方式解耦；为 App/网站预留） | 运行时产生 |
-| 27 | `tb_wallet` | 会员储值账户（余额 / 累计充值 / 累计消费 / 累计赠送，主键即 customer_id） | 运行时产生 |
-| 28 | `tb_wallet_txn` | 储值流水（台账只增不改，balance_after 逐行累加必须等于当前余额） | 运行时产生 |
-| 29 | `tb_recharge` | 储值充值单（微信 JSAPI 支付，单号 R 开头与订单 D 开头靠前缀分流回调） | 运行时产生 |
+| 27 | `tb_wallet` | 会员储值账户（本金 balance / 赠金 balance_gift 分桶 + 累计充值/消费/赠送，主键即 customer_id） | 运行时产生 |
+| 28 | `tb_wallet_txn` | 储值流水（台账只增不改，balance_after 逐行累加必须等于当前余额；gift_amount/gift_after 是赠金桶镜像） | 运行时产生 |
+| 29 | `tb_recharge` | 储值充值单（微信 JSAPI 支付，单号 R 开头与订单 D 开头靠前缀分流回调；gift_amount 冻结赠送额） | 运行时产生 |
+| 30 | `tb_wallet_agreement` | 《储值规则》同意留痕（合规：发卡须明示章程，记会员同意的是哪一版） | 运行时产生 |
 
 > `tb_print_job` 与 `tb_print_log` 的分工：前者是「待办」（送达即结案，可定期清理），
 > 后者是「台账」（给商家查「这单打了没」，长期保留），两者由 `print_log_id` 关联。
@@ -357,9 +373,9 @@ SET GLOBAL max_allowed_packet=128M;
 
 ## 八、校验记录
 
-> 以下为人工复核快照；**计数一律以 `go run ./cmd/gensql -check` 的输出为准**，
-> 加表加列后不必回来改这里。25 表 / 39 索引 / 118 行种子由 `schemaTemplate` 与
-> `SeedCounts()` 自动核对，`go test ./...` 中 `sqlgen_test.go` 会同步做一致性校验。
+> 以下为人工复核快照；**表 / 索引清单见第四、五节，种子行数以 `go run ./cmd/gensql -check`
+> 的输出为准**，加表加列后不必回来改这里的数字（`schemaTemplate` 与 `SeedCounts()`
+> 自动核对，`go test ./...` 中 `sqlgen_test.go` 会同步做一致性校验）。
 
 **SQLite（3.53）**
 
@@ -367,6 +383,14 @@ SET GLOBAL max_allowed_packet=128M;
   重复执行数量不变）；`tb_order` 全列齐全。
 - 历史 `incr/` 脚本曾按序在旧结构上验证：加列 / 回填 / 建表均正确
   （脚本已到期清理，细节见 git 历史）。
+- **2026-10-19 储值合规脚本**：用「改动前的 `full/sqlite/{schema,seed}.sql`」造了一个
+  真实老库，按序执行 `incr/sqlite/` 下两个脚本后验证 ——
+  `tb_wallet` / `tb_wallet_txn` / `tb_recharge` 的列集合与新建库**完全一致**，
+  `tb_wallet_agreement` 与 `trg_tb_wallet_agreement_touch` 均已创建，
+  9 个 `wallet_*` 配置项就位；随后以 `DB_PATH` 指向该库启动后端，
+  启动迁移无冲突、`/api/version` 正常返回 200。
+  （SQLite 的 `ADD COLUMN` 只能追加到表末尾，故物理列顺序与 `full/schema.sql` 不同 ——
+  这是两库已知差异，见第六节表格与第七节第 7 条。）
 
 **MySQL（在 MySQL 协议兼容服务端上实跑）**
 

@@ -323,12 +323,38 @@ export interface MemberOrderRow {
 // 储值（金额一律以「元」下发，与订单金额同一口径）
 // ---------------------------------------------------------------------------
 
-/** 储值账户（余额与累计口径）。 */
+/**
+ * 储值账户（余额与累计口径）。
+ *
+ * 本金与赠金分桶：balance 是本金刚（可退），balanceGift 是赠金（只能消费、不可退现）。
+ * 分桶的必要性在退款时才看得出来 —— 混在一个数里，退余额时无法回答
+ * 「这笔钱该不该退给顾客」，只能一刀切全退（可被套现）。
+ */
 export interface WalletInfo {
   balance: number;
+  balanceGift: number;
   totalRecharge: number;
   totalConsume: number;
   totalGift: number;
+  // ---- 合规与交互 ----
+  /** 是否已实名（绑手机号）：决定余额上限走 1000 还是 5000。 */
+  named: boolean;
+  /** 当前《储值规则》版本。 */
+  rulesVer: string;
+  /** 《储值规则》正文（可能含换行，前端按 \n 分段渲染）。 */
+  rulesText: string;
+  /** 是否已同意当前版本规则；未同意时不能充值。 */
+  agreed: boolean;
+  /** 门店是否开放自助充值。 */
+  canRecharge: boolean;
+  /** 充值前是否强制实名。 */
+  realnameRequired: boolean;
+  /** 单笔充值下限（元）。 */
+  rechargeMin: number;
+  /** 单笔充值上限（元）。 */
+  rechargeMax: number;
+  /** 该会员的余额上限（元）。 */
+  balanceMax: number;
 }
 
 /** 储值流水行（amount 带符号：正入账 / 负出账）。 */
@@ -337,10 +363,31 @@ export interface WalletTxnRow {
   bizType: string;
   amount: number;
   balanceAfter: number;
+  /** 本笔变动中属于赠金桶的部分（带符号）；顾客据此看懂「扣的是赠金还是本金」。 */
+  giftAmount: number;
   orderNo: string;
   reason: string;
   operator: string;
   createTime: string;
+}
+
+/**
+ * 混合支付（余额抵扣 + 微信补差）结果。
+ *
+ * paid=true 表示余额已把订单付清（无需拉起收银台）；否则带着
+ * wx.requestPayment 所需的调起参数，由顾客补齐差额。
+ */
+export interface WalletMixedPayResult {
+  paid: boolean;
+  /** 本次实际扣掉的余额（元）。 */
+  walletCents: number;
+  /** 还需微信支付的金额（元）。 */
+  payCents?: number;
+  timeStamp?: string;
+  nonceStr?: string;
+  package?: string;
+  signType?: 'MD5' | 'HMAC-SHA256' | 'RSA';
+  paySign?: string;
 }
 
 /** 发起充值：返回 wx.requestPayment 所需的调起参数 + 充值单号（轮询入账用）。 */

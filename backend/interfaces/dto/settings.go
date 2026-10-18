@@ -22,6 +22,19 @@ type Settings struct {
 	WxpayJsapiEnabled string `json:"wxpay_jsapi_enabled"`
 	// 储值自助充值开关(默认 0):只管「顾客能否自助充值」,不影响已有余额的消费与退款。
 	WalletRechargeEnabled string `json:"wallet_recharge_enabled"`
+	// ---- 储值合规参数(出处见 docs/compliance/prepaid-card.md) ----
+	// 餐饮储值属于「单用途商业预付卡」,以下几项是监管口径而非产品偏好:
+	// 单张不记名卡余额上限 1000 元、记名卡 5000 元。改大之前请先读那份文档。
+	WalletRechargeMin      string `json:"wallet_recharge_min"`      // 单笔充值下限(元)
+	WalletRechargeMax      string `json:"wallet_recharge_max"`      // 单笔充值上限(元)
+	WalletBalanceMax       string `json:"wallet_balance_max"`       // 未记名余额上限(元)
+	WalletBalanceMaxNamed  string `json:"wallet_balance_max_named"` // 已记名余额上限(元)
+	WalletRealnameRequired string `json:"wallet_realname_required"` // 充值是否强制实名("1")
+	WalletAdjustMax        string `json:"wallet_adjust_max"`        // 后台单次调账上限(元)
+	// 《储值规则》版本与正文。改了正文就必须改版本号:版本号变化会强制顾客重新确认,
+	// 这是「他充值时看到的是哪一版」的唯一留痕依据。
+	WalletRulesVersion string `json:"wallet_rules_version"`
+	WalletRulesText    string `json:"wallet_rules_text"`
 	// 微信支付商户参数(wxpay_apiv3_key 为敏感项:已配置回显 ****** 占位,原样带回或留空均表示不修改)
 	WxpayMchid            string `json:"wxpay_mchid"`
 	WxpayAppid            string `json:"wxpay_appid"`

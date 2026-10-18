@@ -60,12 +60,14 @@ var routeAudit = map[string]auditMeta{
 	"POST /api/admin/user/toggleStatus":  {Module: "员工管理", Action: "启停用员工", Type: po.OperTypeGrant, Target: "user", IDKey: "userId"},
 	"DELETE /api/admin/user/:id":         {Module: "员工管理", Action: "删除员工", Type: po.OperTypeDelete, Target: "user", IDKey: "id"},
 	// 启停用会员会影响顾客能否登录(停用即踢下线),属于权限类变更,必须留痕。
-	"POST /api/admin/member/status":      {Module: "会员管理", Action: "启停用会员", Type: po.OperTypeGrant, Target: "member", IDKey: "customerId"},
+	"POST /api/admin/member/status": {Module: "会员管理", Action: "启停用会员", Type: po.OperTypeGrant, Target: "member", IDKey: "customerId"},
 	// 后台调账直接动钱(赠送/扣减),原因与操作人都要能查。
 	"POST /api/admin/member/wallet/adjust": {Module: "储值管理", Action: "储值调账", Type: po.OperTypeGrant, Target: "member", IDKey: "customerId"},
-	"POST /api/admin/role/save":          {Module: "角色权限", Action: "新增角色", Type: po.OperTypeInsert, Target: "role"},
-	"POST /api/admin/role/update":        {Module: "角色权限", Action: "修改角色权限", Type: po.OperTypeGrant, Target: "role", IDKey: "roleId"},
-	"DELETE /api/admin/role/:id":         {Module: "角色权限", Action: "删除角色", Type: po.OperTypeDelete, Target: "role", IDKey: "id"},
+	// 退余额:钱真的出店了(门店线下付现金或微信退款),必须与调账一样逐笔可查。
+	"POST /api/admin/member/wallet/withdraw": {Module: "储值管理", Action: "退余额", Type: po.OperTypeGrant, Target: "member", IDKey: "customerId"},
+	"POST /api/admin/role/save":              {Module: "角色权限", Action: "新增角色", Type: po.OperTypeInsert, Target: "role"},
+	"POST /api/admin/role/update":            {Module: "角色权限", Action: "修改角色权限", Type: po.OperTypeGrant, Target: "role", IDKey: "roleId"},
+	"DELETE /api/admin/role/:id":             {Module: "角色权限", Action: "删除角色", Type: po.OperTypeDelete, Target: "role", IDKey: "id"},
 
 	// ---- 基础资料 ----
 	"POST /api/admin/table/save":   {Module: "桌台管理", Action: "新增桌台", Type: po.OperTypeInsert, Target: "table"},

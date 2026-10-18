@@ -43,6 +43,8 @@ var ManagedSettingKeys = []string{
 	"promotion_enabled", "promotion_threshold", "promotion_discount",
 	"pay_qr_wx", "pay_qr_ali",
 	"wxpay_enabled", "wxpay_jsapi_enabled", "wallet_recharge_enabled", "wxpay_mchid", "wxpay_appid", "wxpay_serial_no",
+	"wallet_recharge_min", "wallet_recharge_max", "wallet_balance_max", "wallet_balance_max_named",
+	"wallet_realname_required", "wallet_adjust_max", "wallet_rules_version", "wallet_rules_text",
 	"wxpay_private_key_path", "wxpay_platform_cert_path",
 	"wxpay_pubkey_id", "wxpay_pubkey_path", "wxpay_notify_url",
 	// 小程序桌牌码:AppID 复用 wxpay_appid,此处只需版本与 AppSecret
@@ -110,6 +112,30 @@ func NormalizeAmountValue(v string) string {
 	return s
 }
 
+// NormalizeYuanIntValue 归一化「整数元」类配置项(储值单笔/余额/调账上限)。
+//
+// 为什么不能复用 NormalizeAmountValue:
+//   - 后者面向可带小数的金额(茶位费 6.5 元),合法值原样落库;
+//   - 储值限额的读取侧是 settingInt(strconv.Atoi),一旦库里存成 "1000.5",
+//     Atoi 会失败并**静默回落到出厂默认值** —— 门店以为调到了 1000.5,
+//     实际仍按 1000 执行,而且没有任何报错。
+//
+// 这里在落库前就收敛成整数,保证「写进去的」与「读出来的」是同一个数。
+// 非法值(非数字 / 小于 1 / NaN / Inf)回落空串,由读取侧的 settingInt
+// 回落到出厂默认值 —— 不硬塞一个极小值,否则一次手滑会把充值额度锁死在 1 元。
+func NormalizeYuanIntValue(v string) string {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return ""
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 1 {
+		logger.Warnf("[setting] 整数元配置 %q 非法(应为 ≥1 的整数),已回落出厂默认值", v)
+		return ""
+	}
+	return strconv.FormatInt(int64(math.Round(f)), 10)
+}
+
 // SettingFlagDefaultOn 「默认开启」型开关的读取归一化:只有明确 "0" 才算关闭,
 // 其余(含 "1"、空值、配置项缺失)一律返回 "1"。
 //
@@ -175,21 +201,30 @@ func maskIfSet(key string) string {
 // 敏感项已配置回显占位符(留空=未配置),指纹作为乐观锁 version 一并下发。
 func ListSettings() dto.Settings {
 	return dto.Settings{
-		ShopName:           dao.GetSetting("shop_name"),
-		ShopSlogan:         dao.GetSetting("shop_slogan"),
-		ShopLogo:           dao.GetSetting("shop_logo"),
-		SeatFeeEnabled:     SettingFlag("seat_fee_enabled"),
-		SeatFee:            dao.GetSetting("seat_fee"),
-		PayQrWx:            dao.GetSetting("pay_qr_wx"),
-		PayQrAli:           dao.GetSetting("pay_qr_ali"),
-		H5BaseURL:          dao.GetSetting("h5_base_url"),
-		PromotionEnabled:   SettingFlag("promotion_enabled"),
-		PromotionThreshold: dao.GetSetting("promotion_threshold"),
-		PromotionDiscount:  dao.GetSetting("promotion_discount"),
-		WxpayEnabled:       SettingFlag("wxpay_enabled"),
-		WxpayJsapiEnabled:  SettingFlag("wxpay_jsapi_enabled"),
+		ShopName:              dao.GetSetting("shop_name"),
+		ShopSlogan:            dao.GetSetting("shop_slogan"),
+		ShopLogo:              dao.GetSetting("shop_logo"),
+		SeatFeeEnabled:        SettingFlag("seat_fee_enabled"),
+		SeatFee:               dao.GetSetting("seat_fee"),
+		PayQrWx:               dao.GetSetting("pay_qr_wx"),
+		PayQrAli:              dao.GetSetting("pay_qr_ali"),
+		H5BaseURL:             dao.GetSetting("h5_base_url"),
+		PromotionEnabled:      SettingFlag("promotion_enabled"),
+		PromotionThreshold:    dao.GetSetting("promotion_threshold"),
+		PromotionDiscount:     dao.GetSetting("promotion_discount"),
+		WxpayEnabled:          SettingFlag("wxpay_enabled"),
+		WxpayJsapiEnabled:     SettingFlag("wxpay_jsapi_enabled"),
 		WalletRechargeEnabled: SettingFlag("wallet_recharge_enabled"),
-		AlipayEnabled:      SettingFlag("alipay_enabled"),
+		// 储值合规参数(与 wallet 配置同一屏,门店按《储值规则》口径填写)
+		WalletRechargeMin:      dao.GetSetting("wallet_recharge_min"),
+		WalletRechargeMax:      dao.GetSetting("wallet_recharge_max"),
+		WalletBalanceMax:       dao.GetSetting("wallet_balance_max"),
+		WalletBalanceMaxNamed:  dao.GetSetting("wallet_balance_max_named"),
+		WalletRealnameRequired: SettingFlag("wallet_realname_required"),
+		WalletAdjustMax:        dao.GetSetting("wallet_adjust_max"),
+		WalletRulesVersion:     dao.GetSetting("wallet_rules_version"),
+		WalletRulesText:        dao.GetSetting("wallet_rules_text"),
+		AlipayEnabled:          SettingFlag("alipay_enabled"),
 		// 微信支付(敏感项:已配置回显占位符,前端原样带回表示不修改)
 		WxpayApiv3Key:         maskIfSet("wxpay_apiv3_key"),
 		WxpayMchid:            dao.GetSetting("wxpay_mchid"),
@@ -265,20 +300,31 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 	}
 
 	vals := map[string]string{
-		"shop_name":                settings.ShopName,
-		"shop_slogan":              settings.ShopSlogan,
-		"shop_logo":                settings.ShopLogo,
-		"seat_fee_enabled":         normFlagValue(settings.SeatFeeEnabled),
-		"seat_fee":                 NormalizeAmountValue(settings.SeatFee),
-		"pay_qr_wx":                settings.PayQrWx,
-		"pay_qr_ali":               settings.PayQrAli,
-		"h5_base_url":              settings.H5BaseURL,
-		"promotion_enabled":        normFlagValue(settings.PromotionEnabled),
-		"promotion_threshold":      NormalizeAmountValue(settings.PromotionThreshold),
-		"promotion_discount":       NormalizeAmountValue(settings.PromotionDiscount),
-		"wxpay_enabled":            normFlagValue(settings.WxpayEnabled),
-		"wxpay_jsapi_enabled":      normFlagValue(settings.WxpayJsapiEnabled),
-		"wallet_recharge_enabled":  normFlagValue(settings.WalletRechargeEnabled),
+		"shop_name":               settings.ShopName,
+		"shop_slogan":             settings.ShopSlogan,
+		"shop_logo":               settings.ShopLogo,
+		"seat_fee_enabled":        normFlagValue(settings.SeatFeeEnabled),
+		"seat_fee":                NormalizeAmountValue(settings.SeatFee),
+		"pay_qr_wx":               settings.PayQrWx,
+		"pay_qr_ali":              settings.PayQrAli,
+		"h5_base_url":             settings.H5BaseURL,
+		"promotion_enabled":       normFlagValue(settings.PromotionEnabled),
+		"promotion_threshold":     NormalizeAmountValue(settings.PromotionThreshold),
+		"promotion_discount":      NormalizeAmountValue(settings.PromotionDiscount),
+		"wxpay_enabled":           normFlagValue(settings.WxpayEnabled),
+		"wxpay_jsapi_enabled":     normFlagValue(settings.WxpayJsapiEnabled),
+		"wallet_recharge_enabled": normFlagValue(settings.WalletRechargeEnabled),
+		// 储值合规参数:限额是**整数元**,走 NormalizeYuanIntValue 收敛
+		// (读取侧是 Atoi,存小数会被静默忽略并回落默认值);
+		// 规则正文是普通文本项,允许门店自由编辑(含换行)。
+		"wallet_recharge_min":      NormalizeYuanIntValue(settings.WalletRechargeMin),
+		"wallet_recharge_max":      NormalizeYuanIntValue(settings.WalletRechargeMax),
+		"wallet_balance_max":       NormalizeYuanIntValue(settings.WalletBalanceMax),
+		"wallet_balance_max_named": NormalizeYuanIntValue(settings.WalletBalanceMaxNamed),
+		"wallet_realname_required": normFlagValue(settings.WalletRealnameRequired),
+		"wallet_adjust_max":        NormalizeYuanIntValue(settings.WalletAdjustMax),
+		"wallet_rules_version":     settings.WalletRulesVersion,
+		"wallet_rules_text":        settings.WalletRulesText,
 		"alipay_enabled":           normFlagValue(settings.AlipayEnabled),
 		"wxpay_mchid":              settings.WxpayMchid,
 		"wxpay_appid":              settings.WxpayAppid,

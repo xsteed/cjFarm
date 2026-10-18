@@ -5,7 +5,7 @@
 -- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 46 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 内容:系统配置 54 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
 -- 执行方式:mysql -u dining -p dining < seed.sql
 -- 幂等性  :全部使用 INSERT IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
@@ -48,7 +48,21 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农�
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_hours', '4');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_release_enabled', '0');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_adjust_max', '1000');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_balance_max', '1000');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_balance_max_named', '5000');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_realname_required', '1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_recharge_enabled', '0');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_recharge_max', '1000');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_recharge_min', '1');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_rules_text', '一、适用范围：储值余额仅限本店堂食消费抵扣，不找零、不兑现、不计息、不可转赠他人。
+二、有效期：储值余额不设有效期，长期有效。
+三、实名与限额：未绑定手机号的账户为不记名账户，余额上限 1000 元；完成手机号绑定后为记名账户，余额上限 5000 元。
+四、退款：本金余额可随时向门店申请退回；充值赠送的金额（赠金）仅可用于消费，不可退现。
+五、注销：注销会员前须先将余额退回或消费完毕，余额未清零时无法注销。
+六、凭证与查询：本店完整保存每一笔储值流水，顾客可在本页随时查询余额与明细。
+七、安全提示：余额支付视同本人消费，请妥善保管微信账号，如有异常请及时联系门店。');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_rules_version', '2026.1');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_app_secret', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_code_env_version', 'release');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_apiv3_key', '');  -- 敏感项,落库前会自动加密

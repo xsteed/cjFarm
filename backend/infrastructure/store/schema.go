@@ -507,10 +507,15 @@ var schemaTemplate = []string{
 	// 余额只由 wallet DAO 在事务内增减(带 balance>=? 守卫),任何绕过 DAO 的
 	// 直接 UPDATE 都可能把余额写成负数 —— 流水与余额对不上时以流水为准。
 	//
-	// 不设 del_flag:储值账户随会员注销物理删除(注销事务里一并清)。
+	// 两个余额桶:balance 本金 / balance_gift 赠金(见 po.Wallet 的说明)。
+	// 消费时先扣赠金、再扣本金;退余额只退本金 —— 这是「赠金不可套现」的落点。
+	//
+	// 不设 del_flag:会员注销前必须把余额清零(退余额或调账),注销事务里
+	// 删账户行 —— 绝不允许「会员没了、钱还挂在账上」(见 dao.DeleteCustomerAccount)。
 	`CREATE TABLE IF NOT EXISTS tb_wallet (
 		customer_id    INTEGER PRIMARY KEY,
 		balance        INTEGER      DEFAULT 0,
+		balance_gift   INTEGER      DEFAULT 0,
 		total_recharge INTEGER      DEFAULT 0,
 		total_consume  INTEGER      DEFAULT 0,
 		total_gift     INTEGER      DEFAULT 0,
@@ -520,16 +525,24 @@ var schemaTemplate = []string{
 
 	// 储值流水(台账,只增不改 —— 调账/退款都追加新行,余额变动必须与流水对得上)。
 	//
-	// biz_type: recharge 充值 / consume 消费 / refund 退回 / gift 后台赠送 / adjust 后台扣减。
-	// amount 带符号:正数入账、负数出账;balance_after 是本笔变动后的余额,
-	// 逐行累加必须等于当前余额 —— 对账脚本就靠这条不变式。
-	// operator 只在后台调账时有值(操作人姓名);顾客自助的充值/消费/退回为空。
+	// biz_type: recharge 充值 / consume 消费 / refund 退回 / gift 后台赠送 /
+	//           gift_void 赠金作废 / gift_back 赠金退回(撤销) / adjust 后台扣减 /
+	//           withdraw 退余额出店。
+	// amount 带符号:正数入账、负数出账;balance_after 是本笔变动后的本金余额,
+	// 逐行累加必须等于当前本金余额 —— 对账脚本就靠这条不变式。
+	//
+	// gift_amount / gift_after 是赠金桶的镜像:本笔变动中属于赠金的部分与变动后
+	// 赠金余额。退款时靠 gift_amount 算出「这单消费里有多少是赠金」—— 赠金不退,
+	// 否则「充 100 送 10 → 用赠金消费 → 退款拿回本金」可以无限套现。
+	// operator 只在后台操作时有值(操作人姓名);顾客自助的充值/消费/退回为空。
 	`CREATE TABLE IF NOT EXISTS tb_wallet_txn (
 		txn_id         {{PK}},
 		customer_id    INTEGER      NOT NULL,
 		biz_type       VARCHAR(16)  NOT NULL,
 		amount         INTEGER      NOT NULL,
 		balance_after  INTEGER      NOT NULL,
+		gift_amount    INTEGER      DEFAULT 0,
+		gift_after     INTEGER      DEFAULT 0,
 		order_no       VARCHAR(32)  DEFAULT '',
 		payment_no     VARCHAR(64)  DEFAULT '',
 		reason         VARCHAR(255) DEFAULT '',
@@ -538,16 +551,35 @@ var schemaTemplate = []string{
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
+	// 《储值规则》同意留痕(合规:发卡须明示章程,见 docs/compliance/prepaid-card.md)。
+	//
+	// 一人一行,customer_id 主键 —— 只记「当前同意的是哪一版」,不记历史:
+	// 争议时需要回答的是「他充值时看到的是哪一版规则」,而 rules_version 变更
+	// 会强制重新确认,所以「当前版本」即「他最近一次充值时看到的版本」。
+	// 会员注销时随档案一并删除(它是会员的行为记录,不是门店的经营数据)。
+	`CREATE TABLE IF NOT EXISTS tb_wallet_agreement (
+		customer_id    INTEGER PRIMARY KEY,
+		rules_ver      VARCHAR(16)  NOT NULL,
+		agreed_time {{TSTYPE}} DEFAULT NULL,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
+	){{OPTS}}`,
+
 	// 储值充值单:顾客在小程序里发起的充值,走微信 JSAPI 支付,回调成功后入账。
 	//
 	// 单号固定以 R 开头(订单是 D 开头)—— 支付回调 handler 靠前缀分流:
-	// R 开头走充值入账,D 开头走订单入账。status: 0 待支付 / 1 已入账。
+	// R 开头走充值入账,D 开头走订单入账。status: 0 待支付 / 1 已入账 / 2 已关闭。
 	// 回调用条件更新(status=0 → 1)做幂等,微信重发的通知不会重复加钱。
+	//
+	// gift_amount 是本笔充值附带的赠送金额(会员系统的「充 100 送 10」),
+	// 由 service 在建单时按活动规则算出并冻结在单上:回调入账只认单上的金额,
+	// 不重新算活动 —— 否则活动一改,已支付未入账的单会入成另一个数。
 	`CREATE TABLE IF NOT EXISTS tb_recharge (
 		recharge_id      {{PK}},
 		recharge_no      VARCHAR(32)  NOT NULL,
 		customer_id      INTEGER      NOT NULL,
 		amount           INTEGER      NOT NULL,
+		gift_amount      INTEGER      DEFAULT 0,
 		status           INTEGER      DEFAULT 0,
 		channel          VARCHAR(16)  DEFAULT '',
 		channel_trade_no VARCHAR(64)  DEFAULT '',
@@ -1020,6 +1052,15 @@ var alterCols = []alterCol{
 	{Table: "tb_customer", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_remember_token", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_image", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	// ---- 储值:本金/赠金分桶与合规留痕(2026-10-18) ----
+	// 老库补列后,存量余额**全部落在本金桶**、历史流水的 gift_amount 为 0:
+	// 那时还没有赠送功能,不存在「需要拆开却拆不开」的数据。赠金桶从 0 起算,
+	// 与「历史消费全额可退」的既有语义一致(退款可退本金上限 = 该单消费总额)。
+	{Table: "tb_wallet", Name: "balance_gift", Def: "INTEGER DEFAULT 0"},
+	{Table: "tb_wallet_txn", Name: "gift_amount", Def: "INTEGER DEFAULT 0"},
+	{Table: "tb_wallet_txn", Name: "gift_after", Def: "INTEGER DEFAULT 0"},
+	// 充值单附带赠送额:老单默认 0(建单时还没有赠送活动)。
+	{Table: "tb_recharge", Name: "gift_amount", Def: "INTEGER DEFAULT 0"},
 }
 
 // alterStatements 返回指定方言下的增量列 DDL。

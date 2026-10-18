@@ -26,8 +26,10 @@ export interface MemberRow {
   providers: string;
   /** 绑定的手机号(完整号码,仅管理端可见;未绑定为空串)。 */
   phone: string;
-  /** 储值余额(元,与订单金额同一口径)。 */
+  /** 储值本金余额(元,与订单金额同一口径;可退)。 */
   balance: number;
+  /** 储值赠金余额(元;只能消费、不可退现)。 */
+  balanceGift: number;
 }
 
 export interface MemberListQuery {

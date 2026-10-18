@@ -29,6 +29,7 @@ import type {
   MemberLoginPayload,
   MemberOrderRow,
   WalletInfo,
+  WalletMixedPayResult,
   WalletRechargeParams,
   WalletTxnRow,
   VisitTrackPayload,
@@ -48,7 +49,14 @@ setUiNotifier({
 });
 
 // 顾客端
-export type { PayJsapiPayload, PayJsapiResult, WalletInfo, WalletRechargeParams, WalletTxnRow };
+export type {
+  PayJsapiPayload,
+  PayJsapiResult,
+  WalletInfo,
+  WalletMixedPayResult,
+  WalletRechargeParams,
+  WalletTxnRow
+};
 export const getTable = (id: Id): Promise<TableInfo> => httpGet<TableInfo>(`/customer/table/${id}`);
 export const setTablePerson = (data: { tableId: number; personCount: number }): Promise<void> =>
   httpPost<void>('/customer/table/person', data);
@@ -133,8 +141,30 @@ export const getWalletRechargeStatus = (
   rechargeNo: string
 ): Promise<{ status: number; amount?: number }> =>
   httpGet<{ status: number; amount?: number }>('/customer/wallet/recharge/status', { rechargeNo });
+/**
+ * 充值补账：回调丢失时让后端主动向渠道查单。
+ * 顾客微信已扣款、余额却没到账是纯资损，这条通道是唯一的自救手段。
+ */
+export const reconcileWalletRecharge = (): Promise<{ credited: number }> =>
+  httpPost<{ credited: number }>('/customer/wallet/recharge/reconcile', {});
+/** 同意《储值规则》（合规：发卡须明示章程并留痕）。 */
+export const agreeWalletRules = (rulesVer: string): Promise<void> =>
+  httpPost<void>('/customer/wallet/rules/agree', { rulesVer });
 export const payOrderByWallet = (orderNo: string): Promise<void> =>
   httpPost<void>('/customer/wallet/pay', { orderNo });
+/**
+ * 混合支付：先用余额抵扣 walletAmount（元），不足部分返回微信支付调起参数。
+ * 后端会先扣余额再出参，调用方必须处理「拿到参数后拉起失败」的回退
+ * （页面上的提示语已说明余额会自动退回）。
+ */
+export const payMixedByWallet = (data: {
+  orderNo: string;
+  code: string;
+  walletAmount: number;
+}): Promise<WalletMixedPayResult> => httpPost<WalletMixedPayResult>('/customer/wallet/pay-mixed', data);
+/** 取消混合支付：立刻把已扣的余额退回（后端先关渠道单，关单成功才释放）。 */
+export const cancelMixedByWallet = (orderNo: string): Promise<void> =>
+  httpPost<void>('/customer/wallet/pay-cancel', { orderNo });
 
 // ---------------------------------------------------------------------------
 // 访问统计打点：挂在顾客公开组下，故意不带登录态拦截（匿名打点天然干净）；

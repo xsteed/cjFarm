@@ -149,8 +149,11 @@ type MemberRow struct {
 	Providers string `json:"providers"`
 	// Phone 绑定的手机号(管理端展示/回拨用,完整号码;只对拥有 member:view 的人可见)。
 	Phone string `json:"phone"`
-	// Balance 储值余额(元,出参口径与订单金额一致)。从未充过值的会员为 0。
+	// Balance 储值本金余额(元,出参口径与订单金额一致)。从未充过值的会员为 0。
 	Balance float64 `json:"balance"`
+	// BalanceGift 储值赠金余额(元)。与本金分开列出:赠金不可退现,
+	// 后台看到「余额 110」时必须能分清其中多少是门店白送的。
+	BalanceGift float64 `json:"balanceGift"`
 }
 
 // MemberQuery 会员列表筛选条件。
@@ -192,7 +195,8 @@ func ListMembers(q MemberQuery, pageNum, pageSize int) (int, []MemberRow, error)
 		c.status, c.order_count, COALESCE(c.last_order_time,''), COALESCE(c.create_time,''), COALESCE(c.last_login_time,''),
 		COALESCE((SELECT GROUP_CONCAT(i.provider) FROM tb_customer_identity i WHERE i.customer_id=c.customer_id), ''),
 		COALESCE((SELECT i3.external_id FROM tb_customer_identity i3 WHERE i3.customer_id=c.customer_id AND i3.provider='phone' LIMIT 1), ''),
-		COALESCE((SELECT w.balance FROM tb_wallet w WHERE w.customer_id=c.customer_id), 0)
+		COALESCE((SELECT w.balance FROM tb_wallet w WHERE w.customer_id=c.customer_id), 0),
+		COALESCE((SELECT w.balance_gift FROM tb_wallet w WHERE w.customer_id=c.customer_id), 0)
 		FROM tb_customer c`+cond+` ORDER BY c.customer_id DESC LIMIT ? OFFSET ?`,
 		append(args, pageSize, (pageNum-1)*pageSize)...)
 	if err != nil {
@@ -203,36 +207,75 @@ func ListMembers(q MemberQuery, pageNum, pageSize int) (int, []MemberRow, error)
 	out := make([]MemberRow, 0, pageSize)
 	for rows.Next() {
 		var r MemberRow
-		var balanceCents int64
+		var balanceCents, giftCents int64
 		if err := rows.Scan(&r.CustomerID, &r.Nickname, &r.AvatarURL, &r.Status, &r.OrderCount,
-			TS(&r.LastOrderTime), TS(&r.CreateTime), TS(&r.LastLoginTime), &r.Providers, &r.Phone, &balanceCents); err != nil {
+			TS(&r.LastOrderTime), TS(&r.CreateTime), TS(&r.LastLoginTime), &r.Providers, &r.Phone,
+			&balanceCents, &giftCents); err != nil {
 			return 0, nil, err
 		}
 		// 库里存「分」,出参一律「元」(与订单金额同一口径)。
 		r.Balance = po.ToYuan(balanceCents)
+		r.BalanceGift = po.ToYuan(giftCents)
 		out = append(out, r)
 	}
 	return total, out, rows.Err()
 }
 
-// DeleteCustomerAccount 注销会员:清订单归属 + 删登录方式 + 删档案,整体一个事务。
+// ErrWalletBalanceRemaining 会员储值余额未清零,不允许注销。
+//
+// 注销前必须把钱处理干净:要么顾客消费掉,要么门店走「退余额」把本金退回去。
+// 少了这道闸门只有两种结局 —— 账户行留成孤儿(钱永远取不出来也退不掉),
+// 或者被事务顺手删掉(直接吞掉顾客的预付款)。两者都比拒绝注销严重得多。
+var ErrWalletBalanceRemaining = errors.New("储值余额未清零")
+
+// DeleteCustomerAccount 注销会员:校验余额已清零 → 清订单归属 → 删登录方式 /
+// 储值账户 / 规则留痕 / 档案,整体一个事务。
 //
 // 订单本身保留(它是门店的经营数据,也是报表口径的来源),只把 customer_id
 // 置回 0 变回「匿名单」;登录方式与档案物理删除(spec §2.6:会员不做软删除)。
 // 访问统计里的 customer_id 不回填 —— 它只用于会员 UV 聚合,SQLite 的
 // AUTOINCREMENT 不会复用主键,残留值不会指向新会员。
+//
+// 余额校验放在**事务内**而不是调用前:否则「查余额 → 注销」之间可以插入一笔
+// 充值回调,钱照样悬空。储值账户随档案一并删除(此时余额必为 0,删掉不留孤儿行)。
 func DeleteCustomerAccount(customerID int) error {
 	if customerID <= 0 {
 		return errors.New("会员不存在")
 	}
 	return store.WithTx(func(tx *sql.Tx) error {
+		// 先取储值账户行写锁再读余额。少了这一步,「读余额 → 删账户」之间可以插进
+		// 一笔充值入账(EnsureWalletTx 建行 + AdjustWalletTx 加钱),账户会带着钱被删掉。
+		// 两库都不支持 SQL 标准的 FOR UPDATE(SQLite 无此语法),用自赋值 UPDATE 取锁
+		// —— 与 TouchOrderTx 同一手法;行锁下并发的充值入账会等本事务提交,
+		// 之后找不到账户行而失败,宁可让它失败也不让钱静默消失。
+		if _, err := tx.Exec(`UPDATE tb_wallet SET update_time=update_time WHERE customer_id=?`, customerID); err != nil {
+			return err
+		}
+		var balance, gift int64
+		err := tx.QueryRow(`SELECT COALESCE(balance,0), COALESCE(balance_gift,0) FROM tb_wallet WHERE customer_id=?`,
+			customerID).Scan(&balance, &gift)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if balance > 0 || gift > 0 {
+			return ErrWalletBalanceRemaining
+		}
 		if _, err := tx.Exec(`UPDATE tb_order SET customer_id=0 WHERE customer_id=?`, customerID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`DELETE FROM tb_customer_identity WHERE customer_id=?`, customerID); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`DELETE FROM tb_customer WHERE customer_id=?`, customerID)
+		if _, err := tx.Exec(`DELETE FROM tb_wallet_agreement WHERE customer_id=?`, customerID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM tb_wallet WHERE customer_id=?`, customerID); err != nil {
+			return err
+		}
+		// tb_wallet_txn / tb_recharge 故意不删:它们是钱的台账(只增不改),
+		// 删掉等于抹掉一段真实发生过的资金流水;此时余额已为 0,
+		// 留下的只有历史记录,不构成「钱悬空」。
+		_, err = tx.Exec(`DELETE FROM tb_customer WHERE customer_id=?`, customerID)
 		return err
 	})
 }

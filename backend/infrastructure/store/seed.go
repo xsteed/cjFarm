@@ -44,6 +44,22 @@ func seed() {
 	logger.Infof("种子数据已初始化")
 }
 
+// defaultWalletRulesText 《储值规则》出厂正文。
+//
+// 合规要求(详见 docs/compliance/prepaid-card.md):发卡企业须向购卡人明示章程,
+// 内容至少覆盖「适用范围 / 有效期 / 限额 / 退卡退款 / 查询凭证」五项。
+// 门店可在管理端改文案,但**改了正文就必须同步改 wallet_rules_version** ——
+// 版本号变化会强制顾客重新确认,这是「他充值时看到的是哪一版」的唯一留痕。
+//
+// 刻意写成「本店」而不带店名:这份文本是默认值,门店改名时不应留下过期店名。
+const defaultWalletRulesText = "一、适用范围：储值余额仅限本店堂食消费抵扣，不找零、不兑现、不计息、不可转赠他人。\n" +
+	"二、有效期：储值余额不设有效期，长期有效。\n" +
+	"三、实名与限额：未绑定手机号的账户为不记名账户，余额上限 1000 元；完成手机号绑定后为记名账户，余额上限 5000 元。\n" +
+	"四、退款：本金余额可随时向门店申请退回；充值赠送的金额（赠金）仅可用于消费，不可退现。\n" +
+	"五、注销：注销会员前须先将余额退回或消费完毕，余额未清零时无法注销。\n" +
+	"六、凭证与查询：本店完整保存每一笔储值流水，顾客可在本页随时查询余额与明细。\n" +
+	"七、安全提示：余额支付视同本人消费，请妥善保管微信账号，如有异常请及时联系门店。"
+
 // settingDefaults 配置项出厂默认值。
 // 既用于首次初始化,也用于每次启动补齐「缺失」的键(冲突则忽略,绝不覆盖已有值)。
 // 该表同时是 migrations/*/seed.sql 中 tb_config 部分的数据来源。
@@ -94,12 +110,34 @@ var settingDefaults = map[string]string{
 	//   wxpay_jsapi_enabled 小程序内支付(JSAPI):默认关。它比 Native 多一个硬前提 ——
 	//   wxpay_appid 必须是小程序 AppID 且配了 wx_app_secret,否则顾客点了只会看到
 	//   「支付暂不可用」;宁可少一个入口,也不要出现点了调不起收银台的情况。
-	"wxpay_enabled":            "0",
-	"wxpay_jsapi_enabled":      "0",
+	"wxpay_enabled":       "0",
+	"wxpay_jsapi_enabled": "0",
 	// 储值自助充值:默认关(动钱的入口一律 fail-closed)。开启前须先配好微信支付(JSAPI),
 	// 否则顾客点了充值只会看到「支付暂不可用」。关闭不影响已有余额的消费与退款 ——
 	// 那是顾客的钱,进得来就出得去。
-	"wallet_recharge_enabled":  "0",
+	"wallet_recharge_enabled": "0",
+	// ---- 储值合规参数(出处见 docs/compliance/prepaid-card.md) ----
+	// 餐饮储值在法律上是「单用途商业预付卡」,这几项不是产品偏好而是监管口径:
+	//   wallet_recharge_min / max  单笔充值区间(元)。只收整数元,上限默认 1000。
+	//   wallet_balance_max         未记名余额上限(元),默认 1000。
+	//   wallet_balance_max_named   已记名(绑手机号)余额上限(元),默认 5000。
+	//      —— 单张记名卡限额不超过 5000 元、不记名卡不超过 1000 元,是《单用途商业
+	//         预付卡管理办法(试行)》第十八条的硬口径,改大之前请先读那份文档。
+	//   wallet_realname_required   充值前是否强制实名(绑手机号),默认 "1"。
+	//      —— 实名与否直接决定上面两个上限走哪一个;关掉它等于把所有人按不记名卡限流。
+	//   wallet_adjust_max          后台单次调账上限(元),默认 1000。
+	//      —— 防误操作:一次手滑加 100 万会立刻变成门店的真实负债。
+	//   wallet_rules_version       规则版本号。门店改了正文就必须改版本号,
+	//      否则已同意过的顾客不会重新确认 —— 争议时就无法证明他看到的是哪一版。
+	//   wallet_rules_text          《储值规则》正文,顾客端钱包页与充值确认弹窗展示。
+	"wallet_recharge_min":      "1",
+	"wallet_recharge_max":      "1000",
+	"wallet_balance_max":       "1000",
+	"wallet_balance_max_named": "5000",
+	"wallet_realname_required": "1",
+	"wallet_adjust_max":        "1000",
+	"wallet_rules_version":     "2026.1",
+	"wallet_rules_text":        defaultWalletRulesText,
 	"alipay_enabled":           "0",
 	"wxpay_mchid":              "",
 	"wxpay_appid":              "",

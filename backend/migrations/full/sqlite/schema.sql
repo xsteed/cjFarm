@@ -375,6 +375,7 @@ CREATE TABLE IF NOT EXISTS tb_customer_identity (
 CREATE TABLE IF NOT EXISTS tb_wallet (
         customer_id    INTEGER PRIMARY KEY,
         balance        INTEGER      DEFAULT 0,
+        balance_gift   INTEGER      DEFAULT 0,
         total_recharge INTEGER      DEFAULT 0,
         total_consume  INTEGER      DEFAULT 0,
         total_gift     INTEGER      DEFAULT 0,
@@ -387,10 +388,19 @@ CREATE TABLE IF NOT EXISTS tb_wallet_txn (
         biz_type       VARCHAR(16)  NOT NULL,
         amount         INTEGER      NOT NULL,
         balance_after  INTEGER      NOT NULL,
+        gift_amount    INTEGER      DEFAULT 0,
+        gift_after     INTEGER      DEFAULT 0,
         order_no       VARCHAR(32)  DEFAULT '',
         payment_no     VARCHAR(64)  DEFAULT '',
         reason         VARCHAR(255) DEFAULT '',
         operator       VARCHAR(64)  DEFAULT '',
+        create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
+        update_time VARCHAR(32) DEFAULT NULL
+    );
+CREATE TABLE IF NOT EXISTS tb_wallet_agreement (
+        customer_id    INTEGER PRIMARY KEY,
+        rules_ver      VARCHAR(16)  NOT NULL,
+        agreed_time VARCHAR(32) DEFAULT NULL,
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
         update_time VARCHAR(32) DEFAULT NULL
     );
@@ -399,6 +409,7 @@ CREATE TABLE IF NOT EXISTS tb_recharge (
         recharge_no      VARCHAR(32)  NOT NULL,
         customer_id      INTEGER      NOT NULL,
         amount           INTEGER      NOT NULL,
+        gift_amount      INTEGER      DEFAULT 0,
         status           INTEGER      DEFAULT 0,
         channel          VARCHAR(16)  DEFAULT '',
         channel_trade_no VARCHAR(64)  DEFAULT '',
@@ -605,6 +616,12 @@ CREATE TRIGGER IF NOT EXISTS trg_tb_wallet_txn_touch
         WHEN NEW.update_time IS OLD.update_time
         BEGIN
             UPDATE tb_wallet_txn SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
+        END;
+CREATE TRIGGER IF NOT EXISTS trg_tb_wallet_agreement_touch
+        AFTER UPDATE ON tb_wallet_agreement FOR EACH ROW
+        WHEN NEW.update_time IS OLD.update_time
+        BEGIN
+            UPDATE tb_wallet_agreement SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
         END;
 CREATE TRIGGER IF NOT EXISTS trg_tb_recharge_touch
         AFTER UPDATE ON tb_recharge FOR EACH ROW

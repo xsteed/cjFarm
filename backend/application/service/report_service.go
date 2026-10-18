@@ -118,11 +118,19 @@ type Summary struct {
 	LastMonthSamePeriodOrderCount int
 	TodayFreeAmount               float64
 	TodayGiftAmount               float64
-	CreditPendingAmount           float64
-	CreditPendingCount            int
-	TodayCreditAmount             float64
-	TodayCreditSettledAmount      float64
-	TodayCreditSettledCount       int
+	// TodayWalletAmount 今日营业额中用储值余额核销的部分。
+	//
+	// 储值是「先收钱、后消费」:充值当天不计收入(那是负债),消费当天才确认收入,
+	// 但那天并没有真实现金流入。把它单列出来,老板才看得到
+	// 「今日营业额 8000 / 其中储值核销 3000 / 实际到账 5000」这个真实结构。
+	TodayWalletAmount float64
+	// TodayCashAmount 今日实际到账资金 = 今日营业额 - 储值核销。
+	TodayCashAmount          float64
+	CreditPendingAmount      float64
+	CreditPendingCount       int
+	TodayCreditAmount        float64
+	TodayCreditSettledAmount float64
+	TodayCreditSettledCount  int
 }
 
 // ReportSummary 汇总今日/昨日/本月/上月同期的营业额、订单量、客流量,
@@ -181,6 +189,13 @@ func ReportSummary() Summary {
 	// ---- 今日赠送(让利额) ----
 	todayGiftCents := dao.SumGiftIn(todayStart, tomorrowStart)
 
+	// ---- 今日储值核销(营业额中「以前收过的钱」) ----
+	todayWalletCents := dao.RangeWalletConsume(todayStart, tomorrowStart)
+	if todayWalletCents > todayAmountCents {
+		// 理论上是子集;真超了说明有历史脏数据,按营业额封顶,避免算出负的到账资金。
+		todayWalletCents = todayAmountCents
+	}
+
 	// ---- 挂账 ----
 	creditPendingCents, creditPendingCount := dao.CreditPendingStats()
 	todayCreditCents := dao.SumCreditIn(todayStart, tomorrowStart)
@@ -214,6 +229,8 @@ func ReportSummary() Summary {
 		LastMonthSamePeriodOrderCount: lastMonthOrderCount,
 		TodayFreeAmount:               po.Round2(po.ToYuan(todayFreeCents)),
 		TodayGiftAmount:               po.Round2(po.ToYuan(todayGiftCents)),
+		TodayWalletAmount:             po.Round2(po.ToYuan(todayWalletCents)),
+		TodayCashAmount:               po.Round2(po.ToYuan(todayAmountCents - todayWalletCents)),
 		CreditPendingAmount:           po.Round2(po.ToYuan(creditPendingCents)),
 		CreditPendingCount:            creditPendingCount,
 		TodayCreditAmount:             po.Round2(po.ToYuan(todayCreditCents)),

@@ -83,7 +83,15 @@ func setupAPI(r *gin.Engine) {
 		api.GET("/customer/wallet/txns", handler.CustomerAuthRequired, handler.WalletTxns)
 		api.POST("/customer/wallet/recharge", handler.CustomerAuthRequired, handler.WalletRecharge)
 		api.GET("/customer/wallet/recharge/status", handler.CustomerAuthRequired, handler.WalletRechargeStatus)
+		// 充值补账:回调丢失时前端主动触发后端向渠道查单(顾客已付款却没入账的自救通道)。
+		api.POST("/customer/wallet/recharge/reconcile", handler.CustomerAuthRequired, handler.WalletRechargeReconcile)
+		// 《储值规则》同意留痕(合规:发卡须明示章程)。
+		api.POST("/customer/wallet/rules/agree", handler.CustomerAuthRequired, handler.WalletAgreeRules)
 		api.POST("/customer/wallet/pay", handler.CustomerAuthRequired, handler.WalletPay)
+		// 混合支付:余额抵扣 + 微信补差(余额不足时也能用上储值)。
+		api.POST("/customer/wallet/pay-mixed", handler.CustomerAuthRequired, handler.WalletMixedPay)
+		// 混合支付取消:顾客点了取消就立刻退回已扣的余额,不让钱白等超时释放。
+		api.POST("/customer/wallet/pay-cancel", handler.CustomerAuthRequired, handler.WalletCancelMixedPay)
 		api.GET("/customer/order/mine", handler.CustomerAuthRequired, handler.CustomerMyOrders)
 		// 历史订单详情:跨桌,归属只认会员身份(customer_id),不能用 tableId 校验
 		// —— 顾客早已离开那张桌(见 service.CustomerMyOrderDetail)。
@@ -138,9 +146,10 @@ func setupAPI(r *gin.Engine) {
 			// 没有登录方式的孤儿档案(见 handler/member.go 顶部说明)。
 			admin.GET("/member/list", handler.MemberList)
 			admin.POST("/member/status", handler.MemberToggleStatus)
-			// 储值:某会员的余额与流水 / 后台调账(赠送或扣减)。
+			// 储值:某会员的余额与流水 / 后台调账(赠送或扣减) / 退余额(钱出店)。
 			admin.GET("/member/wallet", handler.MemberWalletDetail)
 			admin.POST("/member/wallet/adjust", handler.MemberWalletAdjust)
+			admin.POST("/member/wallet/withdraw", handler.MemberWalletWithdraw)
 
 			// 角色与权限
 			admin.GET("/role/list", handler.RoleList)
@@ -363,6 +372,14 @@ func main() {
 	// 桌台遗留订单防护:按「跨日自动清台」配置开关后台巡检,把过期遗留单所在桌台
 	// 恢复空闲(订单与账务不动)。开关关闭时每轮直接跳过,不做查询。
 	service.StartStaleOrderGuard()
+	// 储值:关闭超过 24 小时仍未入账的充值单(顾客早已放弃、渠道也不会再受理)。
+	// 启动时先清一轮(停机期间累积的废单),之后由后台任务每 6 小时一次 ——
+	// 常年不重启的门店否则会在 tb_recharge 里堆满顾客早已放弃的待支付单。
+	service.ExpireWalletRecharges()
+	service.StartWalletRechargeExpirer()
+	// 混合支付超时释放:余额已扣、微信迟迟未付的订单,15 分钟后自动退回余额并关单。
+	// 放在 handler 层:释放前要用 pay 包关渠道单,service 不得 import pay。
+	handler.StartMixedPaySweeper()
 	// 站点访问统计:批量写 worker + 日聚合补跑 + 明细清理(开关关闭时不起 worker)。
 	// 放在巡检任务之后:两者互不依赖,但日志上保持「后台任务」在同一段。
 	service.StartVisitRollup()

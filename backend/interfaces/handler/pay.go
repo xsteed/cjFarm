@@ -306,6 +306,12 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 				logger.CtxWarnf(ctx, "[wallet] 充值单不存在,应答成功 单%s", notify.OrderNo)
 				return true
 			}
+			// 已关闭的单是终态:顾客早已放弃这笔充值,延迟通知绝不能让它复活。
+			// 应答成功 —— 让渠道停止重试,否则一笔永远不该入账的单会被无限重发。
+			if errors.Is(err, service.ErrRechargeClosed) {
+				logger.CtxWarnf(ctx, "[wallet] 充值单已关闭,拒绝入账并应答成功 单%s", notify.OrderNo)
+				return true
+			}
 			logger.CtxErrorf(ctx, "[wallet][告警] 充值入账失败,应答失败待渠道重试 单%s: %v", notify.OrderNo, err)
 			return false
 		}
@@ -327,10 +333,20 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 	// 金额一致性:回调金额必须与订单金额一致,否则挂起人工处理,绝不自动入账。
 	// 同时落一条退款流水标记(状态=失败、原因写明差额),让「钱收到了但入不了账」
 	// 在退款记录里可见、可追 —— 只留日志的话,事后根本发现不了顾客多付/少付。
-	if notify.AmountCents != totalCents {
-		logger.CtxWarnf(ctx, "[pay][告警] 金额不一致 订单%s 期望%d分 实际%d分", notify.OrderNo, totalCents, notify.AmountCents)
-		service.RecordMismatchedPayment(ctx, orderID, notify.OrderNo, channel, notify.AmountCents, totalCents, notify.ChannelTradeNo)
-		return true
+	//
+	// 混合支付(余额抵扣 + 渠道补差):本笔只覆盖差额,判据是
+	// 「本笔 + 其它渠道已入账 == 订单总额」。订单已支付时不校验 ——
+	// 任何额外到账都是重复支付,交给 applyPaymentSuccess 判重并自动原路退回。
+	if o.PayStatus != 1 {
+		expect := totalCents - service.PaidPaymentsExcept(notify.OrderNo, channel)
+		if expect < 0 {
+			expect = 0
+		}
+		if notify.AmountCents != expect {
+			logger.CtxWarnf(ctx, "[pay][告警] 金额不一致 订单%s 期望%d分 实际%d分", notify.OrderNo, expect, notify.AmountCents)
+			service.RecordMismatchedPayment(ctx, orderID, notify.OrderNo, channel, notify.AmountCents, expect, notify.ChannelTradeNo)
+			return true
+		}
 	}
 	// 回写失败(DB 故障)必须应答 FAIL 让渠道重试:首读成功不代表回写一定成功,
 	// 若折叠成成功应答,顾客已付款却永不入账(掉单不可恢复)。
@@ -440,11 +456,17 @@ func settleQueryResult(ctx context.Context, orderID int, orderNo, channel string
 		return
 	}
 	totalCents := o.TotalAmount
+	// 期望金额 = 订单总额 - 其它渠道已入账的部分:混合支付时渠道只收差额,
+	// 拿它直接跟订单总额比会把每一笔混合支付都判成「金额不一致」。
+	expect := totalCents - service.PaidPaymentsExcept(orderNo, channel)
+	if expect < 0 {
+		expect = 0
+	}
 	// 金额不一致(含 <=0,如支付宝金额解析失败返回 0)绝不入账,只留痕人工核对,
 	// 否则「生成旧码→加菜涨价→用旧码付旧金额→前端轮询补单」会造成少付入账。
-	if q.PaidAmount <= 0 || q.PaidAmount != totalCents {
-		logger.CtxWarnf(ctx, "[pay][告警] 主动查单金额不一致 订单%s 期望%d分 实际%d分", orderNo, totalCents, q.PaidAmount)
-		service.RecordMismatchedPayment(ctx, orderID, orderNo, channel, q.PaidAmount, totalCents, q.ChannelTradeNo)
+	if q.PaidAmount <= 0 || q.PaidAmount != expect {
+		logger.CtxWarnf(ctx, "[pay][告警] 主动查单金额不一致 订单%s 期望%d分 实际%d分", orderNo, expect, q.PaidAmount)
+		service.RecordMismatchedPayment(ctx, orderID, orderNo, channel, q.PaidAmount, expect, q.ChannelTradeNo)
 		return
 	}
 	applyPaymentSuccess(ctx, orderID, orderNo, channel, q.PaidAmount, q.ChannelTradeNo)
@@ -552,28 +574,9 @@ func PayRefund(c *gin.Context) {
 	// 发起退款即视为商家已实际处理这单:列表「新」角标随之消解(与制作/收款/结账等操作同口径)。
 	// 放在参数与状态校验之后:无效请求不标记;后续渠道退款无论成功/失败/转处理中,都算操作过。
 	service.MarkOrderViewed(p.OrderID)
-	// 找支付流水:已支付或(部分)已退款的流水都可用于继续退款,避免部分退款后剩余金额退不掉。
-	flow, flowErr := service.LastPaidPayment(orderNo)
-	if flowErr != nil {
-		fail(c, "未找到在线支付流水，该订单为线下收款，请人工退款")
-		return
-	}
-	paymentID, channel := flow.PaymentID, flow.Channel
-	// 余额支付订单:原路退回 = 退回储值余额,同步完成,不走渠道抽象与异步查询。
-	isWallet := channel == service.PayChannelWallet
-	var provider pay.Provider
-	if !isWallet {
-		provider, err = pay.Get(channel)
-		if err != nil || !provider.Enabled() {
-			fail(c, "支付渠道未配置，无法在线退款")
-			return
-		}
-	}
-
 	ctx := c.Request.Context()
-	// 后续日志都围绕同一笔退款单,一次绑定 requestID + 订单/渠道字段。
-	log := logger.WithContext(ctx,
-		zap.String("orderNo", orderNo), zap.String("channel", channel))
+	// 后续日志都围绕同一笔退款单,一次绑定 requestID + 订单字段(渠道由各分摊决定)。
+	log := logger.WithContext(ctx, zap.String("orderNo", orderNo))
 
 	// 可退金额 = 订单金额 - (已成功 + 处理中)退款金额。
 	// 处理中的退款单同样占用额度,防止并发退款超额;全程持锁保证校验与落单原子。
@@ -593,80 +596,152 @@ func PayRefund(c *gin.Context) {
 	}
 
 	// 校验 + 落单在同一 DB 事务内完成(订单行锁串行化),refundMu 仍保留为单实例第一道防线。
-	// 落库用规范化后的 reason(与下方审计摘要同源),避免退款记录里存着未 Trim 的空白原因。
-	refundNo, refundID, refundCents, err := service.CreateRefund(ctx, p.OrderID, orderNo, paymentID, channel, totalCents, p.Amount, reason, adminName(c))
+	// 落库用规范化后的 reason(与审计摘要同源),避免退款记录里存着未 Trim 的空白原因。
+	//
+	// 一笔退款可能被拆成多笔:混合支付(余额 + 渠道)的订单有多条已入账流水,
+	// 钱必须分别回到各自渠道 —— 全退给渠道是重复退款,全退给余额则把微信的钱留在店里。
+	parts, err := service.CreateRefundParts(ctx, p.OrderID, orderNo, totalCents, p.Amount, reason, adminName(c))
 	if err != nil {
 		fail(c, err.Error())
 		return
 	}
-
+	var refundCents int64
+	for _, part := range parts {
+		refundCents += part.Amount
+	}
+	// 审计摘要先落(执行前):万一渠道退款失败,日志里仍能看到「想退多少、为什么退」,
+	// 失败原因由中间件从响应里补上。
 	SetAuditDetail(c, "order", strconv.Itoa(p.OrderID),
-		fmt.Sprintf("发起退款 ¥%.2f（%s），原因：%s", po.ToYuan(refundCents), channelName(channel), reason))
+		fmt.Sprintf("发起退款 ¥%.2f（%s），原因：%s", po.ToYuan(refundCents), refundChannelsText(parts), reason))
 
-	// 余额支付订单:原路退回 = 退回储值余额,同步完成(钱本来就在店里)。
-	if isWallet {
-		if err := service.WalletRefundForOrder(orderNo, refundCents, reason); err != nil {
-			fail(c, "余额退回失败，请稍后重试")
-			return
+	// 逐笔执行:钱包同步退回余额,渠道走各自的退款接口。
+	succeeded, processing := 0, 0
+	lastErr := ""
+	for _, part := range parts {
+		switch status, msg := execRefundPart(ctx, log, orderNo, part, reason); status {
+		case refundPartDone:
+			succeeded++
+		case refundPartProcessing:
+			processing++
+		default:
+			lastErr = msg
+		}
+	}
+	switch {
+	case lastErr != "" && succeeded == 0 && processing == 0:
+		fail(c, lastErr)
+	case lastErr != "":
+		// 部分成功 + 部分失败:如实回报,不掩盖。
+		ok(c, gin.H{"status": po.RefundStatusProcessing,
+			"msg": fmt.Sprintf("部分退款已受理（%d 笔成功 / %d 笔待处理 / 1 笔失败：%s）", succeeded, processing, lastErr)})
+	case processing > 0:
+		ok(c, gin.H{"status": po.RefundStatusProcessing, "msg": "退款已受理，等待渠道到账"})
+	case refundOnlyWallet(parts):
+		okMsg(c, "退款成功（已退回储值余额）")
+	default:
+		okMsg(c, "退款成功")
+	}
+}
+
+// 退款分摊的执行结果。
+const (
+	refundPartDone = iota
+	refundPartProcessing
+	refundPartFail
+)
+
+// execRefundPart 执行一笔分摊:钱包同步退回储值,渠道调对应退款接口。
+//
+// 失败一律把退款单置失败以释放额度 —— 退款单停在「处理中」会按
+// 「已成功 + 处理中」占用可退额度,这笔钱就再也退不出去。
+func execRefundPart(ctx context.Context, log *zap.SugaredLogger, orderNo string, part service.RefundPart, reason string) (int, string) {
+	if part.Channel == service.PayChannelWallet {
+		if err := service.WalletRefundForOrder(orderNo, part.Amount, reason); err != nil {
+			if e := service.MarkRefund(part.RefundID, po.RefundStatusFail, "", truncateMsg(err.Error())); e != nil {
+				log.Errorf("[pay][告警] 余额退回失败且退款单置失败也失败,请人工处理 退款单%d: %v", part.RefundID, e)
+			}
+			return refundPartFail, err.Error()
 		}
 		// 退款台账照常落:渠道退款号没有,用 WR 前缀的本地流水号占位。
-		if err := service.ApplyRefundSuccess(ctx, refundID, paymentID, orderNo, refundCents, "WR"+refundNo); err != nil {
-			// 钱已退回余额但账没记上:立刻把刚退的钱扣回(补偿),否则会留下
-			// 「余额已加、退款单停在处理中」的不一致,且重试被额度占用挡死。
-			if rbErr := service.WalletRefundRollback(orderNo, refundCents); rbErr != nil {
-				log.Errorf("[pay][告警] 退款入账失败且回滚也失败(请人工核对余额与退款单) 退款单%d 金额%d分: %v", refundID, refundCents, rbErr)
+		if err := service.ApplyRefundSuccess(ctx, part.RefundID, part.PaymentID, orderNo, part.Amount, "WR"+part.RefundNo); err != nil {
+			// 钱已退回余额但账没记上:立刻把刚退的钱扣回(补偿),
+			// 否则会留下「余额已加、退款单停在处理中」的不一致。
+			if rbErr := service.WalletRefundRollback(orderNo, part.Amount); rbErr != nil {
+				log.Errorf("[pay][告警] 退款入账失败且回滚也失败(请人工核对余额与退款单) 退款单%d 金额%d分: %v", part.RefundID, part.Amount, rbErr)
 			} else {
-				log.Warnf("[pay] 退款入账失败,已自动回滚余额 退款单%d 金额%d分", refundID, refundCents)
+				log.Warnf("[pay] 退款入账失败,已自动回滚余额 退款单%d 金额%d分", part.RefundID, part.Amount)
 			}
-			fail(c, "退款入账失败，请稍后重试")
-			return
+			return refundPartFail, "退款入账失败，请稍后重试"
 		}
-		log.Infof("[pay] 余额退款成功 退款单%s 金额%d分 操作人%s", refundNo, refundCents, adminName(c))
-		okMsg(c, "退款成功（已退回储值余额）")
-		return
+		log.Infof("[pay] 余额退款成功 退款单%s 金额%d分", part.RefundNo, part.Amount)
+		return refundPartDone, ""
 	}
 
-	result, err := provider.Refund(orderNo, refundNo, refundCents, totalCents)
-	if err != nil {
-		log.Warnf("[pay] 渠道退款失败 退款单%s 金额%d分: %v", refundNo, refundCents, err)
-		if e := service.MarkRefund(refundID, po.RefundStatusFail, "", truncateMsg(err.Error())); e != nil {
-			// 退款单停在「处理中」会导致可退额度被永久占用(见 CreateRefund 的额度校验),
-			// 这笔钱就再也退不出去,故必须留痕让人工介入。
-			log.Errorf("[pay][告警] 渠道退款失败且退款单置失败也失败,请人工处理 退款单%d: %v", refundID, e)
+	provider, err := pay.Get(part.Channel)
+	if err != nil || !provider.Enabled() {
+		if e := service.MarkRefund(part.RefundID, po.RefundStatusFail, "", "支付渠道未配置"); e != nil {
+			log.Errorf("[pay][告警] 渠道未配置且退款单置失败也失败,请人工处理 退款单%d: %v", part.RefundID, e)
 		}
-		fail(c, "退款失败: "+err.Error())
-		return
+		return refundPartFail, "支付渠道未配置，无法在线退款"
+	}
+
+	// total 参数必须是「该笔支付的原始金额」而不是订单总额:混合支付时两者不等,
+	// 传错微信会直接拒绝这笔退款。
+	result, err := provider.Refund(orderNo, part.RefundNo, part.Amount, part.PaymentTotal)
+	if err != nil {
+		log.Warnf("[pay] 渠道退款失败 退款单%s 金额%d分: %v", part.RefundNo, part.Amount, err)
+		if e := service.MarkRefund(part.RefundID, po.RefundStatusFail, "", truncateMsg(err.Error())); e != nil {
+			log.Errorf("[pay][告警] 渠道退款失败且退款单置失败也失败,请人工处理 退款单%d: %v", part.RefundID, e)
+		}
+		return refundPartFail, "退款失败: " + err.Error()
 	}
 	// 入账判据用「渠道返回的实际状态」而非渠道名:微信退款同样可能同步返回
-	// SUCCESS(钱已退出),此前按渠道名放行会把已退出的钱停在「处理中」——
-	// refund_amount 不累加、paid_amount 不扣减(当天营业额虚高),退款单继续占用
-	// 可退额度,且回给商家「等待到账」的文案与事实相反。
-	if result.Success && (result.Status == pay.RefundSuccess || refundSettled(channel)) {
-		if err := service.ApplyRefundSuccess(ctx, refundID, paymentID, orderNo, refundCents, result.RefundNo); err != nil {
-			// 渠道钱已退但账务回写失败:不能回复「退款成功」误导商家。
-			// 这是最需要告警的一类 —— 钱已经出去了,账上却没记。
+	// SUCCESS(钱已退出),按渠道名放行会把已退出的钱停在「处理中」。
+	if result.Success && (result.Status == pay.RefundSuccess || refundSettled(part.Channel)) {
+		if err := service.ApplyRefundSuccess(ctx, part.RefundID, part.PaymentID, orderNo, part.Amount, result.RefundNo); err != nil {
 			log.Errorf("[pay][告警] 渠道已退款但账务入账失败(钱已退、账未记,请人工核对) 退款单%d 金额%d分: %v",
-				refundID, refundCents, err)
-			fail(c, "退款已发起但入账失败，请稍后重试或在退款记录中核对")
-			return
+				part.RefundID, part.Amount, err)
+			return refundPartFail, "退款已发起但入账失败，请稍后重试或在退款记录中核对"
 		}
-		log.Infof("[pay] 退款成功 退款单%s 金额%d分 操作人%s", refundNo, refundCents, adminName(c))
-		okMsg(c, "退款成功")
-		return
+		log.Infof("[pay] 退款成功 退款单%s 金额%d分 渠道%s", part.RefundNo, part.Amount, part.Channel)
+		return refundPartDone, ""
 	}
-	// 渠道明确返回失败(如微信 CLOSED/ABNORMAL:err 为 nil 但 Status=fail)。
-	// 此时钱没有退出去,必须把退款单置为失败 —— 否则它会停在「处理中」,
-	// 按 CreateRefund 的额度口径(已成功 + 处理中)永久占用可退额度,这笔钱再也退不出去。
+	// 渠道明确返回失败(如微信 CLOSED/ABNORMAL:err 为 nil 但 Status=fail):钱没退出去。
 	if result.Status == pay.RefundFail {
-		log.Errorf("[pay] 渠道明确拒绝退款(钱未退出) 退款单%s 金额%d分 渠道状态=%s",
-			refundNo, refundCents, result.Status)
-		if e := service.MarkRefund(refundID, po.RefundStatusFail, result.RefundNo, "渠道退款失败"); e != nil {
-			log.Errorf("[pay][告警] 退款单置失败也失败,请人工处理 退款单%d: %v", refundID, e)
+		log.Errorf("[pay] 渠道明确拒绝退款(钱未退出) 退款单%s 金额%d分 渠道状态=%s", part.RefundNo, part.Amount, result.Status)
+		if e := service.MarkRefund(part.RefundID, po.RefundStatusFail, result.RefundNo, "渠道退款失败"); e != nil {
+			log.Errorf("[pay][告警] 退款单置失败也失败,请人工处理 退款单%d: %v", part.RefundID, e)
 		}
-		fail(c, "退款失败：渠道未能受理该笔退款，请稍后在「退款记录」中核对")
-		return
+		return refundPartFail, "退款失败：渠道未能受理该笔退款，请稍后在「退款记录」中核对"
 	}
-	ok(c, gin.H{"refundId": refundID, "status": po.RefundStatusProcessing, "msg": "退款已受理，等待渠道到账"})
+	return refundPartProcessing, ""
+}
+
+// refundOnlyWallet 本次退款是否全部退回储值余额(文案据此区分)。
+func refundOnlyWallet(parts []service.RefundPart) bool {
+	for _, p := range parts {
+		if p.Channel != service.PayChannelWallet {
+			return false
+		}
+	}
+	return len(parts) > 0
+}
+
+// refundChannelsText 把分摊渠道拼成审计摘要里的可读文案(如「储值余额+微信支付」)。
+func refundChannelsText(parts []service.RefundPart) string {
+	seen := map[string]bool{}
+	names := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if seen[p.Channel] {
+			continue
+		}
+		seen[p.Channel] = true
+		names = append(names, channelName(p.Channel))
+	}
+	if len(names) == 0 {
+		return "未知渠道"
+	}
+	return strings.Join(names, "+")
 }
 
 // refundSettled 判断渠道退款结果是否为「已到账」(支付宝同步到账)。

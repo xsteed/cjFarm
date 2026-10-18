@@ -637,6 +637,100 @@
               </span>
             </t-space>
           </t-form-item>
+
+          <!-- 储值合规参数：餐饮储值在法律上是「单用途商业预付卡」，
+               下面几项是监管口径而非产品偏好，改大之前请看 docs/compliance/prepaid-card.md -->
+          <t-form-item label="储值：单笔限额">
+            <t-space>
+              <t-input-number
+                v-model="form.wallet_recharge_min"
+                theme="normal"
+                :min="1"
+                :decimal-places="0"
+                style="width: 140px"
+              />
+              <span class="tip">~</span>
+              <t-input-number
+                v-model="form.wallet_recharge_max"
+                theme="normal"
+                :min="1"
+                :decimal-places="0"
+                style="width: 140px"
+              />
+              <span class="tip">元（只收整数元）</span>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="储值：余额上限">
+            <t-space>
+              <t-input-number
+                v-model="form.wallet_balance_max"
+                theme="normal"
+                :min="1"
+                :decimal-places="0"
+                style="width: 140px"
+              />
+              <span class="tip">未实名</span>
+              <t-input-number
+                v-model="form.wallet_balance_max_named"
+                theme="normal"
+                :min="1"
+                :decimal-places="0"
+                style="width: 140px"
+              />
+              <span class="tip">已实名（元）</span>
+            </t-space>
+            <div class="tip">
+              单张不记名卡余额上限 1000 元、记名卡 5000 元，出自《单用途商业预付卡管理办法（试行）》第十八条。
+              调高前请确认门店已完成发卡备案，否则属于超限额发卡。
+            </div>
+          </t-form-item>
+          <t-form-item label="储值：强制实名">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.wallet_realname_required"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后顾客必须先绑定手机号才能充值。实名与否直接决定上面两个余额上限走哪一个；
+                关闭等同于把所有账户按不记名卡限流。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item
+            label="储值：调账上限"
+            name="wallet_adjust_max"
+          >
+            <t-input-number
+              v-model="form.wallet_adjust_max"
+              theme="normal"
+              :min="1"
+              :decimal-places="0"
+              style="width: 140px"
+            />
+            <span class="tip">元。后台单次调账的最大金额，防手滑加出巨额负债</span>
+          </t-form-item>
+          <t-form-item label="储值：规则版本">
+            <t-input
+              v-model="form.wallet_rules_version"
+              placeholder="如 2026.1"
+              style="width: 200px"
+            />
+            <div class="tip">
+              修改下方规则正文后<b>必须同步修改版本号</b>：版本号变化会强制顾客重新确认，
+              这是「他充值时看到的是哪一版」的唯一留痕依据。
+            </div>
+          </t-form-item>
+          <t-form-item label="储值：规则正文">
+            <t-textarea
+              v-model="form.wallet_rules_text"
+              :autosize="{ minRows: 6, maxRows: 14 }"
+              placeholder="展示在小程序「我的钱包」，至少覆盖适用范围 / 有效期 / 限额 / 退卡退款 / 查询凭证"
+            />
+            <div class="tip">留空时后端回落到出厂默认文案（含退余额与注销条款）。</div>
+          </t-form-item>
           <t-form-item
             label="微信商户号"
             name="wxpay_mchid"
@@ -1221,6 +1315,23 @@ interface ConfigForm {
   wxpay_jsapi_enabled: string;
   /** 储值自助充值：开启后顾客钱包页出现充值入口（余额消费/退款不受影响） */
   wallet_recharge_enabled: string;
+  // ---- 储值合规参数（口径见 docs/compliance/prepaid-card.md）----
+  /** 单笔充值下限（元） */
+  wallet_recharge_min: number | string;
+  /** 单笔充值上限（元） */
+  wallet_recharge_max: number | string;
+  /** 未记名（未绑手机号）账户余额上限（元），监管口径默认 1000 */
+  wallet_balance_max: number | string;
+  /** 已记名账户余额上限（元），监管口径默认 5000 */
+  wallet_balance_max_named: number | string;
+  /** 充值前是否强制实名（绑手机号） */
+  wallet_realname_required: string;
+  /** 后台单次调账上限（元），防误操作 */
+  wallet_adjust_max: number | string;
+  /** 《储值规则》版本号：改了正文必须改版本号，否则顾客不会重新确认 */
+  wallet_rules_version: string;
+  /** 《储值规则》正文 */
+  wallet_rules_text: string;
   alipay_enabled: string;
   wxpay_mchid: string;
   wxpay_appid: string;
@@ -1298,6 +1409,15 @@ type ConfigPayloadFull = ConfigData & {
   stale_alert_hours?: string;
   biz_date_cutoff_hour?: string;
   member_enabled?: string;
+  // 储值合规参数(后端 dto.Settings 的同名字段)
+  wallet_recharge_min?: string;
+  wallet_recharge_max?: string;
+  wallet_balance_max?: string;
+  wallet_balance_max_named?: string;
+  wallet_realname_required?: string;
+  wallet_adjust_max?: string;
+  wallet_rules_version?: string;
+  wallet_rules_text?: string;
   // 一次性指令:传 '1' 表示主动清空 agent_token(敏感项留空只表示「不修改」)。
   agent_token_clear?: string;
 };
@@ -1320,6 +1440,16 @@ const form = reactive<ConfigForm>({
   wxpay_enabled: '0',
   wxpay_jsapi_enabled: '0',
   wallet_recharge_enabled: '0',
+  // 储值合规参数(出厂默认值与后端 settingDefaults 一致,
+  // 上限口径出自《单用途商业预付卡管理办法(试行)》第十八条,详见 docs/compliance/prepaid-card.md)
+  wallet_recharge_min: 1,
+  wallet_recharge_max: 1000,
+  wallet_balance_max: 1000,
+  wallet_balance_max_named: 5000,
+  wallet_realname_required: '1',
+  wallet_adjust_max: 1000,
+  wallet_rules_version: '2026.1',
+  wallet_rules_text: '',
   alipay_enabled: '0',
   wxpay_mchid: '',
   wxpay_appid: '',
@@ -1391,6 +1521,7 @@ const FLAG_KEYS = [
   'wxpay_enabled',
   'wxpay_jsapi_enabled',
   'wallet_recharge_enabled',
+  'wallet_realname_required',
   'alipay_enabled',
   'print_enabled',
   'print_kitchen_show_price',
@@ -1442,6 +1573,21 @@ async function load(silent = false): Promise<void> {
     form.stale_alert_hours = Math.min(72, Math.max(1, Number(res.stale_alert_hours) || 4));
     // 营业日切换时刻兜底:老后端不下发时回落 0(自然日),越界同样收敛到 0~12
     form.biz_date_cutoff_hour = Math.min(12, Math.max(0, Number(res.biz_date_cutoff_hour) || 0));
+    // 储值合规参数兜底:老后端不下发、或后端把非法值归一化成空串时,
+    // 一律回落到**出厂默认值**(1000/5000…),而不是回落到下界 1 ——
+    // 回落到 1 会让整个界面显示「余额上限 1 元」,门店一保存就真写成 1.
+    const intOr = (v: unknown, def: number): number => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 1 ? Math.round(n) : def;
+    };
+    form.wallet_recharge_min = intOr(res.wallet_recharge_min, 1);
+    form.wallet_recharge_max = intOr(res.wallet_recharge_max, 1000);
+    form.wallet_balance_max = intOr(res.wallet_balance_max, 1000);
+    form.wallet_balance_max_named = intOr(res.wallet_balance_max_named, 5000);
+    form.wallet_adjust_max = intOr(res.wallet_adjust_max, 1000);
+    // 规则文本项:老后端不下发时留空(后端会回落到出厂默认文案),不能是 undefined。
+    form.wallet_rules_version = res.wallet_rules_version || '2026.1';
+    form.wallet_rules_text = res.wallet_rules_text ?? '';
     // 开关字段归一化为 '1' / '0'
     FLAG_KEYS.forEach(k => {
       form[k] = normFlag(res[k]);
@@ -1488,6 +1634,12 @@ async function save(): Promise<void> {
       promotion_discount: String(form.promotion_discount),
       stale_alert_hours: String(form.stale_alert_hours),
       biz_date_cutoff_hour: String(form.biz_date_cutoff_hour),
+      // 储值合规参数同为数值项,一并按字符串提交(后端 NormalizeAmountValue 再归一)
+      wallet_recharge_min: String(form.wallet_recharge_min),
+      wallet_recharge_max: String(form.wallet_recharge_max),
+      wallet_balance_max: String(form.wallet_balance_max),
+      wallet_balance_max_named: String(form.wallet_balance_max_named),
+      wallet_adjust_max: String(form.wallet_adjust_max),
       // 乐观锁:带回回显时的指纹,后端发现不一致(有其他人已先保存)会拒绝
       version: version.value
     };

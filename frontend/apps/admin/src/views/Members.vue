@@ -98,8 +98,12 @@
             <div class="v">{{ row.orderCount }}</div>
           </div>
           <div class="mcard-cell">
-            <div class="k">储值余额</div>
+            <div class="k">储值余额（本金）</div>
             <div class="v">¥{{ Number(row.balance || 0).toFixed(2) }}</div>
+          </div>
+          <div class="mcard-cell">
+            <div class="k">赠金（不可退）</div>
+            <div class="v">¥{{ Number(row.balanceGift || 0).toFixed(2) }}</div>
           </div>
           <div class="mcard-cell">
             <div class="k">最近下单</div>
@@ -171,6 +175,13 @@
         </template>
         <template #balance="{ row }">
           <span class="mono">¥{{ Number(row.balance || 0).toFixed(2) }}</span>
+          <!-- 赠金不可退现,必须与本金分行标出:不然「余额 110」里有多少是门店白送的,退款时说不清 -->
+          <div
+            v-if="Number(row.balanceGift || 0) > 0"
+            class="tip"
+          >
+            含赠金 ¥{{ Number(row.balanceGift || 0).toFixed(2) }}
+          </div>
         </template>
         <template #time="{ row }">
           <div class="tip">入会 {{ row.createTime || '—' }}</div>
@@ -193,6 +204,15 @@
             @click="onAdjust(row)"
           >
             调账
+          </t-button>
+          <t-button
+            v-if="canAdjust"
+            theme="danger"
+            variant="text"
+            size="small"
+            @click="onWithdraw(row)"
+          >
+            退余额
           </t-button>
           <t-button
             v-if="canEdit"
@@ -258,6 +278,36 @@
         </div>
       </t-dialog>
 
+      <!-- 退余额:合规要求的「预付款拿得回去」通道。
+           本金清零后由门店线下付现金/微信退款给顾客,赠金一并作废(不产生现金流出)。 -->
+      <t-dialog
+        v-model:visible="withdrawVisible"
+        header="退余额"
+        width="560px"
+        :confirm-btn="{ content: '确认清零并退款', theme: 'danger' }"
+        @confirm="onWithdrawConfirm"
+      >
+        <div
+          v-if="withdrawRow"
+          class="adjust"
+        >
+          <div class="adjust-cur">
+            本金余额（需付给顾客）：<b>¥{{ Number(withdrawRow.balance || 0).toFixed(2) }}</b>
+          </div>
+          <div class="adjust-cur">
+            赠金余额（作废，不退）：<b>¥{{ Number(withdrawRow.balanceGift || 0).toFixed(2) }}</b>
+          </div>
+          <t-input
+            v-model="withdrawReason"
+            label="原因"
+            placeholder="必填，如 顾客申请退卡 / 会员注销前清算"
+          />
+          <div class="txn-title tip">
+            确认后该会员储值余额清零，请按上方本金金额向顾客付款。操作会记入审计与储值流水。
+          </div>
+        </div>
+      </t-dialog>
+
       <div class="pager">
         <t-pagination
           v-model="query.pageNum"
@@ -287,6 +337,7 @@ import {
   listMembers,
   providerText,
   setMemberStatus,
+  withdrawMemberWallet,
   WALLET_TXN_LABELS
 } from '@dining/api';
 import type { MemberRow, WalletTxnRow } from '@dining/api';
@@ -369,6 +420,51 @@ async function onAdjustConfirm(): Promise<void> {
     await adjustMemberWallet({ customerId: row.customerId, amount, reason: adjustReason.value.trim() });
     MessagePlugin.success('调账成功');
     adjustVisible.value = false;
+    await load();
+  } catch {
+    /* 失败已由拦截器统一 toast */
+  }
+}
+
+// ---- 退余额(合规:顾客的预付款必须拿得回去) ----
+const withdrawVisible = ref(false);
+const withdrawRow = ref<MemberRow | null>(null);
+const withdrawReason = ref('');
+
+/** 打开退余额弹窗。余额为 0 时后端也会拒绝,这里提前挡一次省得白跑一趟。 */
+function onWithdraw(row: MemberRow): void {
+  if (Number(row.balance || 0) <= 0 && Number(row.balanceGift || 0) <= 0) {
+    MessagePlugin.warning('该会员储值余额为 0，无需退款');
+    return;
+  }
+  withdrawRow.value = row;
+  withdrawReason.value = '';
+  withdrawVisible.value = true;
+}
+
+async function onWithdrawConfirm(): Promise<void> {
+  const row = withdrawRow.value;
+  if (!row) return;
+  if (!withdrawReason.value.trim()) {
+    MessagePlugin.warning('请填写退余额原因');
+    return;
+  }
+  // 钱要真的出店,二次确认交给 DialogPlugin 而不是只用弹窗里的按钮。
+  const confirmed = await new Promise<boolean>(resolve => {
+    DialogPlugin.confirm({
+      header: '确认退余额',
+      body: `将清零该会员的储值余额，请向顾客支付本金 ¥${Number(row.balance || 0).toFixed(2)}。确认已付款？`,
+      confirmBtn: { content: '已付款', theme: 'danger' },
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+      onClose: () => resolve(false)
+    });
+  });
+  if (!confirmed) return;
+  try {
+    const res = await withdrawMemberWallet({ customerId: row.customerId, reason: withdrawReason.value.trim() });
+    MessagePlugin.success(res.msg || '余额已清零');
+    withdrawVisible.value = false;
     await load();
   } catch {
     /* 失败已由拦截器统一 toast */

@@ -53,8 +53,11 @@ var routePerms = map[string]string{
 	"POST /api/admin/member/status": "member:edit",
 
 	// ---- 储值(动钱,与会员查看分开收口) ----
-	"GET /api/admin/member/wallet":        "wallet:view",
-	"POST /api/admin/member/wallet/adjust": "wallet:edit",
+	// 退余额是「钱出店」的操作,与调账同级:它需要门店真的把现金/微信款付给顾客,
+	// 权限放给同一批人,避免「能调账的人不能退款」这种半吊子配置。
+	"GET /api/admin/member/wallet":           "wallet:view",
+	"POST /api/admin/member/wallet/adjust":   "wallet:edit",
+	"POST /api/admin/member/wallet/withdraw": "wallet:edit",
 
 	// ---- 角色与权限 ----
 	"GET /api/admin/role/list":    "role:view",

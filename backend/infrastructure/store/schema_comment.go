@@ -44,8 +44,9 @@ var tableComments = map[string]string{
 	"tb_user":              "员工账号",
 	"tb_customer":          "会员档案(账号与登录方式解耦)",
 	"tb_customer_identity": "会员登录方式",
-	"tb_wallet":            "会员储值账户",
+	"tb_wallet":            "会员储值账户(本金与赠金分桶)",
 	"tb_wallet_txn":        "储值流水(只增不改)",
+	"tb_wallet_agreement":  "储值规则同意留痕(合规:发卡须明示章程)",
 	"tb_recharge":          "储值充值单",
 	"tb_remember_token":    "记住登录令牌",
 	"tb_image":             "图片内容(菜品图/收款码随库走)",
@@ -355,7 +356,8 @@ var columnComments = map[string]string{
 
 	// ---- tb_wallet 储值账户 ----
 	"tb_wallet.customer_id":    "会员ID(主键,1:1)",
-	"tb_wallet.balance":        "余额(分,只由事务内DAO增减,守卫不为负)",
+	"tb_wallet.balance":        "本金余额(分,只由事务内DAO增减,守卫不为负,可退)",
+	"tb_wallet.balance_gift":   "赠金余额(分,充值赠送/活动赠送,只可消费不可退现)",
 	"tb_wallet.total_recharge": "累计充值(分)",
 	"tb_wallet.total_consume":  "累计消费(分)",
 	"tb_wallet.total_gift":     "累计赠送(分)",
@@ -363,9 +365,11 @@ var columnComments = map[string]string{
 	// ---- tb_wallet_txn 储值流水 ----
 	"tb_wallet_txn.txn_id":        "流水ID(自增主键)",
 	"tb_wallet_txn.customer_id":   "会员ID",
-	"tb_wallet_txn.biz_type":      "业务类型 recharge/consume/refund/gift/adjust",
+	"tb_wallet_txn.biz_type":      "业务类型 recharge/consume/refund/gift/gift_void/gift_back/adjust/withdraw",
 	"tb_wallet_txn.amount":        "变动金额(分,带符号,正入负出)",
-	"tb_wallet_txn.balance_after": "变动后余额(分,逐行累加必须等于当前余额)",
+	"tb_wallet_txn.balance_after": "变动后本金余额(分,逐行累加必须等于当前本金)",
+	"tb_wallet_txn.gift_amount":   "本笔变动中赠金部分(分,带符号;退款据此算可退本金)",
+	"tb_wallet_txn.gift_after":    "变动后赠金余额(分)",
 	"tb_wallet_txn.order_no":      "关联订单号",
 	"tb_wallet_txn.payment_no":    "关联支付单号",
 	"tb_wallet_txn.reason":        "变动原因",
@@ -375,11 +379,17 @@ var columnComments = map[string]string{
 	"tb_recharge.recharge_id":      "充值单ID(自增主键)",
 	"tb_recharge.recharge_no":      "充值单号(R开头,与订单D开头靠前缀分流回调)",
 	"tb_recharge.customer_id":      "会员ID",
-	"tb_recharge.amount":           "充值金额(分)",
-	"tb_recharge.status":           "0待支付 1已入账(回调条件更新做幂等)",
+	"tb_recharge.amount":           "充值金额(分,本金)",
+	"tb_recharge.gift_amount":      "本笔赠送额(分,建单时冻结,入账进赠金桶)",
+	"tb_recharge.status":           "0待支付 1已入账(回调条件更新做幂等) 2已关闭(终态,回调不入账)",
 	"tb_recharge.channel":          "支付渠道",
 	"tb_recharge.channel_trade_no": "渠道交易号",
 	"tb_recharge.pay_time":         "支付时间",
+
+	// ---- tb_wallet_agreement 储值规则同意留痕 ----
+	"tb_wallet_agreement.customer_id": "会员ID(主键,1:1)",
+	"tb_wallet_agreement.rules_ver":   "同意的规则版本号",
+	"tb_wallet_agreement.agreed_time": "同意时间",
 
 	// ---- tb_remember_token 记住登录令牌 ----
 	"tb_remember_token.token_id":       "令牌ID(自增主键)",

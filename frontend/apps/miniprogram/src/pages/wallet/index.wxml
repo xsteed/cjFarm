@@ -1,4 +1,4 @@
-<!-- 我的钱包：余额 + 充值（管理端开关控制）+ 储值流水 -->
+<!-- 我的钱包：余额（本金/赠金）+ 充值（含规则确认与限额）+ 储值流水 -->
 <view class="page">
   <view
     wx:if="{{loading}}"
@@ -21,60 +21,131 @@
   </view>
 
   <block wx:else>
-    <!-- 余额卡 -->
+    <!-- 余额卡：本金与赠金分开显示（赠金不可退现，混在一起必然产生退款纠纷） -->
     <view class="balance-card">
       <view class="bal-label">储值余额（元）</view>
       <view class="bal-num">{{balanceText}}</view>
+      <view
+        wx:if="{{hasGift}}"
+        class="bal-gift"
+      >
+        <text class="gift-tag">赠金</text>
+        <text class="gift-num">{{giftText}}</text>
+        <text class="gift-tip">仅可消费，不可退现</text>
+      </view>
       <view class="bal-stats">
         <view class="stat">
-          <view class="stat-num">{{info.totalRecharge}}</view>
+          <view class="stat-num">{{totalRechargeText}}</view>
           <view class="stat-label">累计充值</view>
         </view>
         <view class="stat">
-          <view class="stat-num">{{info.totalConsume}}</view>
+          <view class="stat-num">{{totalConsumeText}}</view>
           <view class="stat-label">累计消费</view>
         </view>
         <view class="stat">
-          <view class="stat-num">{{info.totalGift}}</view>
+          <view class="stat-num">{{totalGiftText}}</view>
           <view class="stat-label">累计赠送</view>
         </view>
       </view>
     </view>
 
-    <!-- 充值区：管理端开关 + 微信支付任一未开通就整块隐藏 -->
+    <!-- 实名提示：未绑定手机号时余额上限按不记名卡执行（默认 1000 元） -->
+    <view
+      wx:if="{{needRealname}}"
+      class="notice"
+      bindtap="onGoBindPhone"
+    >
+      <view class="notice-title">绑定手机号可提升余额上限</view>
+      <view class="notice-body">
+        未绑定手机号为不记名账户，余额上限 {{info.balanceMax}} 元；完成实名后按记名账户执行更高额度。去「我的」绑定 →
+      </view>
+    </view>
+
+    <!-- 充值区：后端开关 + 微信支付开通时才出现 -->
     <view
       wx:if="{{canRecharge}}"
       class="panel"
     >
       <view class="panel-title">充值</view>
-      <view class="amount-grid">
-        <view
-          wx:for="{{[100,200,500,1000]}}"
-          wx:key="*this"
-          class="amount-cell {{preset === item ? 'on' : ''}}"
-          data-amount="{{item}}"
-          bindtap="onPickPreset"
-        >
-          {{item}} 元
+
+      <!-- 未同意规则：只给「阅读并同意」一个出口，不展示金额选择 -->
+      <block wx:if="{{!agreed}}">
+        <view class="rules-box">
+          <view class="rules-head">《储值规则》</view>
+          <view
+            wx:for="{{rulesLines}}"
+            wx:key="*this"
+            class="rules-line"
+          >
+            {{item}}
+          </view>
         </view>
-      </view>
-      <view class="custom-row">
-        <input
-          class="custom-input"
-          type="number"
-          placeholder="自定义金额（整数元）"
-          value="{{customAmount}}"
-          bindinput="onCustomInput"
-        />
-      </view>
-      <button
-        class="btn-primary"
-        disabled="{{recharging}}"
-        bindtap="onRecharge"
-      >
-        {{recharging ? '拉起支付…' : '微信支付'}}
-      </button>
-      <view class="panel-tip">充值后可用于到店消费抵扣；余额不设有效期，注销会员时未消费余额按门店规则处理。</view>
+        <button
+          class="btn-primary"
+          bindtap="onRecharge"
+        >
+          阅读并同意《储值规则》
+        </button>
+        <view class="panel-tip">同意后方可充值，本店将保留你的同意记录。</view>
+      </block>
+
+      <block wx:else>
+        <view class="amount-grid">
+          <view
+            wx:for="{{[100,200,500,1000]}}"
+            wx:key="*this"
+            class="amount-cell {{preset === item ? 'on' : ''}}"
+            data-amount="{{item}}"
+            bindtap="onPickPreset"
+          >
+            {{item}} 元
+          </view>
+        </view>
+        <view class="custom-row">
+          <input
+            class="custom-input"
+            type="number"
+            placeholder="自定义金额（整数元）"
+            value="{{customAmount}}"
+            bindinput="onCustomInput"
+          />
+        </view>
+        <button
+          class="btn-primary"
+          disabled="{{recharging}}"
+          bindtap="onRecharge"
+        >
+          {{recharging ? '拉起支付…' : '微信支付'}}
+        </button>
+        <view class="panel-tip">{{limitTip}}</view>
+        <view
+          class="rules-toggle"
+          bindtap="onToggleRules"
+        >
+          《储值规则》{{rulesOpen ? '收起' : '展开'}}
+        </view>
+        <view
+          wx:if="{{rulesOpen}}"
+          class="rules-box"
+        >
+          <view
+            wx:for="{{rulesLines}}"
+            wx:key="*this"
+            class="rules-line"
+          >
+            {{item}}
+          </view>
+        </view>
+      </block>
+    </view>
+
+    <!-- 已关闭自助充值但有余额：说明余额照常可用，避免顾客以为钱被锁住 -->
+    <view
+      wx:if="{{!canRecharge && info.balance > 0}}"
+      class="notice"
+    >
+      <view class="notice-title">储值余额可正常使用</view>
+      <view class="notice-body">本店暂未开放线上自助充值，已有余额可继续用于结账抵扣，也可联系门店办理退余额。</view>
     </view>
 
     <!-- 流水 -->
@@ -93,7 +164,16 @@
       >
         <view class="txn-main">
           <view class="txn-type">{{item.typeText}}</view>
-          <view class="txn-sub">{{item.timeText}}<text wx:if="{{item.orderNo}}"> · {{item.orderNo}}</text></view>
+          <view class="txn-sub">
+            {{item.timeText}}
+            <text wx:if="{{item.orderNo}}"> · {{item.orderNo}}</text>
+            <text
+              wx:if="{{item.giftText}}"
+              class="txn-gift"
+            >
+              {' '}· {{item.giftText}}
+            </text>
+          </view>
         </view>
         <view class="txn-right">
           <view class="txn-amt {{item.amountClass}}">{{item.amountText}}</view>
