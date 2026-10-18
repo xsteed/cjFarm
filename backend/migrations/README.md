@@ -9,57 +9,62 @@ SQLite（默认、单机）与 MySQL（多实例 / 高并发部署）。
 ```
 backend/migrations/
 ├── README.md                                              # 本说明
-├── full/                                                  # 全量脚本：全新部署，一次建好最终结构 + 存量数据
-│   ├── sqlite/
-│   │   ├── schema.sql                                     #   建表 DDL（22 表 + 34 索引）
-│   │   └── seed.sql                                       #   种子 / 存量数据
-│   └── mysql/
-│       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
-│       └── seed.sql
-└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 10 个文件、编号 26~35，文件名一致）
+└── full/                                                  # 全量脚本：全新部署，一次建好最终结构 + 存量数据
     ├── sqlite/
-    │   ├── 20260920020000_tb_order_urge_create.sql                    # 01 催菜/加菜记录表
-    │   ├── 20260920021000_tb_payment_refund_create.sql                # 02 支付/退款流水表
-    │   ├── 20260920022000_tb_order_add_pay_columns.sql                # 03 订单支付列
-    │   ├── 20260920023000_tb_order_add_settle_credit_columns.sql      # 04 结算/挂账列
-    │   ├── 20260921000000_tb_user_role_create.sql                     # 05 员工与角色表（多员工 + 权限）
-    │   ├── 20260922000000_tb_oper_log_create.sql                      # 06 操作日志表（审计留痕）
-    │   ├── 20260922010000_tb_remember_token_create.sql                # 07 记住我令牌表（7/30 天免登录）
-    │   ├── 20260922020000_tb_remember_token_add_ua.sql                # 08 令牌补环境指纹列 ua
-    │   ├── 20260923000000_tb_print_job_create.sql                     # 09 本地打印代理任务队列（云部署 + 门店 9100 网络机）
-    │   ├── 20260924000000_tb_order_tb_refund_add_columns.sql          # 10 结账前状态快照 + 重复支付退回标记
-    │   ├── 20260924000000_tb_print_agent_create.sql                   # 11 本地打印代理身份表
-    │   ├── 20260924010000_tb_table_add_table_code.sql                 # 12 桌台点餐稳定码列（补与运行时迁移同义的历史脚本）
-    │   ├── 20260925000000_tb_remember_token_add_token_prefix.sql      # 13 令牌补设备识别前缀列 token_prefix
-    │   ├── 20260926000000_tb_order_tb_refund_add_report_indexes.sql   # 14 报表查询索引补齐（订单/退款按时间）
-    │   ├── 20261007010000_tb_order_item_add_batch_no_client_request_id.sql # 15 明细补「加菜批次」与「幂等键」列
-    │   ├── 20261007020000_tb_order_add_unpaid_index.sql               # 16 订单补「未结账单判定」组合索引
-    │   ├── 20261008000000_tb_dish_add_sold_out.sql                    # 17 菜品补「售罄」标记
-    │   ├── 20261008001000_tb_spec_add_stock.sql                       # 18 规格补「库存」列
-    │   ├── 20261008120000_tb_order_item_add_gift_columns.sql          # 19 订单明细赠送（送菜）标记列
-    │   ├── 20261008150000_tb_customer_create.sql                      # 20 小程序顾客会员档案表
-    │   ├── 20261008151000_tb_order_add_customer_id.sql                # 21 订单补会员归属列
-    │   ├── 20261009000000_tb_order_add_pickup_no.sql                  # 22 订单营业日与当日取餐号
-    │   ├── 20261009010000_tb_table_add_lock_status.sql                # 23 桌台补「人工可用性状态」列
-    │   ├── 20261010000000_tb_dish_add_signature.sql                   # 24 菜品补「招牌菜」标记
-    │   └── 20261013000000_tb_config_fix_shop_name_dot.sql             # 25 店铺名统一为「品牌 · 标语」
-│   ├── 20261015000000_tb_order_add_meal_time_columns.sql          # 26 订单用餐起止时间落库（incr/README.md 收录）
-│   ├── 20261015010000_tables_add_timestamp_columns.sql            # 27 11 张表补齐 create_time / update_time
-│   ├── 20261015020000_times_autofill_triggers.sql                 # 28 时间列改由数据库自动维护（触发器 / ON UPDATE）
-│   ├── 20261016000000_tb_print_log_add_snapshot_columns.sql       # 29 打印台账补「票据标识 + 票面快照」三列
-│   ├── 20261017000000_tb_order_drop_legacy_time_columns.sql       # 30 删除 tb_order 遗留 begin_time / end_time
-│   ├── 20261017010000_tb_visit_log_visitor_daily_create.sql       # 31 站点访问统计三张表（明细 / 访客 / 日聚合）
-│   ├── 20261018000000_tb_customer_identity_create.sql              # 32 顾客会员身份表（账号与登录方式解耦）
-│   ├── 20261018010000_tb_customer_drop_openid.sql                  # 33 退役 tb_customer.openid（登录走身份表）
-│   ├── 20261018020000_tb_order_add_viewed_at.sql                    # 34 订单补「商家首次操作时间」viewed_at（新单角标）
-│   └── 20261018030000_tb_config_member_enabled.sql                   # 35 会员功能总闸 member_enabled（管理端独立开关，默认关）
-    └── mysql/                                             # 与 sqlite/ 同名同序，内容按 MySQL 语法适配
-        └──（同上 10 个文件）
+    │   ├── schema.sql                                     #   建表 DDL（22 表 + 34 索引）
+    │   ├── seed.sql                                       #   种子 / 存量数据
+    │   └── 2026*.sql                                      #   增量脚本（原 incr/，编号 26~36 共 11 个，含 28 号 SQLite 专属触发器脚本）
+    └── mysql/
+        ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
+        ├── seed.sql
+        └── 2026*.sql                                      #   增量脚本 10 个（与 sqlite/ 同名同序，28 号为 SQLite 专属、MySQL 无此文件）
 ```
 
-> 下文「归属脚本」中的 incr 编号即上表 01~25 的序号。
+增量脚本对照表（**01~25 号未落盘**，仅作历史编号对照；**26~36 号已落盘**，
+位于 `full/{sqlite,mysql}/`，文件名以时间戳开头）：
 
-> 另有 `tb_print_log`（打印日志）与 `tb_printer` 的飞鹅云字段，因早于 `incr/` 机制建立，
+| # | 时间戳 | 脚本名（`_表名_动作`） | 说明 |
+|---|---|---|---|
+| 01 | 20260920020000 | `tb_order_urge_create` | 催菜/加菜记录表 |
+| 02 | 20260920021000 | `tb_payment_refund_create` | 支付/退款流水表 |
+| 03 | 20260920022000 | `tb_order_add_pay_columns` | 订单支付列 |
+| 04 | 20260920023000 | `tb_order_add_settle_credit_columns` | 结算/挂账列 |
+| 05 | 20260921000000 | `tb_user_role_create` | 员工与角色表（多员工 + 权限） |
+| 06 | 20260922000000 | `tb_oper_log_create` | 操作日志表（审计留痕） |
+| 07 | 20260922010000 | `tb_remember_token_create` | 记住我令牌表（7/30 天免登录） |
+| 08 | 20260922020000 | `tb_remember_token_add_ua` | 令牌补环境指纹列 ua |
+| 09 | 20260923000000 | `tb_print_job_create` | 本地打印代理任务队列（云部署 + 门店 9100 网络机） |
+| 10 | 20260924000000 | `tb_order_tb_refund_add_columns` | 结账前状态快照 + 重复支付退回标记 |
+| 11 | 20260924000000 | `tb_print_agent_create` | 本地打印代理身份表 |
+| 12 | 20260924010000 | `tb_table_add_table_code` | 桌台点餐稳定码列（补与运行时迁移同义的历史脚本） |
+| 13 | 20260925000000 | `tb_remember_token_add_token_prefix` | 令牌补设备识别前缀列 token_prefix |
+| 14 | 20260926000000 | `tb_order_tb_refund_add_report_indexes` | 报表查询索引补齐（订单/退款按时间） |
+| 15 | 20261007010000 | `tb_order_item_add_batch_no_client_request_id` | 明细补「加菜批次」与「幂等键」列 |
+| 16 | 20261007020000 | `tb_order_add_unpaid_index` | 订单补「未结账单判定」组合索引 |
+| 17 | 20261008000000 | `tb_dish_add_sold_out` | 菜品补「售罄」标记 |
+| 18 | 20261008001000 | `tb_spec_add_stock` | 规格补「库存」列 |
+| 19 | 20261008120000 | `tb_order_item_add_gift_columns` | 订单明细赠送（送菜）标记列 |
+| 20 | 20261008150000 | `tb_customer_create` | 小程序顾客会员档案表 |
+| 21 | 20261008151000 | `tb_order_add_customer_id` | 订单补会员归属列 |
+| 22 | 20261009000000 | `tb_order_add_pickup_no` | 订单营业日与当日取餐号 |
+| 23 | 20261009010000 | `tb_table_add_lock_status` | 桌台补「人工可用性状态」列 |
+| 24 | 20261010000000 | `tb_dish_add_signature` | 菜品补「招牌菜」标记 |
+| 25 | 20261013000000 | `tb_config_fix_shop_name_dot` | 店铺名统一为「品牌 · 标语」 |
+| 26 | 20261015000000 | `tb_order_add_meal_time_columns` | 订单用餐起止时间落库（`meal_start_time` / `meal_end_time`）并回填历史行 |
+| 27 | 20261015010000 | `tables_add_timestamp_columns` | 11 张缺 `create_time` / `update_time` 的表补齐这两个列 |
+| 28 | 20261015020000 | `times_autofill_triggers`（仅 SQLite） | 时间列改由数据库自动维护：SQLite 建 22 个 `update_time` 触发器；MySQL 无对应文件（建表语句原生 `DEFAULT`/`ON UPDATE CURRENT_TIMESTAMP` 承担） |
+| 29 | 20261016000000 | `tb_print_log_add_snapshot_columns` | 打印台账补「票据标识 + 票面快照」三列，老记录留空、读侧回落重算 |
+| 30 | 20261017000000 | `tb_order_drop_legacy_time_columns` | 删除 `tb_order` 遗留的 `begin_time` / `end_time` 两列 |
+| 31 | 20261017010000 | `tb_visit_log_visitor_daily_create` | 站点访问统计三张表：`tb_visit_log` / `tb_visitor` / `tb_visit_daily` |
+| 32 | 20261018000000 | `tb_customer_identity_create` | 顾客会员身份表（账号与登录方式解耦），存量 `openid` 搬迁为 `provider='wx_mp'` 身份记录 |
+| 33 | 20261018010000 | `tb_customer_drop_openid` | 退役 `tb_customer.openid`（32/33 配套：只跑 32 不跑 33 时第二个登录方式仍会被唯一索引挡住；常规升级由启动时 `store.migrateCustomerOpenid` 幂等完成） |
+| 34 | 20261018020000 | `tb_order_add_viewed_at` | 订单补「商家首次操作时间」`viewed_at`（新单角标），存量订单回填为已操作 |
+| 35 | 20261018030000 | `tb_config_member_enabled` | 会员功能总闸 `member_enabled`（默认关）：管理端独立开关，控制小程序「我的」入口显隐与会员登录/注册放行 |
+| 36 | 20261018040000 | `tb_visit_log_add_terminal_columns` | 访问明细补「终端与来源」六列（`ip` / `city` / `os` / `browser` / `device` / `model`），历史行留空不回填 |
+
+> 下文「归属脚本」中的 incr 编号即上述序号（01~25 为历史编号，26~36 为实际落盘文件）。
+
+> 另有 `tb_print_log`（打印日志）与 `tb_printer` 的飞鹅云字段，因早于增量脚本机制建立，
 > 老库升级由 `store.alterCols` 在启动时自动补列/建表，`full/` 脚本已包含最终结构
 > （`tb_print_log` 的「票据标识 + 票面快照」三列另见 incr 29，`alterCols` 与脚本等价幂等）。
 
@@ -68,22 +73,32 @@ backend/migrations/
 | 目录 | 规则 | 示例 |
 |---|---|---|
 | `full/` | **通用命名**：`schema.sql` 为建表脚本；`seed.sql` 为种子 / 存量数据 | `schema.sql`、`seed.sql`（SQLite 库为 `data/dining.db`，MySQL 库为 `dining`） |
-| `incr/` | **`日期时间_表名_动作.sql`**，日期时间为 `YYYYMMDDHHMMSS` | `20260920022000_tb_order_add_pay_columns.sql` |
+| `full/{sqlite,mysql}/` 增量脚本 | **`YYYYMMDDHHMMSS_表名_动作.sql`**（原 `incr/` 规范），时间戳 14 位、**精确到秒** | `20260920022000_tb_order_add_pay_columns.sql` |
 
-- **第一层按数据库产品分目录**（`sqlite/`、`mysql/`），两套文件名完全一致，
-  便于对照排查；切换数据库时执行对应目录下的脚本即可。
-- 时间前缀保证**字典序 = 执行顺序**，新增脚本只需取「晚于现有最大时间」的时间戳。
+增量脚本（原 `incr/` 机制，**已封存、不再新增脚本**）时间前缀的**硬性约束**
+（保证「文件名字典序 = 执行顺序」，缺一不可）：
+
+1. 时间戳固定 14 位 `YYYYMMDDHHMMSS`，精确到**秒**；靠前补零，不得缩位
+   （如不得用 `YYYYMMDDHHMM` 十二位，否则同小时内多个脚本无法排序）。
+2. 同一目录（`sqlite/`、`mysql/` 各自）内时间戳**全局唯一且严格递增**：
+   禁止两个脚本共用同一时间前缀 —— 字典序并列时执行顺序不确定。
+3. 已落盘文件的时间戳与文件名**不得再改**（外部环境可能已按旧名执行过）。
+4. 两库文件名保持一致，仅方言专属脚本例外（如 28 号 SQLite 触发器脚本 MySQL 无对应文件），
+   例外必须在目录树注释中说明。
+
+- **第一层按数据库产品分目录**（`sqlite/`、`mysql/`），便于对照排查；切换数据库时执行对应目录下的脚本即可。
 - 常用动作词：`create`（建表/建索引）、`add_xxx_columns`（加列）、`drop_xxx`（删列/删表）、
   `backfill`（历史数据回填）、`fix_xxx`（数据修正）。
 - 一次变更涉及多张表时，表名部分用下划线连接（如 `tb_payment_refund_create`）。
-- 本仓库从 **26 号（`20261015000000`）起** 才真正落 `incr/` 文件；此前 01~25 号只在
-  下表的历史演进清单里出现，实际升级一直依赖后端启动时 `store.alterCols` 自动补列。
-  已收录脚本（26 起）的说明见 [`incr/README.md`](./incr/README.md)。
+- 01~25 号为历史演进编号（见上文对照表），从未落盘，实际升级一直依赖后端启动时
+  `store.alterCols` 自动补列；26~36 号为实际落盘文件，位于 `full/{sqlite,mysql}/`，
+  逐条说明见上文对照表；
+  其中的「编号」按时间戳排序连续递增，仅作行文索引，实际执行顺序一律以时间戳为准。
 
-> **脚本是生成的，不是手写的**：`full/` 下 4 个文件由
+> **脚本是生成的，不是手写的**：`full/` 下 `schema.sql` / `seed.sql` 由
 > `go run ./cmd/gensql` 从 `internal/store` 的表结构与种子数据定义自动生成
 > （单一事实来源，避免两库脚本各自漂移）。改结构流程见第六节。
-> `incr/` 下的脚本为手工编写的历史演进记录。
+> `full/{sqlite,mysql}/` 下带时间戳前缀的脚本（原 `incr/`）为手工编写的历史演进记录。
 
 ## 二、全新部署（full）
 
@@ -115,23 +130,31 @@ mysql -u root -p dining < migrations/full/mysql/seed.sql
 > **例外**：MySQL 的 `CREATE INDEX` 没有 `IF NOT EXISTS` 语法，重复执行会报
 > `Duplicate key name`，属正常现象、可忽略。
 
-## 三、老库升级（incr）
+## 三、老库升级（增量脚本）
 
-按文件名时间顺序依次执行。
+增量脚本与全量脚本同目录（`full/{sqlite,mysql}/`），文件名以 14 位时间戳开头，
+按文件名时间顺序依次执行。**glob 用 `2*.sql` 只挑增量脚本**——
+`schema.sql` / `seed.sql` 是全新部署专用，不要混入老库升级流程。
 
 **SQLite**
 
 ```bash
 cd backend
-for f in migrations/incr/sqlite/*.sql; do sqlite3 data/dining.db < "$f"; done
+for f in migrations/full/sqlite/2*.sql; do sqlite3 data/dining.db < "$f"; done
 ```
 
 **MySQL**
 
 ```bash
 cd backend
-for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
+for f in migrations/full/mysql/2*.sql; do mysql -u dining -p dining < "$f"; done
 ```
+
+> ⚠️ 28 号脚本（`20261015020000_times_autofill_triggers.sql`，仅 SQLite）的 MySQL
+> 等价改造（`DATETIME` + `DEFAULT`/`ON UPDATE`）已内联在 `full/mysql/schema.sql`；
+> 若需在老库手工执行同类变更，注意：先清洗空串与 `'0000-00-00'` 历史零值；
+> `CURRENT_TIMESTAMP` 取会话时区，执行前确认 `time_zone` 与部署时区一致；
+> 大表（`tb_order` / `tb_oper_log`）的 `MODIFY` 会重建表，请低峰执行。
 
 > ⚠️ `add_*_columns` 系列使用 `ALTER TABLE ADD COLUMN`，**两种数据库都不支持**
 > `IF NOT EXISTS`。列已存在时会报 `duplicate column name` / `Duplicate column name`，
@@ -143,7 +166,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 >
 > ⚠️ `drop_*` 系列（如 30 号删 `tb_order.begin_time` / `end_time`）同样无
 > `IF EXISTS` 语法，重复执行报 `no such column` / `check that column/key exists`，
-> 属正常现象、可忽略（详见 `incr/README.md` 的幂等性说明）。
+> 属正常现象、可忽略（详见本节开头的两条 ⚠️ 幂等性说明）。
 
 ## 四、表清单（共 29 张）
 
@@ -171,7 +194,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 20 | `tb_image` | 图片内容表（菜品图 / 收款码 / 上传图二进制） | 启动时写入出厂图 | full |
 | 21 | `tb_day_seq` | 按营业日维护「当日取餐号」的计数器 | 运行时产生 | full + incr 22 |
 | 22 | `tb_customer` | 会员档案（账号，与登录方式无关；用于「我的订单」与订单归属）。`openid` 列已由 incr 33 删除 | 运行时产生 | full + incr 20/21/33 |
-| 23 | `tb_visit_log` | 访问明细（站点 PV/UV 打点，「待办」性质，按保留天数清理） | 运行时产生 | full + incr 31/32 |
+| 23 | `tb_visit_log` | 访问明细（站点 PV/UV 打点，「待办」性质，按保留天数清理） | 运行时产生 | full + incr 31/36 |
 | 24 | `tb_visitor` | 访客注册表（独立访客档案，「新访客」精确口径，长期保留） | 运行时产生 | full + incr 31 |
 | 25 | `tb_visit_daily` | 日聚合台账（每日每渠道 PV/UV/新访客，报表主读，长期保留） | 运行时产生 | full + incr 31 |
 | 26 | `tb_customer_identity` | 会员登录方式（provider + external_id 绑定，账号与登录方式解耦；为 App/网站预留） | 运行时产生 | full + incr 32 |
@@ -273,9 +296,12 @@ cd backend
 # 1) 修改 internal/store 里的表结构 / 种子数据定义
 # 2) 重新生成两库的 full 脚本
 go run ./cmd/gensql
-# 3) 手工补一个 incr/ 脚本（sqlite + mysql 各一份），并跑测试
+# 3) 跑测试
 go test ./...
 ```
+
+> 增量脚本机制（原 `incr/`）**已收编**进 `full/{sqlite,mysql}/`（时间戳前缀脚本），不再手工新增；
+> 老库的结构升级由后端启动时的 `store.alterCols` 自动补列/建表（幂等，与 full 脚本等价）。
 
 `go run ./cmd/gensql -check` 可用于 CI：只校验磁盘脚本是否与 Go 定义一致，不写盘。
 `internal/store/sqlgen_test.go` 也会在 `go test` 时自动做这项一致性校验
@@ -308,7 +334,7 @@ go test ./...
    不会覆盖应用显式写入的值 —— 与 MySQL 的 `ON UPDATE` 语义一致。
 
    例外：走 REPLACE 写入的 `tb_config` 写不了 `create_time`（整行替换会冲掉首次
-   落库时间），详见 [`incr/README.md`](./incr/README.md)。
+   落库时间）——只在种子语句里写一次 `create_time`，之后改配置只推进 `update_time`。
    用餐时长对应的两个落库列是 `tb_order` 的 `meal_start_time` / `meal_end_time`
    （下单写起点、走到终态即 4 已完成 / 5 已取消写终点；撤销结算时终点清空）。
    老库由 `store.alterCols` 自动补列 + `backfillMealTimes()` 按 `create_time` /
@@ -318,8 +344,8 @@ go test ./...
    存量图片由后端启动时自动导入。业务表仍保存 `/uploads/<文件名>` 虚拟路径（该前缀由
    后端 `store.UploadURLPrefix` 统一定义，启动时会把老库里的 `/picture/` 前缀自动改写）。
 4. **软删除**：业务表用 `del_flag`（`'0'` 正常 / `'1'` 删除），查询需带 `del_flag='0'`。
-5. **full 与 incr 的关系**：`full/schema.sql` 始终体现**最终结构**（已内联历史上所有
-   `ALTER TABLE` 追加的列）；`incr/` 则保留**逐步演进过程**，供老库按序升级。
+5. **full 与增量脚本的关系**：`full/schema.sql` 始终体现**最终结构**（已内联历史上所有
+   `ALTER TABLE` 追加的列）；同目录的时间戳前缀脚本（原 `incr/`）则保留**逐步演进过程**，供老库按序升级。
 6. **主密钥别丢**：`tb_config` 中的敏感项是 AES-256-GCM 密文，主密钥在
    `backend/data/master.key`。搬迁数据库时必须把它一并带走，否则密文无法解密。
 7. **加列必须带 `AFTER`**（仅 MySQL 增量脚本）：`ALTER TABLE ... ADD COLUMN ... AFTER <已有列>`
@@ -327,7 +353,7 @@ go test ./...
    MySQL 会把列追加到表**末尾**，导致 `store.alterCols` 启动补列后的列顺序与全量建表对不上。
    `AFTER` 的取值以 `full/mysql/schema.sql` 中该列实际位置为准（如 `viewed_at AFTER meal_end_time`）。
    SQLite 不支持 `AFTER` 且加列只能追加末尾，**无需也不能写**；两库最终列顺序都以
-   `full/schema.sql` 为单一事实来源。详见 [`incr/README.md`](./incr/README.md)。
+   `full/schema.sql` 为单一事实来源。详见上文对照表 34 号脚本（`viewed_at AFTER meal_end_time`）。
 
 ### MySQL 大图写入注意
 

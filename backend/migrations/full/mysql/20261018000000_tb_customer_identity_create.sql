@@ -17,7 +17,7 @@
 --
 -- 幂等性:建表为 IF NOT EXISTS,搬迁用 NOT EXISTS 守卫(不依赖索引),重复执行零变更。
 --         MySQL 的 CREATE INDEX 没有 IF NOT EXISTS 语法,重复执行会报
---         Duplicate key name,属可忽略的正常现象(见 incr/README.md)。
+--         Duplicate key name,属可忽略的正常现象(见 migrations/README.md)。
 CREATE TABLE IF NOT EXISTS tb_customer_identity (
 	identity_id     INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
 	customer_id     INT          NOT NULL,
