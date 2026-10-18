@@ -482,7 +482,7 @@ DB_DSN=dining:密码@tcp(10.0.0.1:3306)/dining?charset=utf8mb4&parseTime=true&lo
 | `backend/internal/store/schema.go` | 表结构定义（两库共用来源） |
 | `backend/migrations/full/mysql/schema.sql` | MySQL 全量建表脚本（含建库语句） |
 | `backend/migrations/full/mysql/seed.sql` | MySQL 种子数据 |
-| `backend/migrations/incr/mysql/*.sql` | MySQL 增量升级脚本（老库用） |
+| `backend/migrations/incr/mysql/*.sql` | MySQL 增量升级脚本（老库用，正本在 `incr/`，`full/mysql/` 留同步副本） |
 | `backend/scripts/sqlite2mysql.py` | SQLite → MySQL 数据搬运脚本 |
 | `backend/cmd/gensql/` | 脚本生成器（`go run ./cmd/gensql`，改结构后重新生成两库脚本） |
 | `backend/migrations/README.md` | 迁移脚本目录说明与命名规则 |
