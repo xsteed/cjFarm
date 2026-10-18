@@ -59,6 +59,9 @@ func setupAPI(r *gin.Engine) {
 		api.GET("/customer/config", handler.CustomerSetting)
 		api.POST("/customer/order", handler.CustomerAuthOptional, handler.CustomerCreateOrder)
 		api.POST("/customer/order/append", handler.CustomerAuthOptional, handler.CustomerAppendOrder)
+		// 改就餐人数(不改菜品):人数决定茶位费,加菜接口要求明细非空,不能复用
+		// (见 service.CustomerUpdatePerson 的说明)。
+		api.POST("/customer/order/person", handler.CustomerAuthOptional, handler.CustomerUpdatePerson)
 		// 站点访问统计打点(公开):H5 点餐页与小程序启动时调用。带会员令牌则
 		// 访客升级为「会员身份」,不带则匿名;恒返回 200,失败不影响点餐
 		// (见 handler.VisitTrack 与 docs/design-docs/visit-analytics/spec.md)。
@@ -68,6 +71,9 @@ func setupAPI(r *gin.Engine) {
 		api.POST("/customer/auth/login", handler.CustomerMemberLogin)
 		api.GET("/customer/auth/profile", handler.CustomerAuthRequired, handler.CustomerMemberProfile)
 		api.GET("/customer/order/mine", handler.CustomerAuthRequired, handler.CustomerMyOrders)
+		// 历史订单详情:跨桌,归属只认会员身份(customer_id),不能用 tableId 校验
+		// —— 顾客早已离开那张桌(见 service.CustomerMyOrderDetail)。
+		api.GET("/customer/order/mine/:orderNo", handler.CustomerAuthRequired, handler.CustomerMyOrderDetail)
 		// 按单号查订单是无鉴权公开接口,且单号会出现在小票/照片/群聊里:
 		// 挂单 IP 限流兜底遍历探测(归属校验见 handler.CustomerOrderByNo)。
 		api.GET("/customer/order/no/:orderNo",
@@ -76,6 +82,9 @@ func setupAPI(r *gin.Engine) {
 		api.POST("/customer/order/urge", handler.CustomerUrgeOrder)
 		api.GET("/customer/pay/qr", handler.CustomerPayQr)
 		api.POST("/customer/pay/create", handler.PayCreate)
+		// 小程序内支付(JSAPI):服务端用 wx.login 的 code 换 openid 并签好调起参数,
+		// 前端拿参数直接调 wx.requestPayment。未开通时返回明确文案,前端降级到收款码。
+		api.POST("/customer/pay/jsapi", handler.PayJsapi)
 		api.POST("/customer/pay/notify/wxpay", handler.PayNotifyWxpay)
 		api.POST("/customer/pay/notify/alipay", handler.PayNotifyAlipay)
 		api.GET("/customer/pay/query", handler.PayQuery)

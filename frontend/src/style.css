@@ -863,7 +863,23 @@ svg.ic-svg {
   gap: 8px;
 }
 
+/* 「新」角标:商家还没点开过/操作过的新单,卡片左上角的小胶囊。
+   用品牌色实心块(而非浅色标签)是为了在一屏卡片里第一眼就能扫到 */
+.ocard-new {
+  flex-shrink: 0;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+}
+
 .ocard-no {
+  /* 让短号占满中间空间:有没有「新」角标,右侧状态标签都恒靠右 */
+  margin-right: auto;
   font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.5px;

@@ -18,7 +18,7 @@ const OrderCols = `order_id, order_no, table_id, table_no, table_name, person_co
 	settle_type, settle_time, settle_operator, settle_remark,
 	credit_status, credit_amount, credit_settle_time, credit_settle_by, paid_amount, gift_amount,
 	finish_time, order_remark, cancel_reason, create_by, create_time, update_by, update_time, remark,
-	biz_date, pickup_no, meal_start_time, meal_end_time`
+	biz_date, pickup_no, meal_start_time, meal_end_time, viewed_at`
 
 // ScanOrder 扫描一行订单记录(不含明细)。
 //
@@ -44,7 +44,7 @@ func ScanOrder(rows interface{ Scan(...interface{}) error }) (po.Order, error) {
 		&settleType, TS(&settleTime), &settleOperator, &settleRemark,
 		&o.CreditStatus, &o.CreditAmount, TS(&creditSettleTime), &creditSettleBy, &o.PaidAmount, &o.GiftAmount,
 		TS(&finishTime), &orderRemark, &cancelReason, &createBy, TS(&createTime), &updateBy, TS(&updateTime), &remark,
-		&bizDate, &o.PickupNo, TS(&mealStartTime), TS(&mealEndTime))
+		&bizDate, &o.PickupNo, TS(&mealStartTime), TS(&mealEndTime), TS(&o.ViewedAt))
 	if err != nil {
 		return o, err
 	}
@@ -83,9 +83,28 @@ func GetOrderByID(orderID int) (po.Order, error) {
 	return ScanOrder(store.DB.QueryRow(`SELECT `+OrderCols+` FROM tb_order WHERE order_id=?`, orderID))
 }
 
+// MarkOrderViewed 记录商家「第一次」查看/操作该订单的时间。
+// 条件里带 viewed_at IS NULL:只写首次时间,后续查看/操作不重复改写;
+// 也正因为带条件,重复调用是无副作用的幂等操作。
+func MarkOrderViewed(orderID int) error {
+	_, err := store.DB.Exec(`UPDATE tb_order SET viewed_at=? WHERE order_id=? AND viewed_at IS NULL`,
+		store.Now(), orderID)
+	return err
+}
+
 // GetOrderByNo 按订单号查询订单。
 func GetOrderByNo(orderNo string) (po.Order, error) {
 	return ScanOrder(store.DB.QueryRow(`SELECT `+OrderCols+` FROM tb_order WHERE order_no=?`, orderNo))
+}
+
+// GetOrderByNoAndCustomer 按单号 + 会员归属查订单(会员「我的订单」详情用)。
+//
+// 为什么必须有这一条:顾客端已登录后看的是**跨桌**历史订单,不能像点餐时那样
+// 用 tableId 证明归属(顾客早就离开那张桌了)。缺了 customer_id 条件,等于让任何
+// 登录用户凭单号遍历他人订单 —— 单号会出现在小票、照片与群聊里。
+func GetOrderByNoAndCustomer(orderNo string, customerID int) (po.Order, error) {
+	return ScanOrder(store.DB.QueryRow(
+		`SELECT `+OrderCols+` FROM tb_order WHERE order_no=? AND customer_id=?`, orderNo, customerID))
 }
 
 // bizDateGuardSQL 生成「营业日隔离」条件片段:只认 guardBizDate 当天及以后的订单。

@@ -1,10 +1,11 @@
 // 小程序内支付（JSAPI）的回归用例。
 //
-// 后端目前走的是 Native 扫码下单（返回 code_url），小程序里不能「自己扫自己」，
-// 所以真正的在线支付要另开 JSAPI 通道。前端这一版先把通道就位，并保证后端没开通时：
-//   ・顾客不会被卡在支付页 —— 降级提示「用收款码或到前台结账」
-//   ・顾客取消收银台 —— 只提示，不误置「已支付」
-//   ・拉起收银台的参数原样透传（签名由服务端完成，前端不做任何加工）
+// 链路：wx.login → 后端换 openid + JSAPI 下单 + 签发调起参数 → wx.requestPayment
+//      → 查单确认（以服务端为准）。
+// 要守住的三件事：
+//   ・顾客不会被卡在支付页 —— 未开通/失败时降级提示「用收款码或到前台结账」；
+//   ・顾客取消收银台 —— 只提示，不误置「已支付」；
+//   ・收银台 success 也要以查单结果为准 —— 回调有延迟，不能谎报支付成功。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootApp, mountPage } from '../../../../test/harness';
 import type { PageInstance } from '../../../../test/harness';
@@ -51,12 +52,14 @@ describe('支付页 · 小程序内支付（JSAPI）', () => {
     return p;
   }
 
-  it('后端已开通：wx.login → 下单 → 拉起收银台，调起参数原样透传', async () => {
+  it('后端已开通：wx.login → 下单 → 拉起收银台 → 查单确认后才算支付成功', async () => {
     page = await boot(true);
     expect(page.data.canJsapi).toBe(true);
 
     wxMock.reply({ code: 200, msg: 'ok', data: PARAMS }); // /customer/pay/jsapi
+    wxMock.reply({ code: 200, msg: 'ok', data: { payStatus: 1 } }); // /customer/pay/query
     await page.onPayOnline();
+    await flush();
     await flush();
 
     const post = wxMock.requests.find(r => r.method === 'POST');
@@ -66,8 +69,25 @@ describe('支付页 · 小程序内支付（JSAPI）', () => {
     expect(wxMock.payments).toHaveLength(1);
     expect(wxMock.payments[0]).toMatchObject({ timeStamp: '1700000000', package: 'prepay_id=wx1' });
 
+    // requestPayment 的 success 之后必须再查一次单：服务端确认收款才置「已支付」
+    expect(wxMock.requests.some(r => r.url.includes('/customer/pay/query'))).toBe(true);
     expect(page.data.paid).toBe(true);
     expect(wxMock.toasts.map(t => t.title)).toContain('支付成功');
+  });
+
+  it('收银台成功但服务端还没确认到账：不谎报成功，提示「确认中」并继续等轮询', async () => {
+    page = await boot(true);
+
+    wxMock.reply({ code: 200, msg: 'ok', data: PARAMS }); // /customer/pay/jsapi
+    wxMock.reply({ code: 200, msg: 'ok', data: { payStatus: 0 } }); // 回调还没到
+    await page.onPayOnline();
+    await flush();
+    await flush();
+
+    expect(wxMock.payments).toHaveLength(1);
+    expect(page.data.paid).toBe(false);
+    expect(wxMock.toasts.map(t => t.title)).not.toContain('支付成功');
+    expect(wxMock.lastToast).toContain('确认中');
   });
 
   it('顾客取消收银台：只提示，不误置「已支付」', async () => {

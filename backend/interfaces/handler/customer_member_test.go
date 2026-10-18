@@ -176,3 +176,20 @@ func TestMemberLoginParameterValidation(t *testing.T) {
 		t.Fatalf("应返回「会员功能未开启」, got %s", w.Body.String())
 	}
 }
+
+// TestMemberLoginUnsupportedProvider 已登记但未实现的登录方式必须明确拒绝,
+// 不能悄悄退化成小程序登录,也不能 500。
+func TestMemberLoginUnsupportedProvider(t *testing.T) {
+	memberInitDB(t)
+	r := memberRouter()
+
+	for _, provider := range []string{"phone", "password", "apple", "wechat"} {
+		w := memberPost(r, "/api/customer/auth/login", "", `{"provider":"`+provider+`","code":"c"}`)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("provider=%s 应 400, got %d body=%s", provider, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "暂不支持该登录方式") {
+			t.Fatalf("provider=%s 应提示「暂不支持该登录方式」, got %s", provider, w.Body.String())
+		}
+	}
+}

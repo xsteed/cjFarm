@@ -44,7 +44,16 @@
   >
     <view class="err-icon">!</view>
     <view class="state-text">{{error}}</view>
+    <!-- 没带桌台码时重试没有意义（结果还是同一句提示），换成扫码入口 -->
     <view
+      wx:if="{{needScan}}"
+      class="btn-primary retry"
+      bindtap="onScanCode"
+    >
+      扫码点餐
+    </view>
+    <view
+      wx:else
       class="btn-primary retry"
       bindtap="onRetry"
     >

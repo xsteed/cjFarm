@@ -5,7 +5,7 @@
 //   ・别跳错页（点餐页在「本桌已有进行中订单」时会把顾客弹回订单页，必须带 append=1）
 // 三条分支（已在目标页 / 目标页在栈里 / 不在栈里）都钉一下。
 import { beforeEach, describe, expect, it } from 'vitest';
-import { goToMenu, goToOrder } from '../nav';
+import { goToHome, goToMenu, goToOrder } from '../nav';
 import { wxMock } from '../../../test/mock-wx';
 
 /** 造一个页面栈：数组头部是首页，尾部是当前页。 */
@@ -16,6 +16,26 @@ function setStack(...routes: string[]): void {
 
 beforeEach(() => {
   setStack('pages/index/index');
+});
+
+describe('goToHome', () => {
+  it('已在首页时什么都不做', () => {
+    setStack('pages/home/index');
+    goToHome();
+    expect(wxMock.navigations).toHaveLength(0);
+  });
+
+  it('首页在栈里时返回它（扫码直达菜单后再切首页）', () => {
+    setStack('pages/home/index', 'pages/index/index');
+    goToHome();
+    expect(wxMock.navigations).toEqual([{ type: 'navigateBack', delta: 1 }]);
+  });
+
+  it('首页不在栈里时用 redirectTo 打开', () => {
+    setStack('pages/index/index');
+    goToHome();
+    expect(wxMock.navigations).toEqual([{ type: 'redirectTo', url: '/pages/home/index' }]);
+  });
 });
 
 describe('goToMenu', () => {

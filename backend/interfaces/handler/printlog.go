@@ -317,6 +317,8 @@ func OrderReprint(c *gin.Context) {
 		fail(c, "补打失败:"+err.Error())
 		return
 	}
+	// 补打同样说明商家已经处理过这张单(通常就是从详情里点的),「新」角标随之消解。
+	service.MarkOrderViewed(p.OrderID)
 	okMsg(c, "补打指令已发送")
 }
 

@@ -90,6 +90,64 @@ func (p *Wxpay) Create(req PayReq) (PayResult, error) {
 	return PayResult{CodeURL: out.CodeURL}, nil
 }
 
+// CreateJsapi 小程序内支付下单:POST /v3/pay/transactions/jsapi,拿 prepay_id 后签好调起参数。
+//
+// 与 Native 的关键差异:
+//   - 请求体多一个 payer.openid(小程序里不能「自己扫自己」,必须知道是哪个微信号在付);
+//   - 返回的不是 code_url,而是 wx.requestPayment 的调起参数。
+//
+// openid 与 appid 必须同主体:这里用的 appid 是 wxpay_appid,所以该项必须是**小程序**
+// 的 AppID(与桌牌码出码共用同一项)。填成公众号 AppID 时 Native 仍能跑、JSAPI 必失败。
+func (p *Wxpay) CreateJsapi(req PayReq) (JsapiParams, error) {
+	if strings.TrimSpace(req.OpenID) == "" {
+		return JsapiParams{}, fmt.Errorf("缺少 openid，无法发起小程序内支付")
+	}
+	appID := cfg("wxpay_appid")
+	body, _ := json.Marshal(map[string]interface{}{
+		"appid":        appID,
+		"mchid":        cfg("wxpay_mchid"),
+		"description":  truncateRunes(req.Description, 40),
+		"out_trade_no": req.OrderNo,
+		"notify_url":   cfg("wxpay_notify_url"),
+		"amount":       map[string]interface{}{"total": req.AmountCents, "currency": "CNY"},
+		"payer":        map[string]string{"openid": req.OpenID},
+	})
+	resp, err := p.do("POST", "/v3/pay/transactions/jsapi", body)
+	if err != nil {
+		return JsapiParams{}, err
+	}
+	var out struct {
+		PrepayID string `json:"prepay_id"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil || out.PrepayID == "" {
+		return JsapiParams{}, fmt.Errorf("微信小程序下单失败: %s", truncateRunes(string(resp), 200))
+	}
+	return p.paySign(appID, out.PrepayID)
+}
+
+// paySign 生成 wx.requestPayment 的调起参数。
+//
+// 签名串固定为 `appId\ntimeStamp\nnonceStr\npackage\n`(package 即 prepay_id=xxx),
+// 用商户 API 私钥做 RSA-SHA256 —— 与请求头的 WECHATPAY2-SHA256-RSA2048 签名是同一把
+// 私钥、不同签名串,不要混用(混用的现象是收银台报「签名错误」)。
+func (p *Wxpay) paySign(appID, prepayID string) (JsapiParams, error) {
+	priv, err := loadRSAPrivateKey(cfg("wxpay_private_key_path"))
+	if err != nil {
+		return JsapiParams{}, err
+	}
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	nonce := randNonce()
+	pkg := "prepay_id=" + prepayID
+	sig := signRSASHA256(priv, appID+"\n"+ts+"\n"+nonce+"\n"+pkg+"\n")
+	return JsapiParams{
+		TimeStamp: ts,
+		NonceStr:  nonce,
+		Package:   pkg,
+		SignType:  "RSA",
+		PaySign:   sig,
+	}, nil
+}
+
 // Query 按商户订单号查单。
 func (p *Wxpay) Query(orderNo string) (PayQuery, error) {
 	resp, err := p.do("GET", "/v3/pay/transactions/out-trade-no/"+orderNo+"?mchid="+cfg("wxpay_mchid"), nil)

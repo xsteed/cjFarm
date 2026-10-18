@@ -52,6 +52,12 @@ func (p *Alipay) Enabled() bool {
 		cfg("alipay_public_key") != ""
 }
 
+// CreateJsapi 支付宝没有「小程序内调起」通道:微信小程序里不能拉起支付宝收银台。
+// 返回明确错误而不是空结构,让上层能干净地降级到「收款码 + 前台结账」。
+func (p *Alipay) CreateJsapi(req PayReq) (JsapiParams, error) {
+	return JsapiParams{}, fmt.Errorf("支付宝不支持小程序内支付")
+}
+
 // Create 当面付预下单,返回 qr_code(前端渲染为二维码,顾客用支付宝扫码支付)。
 func (p *Alipay) Create(req PayReq) (PayResult, error) {
 	biz, _ := json.Marshal(map[string]string{

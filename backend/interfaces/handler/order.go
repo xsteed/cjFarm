@@ -81,6 +81,9 @@ func OrderList(c *gin.Context) {
 		d := dto.FromOrder(o, nil, pending[o.OrderID])
 		d.BatchCount = batchCounts[o.OrderID]
 		d.RefundingAmount = po.ToYuan(refunding[o.OrderID])
+		// 「新」角标:已下单且商家从未查看/操作过(viewed_at 为空)。
+		// 只在列表接口算:详情一打开就会被标记为已查看,顾客端也不需要这个内部状态。
+		d.IsNew = o.OrderStatus == service.OrderStatusPlaced && o.ViewedAt == nil
 		out = append(out, d)
 	}
 	tableResult(c, total, out)
@@ -96,6 +99,9 @@ func OrderGet(c *gin.Context) {
 		fail(c, "订单不存在")
 		return
 	}
+	// 打开详情即视为「已查看」:列表的「新」角标随之消解(下一轮列表刷新生效)。
+	// 放在成功读取之后,读不到的订单不会被误标。
+	service.MarkOrderViewed(id)
 	items := make([]dto.OrderItem, 0, len(poItems))
 	for _, it := range poItems {
 		items = append(items, dto.FromOrderItem(it))
@@ -152,6 +158,8 @@ func OrderStatus(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	// 列表上直接点「制作/上齐」也算处理过这单:消解「新」角标。
+	service.MarkOrderViewed(p.OrderID)
 	// 直接流转到终态(取消)时,同步关闭未支付的在线渠道单,防止旧二维码事后被扫码付款。
 	if p.OrderStatus == 5 {
 		closeOnlinePayment(c.Request.Context(), p.OrderID)
@@ -199,6 +207,8 @@ func UrgeHandle(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	// 处理催菜也是商家对这张单的明确操作,「新」角标一并消解。
+	service.MarkOrderViewed(p.OrderID)
 	okMsg(c, "已处理")
 }
 
@@ -217,6 +227,8 @@ func OrderPay(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	// 收款后订单可能仍是「已下单」(不收档),必须显式记已查看,否则「新」角标会一直挂着。
+	service.MarkOrderViewed(p.OrderID)
 	// 线下收款成功后,同步关闭该订单未支付的在线支付单:顾客若还开着此前的
 	// 收款二维码,扫了会付第二笔(重复支付),关单后旧码失效。
 	closeOnlinePayment(c.Request.Context(), p.OrderID)
@@ -249,6 +261,7 @@ func OrderSettle(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	service.MarkOrderViewed(p.OrderID)
 	// 审计摘要:金额与原因必须写进日志 —— 免单与挂账是对账时最容易扯皮的两类动作,
 	// 光看「调了 /order/settle」根本说不清让了多少利、记在谁头上。
 	switch out.SettleType {
@@ -297,6 +310,7 @@ func OrderCreditSettle(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	service.MarkOrderViewed(p.OrderID)
 	SetAuditDetail(c, "order", strconv.Itoa(p.OrderID),
 		fmt.Sprintf("挂账核销，收款 ¥%.2f（%s）", po.ToYuan(due), payType))
 	// 补打一张「挂账已结」小票:客人此前拿到的那张写的是「待收」,欠款结清
@@ -322,6 +336,7 @@ func OrderSettleCancel(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	service.MarkOrderViewed(p.OrderID)
 	oldType := "正常收款"
 	switch out.SettleType {
 	case service.SettleTypeCredit:
@@ -396,6 +411,7 @@ func OrderFinish(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	service.MarkOrderViewed(p.OrderID)
 	okMsg(c, "订单已完成并归档")
 }
 
@@ -413,6 +429,7 @@ func OrderCancel(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	service.MarkOrderViewed(p.OrderID)
 	// 若该订单已生成在线支付单但尚未付款,同步关闭渠道订单,防止取消后仍被扫码支付。
 	closeOnlinePayment(c.Request.Context(), p.OrderID)
 	reason = strings.TrimSpace(reason)
@@ -439,6 +456,7 @@ func OrderEdit(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	service.MarkOrderViewed(p.OrderID)
 	// 改单重算了应收金额:若顾客此前已生成在线支付二维码,旧码对应旧金额,
 	// 必须同步关闭渠道支付单(同 OrderCancel),防止按旧金额付款后回调因金额不符被拒导致掉单。
 	closeOnlinePayment(c.Request.Context(), p.OrderID)

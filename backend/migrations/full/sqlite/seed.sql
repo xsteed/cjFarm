@@ -5,7 +5,7 @@
 -- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 43 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 内容:系统配置 44 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
 -- 执行方式:sqlite3 data/dining.db < seed.sql
 -- 幂等性  :全部使用 INSERT OR IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
@@ -50,6 +50,7 @@ INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_code_env_version'
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_apiv3_key', '');  -- 敏感项,落库前会自动加密
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_appid', '');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_enabled', '0');
+INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_jsapi_enabled', '0');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_mchid', '');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_notify_url', '');
 INSERT OR IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_platform_cert_path', '');

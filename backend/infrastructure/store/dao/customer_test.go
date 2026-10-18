@@ -1,6 +1,7 @@
 package dao
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -14,7 +15,7 @@ func custDaoInitDB(t *testing.T) {
 	t.Cleanup(func() { _ = store.DB.Close() })
 }
 
-// TestCustomerInsertAndGet 建档 + 按主键/按 openid 查询 + 不存在返回 (nil,nil)。
+// TestCustomerInsertAndGet 建档 + 按主键/按登录方式查询 + 不存在返回 (nil,nil)。
 func TestCustomerInsertAndGet(t *testing.T) {
 	custDaoInitDB(t)
 
@@ -46,21 +47,116 @@ func TestCustomerInsertAndGet(t *testing.T) {
 		t.Fatalf("默认 order_count 应为 0, got %d", byID.OrderCount)
 	}
 
-	byOpenid, err := GetCustomerByOpenid("openid-A")
-	if err != nil || byOpenid == nil {
-		t.Fatalf("按 openid 查询失败: %v", err)
-	}
-	if byOpenid.CustomerID != int(id) {
-		t.Fatalf("openid 查询结果 ID 不符: %d", byOpenid.CustomerID)
-	}
-
 	// 不存在的记录:返回 (nil, nil),不报错(登录流程据此判定 isNew)。
-	if none, err := GetCustomerByOpenid("no-such-openid"); err != nil || none != nil {
-		t.Fatalf("查不存在的 openid 应返回 (nil,nil), got %v err=%v", none, err)
+	if none, err := GetCustomerByIdentity(po.CustomerProviderWxMP, "no-such-openid"); err != nil || none != nil {
+		t.Fatalf("查不存在的身份应返回 (nil,nil), got %v err=%v", none, err)
 	}
 	if none, err := GetCustomerByID(999999); err != nil || none != nil {
 		t.Fatalf("查不存在的 ID 应返回 (nil,nil), got %v err=%v", none, err)
 	}
+}
+
+// TestCreateCustomerWithIdentity 建档与绑定在同一个事务里,且按身份可查回同一份档案。
+func TestCreateCustomerWithIdentity(t *testing.T) {
+	custDaoInitDB(t)
+
+	id, err := CreateCustomerWithIdentity(po.CustomerProviderWxMP, "openid-B", "")
+	if err != nil {
+		t.Fatalf("建档失败: %v", err)
+	}
+	c, err := GetCustomerByIdentity(po.CustomerProviderWxMP, "openid-B")
+	if err != nil || c == nil {
+		t.Fatalf("按身份查档失败: %v", err)
+	}
+	if c.CustomerID != id {
+		t.Fatalf("身份指向的档案不符: want %d got %d", id, c.CustomerID)
+	}
+
+	// 同一个 key 重复绑定必须失败(唯一索引),且失败后不留孤儿档案 ——
+	// 并发首登靠的就是这个语义。
+	before := customerCount(t)
+	if _, err := CreateCustomerWithIdentity(po.CustomerProviderWxMP, "openid-B", ""); err == nil {
+		t.Fatal("同一身份重复建档应被唯一索引拒绝")
+	}
+	if after := customerCount(t); after != before {
+		t.Fatalf("冲突后档案必须整体回滚, 期望 %d 行, got %d", before, after)
+	}
+}
+
+// TestCustomerIdentityUnique (provider, external_id) 是登录凭据的唯一约束。
+//
+// 注意:这里直接插 tb_customer_identity,而不走 CreateCustomerWithIdentity ——
+// P0 过渡期 tb_customer.openid 仍是 NOT NULL + 唯一索引,非微信 provider 建档
+// 会先撞 openid 的唯一约束(这正是 P2 必须放开可空的原因,见 spec §7.2)。
+// 身份表本身的约束与那里无关,单独验。
+func TestCustomerIdentityUnique(t *testing.T) {
+	custDaoInitDB(t)
+
+	id, err := CreateCustomerWithIdentity(po.CustomerProviderWxMP, "openid-D", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 同一 provider 换个 external_id:允许(一个会员可以绑多种凭据,一个凭据只能绑一个会员)。
+	if err := InsertIdentityTxForTest(id, po.CustomerProviderWxOA, "openid-D-oa"); err != nil {
+		t.Fatalf("不同 external_id 应允许: %v", err)
+	}
+	// 完全相同的 (provider, external_id):必须被唯一索引拒绝。
+	if err := InsertIdentityTxForTest(id, po.CustomerProviderWxOA, "openid-D-oa"); err == nil {
+		t.Fatal("同一 (provider, external_id) 重复绑定应被拒绝")
+	}
+}
+
+// TestCustomerIdentityUnionID 未绑定开放平台时 unionid 存 NULL 而不是空串;
+// 同一个人的多个 openid 可共享同一个 unionid(索引非唯一)。
+func TestCustomerIdentityUnionID(t *testing.T) {
+	custDaoInitDB(t)
+
+	id, err := CreateCustomerWithIdentity(po.CustomerProviderWxMP, "openid-C1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uid *string
+	if err := store.DB.QueryRow(`SELECT unionid FROM tb_customer_identity WHERE external_id=?`, "openid-C1").Scan(&uid); err != nil {
+		t.Fatalf("读取 unionid 失败: %v", err)
+	}
+	if uid != nil {
+		t.Fatalf("未绑定开放平台时 unionid 应为 NULL, got %q", *uid)
+	}
+
+	// 两个不同 openid 共享同一个 unionid:不能撞唯一约束,否则同一人接第二端就失败。
+	for _, ext := range []string{"openid-C2", "openid-C3"} {
+		if err := InsertIdentityTxForTest(id, po.CustomerProviderWxApp, ext, "union-1"); err != nil {
+			t.Fatalf("共享 unionid 应允许(%s): %v", ext, err)
+		}
+	}
+	var n int
+	if err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_customer_identity WHERE unionid='union-1'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("应有 2 条共享 unionid 的身份, got %d", n)
+	}
+}
+
+// InsertIdentityTxForTest 测试辅助:单条绑定(不建档案)。
+func InsertIdentityTxForTest(customerID int, provider, externalID string, unionids ...string) error {
+	unionid := ""
+	if len(unionids) > 0 {
+		unionid = unionids[0]
+	}
+	return store.WithTx(func(tx *sql.Tx) error {
+		return InsertIdentityTx(tx, customerID, provider, externalID, unionid)
+	})
+}
+
+// customerCount 当前会员档案总数(并发/回滚类断言用)。
+func customerCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_customer`).Scan(&n); err != nil {
+		t.Fatalf("统计会员失败: %v", err)
+	}
+	return n
 }
 
 // TestCustomerTimestampColumns 通用记录时间的填写口径:

@@ -1,0 +1,130 @@
+<!-- 默认主页：扫码入口 + 续用入口（上次的桌台 / 进行中的订单）+ 招牌菜橱窗。
+     扫码进桌仍然直达菜单页（app.json 的首页不是扫码落地页），这里只负责没带桌台码的场景。 -->
+<view class="page">
+  <!-- 品牌区：与菜单页同一套渐变头部，扫码卡压在上面做唯一主操作 -->
+  <view class="hero">
+    <view class="brand">
+      <view class="brand-name">{{shopName}}</view>
+      <view
+        wx:if="{{slogan}}"
+        class="brand-slogan"
+      >
+        {{slogan}}
+      </view>
+    </view>
+
+    <view
+      class="scan"
+      bindtap="onScan"
+    >
+      <view class="scan-ico"></view>
+      <view class="scan-main">
+        <view class="scan-title">扫码点餐</view>
+        <view class="scan-sub">扫描桌面点餐码，立即开始点菜</view>
+      </view>
+      <view class="scan-go">去扫码</view>
+    </view>
+  </view>
+
+  <view class="body">
+    <!-- 进行中的订单：刚下完单就从订单页退回来时，这里是最近的入口 -->
+    <view
+      wx:if="{{hasOrder}}"
+      class="card entry"
+      bindtap="onResumeOrder"
+    >
+      <view class="entry-tag">进行中</view>
+      <view class="entry-main">
+        <view class="entry-title">{{orderStatusText}}</view>
+        <view class="entry-sub">#{{orderShort}} · ¥{{orderAmountText}}</view>
+      </view>
+      <view class="entry-go">查看 ›</view>
+    </view>
+
+    <!-- 上次进入的桌台：不必重新找桌牌也能接着点 -->
+    <view
+      wx:if="{{tableCode}}"
+      class="card entry"
+      bindtap="onResumeMenu"
+    >
+      <view class="entry-tag entry-tag-plain">桌台</view>
+      <view class="entry-main">
+        <view class="entry-title">继续点餐</view>
+        <view class="entry-sub">{{tableLabel}}</view>
+      </view>
+      <view class="entry-go">去点餐 ›</view>
+    </view>
+
+    <!-- 招牌菜橱窗：让人先知道这家店卖什么；点进去仍然走菜单（规格 / 备注在菜单页选） -->
+    <view
+      wx:if="{{sigDishes.length}}"
+      class="card sec"
+    >
+      <view class="sec-head">
+        <view class="sec-title">本店招牌</view>
+        <view class="sec-sub">{{tableCode ? '扫码后可点' : '先扫码进桌'}}</view>
+      </view>
+      <scroll-view
+        class="sig-scroll"
+        scroll-x
+        enhanced
+        show-scrollbar="{{false}}"
+      >
+        <view class="sig-row">
+          <view
+            wx:for="{{sigDishes}}"
+            wx:key="dishId"
+            class="sig"
+            data-id="{{item.dishId}}"
+            bindtap="onOpenDish"
+          >
+            <view class="sig-media">
+              <image
+                wx:if="{{item.image}}"
+                class="sig-img"
+                src="{{item.image}}"
+                mode="aspectFill"
+                lazy-load
+                data-id="{{item.dishId}}"
+                binderror="onImgError"
+              ></image>
+              <view
+                wx:else
+                class="sig-img sig-img-none"
+              >
+                暂无图片
+              </view>
+              <view
+                wx:if="{{item.soldOut}}"
+                class="sig-mask"
+              >
+                售罄
+              </view>
+            </view>
+            <view class="sig-name">{{item.dishName}}</view>
+            <view class="sig-price">
+              <text class="cny">¥</text>{{item.priceText}}<text
+                wx:if="{{item.manySpecs}}"
+                class="sig-from"
+              >
+                起</text>
+            </view>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <!-- 点餐说明：第一次来的顾客不知道「必须先扫码」，把规则写在明面上 -->
+    <view class="card tips">
+      <view class="tips-title">点餐说明</view>
+      <view class="tip">· 扫描桌上的点餐码，菜单会自动对应到您的桌台</view>
+      <view class="tip">· 下单后可在「订单」里查看出餐进度、加菜与催菜</view>
+      <view class="tip">· 也可以直接用微信「扫一扫」扫描桌牌上的小程序码</view>
+    </view>
+  </view>
+
+  <tab-bar
+    active="home"
+    show-profile="{{showProfile}}"
+  />
+</view>

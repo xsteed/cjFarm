@@ -79,21 +79,23 @@ func memberView(c *po.Customer) gin.H {
 	}
 }
 
-// CustomerMemberLogin 微信一键注册/登录。
+// CustomerMemberLogin 会员登录/注册(按登录方式分派)。
+//
+// 请求体 {provider, code},provider 缺省 wx_mp —— 老版本小程序只发 {code}
+// 也必须能继续登录(spec D4)。校验、限流、错误文案全部在 service 层,
+// 这里不做任何 provider 分支:新增登录方式时 handler 不需要改。
 // isNew 区分「🎉 注册成功，已加入会员」与「欢迎回来」两种前端反馈。
 func CustomerMemberLogin(c *gin.Context) {
 	var p struct {
-		Code string `json:"code"`
+		Provider string `json:"provider"`
+		Code     string `json:"code"`
 	}
-	if err := c.ShouldBindJSON(&p); err != nil || strings.TrimSpace(p.Code) == "" {
+	if err := c.ShouldBindJSON(&p); err != nil {
 		fail(c, "参数错误")
 		return
 	}
-	if !service.MemberEnabled() {
-		fail(c, "会员功能未开启")
-		return
-	}
-	res, err := service.CustomerLogin(c.Request.Context(), p.Code, c.ClientIP())
+	res, err := service.CustomerLoginByProvider(c.Request.Context(), p.Provider,
+		service.ProviderPayload{Code: p.Code}, c.ClientIP())
 	if err != nil {
 		// service 层已保证错误文案可直接面向顾客(限流/微信错误码翻译/系统繁忙)。
 		fail(c, err.Error())
@@ -125,4 +127,15 @@ func CustomerMyOrders(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"total": total, "items": rows})
+}
+
+// CustomerMyOrderDetail 会员查看自己的一笔历史订单详情(跨桌,含明细)。
+// 归属只认 customer_id —— 历史订单不在当前桌台,不能用 tableId 校验。
+func CustomerMyOrderDetail(c *gin.Context) {
+	order, err := service.CustomerMyOrderDetail(customerIDFrom(c), c.Param("orderNo"))
+	if err != nil {
+		customerFail(c, err)
+		return
+	}
+	ok(c, order)
 }

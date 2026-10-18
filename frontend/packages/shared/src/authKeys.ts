@@ -18,3 +18,16 @@ export const LS_PERMS = 'admin_perms';
 
 /** 全部登录态键；「清空登录态」按此列表遍历，避免漏清造成脏缓存。 */
 export const AUTH_KEYS: string[] = [LS_TOKEN, LS_USER, LS_REALNAME, LS_ROLE, LS_ROLENAME, LS_PERMS];
+
+/**
+ * 顾客会员令牌的本地键。
+ *
+ * ⚠️ 刻意**不**放进 AUTH_KEYS：那个列表的语义是「管理端登出时清空」。
+ * 同一个浏览器里管理端与顾客端是两个身份，把顾客令牌塞进去会导致
+ * 「管理端一退出，同浏览器的顾客也被踢下线」。
+ *
+ * 各端共用这一个键名。小程序历史上用的是 dining_mp_customer_token，本次统一后
+ * 旧键被弃用：老用户升级后本地令牌读不到，下一次会员请求会静默重登一次
+ * （wx.login 免费无感），而令牌本身只有 2h 有效期，实际影响可忽略。
+ */
+export const LS_CUSTOMER_TOKEN = 'dining_customer_token';

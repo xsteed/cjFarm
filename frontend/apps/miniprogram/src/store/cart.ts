@@ -8,6 +8,7 @@
 import type { GlobalData, CartLine } from '../types';
 import type { OrderCreateItem, PublicConfig } from '@dining/types';
 import { round2 } from '@dining/shared/money';
+import { saveCart } from './cartPersist';
 
 /** 购物车数组本体（跨页共享，见 src/types.ts 顶部注释）。 */
 export function cartState(): CartLine[] {
@@ -45,9 +46,31 @@ export function cartAdd(line: Omit<CartLine, 'key' | 'quantity' | 'itemRemark'> 
   if (exist) {
     exist.quantity += 1;
     if (line.itemRemark !== undefined) exist.itemRemark = line.itemRemark;
+    saveCart();
     return;
   }
   cart.push({ ...line, key, quantity: 1, itemRemark: line.itemRemark ?? '' });
+  saveCart();
+}
+
+/**
+ * 批量并入若干行（「再来一单」用）：同一 dish+spec 合并份数，整批只落盘一次。
+ * 与循环调用 cartAdd 的差别只是「一次写完」，避免几十次同步写 storage。
+ * 已经点过的菜不会被覆盖 —— 顾客自己加的量不该被历史订单冲掉。
+ */
+export function cartMergeLines(lines: CartLine[]): void {
+  if (!lines.length) return;
+  const cart = cartState();
+  for (const line of lines) {
+    const exist = cart.find(l => l.key === line.key);
+    if (exist) {
+      exist.quantity += line.quantity;
+      if (line.itemRemark) exist.itemRemark = line.itemRemark;
+      continue;
+    }
+    cart.push({ ...line });
+  }
+  saveCart();
 }
 
 /** 增减份数；减到 0 自动移除该行。 */
@@ -58,21 +81,26 @@ export function cartChangeQty(key: string, delta: number): void {
   const next = cart[idx].quantity + delta;
   if (next <= 0) cart.splice(idx, 1);
   else cart[idx].quantity = next;
+  saveCart();
 }
 
 export function cartSetRemark(key: string, itemRemark: string): void {
   const line = cartState().find(l => l.key === key);
-  if (line) line.itemRemark = itemRemark;
+  if (!line) return;
+  line.itemRemark = itemRemark;
+  saveCart();
 }
 
 export function cartRemove(key: string): void {
   const cart = cartState();
   const idx = cart.findIndex(l => l.key === key);
   if (idx >= 0) cart.splice(idx, 1);
+  saveCart();
 }
 
 export function cartClear(): void {
   cartState().length = 0;
+  saveCart();
 }
 
 /** 转成下单接口的 items 结构。 */

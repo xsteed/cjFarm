@@ -1,5 +1,5 @@
 // ============================================================================
-// 主页面之间的跳转（点餐 ↔ 订单）
+// 主页面之间的跳转（首页 ↔ 点餐 ↔ 订单 ↔ 我的）
 //
 // 小程序端没有用原生 tabBar：点餐与订单是两个独立页面，且「订单」在未下单时是空态，
 // 支付页还需要专注，原生 tabBar 的「全局常驻 + 自动切页」语义在这里反而添乱。
@@ -10,9 +10,15 @@
 //   ・不在栈里 → redirectTo 打开，替换当前页，避免来回切页把页面栈撑到 10 层上限
 // ============================================================================
 
+export const HOME_ROUTE = 'pages/home/index';
 export const MENU_ROUTE = 'pages/index/index';
 export const ORDER_ROUTE = 'pages/order/index';
 export const PROFILE_ROUTE = 'pages/profile/index';
+
+/** 去首页（默认主页：扫码入口 / 进行中订单 / 招牌菜）。 */
+export function goToHome(): void {
+  switchTo(HOME_ROUTE, false);
+}
 
 /**
  * 去点餐页。

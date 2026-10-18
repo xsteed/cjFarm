@@ -9,6 +9,7 @@
 import { getMenu, getPublicConfig, getRemarks, getTable } from '../../api/client';
 import { devTableCode, mediaUrl } from '../../config';
 import { cartAdd, cartChangeQty, cartCount, cartDishQty, cartSettle, cartState } from '../../store/cart';
+import { restoreCart } from '../../store/cartPersist';
 import { memberEnabled } from '../../store/member';
 import {
   applyConfig,
@@ -22,6 +23,7 @@ import {
 } from '../../store/session';
 import { toast } from '../../utils/toast';
 import { resolveTableCode } from '../../utils/scene';
+import { scanTableCode } from '../../utils/scan';
 import { money } from '@dining/shared/money';
 import { ORDER_STATUS } from '@dining/shared/dicts';
 import { isActiveStatus } from '@dining/shared/orderStatus';
@@ -146,6 +148,8 @@ Page({
   data: {
     loading: true,
     error: '',
+    /** 没有桌台码（从底部导航直接切到点餐、且没扫过码）：错误态给「扫码点餐」而不是无效的重试 */
+    needScan: false,
     // 「我的」tab 是否显示：跟随后端开关；配置到达前先隐藏，避免闪现
     showProfile: false,
     shopName: '扫码点餐',
@@ -245,7 +249,12 @@ Page({
     // 优先级：扫码参数 > 上次进入的桌台 > 开发期兜底（正式版为空，见 config.ts）
     const code = resolveTableCode(options) || readPersisted().tableCode || devTableCode();
     if (!code) {
-      this.setData({ loading: false, error: '请扫描餐桌上的二维码进入点餐' });
+      this.setData({
+        loading: false,
+        error: '请扫描餐桌上的二维码进入点餐',
+        // 这时点「重新加载」还是会落到同一句提示；给顾客一个扫码入口才解决得了问题
+        needScan: true
+      });
       return;
     }
     this.loadedCode = code;
@@ -384,6 +393,10 @@ Page({
 
   /** 渲染点餐界面（首次进入 / 无未结账订单 / 跳订单页失败时都会走这里）。 */
   renderMenu(info: TableInfo) {
+    // 上次没提交的车（被杀进程 / 冷启动重进）：按刚拉到的菜单复核后放回。
+    // 必须在这里 —— 紧随其后的 refreshRows 要按购物车算角标与合计。
+    // 内存里已有车时 restoreCart 内部会直接返回，不会覆盖顾客正在点的东西。
+    restoreCart(this.menu);
     const cats: CatRow[] = this.menu.map((c, i) => ({
       categoryId: Number(c.categoryId) || 0,
       categoryName: String(c.categoryName || ''),
@@ -396,6 +409,7 @@ Page({
     this.setData({
       loading: false,
       error: '',
+      needScan: false,
       shopName: sessionState().shopName,
       tableLabel: this.tableLabelOf(info),
       cats,
@@ -987,10 +1001,31 @@ Page({
     // 首屏失败时会话里还没有桌台（applyTable 成功后才写入），所以优先用本次解析出的码
     const code = this.loadedCode || sessionState().tableCode || readPersisted().tableCode;
     if (!code) {
-      this.setData({ error: '请扫描餐桌上的二维码进入点餐' });
+      this.setData({ error: '请扫描餐桌上的二维码进入点餐', needScan: true });
       return;
     }
     this.setData({ loading: true, error: '' });
     void this.loadAll(code);
+  },
+
+  /**
+   * 没带桌台码时的「扫码点餐」：扫到就在本页把菜单加载起来。
+   * 不退回首页 —— 顾客是从底部导航切到点餐的，他的意图就在这里，别再让他多走一步。
+   */
+  async onScanCode(): Promise<void> {
+    try {
+      const code = await scanTableCode();
+      if (code === null) return; // 顾客自己取消的，不打扰
+      if (!code) {
+        toast.info('没识别到桌台码，请扫描桌面上的点餐码');
+        return;
+      }
+      // 与 onLoad 的解析结果同一份语义：重试、复扫都靠 loadedCode
+      this.loadedCode = code;
+      this.setData({ loading: true, error: '', needScan: false });
+      void this.loadAll(code);
+    } catch (e) {
+      toast.info((e as Error)?.message || '扫码失败，请用微信「扫一扫」扫描桌面点餐码');
+    }
   }
 });

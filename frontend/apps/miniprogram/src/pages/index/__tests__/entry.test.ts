@@ -81,6 +81,23 @@ describe('菜单页 · 进入与重试', () => {
     expect(page.data.tableLabel).toBe('大厅03桌');
   });
 
+  it('没带桌台码：错误态给「扫码点餐」，扫到码后在本页把菜单加载起来', async () => {
+    const page = await mount();
+    page.onLoad({});
+    // 这种情况下「重新加载」只会得到同一句提示，必须给一个能解决问题的入口
+    expect(page.data.needScan).toBe(true);
+    expect(page.data.error).toContain('扫描');
+
+    wxMock.scanCodeResult = 'https://dining.test/order/A1';
+    replyMenuLoad(TABLE_OK);
+    await page.onScanCode();
+    await flush();
+
+    expect(page.data.needScan).toBe(false);
+    expect(page.data.error).toBe('');
+    expect(page.data.tableLabel).toBe('大厅03桌');
+  });
+
   it('带 append=1 进入时，本桌有进行中订单也留在菜单页继续点', async () => {
     const page = await mount();
     replyMenuLoad({

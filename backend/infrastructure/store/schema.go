@@ -332,6 +332,9 @@ var schemaTemplate = []string{
 		-- 默认 NULL 而非空串:区分「还没结束」与「时间未知」,回填脚本与报警 SQL 一眼明了。
 		meal_start_time VARCHAR(32) DEFAULT NULL,
 		meal_end_time VARCHAR(32) DEFAULT NULL,
+		-- 商家首次查看/操作该订单的时间:NULL = 还没人看过。
+		-- 列表据此给「已下单」的未查看订单打「新」角标,打开详情或任意操作后写入,只写一次。
+		viewed_at VARCHAR(32) DEFAULT NULL,
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
@@ -452,12 +455,17 @@ var schemaTemplate = []string{
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
-	// 顾客会员档案(小程序「注册成为会员」,见 docs/design-docs/customer-member/spec.md)。
-	// openid 是微信小程序侧的用户唯一标识:wx.login 的 code 由服务端 code2session 换得,
-	// 同一个微信号在该小程序下恒定 —— 以它做唯一键,「首次出现即注册,再次出现即登录」。
+	// 顾客会员档案(见 docs/design-docs/customer-member-identity/spec.md)。
+	// 本表只存「账号」,与登录方式无关:同一份档案可以绑小程序 openid、手机号、网站密码…
+	// 具体绑定关系在 tb_customer_identity,账号可用性只由本表的 status 裁决。
 	// 不存 session_key(一期不解密手机号等敏感数据,最小化收集);
 	// 无 del_flag:会员不做软删除,注销直接物理删(档案不含敏感信息,见 spec 2.6)。
 	// 昵称/头像由用户主动填写,不强制,未填时前端显示「微信用户」。
+	//
+	// ⚠️ openid 列是 P0 过渡期遗留:拆表时把唯一约束搬到了 tb_customer_identity,
+	// 但本列仍 NOT NULL + 唯一索引,微信登录继续写一份。删列 / 放开可空是
+	// 「接第二个登录方式之前」的前置动作(P2),见 spec §7.2 —— 唯一索引不先删,
+	// 非微信建档写空串会撞「只允许一行空串」的唯一约束。
 	`CREATE TABLE IF NOT EXISTS tb_customer (
 		customer_id      {{PK}},
 		openid           VARCHAR(64)  NOT NULL,
@@ -468,6 +476,29 @@ var schemaTemplate = []string{
 		last_order_time VARCHAR(32) DEFAULT NULL,
 		last_login_time VARCHAR(32) DEFAULT NULL,
 		remark           VARCHAR(255) DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
+	){{OPTS}}`,
+
+	// 顾客登录方式(账号 ↔ 登录凭据 的绑定)。
+	//
+	// (provider, external_id) 唯一:一个登录凭据只能指向一个会员,同时兜底
+	// 「并发首登」—— 两个请求同时建档时,后到者撞唯一约束,service 层据此
+	// 回滚整个事务并按 (provider, external_id) 重查走登录分支。
+	// 反过来一个会员可以有多条(小程序 + 公众号 + 手机号…),这是 App/网站
+	// 共用同一份会员档案的基础。
+	//
+	// unionid 建普通索引而非唯一索引:同一个人的多个 openid 共享同一个 unionid,
+	// 建唯一索引会直接冲突。
+	// 不设 status:账号可用性只由 tb_customer.status 裁决;解绑 = 物理删行。
+	`CREATE TABLE IF NOT EXISTS tb_customer_identity (
+		identity_id      {{PK}},
+		customer_id      INTEGER      NOT NULL,
+		provider         VARCHAR(32)  NOT NULL,
+		external_id      VARCHAR(128) NOT NULL,
+		credential       VARCHAR(255) DEFAULT '',
+		unionid          VARCHAR(64)  DEFAULT NULL,
+		last_login_time {{TSTYPE}} DEFAULT NULL,
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
@@ -715,7 +746,15 @@ var indexDefs = []indexDef{
 	// 会员「我的订单」按时间倒序分页(见 tb_customer)。
 	{Name: "idx_order_customer", Table: "tb_order", Columns: "customer_id, create_time"},
 	// 会员登录按 openid 精确查档;唯一索引同时兜底「并发首登建档」的幂等性。
+	// ⚠️ P0 过渡期保留(见 schemaTemplate 的 tb_customer 注释):登录查档已改走
+	// tb_customer_identity,本索引在 P2 删列时一并移除。
 	{Name: "idx_customer_openid", Table: "tb_customer", Columns: "openid", Unique: true},
+	// 会员登录查档主路径(provider + external_id),同时兜底并发首登的幂等性。
+	{Name: "idx_identity_provider_external", Table: "tb_customer_identity", Columns: "provider, external_id", Unique: true},
+	// 「这个人绑了哪几种登录方式」:后续解绑 / 多端合并要用。
+	{Name: "idx_identity_customer", Table: "tb_customer_identity", Columns: "customer_id"},
+	// 同一人的多个 openid 共享 unionid,按它反查可把多端归到一个人;非唯一(必然重复)。
+	{Name: "idx_identity_unionid", Table: "tb_customer_identity", Columns: "unionid"},
 	{Name: "idx_order_item_order", Table: "tb_order_item", Columns: "order_id"},
 	{Name: "idx_payment_order", Table: "tb_payment", Columns: "order_no"},
 	{Name: "idx_payment_channel_trade", Table: "tb_payment", Columns: "channel, channel_trade_no", Unique: true},
@@ -866,6 +905,9 @@ var alterCols = []alterCol{
 	// finish_time 补齐；读侧一律 COALESCE 回落到这两列，保证升级前后统计口径一致。
 	{Table: "tb_order", Name: "meal_start_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_order", Name: "meal_end_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	// 商家首次查看/操作时间:老库补列后为 NULL,历史订单不会被批量打上「新」角标
+	// (角标条件还叠加了「已下单」,已完成/已取消的历史单本来就不会命中)。
+	{Table: "tb_order", Name: "viewed_at", Def: "VARCHAR(32) DEFAULT NULL"},
 	// ---- 通用记录时间补齐 ----
 	// 早期只给「主数据表」(桌台/菜品/订单/员工/角色…)留了 create_time/update_time,
 	// 其余表按需加了单列甚至没有,排查问题时无从判断「这行什么时候进来的、最后动过没」。
@@ -946,6 +988,20 @@ func migrate(stmts []string) {
 			logger.Fatalf("补列失败(%s): %v\n%s", dialect, err, stmt)
 		}
 		logger.Infof("[db] 已补列 %s.%s", c.Table, c.Name)
+		// viewed_at 只在「存量库补列」这一刻做一次性回填:此刻库里的订单都早于本功能上线,
+		// 商家早就处理过了,统一按已查看落库,避免升级后列表整屏挂「新」角标。
+		// 放在补列分支内(而非 migrate 末尾),保证只会执行一次 —— 放到末尾会在每次启动
+		// 把当天真正的未读新单也一并标成已读。
+		if c.Table == "tb_order" && c.Name == "viewed_at" {
+			if _, err := DB.Exec(`UPDATE tb_order SET viewed_at = COALESCE(update_time, create_time) WHERE viewed_at IS NULL`); err != nil {
+				logger.Warnf("[db] 回填订单已查看时间失败: %v", err)
+			}
+			// 连 create_time 都为空的历史脏行:用哨兵时间兜底,否则空串会被读侧当成 NULL,
+			// 升级后这些老单仍会挂着「新」角标。
+			if _, err := DB.Exec(`UPDATE tb_order SET viewed_at='1970-01-01 00:00:00' WHERE viewed_at IS NULL OR viewed_at=''`); err != nil {
+				logger.Warnf("[db] 兜底回填订单已查看时间失败: %v", err)
+			}
+		}
 	}
 
 	// 建唯一索引前先清理 tb_role 的历史重复行:老版本 MySQL 下 idx_role_key 退化为

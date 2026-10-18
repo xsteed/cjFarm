@@ -52,6 +52,15 @@ export class WxMock {
   /** 每次拉起收银台的参数（供断言「调起参数原样透传」） */
   payments: { timeStamp?: string; nonceStr?: string; package?: string }[] = [];
 
+  /** wx.scanCode 扫到的内容 / 携带的页面 path（首页与菜单页的扫码入口用） */
+  scanCodeResult = 'https://dining.test/order/8YG3Q335';
+  scanCodePath = '';
+  /** 扫码结果：'' 成功 / 'cancel' 用户取消 / 'error' 相机或权限失败 */
+  scanCodeFail: '' | 'cancel' | 'error' = '';
+
+  /** 最后一次 setNavigationBarTitle 的标题（首页会把标题换成店名） */
+  navTitle = '';
+
   private queue: Reply[] = [];
 
   /** 装成全局 wx。 */
@@ -73,6 +82,10 @@ export class WxMock {
     this.loginCode = 'code-abc';
     this.paymentResult = 'success';
     this.payments = [];
+    this.scanCodeResult = 'https://dining.test/order/8YG3Q335';
+    this.scanCodePath = '';
+    this.scanCodeFail = '';
+    this.navTitle = '';
   }
 
   /** 预置一次成功回包（按先入先出匹配请求）。 */
@@ -156,6 +169,23 @@ export class WxMock {
       if (this.navigationFails) void Promise.resolve().then(() => opt?.fail?.());
     },
     setClipboardData: (): void => {},
+
+    // ---- 扫码 / 导航栏标题 ----
+    scanCode: (opt: {
+      success?: (r: { result: string; path?: string }) => void;
+      fail?: (e: { errMsg: string }) => void;
+    }): void => {
+      void Promise.resolve().then(() => {
+        if (this.scanCodeFail) {
+          opt.fail?.({ errMsg: `scanCode:fail ${this.scanCodeFail}` });
+          return;
+        }
+        opt.success?.({ result: this.scanCodeResult, path: this.scanCodePath });
+      });
+    },
+    setNavigationBarTitle: (opt: { title: string }): void => {
+      this.navTitle = opt.title;
+    },
 
     // ---- 小程序内支付（JSAPI）----
     login: (opt: { success?: (r: { code: string }) => void; fail?: (e: unknown) => void }): void => {

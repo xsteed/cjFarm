@@ -91,7 +91,11 @@ var settingDefaults = map[string]string{
 	//   生成方式见 docs/print-agent.md(要求足够长且随机,等同于一台打印机的操作权限)。
 	"agent_token": "",
 	// 在线支付(默认关闭,待商户申请 key 后填写并开启)
+	//   wxpay_jsapi_enabled 小程序内支付(JSAPI):默认关。它比 Native 多一个硬前提 ——
+	//   wxpay_appid 必须是小程序 AppID 且配了 wx_app_secret,否则顾客点了只会看到
+	//   「支付暂不可用」;宁可少一个入口,也不要出现点了调不起收银台的情况。
 	"wxpay_enabled":            "0",
+	"wxpay_jsapi_enabled":      "0",
 	"alipay_enabled":           "0",
 	"wxpay_mchid":              "",
 	"wxpay_appid":              "",

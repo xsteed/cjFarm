@@ -16,6 +16,10 @@ type Settings struct {
 	// 在线支付开关(未申请 key 前保持 "0",码牌收款不受影响)
 	WxpayEnabled  string `json:"wxpay_enabled"`
 	AlipayEnabled string `json:"alipay_enabled"`
+	// 小程序内支付(JSAPI)开关。开启后小程序结账页出现「微信支付」按钮;
+	// 依赖项:小程序 AppID(填在 wxpay_appid)+ AppSecret(wx_app_secret)+
+	// 商户 API 私钥与证书 —— 缺任一都调不起收银台,所以默认关(fail-closed)。
+	WxpayJsapiEnabled string `json:"wxpay_jsapi_enabled"`
 	// 微信支付商户参数(wxpay_apiv3_key 为敏感项:已配置回显 ****** 占位,原样带回或留空均表示不修改)
 	WxpayMchid            string `json:"wxpay_mchid"`
 	WxpayAppid            string `json:"wxpay_appid"`

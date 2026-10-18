@@ -10,6 +10,7 @@
 
 | 你想做什么 | 直接看 |
 |---|---|
+| 改默认主页（没扫码进来时看到什么） | `src/pages/home/*` |
 | 印桌牌（小程序码 / H5 二维码） | **二** |
 | 上线（域名 / 备案 / 合法域名） | **三** |
 | 继续开发、补功能 | **四** |
@@ -22,6 +23,7 @@
 
 | 能力 | 实现位置 | 说明 |
 |---|---|---|
+| 默认主页 | `src/pages/home/*` | 小程序首页（`app.json` 第一项）。没扫桌台码时落地在这里：微信内直接唤起扫码进桌、上次桌台 / 进行中订单续用、本店招牌橱窗。**扫码进桌仍然直达菜单**：后端出码的 `PagePath` 固定为 `pages/index/index`，扫码顾客不会多点一次 |
 | 扫小程序码 / 普通二维码进入 | `src/pages/index/index.ts` + `src/utils/scene.ts` | 支持 `scene=tableCode=X`、裸码值、`?tableCode=X`；无参数时用本地缓存兜底 |
 | 菜单浏览 | `src/pages/index/*` | 左侧分类 + 右侧菜品，右栏是**所有分类首尾相连的连续列表**（内容少的分类不会留白）；点分类平滑定位到对应分组标题，滚动时左侧高亮跟随，分组标题吸顶。菜品图/描述/价格（规格太多时显示「起」） |
 | 菜品搜索 | `src/pages/index/index.ts` + `packages/customer-core/src/search.ts` | 菜名 / 描述 / 规格名模糊搜索：按「包含」匹配，并支持菜名的顺序包含（「红肉」→「红烧肉」）；多关键词是「与」。搜索态隐藏左栏、结果回到顶部。搜索实现已抽到 `@dining/customer-core`，与 H5 共用同一份 |
@@ -31,14 +33,18 @@
 | 加载骨架屏 | `src/pages/index/*` | 按真实布局铺骨架（渐变头部 + 搜索 + 左栏 + 菜品行），而不是转圈 |
 | 规格 / 单项备注 | `src/components/spec-sheet/*` | 底部弹层，备注组合规则与 H5 完全一致（`、` 连接，原样进后厨票） |
 | 购物车 | `src/store/cart.ts` | 加/减/移除/清空、茶位费与满减试算（与 H5 同规则，仅供展示） |
+| 购物车持久化 | `src/store/cartPersist.ts` | 被杀进程 / 冷启动重进后恢复未提交的车（人数与整单备注一起）。按「桌台码 + 订单号」隔离、时间上限兜底；恢复时按当前菜单复核（下架/售罄丢弃、价格取现值）。**刻意不照搬 H5 的「会话起点」判断** —— 小程序没有 sessionStorage，照抄会让冷启动永远恢复不了 |
 | 下单 / 加菜 | `src/pages/cart/index.ts` | 首次下单与「加菜」自动判别；本桌已有进行中订单会提示并入 |
 | 幂等提交 | `src/pages/cart/index.ts` | `clientRequestId` 复用策略与 H5 一致，超时重试不会重复下单 |
 | 订单进度 | `src/pages/order/index.ts` | 3s 轮询、状态步骤条、菜品明细、手动刷新 |
 | 催菜 | `src/pages/order/index.ts` | 与 H5 `useUrge` 同策略：silent 请求 + 冷却倒计时（读后端结构化 `cooldown`） |
-| 结账 | `src/pages/pay/index.ts` | 展示门店收款码 + 支付状态轮询（**未接在线支付**，见 4.1） |
+| 改就餐人数 | `src/pages/order/index.ts` + `POST /api/customer/order/person` | 订单页「N 人用餐 · 修改」。人数决定茶位费，金额由后端重算并回传最新订单；只允许「进行中且未支付」的单。**不能复用加菜接口**：它要求明细非空，回传原明细会重复扣库存、重复出厨单 |
+| 历史订单详情 / 再来一单 | `src/pages/history-detail/*` | 「我的」→ 点订单行进入。只读详情 + 「再来一单」（按当前菜单复核后并入当前购物车，赠菜不复制）。归属走会员令牌（`/customer/order/mine/:orderNo`），**不能用 tableId** —— 历史单在别的桌上 |
+| 结账 | `src/pages/pay/index.ts` | 已接入小程序内支付（JSAPI，见 4.1）；未开通时降级为门店收款码 + 支付状态轮询 |
 | 本桌出餐中订单提示 | `src/pages/index/index.ts` | 复用后端 `table.servingOrders`；标签**可点击**，带单号跳订单页看出餐进度（H5 只展示、点不了） |
 | 订单恢复 | `src/store/session.ts` + 各页 `recover()` | 冷启动/从「最近使用」进入时，用本地缓存的 `tableCode`/`orderNo` 回到原桌原单；本桌还有出餐中订单时保留 `orderNo` 不清 |
-| 底部导航（点餐 / 订单） | `src/components/tab-bar/*` + `src/utils/nav.ts` | 常驻显示（未下单时订单页是空态，也能切过去）；点餐页带 `append=1` 打开，否则会被「本桌已有进行中订单」弹回订单页 |
+| 底部导航（首页 / 点餐 / 订单 / 我的） | `src/components/tab-bar/*` + `src/utils/nav.ts` | 常驻显示（未下单时订单页是空态，也能切过去）；点餐页带 `append=1` 打开，否则会被「本桌已有进行中订单」弹回订单页 |
+| 没带桌台码时扫码自救 | `src/pages/index/index.ts` + `src/utils/scan.ts` | 从底部导航直接切到点餐、而本次没扫过码时，错误态给的是「扫码点餐」而不是无效的「重新加载」；扫到码就地加载菜单，不用退回首页 |
 | 接口复用 | `src/api/wx-adapter.ts` + `src/api/client.ts` | **`@dining/api` 一行未改**：用 axios 自定义 adapter 把传输层换成 `wx.request` |
 | 类型复用 | `@dining/types` | 全部实体与请求/响应类型共用 |
 | 纯函数复用 | `@dining/shared/{money,dicts,orderStatus,orderDisplay}` | 金额格式化、状态字典、状态判定与 H5 同一份实现 |
@@ -60,10 +66,10 @@ frontend/apps/miniprogram/
     ├── config.ts          # ⚠️ API_ORIGIN 等必改项集中在这里
     ├── types.ts           # 跨页共享状态类型
     ├── api/               # wx-adapter.ts（axios→wx.request）+ client.ts（装配）
-    ├── store/             # cart（购物车）/ session（桌台与订单）/ poller（轮询）
-    ├── utils/             # toast / scene（桌台码解析）/ nav（点餐 ↔ 订单切页）
+    ├── store/             # cart（购物车）/ cartPersist（购物车持久化）/ session（桌台与订单）/ poller（轮询）/ member（会员）
+    ├── utils/             # toast / scene（桌台码解析）/ scan（扫码取桌台码）/ nav（四页切页）
     ├── components/        # tab-bar（底部主导航）/ cart-bar（底部结算栏）/ spec-sheet（规格备注弹层）
-    └── pages/             # index（菜单）/ cart（确认下单）/ order（进度）/ pay（结账）/ profile（我的）
+    └── pages/             # home（默认主页）/ index（菜单）/ cart（确认下单）/ order（进度）/ pay（结账）/ profile（我的）/ history-detail（历史订单详情）
 ```
 
 ### 命令
@@ -183,12 +189,12 @@ export const API_ORIGIN = 'https://dining.example.com';
 #### 开发期便利：兜底桌台码与编译模式
 
 扫码进入才是正式路径，但开发者工具默认用的是**「普通编译」**（不带任何 `scene` / query 参数），
-菜单页拿不到桌台码就只会显示「请扫描餐桌上的二维码进入点餐」。两种办法都能解决：
+于是启动后落在**默认主页** `pages/home/index`（不是菜单页）。想直接进菜单调试，两种办法：
 
 | 办法 | 做法 | 注意 |
 |---|---|---|
 | 编译模式（贴近真实） | 点「编译」左边的模式下拉，选 `直接指定桌台码（调试用）` 或 `扫小程序码进入（scene=桌台码）`；下拉里没有就「添加编译模式」，启动页 `pages/index/index`、启动参数 `tableCode=<桌台码>` | 工具**只在打开项目时**读一次 `project.private.config.json`：手改配置后要重开项目，下拉里才会出现 |
-| 开发期兜底（最省事） | 什么都不用选，直接编译 | 见下方 `DEV_TABLE_CODE`，只对开发版生效 |
+| 开发期兜底（最省事） | 什么都不用选，直接编译，再点首页的「继续点餐」 | 见下方 `DEV_TABLE_CODE`：开发版下首页用它兜底「继续点餐」，一键进本机那张桌；只对开发版生效 |
 
 `src/config.ts` 里的兜底值：
 
@@ -202,29 +208,41 @@ export const DEV_TABLE_CODE = '8YG3Q335';
 
 ---
 
-## 四、尚未实现的功能（按优先级）
+## 四、功能现状与后续计划（按优先级）
 
-### 4.1 在线支付（最大缺口，当前是降级方案）
+### 4.1 在线支付（✅ JSAPI 已接通）
 
-**现状**：后端走的是微信 **Native 扫码支付**（`backend/internal/pay/wxpay.go` 调
-`/v3/pay/transactions/native`，返回 `code_url` 让前端渲染二维码）。小程序里不能「自己扫自己」，
-所以 `pages/pay` 目前是降级方案：展示门店收款码图片、提示到前台结账、每 5s 轮询支付状态
-（商家在后台收款后顾客端会立刻变成「已支付」）。
+**现状**：小程序内支付走微信 **JSAPI**，链路已完整落地：
 
-**前端通道已经就位**（`pages/pay/index.ts` 的 `onPayOnline` + `packages/api` 的 `payJsapi`），
-等后端把下面第 1~3 步补上即可生效；后端没开通时按钮不会变成「微信支付」，顾客仍然走收款码 ——
-不会出现「点了在线支付却拉不起收银台」的情况。
+```
+购物车提交 → 订单页 → 去支付 → wx.login 拿 code
+  → POST /api/customer/pay/jsapi
+     （服务端 code2session 换 openid → transactions/jsapi 下单 → 商户私钥签好调起参数）
+  → wx.requestPayment 拉起收银台
+  → 成功后主动查单（GET /api/customer/pay/query）确认到账，才置「已支付」
+```
 
-**后端还需要的改动：**
+实现位置：`pages/pay/index.ts` 的 `onPayOnline` + `packages/api` 的 `payJsapi`；
+后端 `handler.PayJsapi` + `pay.Wxpay.CreateJsapi` + `paySign`。
 
-| 步骤 | 改动点 |
+**为什么付款成功后还要查单**：`wx.requestPayment` 的 success 只代表「顾客完成了付款动作」，
+服务端要等微信回调才知道钱到没到。回调有延迟时直接显示「支付成功」会与订单真实状态矛盾，
+所以 success 之后一律以 `queryPay` 结果为准；没确认到就留在支付页继续轮询。
+
+**降级路径**（未开通时）与 H5 一致：展示门店收款码 + 引导到前台结账、每 5s 轮询支付状态。
+
+**开关与前提：**
+
+| 项 | 说明 |
 |---|---|
-| 1. 拿 openid | 新增接口：`wx.login` 的 code → 服务端调 `code2session` 换 `openid`（需 AppSecret） |
-| 2. JSAPI 下单 | `backend/internal/pay/wxpay.go` 新增 `Jsapi()`，请求 `POST /v3/pay/transactions/jsapi`，body 带 `payer.openid` |
-| 3. 调起参数签名 | 服务端用商户私钥签发调起参数（`appId\ntimeStamp\nnonceStr\npackage\n`），前端只拿签名结果 |
-| 4. ~~前端调起~~ | ✅ **已完成**：`wx.requestPayment` 原样透传服务端给的调起参数，不做任何加工 |
-| 5. 回调复用 | 现有 `/api/customer/pay/notify/wxpay` 可复用，无需改 |
-| 6. 配置 | JSAPI 要求 `wxpay_appid` 为**小程序** AppID（与桌牌码共用同一项，注意点见 2.2）；AppSecret 已有（`wx_app_secret`），无需新增 |
+| 顾客端入口 | 由公开配置 `wxpay_jsapi_enabled` 决定（管理端「系统配置 → 在线支付 → 小程序内支付」，默认关）。fail-closed：未开通时按钮根本不存在，不会出现「点了拉不起收银台」 |
+| AppID | `wxpay_appid` 必须是**小程序**的 AppID（与桌牌码共用同一项，注意点见 2.2）。填成公众号 AppID 时 Native 仍能跑、JSAPI 必失败 |
+| AppSecret | 必须配置 `wx_app_secret`（code2session 用）。缺它时接口返回「小程序内支付尚未开通，请用收款码或到前台结账」 |
+| 回调 | 复用现有 `/api/customer/pay/notify/wxpay`，无需额外配置 |
+| openid | 用 `wx.login` 的 code 现换、不落库 —— 未登录顾客同样能付款（会员表里那份 openid 属于登录链路，不复用） |
+
+同一订单只会保留一张能付款的支付单：JSAPI 下单前会先关掉该单其它待支付流水，
+避免顾客手里同时存在两张都能付成功的码。
 
 #### 接口契约（后端按这个实现，前端无需再改）
 
@@ -238,14 +256,13 @@ POST /api/customer/pay/jsapi
 
 - 失败时返回业务错误码 + 中文 `msg`，前端据此提示「小程序内支付暂不可用，请用上方收款码或到前台结账」
   （不会重试、不会卡在支付页）。
-- 是否展示「微信支付」按钮，由公开配置 `wxpay_jsapi_enabled` 决定（`'1'` 才显示）。
-  **注意：这一项目前在后端还不存在**（`CustomerSettings()` 没下发它，管理端配置里也没有），
-  所以线上按钮恒不出现 —— 这是刻意的 fail-closed：宁可少一个入口，也不要出现
-  「点了在线支付却 404」。实现第 1~3 步时请一并把它加进 `CustomerSettings()` 与管理端配置项。
+- 是否展示「微信支付」按钮，由公开配置 `wxpay_jsapi_enabled` 决定（`'1'` 才显示）；
+  `CustomerSettings()` 已下发该项，管理端配置里也有对应开关（默认关）。
 - `signType` 取值限定 `MD5` / `HMAC-SHA256` / `RSA`（`PayJsapiResult` 已按 `wx.requestPayment` 收窄）。
 
-⚠️ 关键约束：`openid` 是**同一个微信号在小程序下的** openid，与公众号下的不同。若 1、2 两步不做，
-无论前端怎么写都调不起支付。
+⚠️ 关键约束：`openid` 是**同一个微信号在小程序下的** openid，与公众号下的不同 ——
+所以「换 openid 用的 AppID」（code2session）与「下单用的 AppID」（`wxpay_appid`）必须是同一个，
+且都是小程序 AppID，否则微信会拒付。
 
 ### 4.2 顾客身份（openid / 我的订单）
 
@@ -254,6 +271,10 @@ POST /api/customer/pay/jsapi
   `tb_order.customer_id` 归属（0=匿名单，历史单不回填）、顾客令牌（2h，过期静默重登）、
   「我的」tab（会员卡 + 跨桌历史订单 + 退出登录）。
   完整设计与实现约束见 [`docs/design-docs/customer-member/spec.md`](design-docs/customer-member/spec.md)。
+- **身份层（2026-10-18）**：账号与登录方式已拆分到 `tb_customer` + `tb_customer_identity`
+  （`provider` + `external_id`），本期仍只实现 `wx_mp`；App / 网站后续接同一套接口，
+  只需新增一个凭据校验器，令牌与订单归属不动。
+  见 [`docs/design-docs/customer-member-identity/spec.md`](design-docs/customer-member-identity/spec.md)。
 - **上线动作**：公众平台「用户隐私保护指引」补声明（openid / 昵称 / 头像）—— 即硬前置第 7 项；
   后端需配置小程序 AppID + AppSecret（与桌牌码共用）。
 - **二期候选**：手机号绑定（需企业认证、按次收费）、积分/储值/优惠券、管理端会员管理页、注销入口。
@@ -363,7 +384,8 @@ POST /api/customer/pay/jsapi
 | `src/pages/order/__tests__/append.test.ts`（4） | 加菜跳转（页面栈里没有菜单页时不能死循环）、首屏加载失败的重试 |
 | `src/pages/pay/__tests__/paid.test.ts`（2） | 支付成功先落「已付款」再回拉详情；延时跳转期间顾客手动返回不重复导航 |
 | `src/components/spec-sheet/__tests__/confirm.test.ts`（3） | 弹层「确定」的防重入：连点只加一份 |
-| `src/utils/__tests__/scene.test.ts`（10） | 小程序码 scene / 裸码值 / urlencode / 多参数 / 非法编码 / 空值 |
+| `src/pages/home/__tests__/home.test.ts`（8） | 默认主页：扫码进菜单（用 navigateTo，首页留在栈里）、扫到无关内容提示重扫 / 取消不提示、上次桌台回填与续用、进行中订单卡片（已完成的单不进）、招牌菜只取 `signature=1` 且多规格给最低价 |
+| `src/utils/__tests__/scene.test.ts`（21） | 小程序码 scene / 裸码值 / urlencode / 多参数 / 非法编码 / 空值；小程序内扫码结果解析（`/order/<码>`、`?tableCode=`、小程序码 path、无关链接返回空串） |
 | `packages/customer-core/src/__tests__/search.test.ts` | 关键词拆分（空白/中英文逗号）、菜名与描述与规格名命中、顺序包含、多关键词「与」、空词短路、过滤时不改写原菜单（与 H5 共用同一份实现与用例） |
 | `src/utils/__tests__/nav.test.ts`（7） | 底部导航切页：已在目标页不跳、目标页在栈里就 `navigateBack`（含跨页 delta）、不在栈里 `redirectTo`（点餐页必须带 `append=1`，否则被弹回订单页） |
 | `src/utils/__tests__/toast.test.ts`（3） | 只有带图标的提示才截断到 7 字，纯文字提示完整保留 |
@@ -385,7 +407,10 @@ POST /api/customer/pay/jsapi
 
 静态检查与单测都跑在 Node 里，下面这些**只能在微信开发者工具 + 真机上验**：
 
-- [ ] **扫码进桌**：用真实桌台码生成小程序码，微信扫码落到对应桌台，顶部桌台名正确
+- [ ] **默认主页**：从「最近使用」/ 直接打开小程序，落在 `pages/home/index`（不是菜单页），店名与招牌菜正常
+- [ ] **首页扫码**：点首页「扫码点餐」→ 微信相机 → 扫 H5 桌牌码 / 小程序码，能落到对应桌台；取消或扫到无关码不报错、不跳转
+- [ ] **首页续用**：「继续点餐」带上次的桌台进菜单；本桌有进行中订单时仍会先问一句归属
+- [ ] **扫码进桌**：用真实桌台码生成小程序码，微信扫码落到对应桌台，顶部桌台名正确（**不经过首页**）
 - [ ] **加菜闭环**：本桌有进行中订单时扫码 → 进订单页 → 点「加菜」→ **停在菜单页**并出现加菜提示条 →
       点菜 → 购物车显示「提交加菜」→ 提交后订单明细出现「加菜1」批次标签
 - [ ] **下单与打印**：下单后后厨小票正常出单；加菜只打印新增的菜（不重打整单）
@@ -406,12 +431,16 @@ POST /api/customer/pay/jsapi
 | 分类切换 | 双栏 + 滚动联动高亮（scroll-spy） | 同左（滚动联动 + 分组标题吸顶），点分类用 `scroll-into-view` 定位；左栏高亮项会自动滚回可视区 |
 | 规格 / 备注 | 规格 chip 全量在菜品行内，备注是独立弹层 | 规格 **≤3 个**时才在行内点选，更多进弹层；规格与备注合并在同一个弹层 |
 | 菜单内加减份数 | 行内可增减 | 规格 ≤3 个的菜行内即有步进器（同样只算所选规格）；规格更多的菜只能「+」进弹层，增减在购物车页 |
-| 菜品搜索 | 无 | 有：菜名 / 描述 / 规格名模糊搜索 + 顺序包含，搜索态隐藏左栏 |
+| 菜品搜索 | 有：全屏搜索层（与小程序**共用** `customer-core/search`） | 有：菜名 / 描述 / 规格名模糊搜索 + 顺序包含，搜索态隐藏左栏 |
 | 售罄 | 显示「售罄」、不可下单 | 同左（遮罩 + 置灰 + 不可点），口径与后端一致 |
-| 在线支付 | 二维码（Native 扫码支付） | 收款码展示 + 前台结账（JSAPI 未接，见 4.1） |
+| 在线支付 | 二维码（Native 扫码支付） | 小程序内调起微信支付（JSAPI，见 4.1）；未开通时才是收款码 + 前台结账 |
+| 购物车持久化 | localStorage，仅**刷新**可恢复（关掉重开即丢） | 本地存储，**冷启动也恢复**；按桌台码 + 订单号隔离 |
+| 改就餐人数 | 仅购物车抽屉 | 购物车页 + 订单页（仅「进行中且未支付」） |
+| 历史订单 | 无（无会员体系） | 「我的」页列表 + 只读详情 + 再来一单 |
 | 页面可见性 | `visibilitychange` 暂停轮询 | 页面 `onHide` / `onShow`（小程序生命周期天然覆盖切后台） |
 | 未登录态 | 管理端 401 跳登录页 | 顾客端无鉴权，401 仅提示 |
 | 订单恢复 | 依赖 `table.currentOrder` | 同左，另加本地缓存 `tableCode/orderNo` 兜底 |
+| 没带桌台码 | 落到点餐页，提示扫码（H5 本身就在浏览器里，通常由二维码带着码进） | 落到**默认主页**：微信内扫码进桌 + 上次桌台/进行中订单续用 + 招牌菜；从点餐 tab 误入菜单时，错误态也能就地扫码 |
 | 出餐中订单 | 顶部提示条只展示，点不动 | 提示条可点击，带 `orderNo` 进订单页看出餐进度 |
 
 ---

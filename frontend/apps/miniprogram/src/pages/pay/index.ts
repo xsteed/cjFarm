@@ -1,11 +1,12 @@
 // 结账页。
 //
-// ⚠️ 这一版**没有**接入微信小程序支付（JSAPI）。原因与替代方案：
-// 现有后端走的是 Native 扫码下单（/v3/pay/transactions/native，返回 code_url 由前端
-// 渲染二维码）。小程序里不能「自己扫自己」，要真正在小程序内完成支付必须：
-//   后端新增 JSAPI 下单 + wx.login 换 openid + 调起参数签名 + 支付回调改造。
-// 在这些就位之前，本页提供与 H5「未启用在线支付」时一致的降级路径：
-// 展示门店收款码 + 引导到前台结账，并轮询订单支付状态（商家在后台收款后顾客能立刻看到）。
+// 小程序内支付（JSAPI）已接通：wx.login → 后端用 code 换 openid 并 JSAPI 下单、
+// 签好调起参数 → wx.requestPayment（见 onPayOnline）。入口是否出现由公开配置
+// wxpay_jsapi_enabled 决定，fail-closed：后端未开通时按钮根本不存在，
+// 不会出现「点了却拉不起收银台」。
+//
+// 未开通时提供与 H5 一致的降级路径：展示门店收款码 + 引导到前台结账，
+// 并轮询订单支付状态（商家在后台收款后顾客能立刻看到）。
 // 详见 docs/miniprogram.md 4.1 节。
 import { getOrderByNo, payJsapi, queryPay } from '../../api/client';
 import type { PayJsapiResult } from '../../api/client';
@@ -118,7 +119,11 @@ Page({
 
   startPolling() {
     if (!this.poller) {
-      this.poller = createPoller(() => this.checkPaid(true), PAY_POLL_INTERVAL_MS);
+      // 包一层再丢弃返回值：poller 的回调契约是 void/Promise<void>，
+      // 而 checkPaid 现在会回传「是否已确认到账」
+      this.poller = createPoller(() => {
+        void this.checkPaid(true);
+      }, PAY_POLL_INTERVAL_MS);
     }
     this.poller.start();
   },
@@ -159,12 +164,15 @@ Page({
     if (order) this.render(order);
   },
 
-  /** 查一次支付状态；silent=true 时不弹错误（轮询场景）。 */
-  async checkPaid(silent: boolean) {
+  /**
+   * 查一次支付状态；silent=true 时不弹错误（轮询场景）。
+   * @returns 服务端是否已确认收款（JSAPI 付款成功后靠它判定「真到账」）
+   */
+  async checkPaid(silent: boolean): Promise<boolean> {
     const orderNo = this.data.orderNo;
     // querying 是手动点击与静默轮询**共用**的锁：两者并发返回会乱序，
     // 可能出现「刚提示已付款、紧接着又弹『尚未收到付款』」
-    if (!orderNo || this.data.paid || this.querying) return;
+    if (!orderNo || this.data.paid || this.querying) return !!this.data.paid;
     this.querying = true;
     if (!silent) this.setData({ checking: true });
     try {
@@ -182,11 +190,13 @@ Page({
         }
         // 回订单页看出餐进度（存下 handle：页面提前卸载时要清掉，否则顾客已被强行拽回）
         this.leaveTimer = setTimeout(() => this.leaveToOrder(), 800);
-        return;
+        return true;
       }
       if (!silent) toast.info('尚未收到付款，请稍后再试');
+      return false;
     } catch {
       if (!silent) toast.error('查询支付状态失败，请稍后重试');
+      return false;
     } finally {
       this.querying = false;
       if (!silent) this.setData({ checking: false });
@@ -218,11 +228,15 @@ Page({
       const code = await this.loginCode();
       const params = await payJsapi({ orderNo, code });
       await this.requestPayment(params);
-      // 与轮询分支同一套收尾：停轮询 → 置已付 → 回订单页看出餐进度
-      this.poller?.stop();
-      this.setData({ paid: true });
-      toast.success('支付成功');
-      this.leaveTimer = setTimeout(() => this.leaveToOrder(), 800);
+      // requestPayment 的 success 只代表「顾客完成了付款动作」，不代表服务端已入账
+      // （微信回调有延迟）。一律以查单结果为准，否则会出现「顾客看到支付成功、
+      // 订单仍是未支付」的错觉。先释放锁：checkPaid 与这里共用 querying。
+      this.querying = false;
+      const confirmed = await this.checkPaid(true);
+      if (!confirmed) {
+        // 没确认到就交给轮询继续跟（poller 未被停），顾客留在支付页等结果
+        toast.info('支付结果确认中，请稍等');
+      }
     } catch (e) {
       const msg = String((e as { errMsg?: string } | null)?.errMsg || '');
       if (/cancel/i.test(msg)) {

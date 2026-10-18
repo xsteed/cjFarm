@@ -11,7 +11,7 @@
 // 而服务端只认 ID 字符串本身)。
 // ============================================================================
 
-import { safeStorage } from './safeStorage';
+import { safeStorage } from './storage';
 
 /** 访客 ID 在本地存储里的键名(与登录态键同级管理,避免散落字符串)。 */
 export const LS_VISITOR_ID = 'dining_visitor_id';

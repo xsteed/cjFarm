@@ -25,6 +25,11 @@ export interface SessionState {
    * 菜单页底部结算栏与购物车页的合计必须一致，否则同一批菜在两页显示两个价。
    */
   personCount: number;
+  /**
+   * 整单备注。同样放会话里：购物车要能跨冷启动恢复（见 store/cartPersist），
+   * 备注若只存在购物车页的 data 里，页面一销毁就丢，恢复出来的车等于少了一半信息。
+   */
+  orderRemark: string;
 }
 
 /** 购物车行：同一道菜的不同规格算两行。 */
@@ -41,43 +46,22 @@ export interface CartLine {
   itemRemark: string;
 }
 
-/** 会员卡信息（/api/customer/auth/* 返回的展示字段）。 */
-export interface MemberInfo {
-  customerId: number;
-  /** 未填昵称时后端返回「微信用户」。 */
-  nickname: string;
-  avatarUrl: string;
-  /** 入会日期。 */
-  memberSince: string;
-  orderCount: number;
-}
+// 会员卡与「我的订单」的响应形态直接复用接口层（@dining/api）的定义。
+// 两端各维护一份结构相同的 interface 迟早会漂移 —— App/网站接进来时更是三份。
+//
+// ⚠️ MemberOrderRow.totalAmount 的单位是**元**（与订单页/支付页同口径），
+// 直接 `money()` 展示即可。它曾被误标成分、且后端确实下发过分，
+// 导致 ¥28.00 的单显示成 ¥2800.00（后端已统一为下发元）。
+import type { MemberInfo } from '@dining/api';
+export type { MemberInfo, MemberOrderRow } from '@dining/api';
 
 /** 会员登录态。挂在 App 实例上跨页共享；令牌另存本地存储供冷启动恢复。 */
 export interface MemberState {
-  /** 会员 ID；0 表示未登录。 */
+  /** 会员 ID；0 表示未登录，-1 表示「有本地令牌但档案尚未拉取」。 */
   customerId: number;
   info: MemberInfo | null;
   /** 登录流程进行中（防重复点击与并发静默重登）。 */
   pending: boolean;
-}
-
-/** 「我的订单」列表行（后端 dao.CustomerOrderRow 的响应形态）。 */
-export interface MemberOrderRow {
-  orderId: number;
-  orderNo: string;
-  pickupNo: number;
-  tableId: number;
-  tableName: string;
-  orderStatus: number;
-  payStatus: number;
-  /**
-   * 金额单位是**元**，与订单页/支付页的 totalAmount 同口径，直接 `money()` 展示。
-   *
-   * 这里曾误注为「单位是分，用 money() 换算」——money() 只做 toFixed(2)，不会 ÷100，
-   * 而后端当时也确实下发了分，于是 ¥28.00 的单显示成 ¥2800.00（后端已改为一律下发元）。
-   */
-  totalAmount: number;
-  createTime: string;
 }
 
 /**

@@ -1,6 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import type { AxiosResponse } from 'axios';
-import { LS_TOKEN, AUTH_KEYS, safeStorage, ui } from '@dining/shared';
+import { LS_CUSTOMER_TOKEN, LS_TOKEN, AUTH_KEYS, safeStorage, ui } from '@dining/shared';
 
 // 后端路由体系已重构为 /api/* 分组(见 backend/main.go setupAPI):
 // /api/auth/* 登录、/api/customer/* 顾客端、/api/admin/* 管理端、/api/common/upload 上传。
@@ -12,9 +12,25 @@ export const http = axios.create({
   timeout: 15000
 });
 
-// 请求拦截:自动携带登录令牌
+// ============================================================================
+// 请求拦截:按路径自动携带对应的登录令牌
+//
+// 管理端与顾客端是**两套互不通用的身份**(后端也刻意不认对方的令牌),
+// 必须按路径分流:
+//   /customer/*   → 顾客会员令牌(小程序 / App / 网站会员)
+//   其余(管理端) → 管理端登录令牌
+//
+// 三端共用这一份逻辑:小程序只要注入 wx.storage 的存储后端
+// (见 apps/miniprogram/src/api/client.ts),Web/App 走默认 localStorage。
+// ============================================================================
+
+/** 顾客端接口路径判定。baseURL 是 '/api',config.url 保持相对路径。 */
+function isCustomerPath(url?: string): boolean {
+  return (url ?? '').startsWith('/customer/');
+}
+
 http.interceptors.request.use(config => {
-  const token = safeStorage.get(LS_TOKEN);
+  const token = safeStorage.get(isCustomerPath(config.url) ? LS_CUSTOMER_TOKEN : LS_TOKEN);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

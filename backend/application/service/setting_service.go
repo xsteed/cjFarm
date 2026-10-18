@@ -42,7 +42,7 @@ var ManagedSettingKeys = []string{
 	"seat_fee_enabled", "seat_fee",
 	"promotion_enabled", "promotion_threshold", "promotion_discount",
 	"pay_qr_wx", "pay_qr_ali",
-	"wxpay_enabled", "wxpay_mchid", "wxpay_appid", "wxpay_serial_no",
+	"wxpay_enabled", "wxpay_jsapi_enabled", "wxpay_mchid", "wxpay_appid", "wxpay_serial_no",
 	"wxpay_private_key_path", "wxpay_platform_cert_path",
 	"wxpay_pubkey_id", "wxpay_pubkey_path", "wxpay_notify_url",
 	// 小程序桌牌码:AppID 复用 wxpay_appid,此处只需版本与 AppSecret
@@ -185,6 +185,7 @@ func ListSettings() dto.Settings {
 		PromotionThreshold: dao.GetSetting("promotion_threshold"),
 		PromotionDiscount:  dao.GetSetting("promotion_discount"),
 		WxpayEnabled:       SettingFlag("wxpay_enabled"),
+		WxpayJsapiEnabled:  SettingFlag("wxpay_jsapi_enabled"),
 		AlipayEnabled:      SettingFlag("alipay_enabled"),
 		// 微信支付(敏感项:已配置回显占位符,前端原样带回表示不修改)
 		WxpayApiv3Key:         maskIfSet("wxpay_apiv3_key"),
@@ -271,6 +272,7 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		"promotion_threshold":      NormalizeAmountValue(settings.PromotionThreshold),
 		"promotion_discount":       NormalizeAmountValue(settings.PromotionDiscount),
 		"wxpay_enabled":            normFlagValue(settings.WxpayEnabled),
+		"wxpay_jsapi_enabled":      normFlagValue(settings.WxpayJsapiEnabled),
 		"alipay_enabled":           normFlagValue(settings.AlipayEnabled),
 		"wxpay_mchid":              settings.WxpayMchid,
 		"wxpay_appid":              settings.WxpayAppid,

@@ -19,6 +19,7 @@ import (
 	"dining-system/domain/po"
 	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/pay"
+	"dining-system/infrastructure/weapp"
 )
 
 // refundMu 串行化「退款额度校验 + 落退款单 + 调渠道」全过程。
@@ -136,6 +137,96 @@ func PayCreate(c *gin.Context) {
 		"orderNo": p.OrderNo,
 		"amount":  totalCents,
 	})
+}
+
+// PayJsapi 顾客在小程序内发起微信支付(JSAPI)。
+//
+// 为什么需要它:小程序里不能「自己扫自己」,Native 的 code_url 在微信内无处可扫。
+// 小程序内完成支付必须走 JSAPI —— 服务端用 wx.login 的 code 换 openid、用
+// transactions/jsapi 下单拿 prepay_id、再用商户私钥签好调起参数,前端直接
+// wx.requestPayment,顾客全程不离开小程序。
+//
+// 商户配置与 Native 完全共用(wxpay_*),回调也是同一个 notify_url;唯一的额外要求是
+// wxpay_appid 必须是**小程序**的 AppID —— openid 在不同 AppID 下不互通,填成公众号的
+// 会出现「下单成功但微信拒付」。openid 走 code2session 现换不落库:未登录顾客也能付。
+func PayJsapi(c *gin.Context) {
+	var p struct {
+		OrderNo string `json:"orderNo"`
+		Code    string `json:"code"` // wx.login 的临时凭证(一次性,5 分钟有效)
+	}
+	if err := c.ShouldBindJSON(&p); err != nil || p.OrderNo == "" || p.Code == "" {
+		fail(c, "参数错误")
+		return
+	}
+
+	provider, _ := pay.Get(pay.ChannelWxpay)
+	if !provider.Enabled() {
+		fail(c, "小程序内支付尚未开通，请用收款码或到前台结账")
+		return
+	}
+
+	ctx := c.Request.Context()
+	log := logger.WithContext(ctx,
+		zap.String("orderNo", p.OrderNo), zap.String("channel", pay.ChannelWxpay))
+
+	orderID, totalCents, err := service.ValidateOrderPayable(ctx, p.OrderNo)
+	if err != nil {
+		fail(c, err.Error())
+		return
+	}
+
+	// openid 用小程序 code 现换:与登录链路无关,匿名顾客同样能付。
+	openID, err := weapp.Code2Session(ctx, p.Code)
+	if err != nil {
+		log.Warnf("[pay] JSAPI 换取 openid 失败: %v", err)
+		// 小程序 AppSecret 未配置时 code2session 会返回「会员功能未开启」——
+		// 这个文案对正在付款的顾客没有意义,换成能指路的说法。
+		if errors.Is(err, weapp.ErrMemberDisabled) {
+			fail(c, "小程序内支付尚未开通，请用收款码或到前台结账")
+			return
+		}
+		fail(c, err.Error())
+		return
+	}
+
+	// 同一订单只保留一条能付款的渠道单:重复发起时先关旧的,避免顾客手里的
+	// 旧参数与新参数都能拉起收银台(两笔都可能付成功)。
+	closePendingPayments(ctx, p.OrderNo, pay.ChannelWxpay)
+
+	params, err := provider.CreateJsapi(pay.PayReq{
+		OrderNo:     p.OrderNo,
+		Description: "餐饮消费" + p.OrderNo,
+		AmountCents: totalCents,
+		ClientIP:    c.ClientIP(),
+		OpenID:      openID,
+	})
+	if err != nil {
+		log.Warnf("[pay] 发起小程序支付失败: %v", err)
+		fail(c, "发起支付失败: "+err.Error())
+		return
+	}
+
+	// 与 Native 同一条金额防线:落流水前在订单行锁内复核金额,变了就关掉刚生成的
+	// 支付单并请顾客重新发起 —— 否则顾客按旧金额付款后回调会被金额防线拒绝。
+	if err := service.CreatePayment(orderID, p.OrderNo, pay.ChannelWxpay, totalCents, params.Package); err != nil {
+		if errors.Is(err, service.ErrOrderAmountChanged) {
+			log.Warnf("[pay] 订单金额在 JSAPI 下单期间被修改,关闭本次支付单 订单%s", p.OrderNo)
+			if closeErr := provider.Close(p.OrderNo); closeErr != nil {
+				log.Warnf("[pay][告警] 金额变更后关单也失败(旧参数可能仍可支付,请人工关注): %v", closeErr)
+			}
+			fail(c, "订单金额已变更，请刷新后重新发起支付")
+			return
+		}
+		log.Errorf("[pay][告警] JSAPI 支付流水落库失败,拒绝返回调起参数: %v", err)
+		if closeErr := provider.Close(p.OrderNo); closeErr != nil {
+			log.Warnf("[pay][告警] 流水落库失败后关单也失败(存在掉单风险,请人工关注): %v", closeErr)
+		}
+		fail(c, "支付发起异常，请稍后重试")
+		return
+	}
+	log.Infof("[pay] 已发起小程序支付 金额%d分", totalCents)
+
+	ok(c, params)
 }
 
 // PayNotifyWxpay 微信支付结果回调(验签 + 解密 + 回写)。

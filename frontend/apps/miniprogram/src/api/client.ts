@@ -2,20 +2,22 @@
 // 接口层组装点
 //
 // `@dining/api` 里已经建好 axios 实例与拦截器（响应解包 {code,msg,data}、
-// 统一中文错误文案、401 清登录态）。小程序端只做三件事把它「本地化」：
+// 统一中文错误文案、按路径注入顾客/管理端令牌、401 清登录态）。小程序端只做四件事把它「本地化」：
 //   1) 换传输层为 wx.request；
 //   2) 把 baseURL 指向已备案的 HTTPS 域名；
 //   3) 注入提示与 401 处理——这两件事在 Web 端由 main.ts / http.ts 默认实现承担，
 //      在小程序端由这里接管（这也是 packages 里留出 setUiNotifier 与
-//      setUnauthorizedHandler 两个口子的原因）。
+//      setUnauthorizedHandler 两个口子的原因）；
+//   4) 注入存储后端（wx.storage），令牌读写从此与 Web 共用同一份逻辑。
 //
 // 页面统一 `import { getMenu, ... } from '../api/client'`，不要直接 import
 // '@dining/api'，否则拦截器可能在被装配之前就被使用。
 // ============================================================================
 import { http } from '@dining/api';
+import { setStorageBackend } from '@dining/shared';
 import { setUiNotifier } from '@dining/shared/ui';
 import { API_BASE_URL, REQUEST_TIMEOUT_MS } from '../config';
-import { currentCustomerToken, installMemberUnauthorizedHandler } from '../store/member';
+import { installMemberUnauthorizedHandler } from '../store/member';
 import { toast } from '../utils/toast';
 import { wxAdapter } from './wx-adapter';
 
@@ -36,22 +38,43 @@ setUiNotifier({
   error: (message: string) => toast.error(message)
 });
 
-// ---- 3) 401 ----
+// ---- 3) 存储后端 ----
+// @dining/shared 的 safeStorage 默认是 Web 的 localStorage；这里换成 wx.storage。
+// 换完之后，`packages/api/src/http.ts` 的请求拦截器（按 /customer/ 前缀自动注入
+// 顾客令牌）与会员模块的令牌持久化，三端共用同一份代码，不再各写一套。
+//
+// 读语义对齐 localStorage.getItem：键不存在时返回 null（wx.getStorageSync 返回空串）。
+setStorageBackend({
+  get(key: string): string | null {
+    try {
+      const v = wx.getStorageSync(key);
+      return v === '' || v === undefined || v === null ? null : String(v);
+    } catch {
+      return null;
+    }
+  },
+  set(key: string, value: string): void {
+    try {
+      wx.setStorageSync(key, value);
+    } catch {
+      /* 磁盘满 / 隐私限制：会员态退化为「本次会话内有效」，静默降级 */
+    }
+  },
+  remove(key: string): void {
+    try {
+      wx.removeStorageSync(key);
+    } catch {
+      /* 同上 */
+    }
+  }
+});
+
+// ---- 4) 401 ----
 // 小程序里会 401 的只有「会员专属接口」（顾客令牌 2h 过期是常态）：
 // 交给会员模块静默重登（wx.login 无感知），成功后调用方重放请求，不打断顾客。
 // 匿名点餐接口正常永远不会 401；真出现（域名/网关层问题）也不弹窗打断点餐，
 // 下一次会员数据请求会触发完整的重新登录并给出明确文案。
 installMemberUnauthorizedHandler();
-
-// ---- 4) 顾客会员令牌 ----
-// 会员令牌存在 App 实例的 member 上（跨页共享）。之所以在拦截器里**每次现读**而不是
-// 闭包缓存：client.ts 会被打进每个页面的包里各一份，模块级变量不共享（见 types.ts 说明），
-// 而 App 实例是全局唯一的。
-http.interceptors.request.use(config => {
-  const token = currentCustomerToken();
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
 
 // 顾客端用到的接口全部从这里转发；管理端接口也一并带出（原生小程序无 tree-shaking 负担顾虑，
 // 但页面不会调用它们，仅保留导出以便后续扩展）。

@@ -1,0 +1,207 @@
+/* 历史订单详情页。
+   视觉沿用订单页（同一套卡片/菜品行/账单行），但不含出餐进度与底部导航：
+   这页是「回看一张旧单」，没有在途状态可追。 */
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28rpx;
+  padding: 0 60rpx;
+}
+
+.state-text {
+  color: var(--ink-3);
+  font-size: 28rpx;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.spinner {
+  width: 68rpx;
+  height: 68rpx;
+  border: 6rpx solid #ffe3d4;
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  padding: 24rpx 24rpx 0;
+  box-sizing: border-box;
+}
+
+/* ---------- 通用卡 ---------- */
+.sec {
+  margin-bottom: 20rpx;
+  padding: 28rpx;
+}
+
+.sec-title {
+  margin-bottom: 12rpx;
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+/* ---------- 订单信息 ---------- */
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.head-table {
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.head-meta {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  margin-top: 12rpx;
+  color: var(--ink-3);
+  font-size: 23rpx;
+}
+
+/* ---------- 菜品行 ---------- */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 20rpx 0;
+  border-top: 2rpx solid #f5f5f5;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-name {
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+/* 赠送菜标记：与金额位同色，和订单页一致 */
+.row-gift {
+  color: #e8850c;
+  font-weight: 700;
+}
+
+.row-spec {
+  margin-left: 12rpx;
+  padding: 2rpx 12rpx;
+  border-radius: var(--r-sm);
+  background: #f4f4f4;
+  color: var(--ink-3);
+  font-size: 21rpx;
+  font-weight: 400;
+}
+
+.row-remark {
+  margin-top: 6rpx;
+  color: var(--warning);
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.row-qty {
+  flex-shrink: 0;
+  color: var(--ink-3);
+  font-size: 25rpx;
+}
+
+.row-amt {
+  flex-shrink: 0;
+  min-width: 120rpx;
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 600;
+  text-align: right;
+}
+
+.order-remark {
+  margin-top: 18rpx;
+  padding-top: 18rpx;
+  border-top: 2rpx dashed var(--line);
+  color: var(--ink-2);
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+/* ---------- 账单 ---------- */
+.bill-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6rpx 0;
+  color: var(--ink-3);
+  font-size: 25rpx;
+}
+
+.bill-total {
+  margin-top: 18rpx;
+  padding: 24rpx 0 0;
+  border-top: 2rpx dashed var(--line);
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.bill-total-value {
+  color: var(--brand-deep);
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.bottom-pad {
+  height: 40rpx;
+}
+
+/* ---------- 底部动作栏 ----------
+   没有常驻 tab-bar，所以安全区必须由这里自己让出（与元素 padding 合并成一条声明）。 */
+.foot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 16rpx;
+  padding: 18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));
+  border-top: 2rpx solid var(--line);
+  background: #fff;
+}
+
+.foot-minor {
+  flex-shrink: 0;
+  height: 76rpx;
+  padding: 0 28rpx;
+  font-size: 26rpx;
+}
+
+.foot-main {
+  flex: 1;
+  height: 84rpx;
+  padding: 0;
+  font-size: 30rpx;
+}

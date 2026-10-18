@@ -1,41 +1,49 @@
 // 顾客会员登录态（小程序「注册成为会员」）。
 //
-// 设计与令牌策略见 docs/design-docs/customer-member/spec.md：
+// 设计与令牌策略见 docs/design-docs/customer-member/spec.md 与
+// docs/design-docs/customer-member-identity/spec.md：
 //   ・登录是「自愿」的 —— 未登录顾客的点餐链路完全不经过本模块；
 //   ・令牌 2h 有效，过期/401 时**静默重登一次**（wx.login 免费无感），顾客无感知；
-//   ・注册动作 = 点按钮 → wx.login（静默）→ POST /customer/auth/login，免表单免密码。
+//   ・注册动作 = 点按钮 → wx.login（静默）→ POST /customer/auth/login，免表单免密码；
+//   ・登录方式可插拔：这里只负责「拿小程序凭据」（wx.login 的 code），
+//     真正的接口调用在 @dining/api 的 memberLogin，网站/App 换成各自的凭据即可。
 //
 // 状态本体挂在 App 实例上（跨页共享的原因见 src/types.ts 顶部注释）；
-// 令牌另存本地存储，冷启动后恢复，避免「每次进小程序都要重新注册」的错觉。
+// 令牌存本地存储（键名来自 @dining/shared，三端共用），冷启动后恢复。
 //
 // ⚠️ 这里直接 import '@dining/api' 而不是 '../api/client' 是有意的：
 // 本模块要注册 401 策略，被 api/client.ts 反过来引入；若再从 client 导入会形成环。
 // 模块加载期不做任何请求（只定义函数），因此加载顺序不影响正确性。
-import { http, setUnauthorizedHandler } from '@dining/api';
+import {
+  getMyOrderDetail as apiMyOrderDetail,
+  memberLogin as apiMemberLogin,
+  memberOrders as apiMemberOrders,
+  memberProfile as apiMemberProfile,
+  setUnauthorizedHandler
+} from '@dining/api';
+import { safeStorage } from '@dining/shared';
 import { CUSTOMER_TOKEN_KEY } from '../config';
 import type { GlobalData, MemberInfo, MemberOrderRow, MemberState } from '../types';
+import type { OrderDetail } from '@dining/types';
 
 /** 取全局唯一的会员登录态（可读可写，写入后调用方自行 setData）。 */
 export function memberState(): MemberState {
   return getApp<GlobalData>().member;
 }
 
-/** 当前顾客令牌（未登录为空串）。供 api/client.ts 的请求拦截器读取。 */
+/**
+ * 当前顾客令牌（未登录为空串）。
+ *
+ * 存储后端由 api/client.ts 注入（wx.storage）；未注入的极早期调用会拿到空串，
+ * 退化为「本次未登录」而不是抛错 —— 匿名点餐链路不依赖它。
+ */
 export function currentCustomerToken(): string {
-  try {
-    return String(wx.getStorageSync(CUSTOMER_TOKEN_KEY) || '');
-  } catch {
-    return '';
-  }
+  return safeStorage.get(CUSTOMER_TOKEN_KEY) || '';
 }
 
 function saveToken(token: string): void {
-  try {
-    if (token) wx.setStorageSync(CUSTOMER_TOKEN_KEY, token);
-    else wx.removeStorageSync(CUSTOMER_TOKEN_KEY);
-  } catch {
-    /* 存储不可用（磁盘满/隐私限制）：会员态退化为「本次会话内有效」，静默降级 */
-  }
+  if (token) safeStorage.set(CUSTOMER_TOKEN_KEY, token);
+  else safeStorage.remove(CUSTOMER_TOKEN_KEY);
 }
 
 function clearMember(): void {
@@ -71,10 +79,9 @@ export function memberLogin(): Promise<{ info: MemberInfo; isNew: boolean }> {
         fail: () => reject(new Error('微信登录失败，请重试'))
       });
     });
-    const res = await http.post<unknown, { token: string; isNew: boolean; customer: MemberInfo }>(
-      '/customer/auth/login',
-      { code }
-    );
+    // provider 显式传 wx_mp：后端缺省值也是它，但写明后网站/App 接同一接口时
+    // 差异一眼可见（服务端按 provider 分派凭据校验器）。
+    const res = await apiMemberLogin({ provider: 'wx_mp', code });
     saveToken(String(res.token || ''));
     s.customerId = Number(res.customer?.customerId) || 0;
     s.info = res.customer || null;
@@ -103,26 +110,29 @@ export function memberLogout(): void {
 /**
  * 会员专属请求的包装：先确保登录，遇 401（令牌过期）静默重登一次并重放。
  * 重放仍 401 才把错误抛给调用方（此时后端文案已能解释原因）。
+ *
+ * 传函数而不是 URL：三个会员接口的形态（GET / 分页参数）各不相同，
+ * 由调用方表达意图，这里只负责「登录 + 重试」这一层横切逻辑。
  */
-async function memberedGet<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-  // 响应拦截器已把 {code,msg,data} 解包,运行时拿到的是业务数据;
-  // axios 的类型在此处与泛型 T 推导不合,与 http.ts 同样用断言桥接。
-  const once = (): Promise<T> => http.get(url, { params }) as unknown as Promise<T>;
-  try {
+async function memberedGet<T>(call: () => Promise<T>): Promise<T> {
+  const attempt = async (): Promise<T> => {
     await memberEnsureLogin();
-    return await once();
+    return call();
+  };
+  try {
+    return await attempt();
   } catch (e) {
     const status = (e as { response?: { status?: number } })?.response?.status;
     if (status !== 401) throw e;
     saveToken('');
     await memberLogin();
-    return await once();
+    return await attempt();
   }
 }
 
 /** 拉取会员卡信息（登录后档案以服务端为准）。 */
 export async function memberProfile(): Promise<MemberInfo> {
-  const info = await memberedGet<MemberInfo>('/customer/auth/profile');
+  const info = await memberedGet<MemberInfo>(() => apiMemberProfile());
   const s = memberState();
   s.info = info;
   s.customerId = Number(info.customerId) || s.customerId;
@@ -134,10 +144,20 @@ export async function memberOrders(
   pageNum: number,
   pageSize = 10
 ): Promise<{ total: number; items: MemberOrderRow[] }> {
-  return memberedGet<{ total: number; items: MemberOrderRow[] }>('/customer/order/mine', {
-    pageNum,
-    pageSize
-  });
+  return memberedGet(() => apiMemberOrders(pageNum, pageSize));
+}
+
+/**
+ * 某一笔历史订单的详情（跨桌，含明细）。
+ *
+ * 为什么必须走 memberedGet 而不是裸 http.get：顾客令牌 2h 过期是常态，
+ * 经过这里才会「401 → 静默重登 → 重放请求」，顾客点开历史订单时不会莫名看到「请先登录」。
+ *
+ * 归属只由令牌决定、不带 tableId —— 历史订单在别的桌上，拿当前桌台校验必然失败
+ * （后端正因如此单开了 /customer/order/mine/:orderNo）。
+ */
+export async function memberOrderDetail(orderNo: string): Promise<OrderDetail> {
+  return memberedGet(() => apiMyOrderDetail(orderNo));
 }
 
 /**

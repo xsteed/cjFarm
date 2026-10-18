@@ -5,6 +5,12 @@
 **状态**：已实施（2026-10-08，按 §9 的推荐方案落地）
 **关联代码**：`frontend/apps/miniprogram/src/*`、`backend/internal/weapp/*`、`backend/internal/handler/customer*.go`、`backend/internal/service/*`、`backend/internal/store/{schema.go,dao/*}`、`backend/internal/service/auth_service.go`（令牌机制）
 
+> **后续演进（2026-10-18）**：身份层已拆成「账号 / 登录方式」两张表
+> （`tb_customer` + `tb_customer_identity`），为 App、网站接入预留；
+> 详见 [`../customer-member-identity/spec.md`](../customer-member-identity/spec.md)。
+> 本文档中「`openid` 直接做 `tb_customer` 唯一键」「登录请求体只有 `{code}`」的描述
+> 已被那次改造取代，其余（令牌机制、会员卡字段、我的订单、前端交互）仍然有效。
+
 ---
 
 ## 0. 需求与一句话方案

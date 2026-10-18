@@ -1,5 +1,5 @@
 /* ============================================================================
-   底部主导航（点餐 / 订单）
+   底部主导航（首页 / 点餐 / 订单 / 我的）
 
    与 cart-bar 一样：小程序自定义组件默认样式隔离（isolated），
    所以这里不引用 app.wxss 的类名与变量，只带自己用到的 token 副本。
@@ -7,7 +7,7 @@
    高度 104rpx 必须与 app.wxss 里的 --tabbar-h 保持一致 —— 页面靠它给底部留白，
    两边对不上就会「盖住最后一道菜」或者「底部多出一条空白」。
 
-   图标纪律：两个图标同一套语言（4rpx 描边 + currentColor 上色），
+   图标纪律：四个图标同一套语言（4rpx 描边 + currentColor 上色），
    选中态只改 .tb-item 的 color 一处，顶部不再有指示条之类的额外装饰。
    ============================================================================ */
 .tabbar {
@@ -56,6 +56,45 @@
   align-items: center;
   justify-content: center;
   height: 44rpx;
+}
+
+/* ---------- 首页：房子 ----------
+   屋顶是「旋转 45° 的描边方块」，只露上半两条斜边；屋身用白底盖住方块下半部分，
+   两者拼出描边式的房子。屋身底色必须写成 #fff（tabbar 就是白底），
+   否则旋转方块的底角会从屋身里透出来。 */
+.ic-home {
+  position: relative;
+  width: 40rpx;
+  height: 40rpx;
+}
+
+.ic-home::before {
+  /* 屋顶 */
+  position: absolute;
+  top: 6rpx;
+  left: 10rpx;
+  width: 22rpx;
+  height: 22rpx;
+  border: 4rpx solid currentColor;
+  border-radius: 4rpx;
+  box-sizing: border-box;
+  transform: rotate(45deg);
+  content: '';
+}
+
+.ic-home::after {
+  /* 屋身：无上边框，顶边被屋身白底压住，视觉上与屋顶连成一体 */
+  position: absolute;
+  bottom: 1rpx;
+  left: 4rpx;
+  width: 32rpx;
+  height: 21rpx;
+  border: 4rpx solid currentColor;
+  border-top: none;
+  border-radius: 0 0 6rpx 6rpx;
+  box-sizing: border-box;
+  background: #fff;
+  content: '';
 }
 
 /* ---------- 点餐：碗 ----------

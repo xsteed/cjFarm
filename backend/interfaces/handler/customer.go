@@ -29,13 +29,15 @@ func customerFail(c *gin.Context, err error) {
 	log := logger.WithContext(c.Request.Context(), zap.String("path", c.Request.URL.Path))
 	// 订单不存在/已结束/不可加菜/已支付统一为同一文案,防止通过响应差异探测订单存在性。
 	switch msg {
-	case "订单不存在", "订单已结束，无需催菜", "当前订单状态不可加菜", "订单已支付，不可加菜":
+	case "订单不存在", "订单已结束，无需催菜", "当前订单状态不可加菜", "订单已支付，不可加菜",
+		"当前订单状态不可修改人数", "订单已支付，不可修改人数":
 		log.Warnf("[customer] 请求失败: %v", err)
 		fail(c, "订单不存在或已结束")
 		return
 	}
-	// 「下单失败/加菜失败」包装了 dao 底层错误(可能是 SQL 错误),不能回显给访客。
-	if strings.HasPrefix(msg, "下单失败:") || strings.HasPrefix(msg, "加菜失败:") {
+	// 「下单失败/加菜失败/修改人数失败」包装了 dao 底层错误(可能是 SQL 错误),不能回显给访客。
+	if strings.HasPrefix(msg, "下单失败:") || strings.HasPrefix(msg, "加菜失败:") ||
+		strings.HasPrefix(msg, "修改人数失败:") {
 		log.Warnf("[customer] 请求失败: %v", err)
 		fail(c, "系统繁忙，请稍后再试")
 		return
@@ -207,6 +209,36 @@ func CustomerAppendOrder(c *gin.Context) {
 		"seatFee":     res.SeatFee,
 		"totalAmount": res.TotalAmount,
 	})
+}
+
+// CustomerUpdatePerson 顾客在订单页修改就餐人数(不改菜品)。
+//
+// 与加菜刻意分成两个接口:加菜要求 items 非空,拿它当「只改人数」用会重复扣库存、
+// 重复出厨单。人数影响茶位费,改完应收金额就变了 —— 与加菜同一口径,必须关掉
+// 顾客手里那张按旧金额生成的在线支付单,否则付款回调会撞上金额防线。
+func CustomerUpdatePerson(c *gin.Context) {
+	var p struct {
+		TableID     int    `json:"tableId"`
+		OrderNo     string `json:"orderNo"`
+		PersonCount int    `json:"personCount"`
+	}
+	if err := c.ShouldBindJSON(&p); err != nil {
+		fail(c, "参数错误")
+		return
+	}
+
+	res, err := service.CustomerUpdatePerson(p.TableID, p.OrderNo, p.PersonCount)
+	if err != nil {
+		customerFail(c, err)
+		return
+	}
+
+	// 人数真变了才关单:没变时金额没动,关单反而可能打断顾客正在进行的支付。
+	if res.Changed {
+		closeOnlinePayment(c.Request.Context(), res.Order.OrderID)
+	}
+
+	ok(c, res.Order)
 }
 
 // CustomerUrgeOrder 顾客催菜:请求后厨加急处理当前订单。

@@ -210,6 +210,19 @@
   color: var(--brand-deep);
 }
 
+/* 金额 + 箭头：箭头暗示整行可点（进入只读详情） */
+.order-right {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.order-arrow {
+  color: var(--ink-4);
+  font-size: 30rpx;
+  line-height: 1;
+}
+
 .btn-more {
   margin-top: 8rpx;
 }

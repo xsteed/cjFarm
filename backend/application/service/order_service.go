@@ -70,6 +70,17 @@ func ListOrderRefundingAmounts(orderIDs []int) map[int]int64 {
 	return dao.RefundingAmounts(orderIDs)
 }
 
+// MarkOrderViewed 标记订单已被商家查看/操作,用于列表「新」角标消解。
+// 只是展示态标记,失败不阻断主流程(打日志即可),避免看单/操作被一次写失败拖住。
+func MarkOrderViewed(orderID int) {
+	if orderID <= 0 {
+		return
+	}
+	if err := dao.MarkOrderViewed(orderID); err != nil {
+		logger.Warnf("[order] 标记订单 %d 已查看失败: %v", orderID, err)
+	}
+}
+
 // GetOrder 读取订单详情:返回订单、明细与待处理催菜标记。
 func GetOrder(orderID int) (po.Order, []po.OrderItem, bool, error) {
 	o, err := dao.GetOrderByID(orderID)

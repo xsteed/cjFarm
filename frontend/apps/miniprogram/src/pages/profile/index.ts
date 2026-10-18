@@ -105,6 +105,13 @@ Page({
     }
   },
 
+  /** 打开历史订单详情（只读：明细 + 「再来一单」）。 */
+  onOpenOrder(e: WechatMiniprogram.TouchEvent): void {
+    const orderNo = String(e.currentTarget.dataset.no || '');
+    if (!orderNo) return;
+    wx.navigateTo({ url: `/pages/history-detail/index?orderNo=${encodeURIComponent(orderNo)}` });
+  },
+
   /** 加载下一页历史订单。 */
   async onLoadMore(): Promise<void> {
     if (this.data.loadingMore || !this.data.hasMore) return;

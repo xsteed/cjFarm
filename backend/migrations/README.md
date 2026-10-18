@@ -16,7 +16,7 @@ backend/migrations/
 │   └── mysql/
 │       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
 │       └── seed.sql
-└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 26 个，文件名一致）
+└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 7 个文件、编号 26~32，文件名一致）
     ├── sqlite/
     │   ├── 20260920020000_tb_order_urge_create.sql                    # 01 催菜/加菜记录表
     │   ├── 20260920021000_tb_payment_refund_create.sql                # 02 支付/退款流水表
@@ -48,9 +48,10 @@ backend/migrations/
 │   ├── 20261015020000_times_autofill_triggers.sql                 # 28 时间列改由数据库自动维护（触发器 / ON UPDATE）
 │   ├── 20261016000000_tb_print_log_add_snapshot_columns.sql       # 29 打印台账补「票据标识 + 票面快照」三列
 │   ├── 20261017000000_tb_order_drop_legacy_time_columns.sql       # 30 删除 tb_order 遗留 begin_time / end_time
-│   └── 20261017010000_tb_visit_log_visitor_daily_create.sql       # 31 站点访问统计三张表（明细 / 访客 / 日聚合）
+│   ├── 20261017010000_tb_visit_log_visitor_daily_create.sql       # 31 站点访问统计三张表（明细 / 访客 / 日聚合）
+│   └── 20261018000000_tb_customer_identity_create.sql              # 32 顾客会员身份表（账号与登录方式解耦）
     └── mysql/                                             # 与 sqlite/ 同名同序，内容按 MySQL 语法适配
-        └──（同上 26 个文件）
+        └──（同上 7 个文件）
 ```
 
 > 下文「归属脚本」中的 incr 编号即上表 01~25 的序号。
@@ -141,7 +142,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `IF EXISTS` 语法，重复执行报 `no such column` / `check that column/key exists`，
 > 属正常现象、可忽略（详见 `incr/README.md` 的幂等性说明）。
 
-## 四、表清单（共 25 张）
+## 四、表清单（共 26 张）
 
 | # | 表名 | 说明 | 种子数据 | 归属脚本 |
 |---|---|---|---|---|
@@ -170,6 +171,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 23 | `tb_visit_log` | 访问明细（站点 PV/UV 打点，「待办」性质，按保留天数清理） | 运行时产生 | full + incr 31 |
 | 24 | `tb_visitor` | 访客注册表（独立访客档案，「新访客」精确口径，长期保留） | 运行时产生 | full + incr 31 |
 | 25 | `tb_visit_daily` | 日聚合台账（每日每渠道 PV/UV/新访客，报表主读，长期保留） | 运行时产生 | full + incr 31 |
+| 26 | `tb_customer_identity` | 会员登录方式（provider + external_id 绑定，账号与登录方式解耦；为 App/网站预留） | 运行时产生 | full + incr 32 |
 
 > `tb_print_job` 与 `tb_print_log` 的分工：前者是「待办」（送达即结案，可定期清理），
 > 后者是「台账」（给商家查「这单打了没」，长期保留），两者由 `print_log_id` 关联。
@@ -181,7 +183,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `tb_role` 的 4 个内置角色（admin / manager / cashier / staff）每次启动由
 > `store.SyncBuiltinRoles()` 幂等校准；其中 `admin` 的权限**强制恢复为全量**，防止误改锁死。
 
-## 五、索引清单（共 39 个）
+## 五、索引清单（共 42 个）
 
 | 索引名 | 表 | 类型 | 用途 |
 |---|---|---|---|
@@ -194,7 +196,10 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_order_pay_time` | tb_order | 普通 | 报表按收款到账时间 |
 | `idx_order_credit_settle_time` | tb_order | 普通 | 报表按挂账核销时间 |
 | `idx_order_customer` | tb_order | 普通（2 列） | 会员「我的订单」按时间倒序分页 |
-| `idx_customer_openid` | tb_customer | UNIQUE | 会员按 openid 精确查档；同时兜底「并发首登建档」的幂等性（MySQL 下降级为普通索引，唯一性由应用层保证） |
+| `idx_customer_openid` | tb_customer | UNIQUE | **P0 过渡期遗留**：登录查档已改走 `tb_customer_identity`，本索引在 P2 删列时一并移除（见 `docs/design-docs/customer-member-identity/spec.md` §7.2） |
+| `idx_identity_provider_external` | tb_customer_identity | UNIQUE（2 列） | 会员登录查档主路径；同时兜底「并发首登建档」的幂等性 |
+| `idx_identity_customer` | tb_customer_identity | 普通 | 查「这个人绑了哪几种登录方式」（解绑 / 多端合并） |
+| `idx_identity_unionid` | tb_customer_identity | 普通 | 同一人的多个 openid 共享 unionid，按它反查归并；必然重复故非唯一 |
 | `idx_order_item_order` | tb_order_item | 普通 | 明细按订单 |
 | `idx_payment_order` | tb_payment | 普通 | 流水按订单号 |
 | `idx_payment_channel_trade` | tb_payment | UNIQUE（2 列） | 渠道交易号防重 |

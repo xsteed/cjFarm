@@ -7,6 +7,7 @@
 //    ・downloadFile 合法域名 ← <image> 加载菜品图与收款码（微信对 image 走这条白名单）
 //   小程序不接受 http，也不接受裸 IP —— 详见 docs/miniprogram.md 第三节。
 // ============================================================================
+import { LS_CUSTOMER_TOKEN } from '@dining/shared';
 
 /** 后端站点源（含协议与端口，不含路径）。 */
 export const API_ORIGIN = 'http://127.0.0.1:8080';
@@ -26,8 +27,13 @@ export const URGE_COOLDOWN_FALLBACK_S = 180;
 /** 本地会话缓存键（桌台码 / 订单号，用于中途退出后恢复）。 */
 export const STORAGE_KEY = 'dining_mp_session';
 
-/** 顾客会员令牌的本地缓存键（2h 有效；过期由 store/member.ts 静默重登，顾客无感知）。 */
-export const CUSTOMER_TOKEN_KEY = 'dining_mp_customer_token';
+/**
+ * 顾客会员令牌的本地缓存键（2h 有效；过期由 store/member.ts 静默重登，顾客无感知）。
+ *
+ * 键名来自 @dining/shared：App / 网站 / 小程序共用同一个常量，
+ * 请求拦截器（packages/api/src/http.ts）也按它取令牌，不允许各端自定义。
+ */
+export const CUSTOMER_TOKEN_KEY = LS_CUSTOMER_TOKEN;
 
 /**
  * 把后端返回的图片路径补成绝对地址。

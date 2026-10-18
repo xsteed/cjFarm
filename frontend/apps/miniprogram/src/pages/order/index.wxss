@@ -112,6 +112,13 @@
   font-size: 23rpx;
 }
 
+/* 改人数入口：靠右的链接式按钮，不抢底部「去支付」的视觉重心 */
+.info-edit {
+  margin-left: auto;
+  color: var(--brand-deep);
+  font-weight: 600;
+}
+
 /* 支付凭证：绿点 + 「已支付（微信）· 2026-10-09 12:03」，可核对可回看 */
 .info-paid {
   display: flex;

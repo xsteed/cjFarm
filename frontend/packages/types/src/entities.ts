@@ -140,6 +140,11 @@ export interface OrderSummary extends Extensible {
   updateTime?: string;
   remark?: NullableString;
   pendingUrge?: boolean;
+  /**
+   * 是否是商家还没查看/操作过的新单:服务端按「已下单 + 从未查看」计算。
+   * 仅列表接口返回(详情打开即视为已查看),前端据此在卡片左上角打「新」角标。
+   */
+  isNew?: boolean;
   /** 加菜批次数(明细 distinct batch_no):>1 表示本单加过菜,列表据此打「加菜×N」角标。列表接口填充 */
   batchCount?: number;
 }
@@ -488,12 +493,12 @@ export interface PublicConfig extends Extensible {
   /** 会员功能开关：后端已配置小程序 AppID/AppSecret 才为 "1"，顾客端据此显隐登录入口。 */
   member_enabled?: string;
   /**
-   * 小程序内支付（JSAPI）开关：**后端目前尚未下发该键**，恒为 undefined。
+   * 小程序内支付（JSAPI）开关：顾客端据此决定结账页是否出现「微信支付」按钮
+   * （`wxpay_jsapi_enabled === '1'`）。后端 `CustomerSettings()` 已下发，
+   * 管理端「系统配置 → 在线支付 → 小程序内支付」控制，默认关（fail-closed）。
    *
-   * 显式声明它是因为小程序结账页用它决定「微信支付」按钮是否出现
-   * （`wxpay_jsapi_enabled === '1'`）。`PublicConfig extends Extensible` 有索引签名，
-   * 不声明也能编译 —— 但那样拼错/后端漏发都不会有任何提示。等后端补上
-   * `/api/customer/pay/jsapi` 与这一项（见 docs/miniprogram.md 4.1）即自动生效。
+   * 显式声明而不是只靠索引签名：`PublicConfig extends Extensible`，字段名拼错或
+   * 后端漏发都不会编译报错 —— 那种错误只会表现为「按钮永远不出现」，极难定位。
    */
   wxpay_jsapi_enabled?: string;
 }

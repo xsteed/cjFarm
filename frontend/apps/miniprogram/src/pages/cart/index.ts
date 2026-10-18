@@ -15,6 +15,7 @@ import {
   cartSetRemark,
   cartToItems
 } from '../../store/cart';
+import { saveCart } from '../../store/cartPersist';
 import { applyOrder, sessionState, setPersonCount } from '../../store/session';
 import { toast } from '../../utils/toast';
 import { money } from '@dining/shared/money';
@@ -68,6 +69,10 @@ Page({
     const appendMode = !!order && isActiveStatus(Number(order.orderStatus)) && Number(order.payStatus) === 0;
     // 加菜时人数沿用订单现值（仍可继续调整）；否则沿用会话里记的人数
     const personCount = appendMode ? setPersonCount(Number(order?.personCount) || 1) : setPersonCount(s.personCount);
+    // 整单备注同理：加菜时先带出该单已有的备注，首次下单用会话里记的
+    // （会话里那份会被购物车持久化一起存下来，见 store/cartPersist）。
+    const orderRemark = appendMode ? String(order?.orderRemark || '') : String(s.orderRemark || '');
+    s.orderRemark = orderRemark;
     // 先付模式：这笔钱要先付，下方提示据此显隐
     const payFirst = s.config?.pay_first_enabled === '1';
 
@@ -78,7 +83,8 @@ Page({
       // 只讲「下单后要付款」这件事本身，不说「提交后跳转支付」——
       // 提交后落在订单明细页，由那里的待付款引导带他去支付。
       payHint: payFirst ? '本店为先付模式：下单后先完成支付，后厨即刻开工～' : '',
-      personCount
+      personCount,
+      orderRemark
     });
     this.render();
   },
@@ -158,7 +164,12 @@ Page({
   },
 
   onRemarkInput(e: WechatMiniprogram.Input): void {
-    this.setData({ orderRemark: e.detail.value });
+    const value = String(e.detail.value || '');
+    this.setData({ orderRemark: value });
+    // 同步进会话并落盘：备注若只留在页面 data 里，页面一销毁（跳订单页是 redirectTo）
+    // 就丢了，而购物车本身还能恢复 —— 恢复出半份信息比不恢复更让人困惑。
+    sessionState().orderRemark = value;
+    saveCart();
   },
 
   /**
@@ -256,6 +267,8 @@ Page({
       this.pendingRequestId = '';
       this.pendingFingerprint = '';
       cartClear();
+      // 整单备注已随订单提交：清掉会话里的草稿，否则下一单会带出上一单的备注
+      s.orderRemark = '';
       // 用订单号回拉一次完整详情（含后厨状态），比用提交响应更完整。
       // 但回拉失败绝不能挡住跳转：订单已经生成，把顾客留在空的购物车页会诱使他重复下单。
       // 兜底办法是把 orderNo 带进 query，订单页会自己再拉一次（见 pages/order 的 onLoad）。

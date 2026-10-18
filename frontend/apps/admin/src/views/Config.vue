@@ -574,6 +574,22 @@
               <span class="tip">开启后顾客可微信在线支付（需填写下方商户参数）</span>
             </t-space>
           </t-form-item>
+          <t-form-item label="小程序内支付">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.wxpay_jsapi_enabled"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后顾客在微信小程序里可直接调起微信支付，全程不离开小程序。<br />
+                前提：上方「微信 AppID」必须是<b>小程序</b>的 AppID，且下方「小程序 AppSecret」已填写；
+                缺任一项时顾客点了只会看到「支付暂不可用」，仍可用收款码或到前台结账。
+              </span>
+            </t-space>
+          </t-form-item>
           <t-form-item
             label="微信商户号"
             name="wxpay_mchid"
@@ -1154,6 +1170,8 @@ interface ConfigForm {
   pay_qr_wx: string;
   pay_qr_ali: string;
   wxpay_enabled: string;
+  /** 小程序内支付（JSAPI）：开启后结账页出现「微信支付」按钮 */
+  wxpay_jsapi_enabled: string;
   alipay_enabled: string;
   wxpay_mchid: string;
   wxpay_appid: string;
@@ -1248,6 +1266,7 @@ const form = reactive<ConfigForm>({
   pay_qr_wx: '',
   pay_qr_ali: '',
   wxpay_enabled: '0',
+  wxpay_jsapi_enabled: '0',
   alipay_enabled: '0',
   wxpay_mchid: '',
   wxpay_appid: '',
@@ -1315,6 +1334,7 @@ const FLAG_KEYS = [
   'seat_fee_enabled',
   'promotion_enabled',
   'wxpay_enabled',
+  'wxpay_jsapi_enabled',
   'alipay_enabled',
   'print_enabled',
   'print_kitchen_show_price',

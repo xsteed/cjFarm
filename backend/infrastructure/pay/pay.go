@@ -28,11 +28,28 @@ type PayReq struct {
 	Description string // 商品描述
 	AmountCents int64  // 支付金额(分)
 	ClientIP    string // 客户端 IP(部分渠道需要)
+	// OpenID 微信小程序用户标识,仅 JSAPI(小程序内支付)需要。
+	// 由服务端用 wx.login 的 code 调 code2session 现换,前端不直接传 ——
+	// 它是「这个微信号在本小程序下」的唯一标识,和公众号下的 openid 不是一回事。
+	OpenID string
 }
 
 // PayResult 发起支付结果。
 type PayResult struct {
 	CodeURL string // 可直接渲染为二维码的字符串(微信 code_url / 支付宝 qr_code)
+}
+
+// JsapiParams 小程序内支付的调起参数。
+//
+// 字段名与 wx.requestPayment 的入参一一对应,前端原样透传、不做任何加工。
+// 刻意不返回 AppID:调起签名已由服务端用商户私钥完成,前端既不参与签名也不该
+// 自己拼参数(拼错只会得到一个「签名错误」,却极难定位)。
+type JsapiParams struct {
+	TimeStamp string `json:"timeStamp"` // 秒级时间戳字符串
+	NonceStr  string `json:"nonceStr"`
+	Package   string `json:"package"`  // 形如 prepay_id=wx...
+	SignType  string `json:"signType"` // 固定 RSA(APIv3 商户私钥签名)
+	PaySign   string `json:"paySign"`  // 对 appId\ntimeStamp\nnonceStr\npackage\n 的 RSA-SHA256 签名
 }
 
 // PayQuery 主动查单结果。
@@ -78,9 +95,13 @@ type RefundQuery struct {
 
 // Provider 支付渠道统一接口。
 type Provider interface {
-	Name() string                                                                         // 渠道名(wxpay / alipay)
-	Enabled() bool                                                                        // 商户配置是否就绪
-	Create(req PayReq) (PayResult, error)                                                 // 发起支付
+	Name() string                         // 渠道名(wxpay / alipay)
+	Enabled() bool                        // 商户配置是否就绪
+	Create(req PayReq) (PayResult, error) // 发起支付(Native 扫码 / 当面付)
+	// CreateJsapi 小程序内支付下单,返回可直接交给 wx.requestPayment 的调起参数。
+	// 只有微信支持;其它渠道返回明确错误(不要返回空结构让调用方误以为成功),
+	// 由上层降级到「收款码 + 前台结账」。
+	CreateJsapi(req PayReq) (JsapiParams, error)
 	Query(orderNo string) (PayQuery, error)                                               // 查单
 	Close(orderNo string) error                                                           // 关闭支付单
 	Refund(orderNo, refundNo string, refundCents, totalCents int64) (RefundResult, error) // 退款

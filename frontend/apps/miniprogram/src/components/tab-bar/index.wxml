@@ -1,5 +1,16 @@
-<!-- 底部主导航：点餐 / 订单。页面把它放在最外层，常驻显示（不在任何 wx:if 分支里）。 -->
+<!-- 底部主导航：首页 / 点餐 / 订单 / 我的。页面把它放在最外层，常驻显示（不在任何 wx:if 分支里）。 -->
 <view class="tabbar">
+  <view
+    class="tb-item {{active === 'home' ? 'on' : ''}}"
+    bindtap="onTapHome"
+  >
+    <!-- 首页：一座房子（屋顶 + 屋身），与碗/单据/人像同一套线条语言 -->
+    <view class="tb-icon">
+      <view class="ic-home"></view>
+    </view>
+    <view class="tb-text">首页</view>
+  </view>
+
   <view
     class="tb-item {{active === 'menu' ? 'on' : ''}}"
     bindtap="onTapMenu"

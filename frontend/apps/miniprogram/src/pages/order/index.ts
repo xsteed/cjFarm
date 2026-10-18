@@ -5,10 +5,10 @@
 //
 // 轮询：3s 一拍（与 H5 一致），页面 onShow 启动 / onHide 停止 —— 小程序的页面生命周期
 // 已经覆盖「切后台」和「跳去支付页」，所以不需要再监听 onAppHide（见 store/poller.ts）。
-import { getOrderByNo, urgeOrder } from '../../api/client';
+import { getOrderByNo, updateOrderPerson, urgeOrder } from '../../api/client';
 import { ORDER_POLL_INTERVAL_MS, URGE_COOLDOWN_FALLBACK_S } from '../../config';
 import { cartClear } from '../../store/cart';
-import { applyOrder, readPersisted, resetOrder, sessionState } from '../../store/session';
+import { applyOrder, readPersisted, resetOrder, sessionState, setPersonCount } from '../../store/session';
 import { createPoller } from '../../store/poller';
 import type { Poller } from '../../store/poller';
 import { memberEnabled } from '../../store/member';
@@ -74,6 +74,10 @@ Page({
     canAppend: false,
     canUrge: false,
     canPay: false,
+    /** 能否改就餐人数：进行中且未支付（已支付的单改金额会对不上实收） */
+    canEditPerson: false,
+    /** 改人数请求进行中（防连点重复请求） */
+    updatingPerson: false,
     /** 底部主按钮文案：先付模式未支付时带火苗，提示「付款后厨才开工」 */
     payBtnText: '去支付',
     /** 先付模式下「未支付」时的那句说明：付款后才出厨单，别让顾客干等 */
@@ -290,6 +294,9 @@ Page({
       orderRemark: String(order.orderRemark || ''),
       rows,
       canAppend: active && payStatus === 0,
+      // 改人数与加菜同一前提：进行中且未支付。已支付的单改人数会改应收金额，
+      // 与实收对不上，只能到前台走退款/改单
+      canEditPerson: active && payStatus === 0,
       canUrge: active && (!payFirst || payStatus === 1),
       canPay: active && payStatus === 0,
       payBtnText,
@@ -344,6 +351,68 @@ Page({
     if (this.urgeTimer !== null) {
       clearInterval(this.urgeTimer);
       this.urgeTimer = null;
+    }
+  },
+
+  // ---------- 改就餐人数 ----------
+  /**
+   * 「修改」人数：弹一个可编辑输入框。
+   *
+   * 为什么用 showModal 而不是加减按钮：人数直接决定茶位费，改完金额就变，
+   * 让顾客在弹窗里一次确认「改成几」比连点加减更不容易误操作；也与购物车页
+   * 改单项备注的交互一致（同一个基础库能力，无额外依赖）。
+   */
+  onEditPerson(): void {
+    if (!this.data.canEditPerson || this.data.updatingPerson) return;
+    const current = Number(this.data.personCount) || 1;
+    wx.showModal({
+      title: '修改用餐人数',
+      // content 预填当前值：顾客只需改动数字，不用重新输一遍
+      content: String(current),
+      editable: true,
+      placeholderText: '1~20 人',
+      confirmText: '保存',
+      success: r => {
+        if (!r.confirm) return;
+        // 老基础库不给 content：保持原值不动（不能当 0 处理，那会把人数改成 1）
+        if (typeof r.content !== 'string') return;
+        const text = r.content.trim();
+        if (!text) return;
+        const next = Number(text);
+        if (!Number.isInteger(next) || next < 1 || next > 20) {
+          toast.info('请输入 1~20 之间的整数');
+          return;
+        }
+        if (next === current) return;
+        void this.submitPerson(next);
+      }
+    });
+  },
+
+  /** 提交人数变更：金额由后端重算并返回最新订单，前端只负责同步与重绘。 */
+  async submitPerson(personCount: number): Promise<void> {
+    if (this.data.updatingPerson) return;
+    const s = sessionState();
+    if (!s.tableId || !this.data.orderNo) {
+      toast.error('桌台信息丢失，请重新扫码进入');
+      return;
+    }
+    this.setData({ updatingPerson: true });
+    try {
+      const order = (await updateOrderPerson({
+        tableId: s.tableId,
+        orderNo: this.data.orderNo,
+        personCount
+      })) as OrderDetail;
+      // 三处同步：会话人数（购物车页/菜单页的茶位费都读它）、订单快照、本页渲染
+      setPersonCount(Number(order.personCount) || personCount);
+      applyOrder(order);
+      this.render(order);
+      toast.success(`已更新为 ${Number(order.personCount) || personCount} 人`);
+    } catch {
+      // 失败提示由请求拦截器统一给出（含「订单已支付，不可修改人数」这类业务文案）
+    } finally {
+      this.setData({ updatingPerson: false });
     }
   },
 

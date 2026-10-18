@@ -152,6 +152,12 @@
         <view class="info-meta">
           <text>{{personCount}} 人用餐</text>
           <text wx:if="{{createTimeText}}">{{createTimeText}}</text>
+          <!-- 改人数会重算茶位费：只在「进行中且未支付」时给入口（已支付改金额会对不上实收） -->
+          <text
+            wx:if="{{canEditPerson}}"
+            class="info-edit"
+            bindtap="onEditPerson"
+          >{{updatingPerson ? '保存中…' : '修改'}}</text>
         </view>
         <!-- 支付凭证：结账后留一条可核对的记录（渠道 + 时间） -->
         <view

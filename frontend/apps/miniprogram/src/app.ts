@@ -19,7 +19,8 @@ App<GlobalData>({
     shopName: '扫码点餐',
     config: null,
     currentOrder: null,
-    personCount: 1
+    personCount: 1,
+    orderRemark: ''
   },
   cart: [],
   member: {

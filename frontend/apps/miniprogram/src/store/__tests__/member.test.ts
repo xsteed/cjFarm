@@ -8,14 +8,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { bootApp } from '../../../test/harness';
 import { flush, wxMock } from '../../../test/mock-wx';
 import { CUSTOMER_TOKEN_KEY } from '../../config';
-import {
-  currentCustomerToken,
-  memberLogin,
-  memberLogout,
-  memberProfile,
-  memberState,
-  restoreMember
-} from '../member';
+import { currentCustomerToken, memberLogin, memberLogout, memberProfile, memberState, restoreMember } from '../member';
 
 const MEMBER = {
   customerId: 7,
@@ -41,9 +34,10 @@ describe('会员登录态', () => {
 
     expect(res.isNew).toBe(true);
     expect(res.info.customerId).toBe(7);
-    // 登录请求体带 wx.login 的 code
+    // 登录请求体带 wx.login 的 code，并显式声明登录方式
+    // （provider 缺省也是 wx_mp，显式写出来是为了让网站/App 接同一接口时差异可见）
     const loginReq = wxMock.requests.find(r => r.url.includes('/customer/auth/login'));
-    expect(loginReq?.data).toEqual({ code: 'code-abc' });
+    expect(loginReq?.data).toEqual({ provider: 'wx_mp', code: 'code-abc' });
     // 令牌持久化（冷启动恢复用）
     expect(wxMock.storage.get(CUSTOMER_TOKEN_KEY)).toBe('tok-1');
     // 状态进 App 实例（跨页共享）

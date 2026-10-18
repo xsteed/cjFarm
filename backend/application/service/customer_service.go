@@ -171,6 +171,9 @@ func CustomerSettings() map[string]string {
 		// 在线支付开关(顾客端据此决定是否展示在线支付入口)
 		"wxpay_enabled":  flag("wxpay_enabled"),
 		"alipay_enabled": flag("alipay_enabled"),
+		// 小程序内支付(JSAPI)开关:小程序结账页据此决定是否出现「微信支付」按钮。
+		// fail-closed:只有明确为 "1" 才下发 "1",避免「按钮出现了却调不起收银台」。
+		"wxpay_jsapi_enabled": flag("wxpay_jsapi_enabled"),
 		// 先付/后付模式:顾客端据此决定「下单后是否直达支付页/是否提示先付款」
 		"pay_first_enabled": flag("pay_first_enabled"),
 		// 会员功能开关:小程序 AppID/AppSecret 已配置才开放「注册成为会员」
@@ -178,10 +181,12 @@ func CustomerSettings() map[string]string {
 	}
 }
 
-// memberEnabledFlag 会员功能开关的归一化("1"/"0"),判定口径与 weapp.MemberEnabled 一致。
-// 放在 service 层判定(而非 handler 直接问 weapp):weapp 依赖本包,反向引用会成环。
+// memberEnabledFlag 会员功能开关的归一化("1"/"0")。
+//
+// 口径统一为「任一登录方式可用」(见 MemberEnabled):不再在这里重复判断微信
+// 配置 —— 否则接上手机号登录后,没配微信的部署会被误判成「会员未开启」。
 func memberEnabledFlag() string {
-	if dao.GetSetting("wxpay_appid") != "" && dao.GetSetting("wx_app_secret") != "" {
+	if MemberEnabled() {
 		return "1"
 	}
 	return "0"
@@ -381,6 +386,122 @@ func CustomerOrderByNo(orderNo string, tableID int) (dto.Order, error) {
 		return dto.Order{}, errors.New("订单不存在或已结束")
 	}
 	return dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false), nil
+}
+
+// CustomerMyOrderDetail 会员查看自己的某一笔历史订单(跨桌,含明细)。
+//
+// 与 CustomerOrderByNo 的区别:后者靠 tableId 证明「这单是这张桌的」,而历史订单
+// 是**跨桌**的 —— 顾客早就离开那张桌了,只能靠会员身份证明。所以这里不走 tableId,
+// 而是把 customer_id 直接写进查询条件。
+//
+// 「查不到」与「不是你的」返回同一文案:不向调用方泄露某个单号是否存在。
+func CustomerMyOrderDetail(customerID int, orderNo string) (dto.Order, error) {
+	if customerID <= 0 || orderNo == "" {
+		return dto.Order{}, errors.New("订单不存在")
+	}
+	o, err := dao.GetOrderByNoAndCustomer(orderNo, customerID)
+	if err != nil {
+		return dto.Order{}, errors.New("订单不存在")
+	}
+	return dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false), nil
+}
+
+// CustomerUpdatePersonResult 顾客改就餐人数的结果。
+//
+// Changed=false 表示人数与库中现值一致(重复提交 / 连点),调用方无需关旧收款码。
+type CustomerUpdatePersonResult struct {
+	Order   dto.Order
+	Changed bool
+}
+
+// CustomerUpdatePerson 顾客在订单页修改就餐人数(不改菜品)。
+//
+// 为什么单独开一个接口:人数直接决定茶位费,「人没到齐 / 有人先走」时需要能改;
+// 而加菜接口的语义是「追加菜品 + 顺带更新人数」,它强制 items 非空(见
+// CustomerAppendOrder)。拿它只改人数,要么被参数校验拒掉,要么得把现有明细原样
+// 回传 —— 后者会重复扣库存、重复出厨单(整单被再做一遍),绝对不能这么用。
+//
+// 约束:仅「进行中且未支付」的订单可改。改人数就是在改应收金额,已支付的单改了
+// 会与实收金额对不上,只能走退款/改单的人工流程。
+func CustomerUpdatePerson(tableID int, orderNo string, personCount int) (CustomerUpdatePersonResult, error) {
+	if tableID == 0 || orderNo == "" {
+		return CustomerUpdatePersonResult{}, errors.New("参数错误")
+	}
+	if personCount < 1 || personCount > 100 {
+		// 上限与加菜接口的人数字段保持一致(前端自己收敛到 1~20)
+		return CustomerUpdatePersonResult{}, errors.New("用餐人数需在 1~100 之间")
+	}
+
+	o, err := dao.GetOrderAppendInfo(orderNo)
+	if err != nil {
+		return CustomerUpdatePersonResult{}, errors.New("订单不存在")
+	}
+	orderID := o.OrderID
+	// 归属校验:与加菜同一口径 —— 单号可被猜测/泄露,只有「订单所属桌台 ==
+	// 请求方声称的桌台」才允许改动这张账单。
+	if o.TableID != tableID {
+		return CustomerUpdatePersonResult{}, errors.New("订单不属于当前桌台")
+	}
+	if !ActiveStatus(o.OrderStatus) {
+		return CustomerUpdatePersonResult{}, errors.New("当前订单状态不可修改人数")
+	}
+	if o.PayStatus == 1 {
+		return CustomerUpdatePersonResult{}, errors.New("订单已支付，不可修改人数")
+	}
+
+	changed := false
+	// 事务内并发校验失败时保留原错误文案:包成「修改人数失败: ...」会被
+	// customerFail 当成底层错误收敛成「系统繁忙」,顾客反而不知道该刷新重试。
+	var bizErr error
+	err = store.WithTx(func(tx *sql.Tx) error {
+		// 与加菜/改单/收款/取消同一把行锁:金额必须基于事务内的最新明细重算,
+		// 否则并发改单时会出现「人数是新的、明细是旧的」的错账。
+		if err := dao.TouchOrderTx(tx, orderID); err != nil {
+			return err
+		}
+		cur, err := dao.GetOrderStateTx(tx, orderID)
+		if err != nil {
+			return err
+		}
+		if !ActiveStatus(cur.OrderStatus) || cur.PayStatus == 1 {
+			bizErr = errors.New("订单状态已变更，请刷新后重试")
+			return bizErr
+		}
+		// 人数没变:不写库(避免无谓的 update_time 变化与关单动作)
+		if cur.PersonCount == personCount {
+			return nil
+		}
+		items, err := dao.LoadOrderItemsTx(tx, orderID)
+		if err != nil {
+			return err
+		}
+		dtoItems := make([]dto.OrderItem, 0, len(items))
+		for _, it := range items {
+			dtoItems = append(dtoItems, dto.FromOrderItem(it))
+		}
+		// 只重算金额,不碰明细:改人数不是加菜 —— 不产生新批次、不扣库存、不出厨单
+		dishAmount, seatFee, discount, giftAmount, total := RecalcAmount(personCount, dtoItems)
+		if err := dao.UpdateOrderAmountAndPersonTx(tx, orderID, personCount,
+			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(giftAmount), po.ToCents(total)); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	if err != nil {
+		if bizErr != nil {
+			return CustomerUpdatePersonResult{}, bizErr
+		}
+		return CustomerUpdatePersonResult{}, fmt.Errorf("修改人数失败: %w", err)
+	}
+
+	// 返回最新订单:顾客端要按新金额刷新账单。价格口径只保留后端这一份,
+	// 不让前端「自己加一下茶位费」—— 两端各算一次必然漂移。
+	order, err := CustomerOrderByNo(orderNo, tableID)
+	if err != nil {
+		return CustomerUpdatePersonResult{}, err
+	}
+	return CustomerUpdatePersonResult{Order: order, Changed: changed}, nil
 }
 
 // CustomerAppendOrderResult 顾客加菜的结果,供 handler 组装响应与触发打印。

@@ -42,9 +42,11 @@ var apiBase = "https://api.weixin.qq.com"
 // 在 /opt/dining-system,三者一起正确解析。
 var cacheDir = "data/weapp-code"
 
-// PagePath 扫码后打开的小程序页面,必须与 frontend/apps/miniprogram/src/app.json
-// 的首页一致。check_path 为真时微信会校验该页面是否存在于目标版本,
-// 写错会直接报 41030 invalid page。
+// PagePath 扫码后打开的小程序页面:点餐页(不是 app.json 的首页 —— 默认主页是
+// pages/home/index,扫码仍应直达菜单,不让顾客多点一次)。
+//
+// 它必须存在于目标版本(且已随版本发布):check_path 为真时微信会校验,
+// 写错会直接报 41030 invalid page。改动前先确认 src/app.json 的 pages 里仍有这一项。
 const PagePath = "pages/index/index"
 
 const (

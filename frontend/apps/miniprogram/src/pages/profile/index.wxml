@@ -80,6 +80,8 @@
         wx:for="{{orders}}"
         wx:key="orderNo"
         class="order"
+        data-no="{{item.orderNo}}"
+        bindtap="onOpenOrder"
       >
         <view class="order-top">
           <view class="order-table">{{item.tableName}}</view>
@@ -96,7 +98,11 @@
         </view>
         <view class="order-bot">
           <view class="order-time">{{item.timeText}}</view>
-          <view class="order-amt">¥{{item.amountText}}</view>
+          <view class="order-right">
+            <view class="order-amt">¥{{item.amountText}}</view>
+            <!-- 箭头暗示可点：点进去是只读详情 + 「再来一单」 -->
+            <view class="order-arrow">›</view>
+          </view>
         </view>
       </view>
 

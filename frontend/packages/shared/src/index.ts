@@ -4,7 +4,8 @@
 // 这里只允许放「不依赖 Vue 组件 / 不依赖 TDesign / 不依赖 DOM 结构」的代码，
 // 这样 Web 端与未来的小程序端都能直接引用。
 export * from './authKeys';
-export * from './safeStorage';
+export * from './storage';
+export * from './sessionStorage';
 export * from './visitor';
 export * from './money';
 export * from './orderDisplay';

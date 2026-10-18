@@ -1,5 +1,13 @@
 {
-  "pages": ["pages/index/index", "pages/cart/index", "pages/order/index", "pages/pay/index", "pages/profile/index"],
+  "pages": [
+    "pages/home/index",
+    "pages/index/index",
+    "pages/cart/index",
+    "pages/order/index",
+    "pages/pay/index",
+    "pages/profile/index",
+    "pages/history-detail/index"
+  ],
   "window": {
     "navigationBarBackgroundColor": "#ff6b35",
     "navigationBarTextStyle": "white",

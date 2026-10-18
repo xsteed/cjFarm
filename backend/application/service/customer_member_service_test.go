@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"strings"
+	"sync"
 	"testing"
 
 	"dining-system/domain/po"
@@ -29,7 +30,7 @@ func craftCustomerToken(t *testing.T, payload string) string {
 func TestCustomerLoginNewThenReturn(t *testing.T) {
 	customerSvcInit(t)
 
-	first, err := customerLoginByOpenid(context.Background(), "openid-member-1", "1.2.3.4")
+	first, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, "openid-member-1", "")
 	if err != nil {
 		t.Fatalf("首次登录应成功: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestCustomerLoginNewThenReturn(t *testing.T) {
 		t.Fatalf("新会员订单数应为 0, got %d", first.Customer.OrderCount)
 	}
 
-	second, err := customerLoginByOpenid(context.Background(), "openid-member-1", "1.2.3.4")
+	second, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, "openid-member-1", "")
 	if err != nil {
 		t.Fatalf("再次登录应成功: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestCustomerLoginNewThenReturn(t *testing.T) {
 func TestCustomerLoginDisabledMember(t *testing.T) {
 	customerSvcInit(t)
 
-	first, err := customerLoginByOpenid(context.Background(), "openid-disabled", "1.2.3.4")
+	first, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, "openid-disabled", "")
 	if err != nil {
 		t.Fatalf("首次登录应成功: %v", err)
 	}
@@ -70,7 +71,7 @@ func TestCustomerLoginDisabledMember(t *testing.T) {
 		t.Fatalf("停用会员失败: %v", err)
 	}
 
-	if _, err := customerLoginByOpenid(context.Background(), "openid-disabled", "1.2.3.4"); err == nil {
+	if _, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, "openid-disabled", ""); err == nil {
 		t.Fatal("停用会员登录应被拒绝")
 	}
 }
@@ -113,16 +114,102 @@ func TestCustomerLoginRateLimit(t *testing.T) {
 
 	const ip = "9.9.9.9"
 	for i := 0; i < customerLoginMaxPerMin; i++ {
-		if err := allowCustomerLogin(ip); err != nil {
+		if err := allowCustomerLogin(po.CustomerProviderWxMP, ip); err != nil {
 			t.Fatalf("第 %d 次不应被限流: %v", i+1, err)
 		}
 	}
-	if err := allowCustomerLogin(ip); err == nil {
+	if err := allowCustomerLogin(po.CustomerProviderWxMP, ip); err == nil {
 		t.Fatal("超过每分钟上限应被限流")
 	}
-	if err := allowCustomerLogin("8.8.8.8"); err != nil {
+	if err := allowCustomerLogin(po.CustomerProviderWxMP, "8.8.8.8"); err != nil {
 		t.Fatalf("其它 IP 不应受影响: %v", err)
 	}
+	// 换登录方式不共用窗口:手机号登录的额度不该被小程序登录的流量吃掉。
+	if err := allowCustomerLogin(po.CustomerProviderPhone, ip); err != nil {
+		t.Fatalf("不同 provider 不应共用限流窗口: %v", err)
+	}
+}
+
+// TestCustomerLoginProviderDispatch 登录方式分派:
+//   - provider 缺省按小程序处理(老客户端只发 {code} 不能因此登录不了);
+//   - 已登记但未实现的 provider 明确拒绝,不落库、不签发令牌;
+//   - 拼错的 provider 同样拒绝(不能悄悄退化成小程序登录)。
+func TestCustomerLoginProviderDispatch(t *testing.T) {
+	customerSvcInit(t)
+
+	if got := po.NormalizeCustomerProvider(""); got != po.CustomerProviderWxMP {
+		t.Fatalf("provider 缺省应为 wx_mp, got %q", got)
+	}
+
+	for _, p := range []string{po.CustomerProviderPhone, po.CustomerProviderPasswd, "wechat", "WX_MP"} {
+		if _, err := CustomerLoginByProvider(context.Background(), p, ProviderPayload{}, "1.1.1.1"); err == nil {
+			t.Fatalf("provider=%q 应被拒绝", p)
+		}
+	}
+
+	// 未实现的 provider 不得留下任何档案。
+	if n := len(allCustomers(t)); n != 0 {
+		t.Fatalf("未实现的登录方式不应建会员, got %d 条", n)
+	}
+}
+
+// TestCustomerLoginConcurrentFirstLogin 并发首登:
+// 同一身份同时进来多个请求,最终只能有 1 个会员、1 条身份绑定。
+//
+// 这是拆表后最容易写错的地方 —— 建档与绑定必须同事务,否则失败的那次
+// 会留下一条没有任何登录方式指向的孤儿档案。
+func TestCustomerLoginConcurrentFirstLogin(t *testing.T) {
+	customerSvcInit(t)
+
+	const workers = 8
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			_, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, "openid-race", "")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("并发首登不应失败: %v", err)
+		}
+	}
+
+	if n := len(allCustomers(t)); n != 1 {
+		t.Fatalf("并发首登只应产生 1 个会员, got %d", n)
+	}
+	var n int
+	if err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_customer_identity WHERE provider=? AND external_id=?`,
+		po.CustomerProviderWxMP, "openid-race").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("并发首登只应有 1 条身份绑定, got %d", n)
+	}
+}
+
+// allCustomers 取全部会员 ID(并发断言用)。
+func allCustomers(t *testing.T) []int {
+	t.Helper()
+	rows, err := store.DB.Query(`SELECT customer_id FROM tb_customer`)
+	if err != nil {
+		t.Fatalf("统计会员失败: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []int{}
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("扫描会员失败: %v", err)
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // TestCustomerCreateOrderAttribution 下单归属:会员单写 customer_id,匿名单为 0;
@@ -190,7 +277,7 @@ func TestCustomerCreateOrderAttribution(t *testing.T) {
 // customerLoginByOpenidForTest 测试辅助:注册一个会员并返回登录结果。
 func customerLoginByOpenidForTest(t *testing.T, openid string) CustomerLoginResult {
 	t.Helper()
-	res, err := customerLoginByOpenid(context.Background(), openid, "127.0.0.1")
+	res, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, openid, "")
 	if err != nil {
 		t.Fatalf("注册会员失败: %v", err)
 	}

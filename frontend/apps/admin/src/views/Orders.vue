@@ -162,6 +162,12 @@
           @keydown.space.prevent="openDetail(row)"
         >
           <div class="ocard-top">
+            <!-- 「新」角标:顾客刚下单、商家还没点开过/操作过的新单,左上角一眼可见 -->
+            <span
+              v-if="row.isNew"
+              class="ocard-new"
+              title="新订单，尚未查看"
+            >新</span>
             <span class="ocard-no"
               ><span class="ocard-no-label">短号(取餐号):</span
               >#{{ row.shortNo || row.orderNo.slice(-6) }}</span
@@ -275,6 +281,16 @@
       @page-change="onTablePageChange"
     >
       <template #orderNo="{ row }">
+        <!-- 「新」角标:与移动端卡片同口径(未查看的新单) -->
+        <t-tag
+          v-if="row.isNew"
+          theme="primary"
+          variant="light"
+          size="small"
+          style="margin-right: 6px"
+        >
+          新
+        </t-tag>
         <span
           class="ono ono-link"
           :title="'完整订单号 ' + row.orderNo"
@@ -762,6 +778,9 @@ function onTablePageChange(pageInfo: PageInfo): void {
 function openDetail(row: OrderRow): void {
   detailOrderId.value = Number(row.orderId) || 0;
   detailVisible.value = true;
+  // 打开即视为「已查看」:本地先消掉「新」角标,后端在详情接口(OrderGet)里落下
+  // viewed_at,不必等下一轮 10s 轮询才变。标记失败时下一轮刷新会把它带回来。
+  if (row.isNew) row.isNew = false;
 }
 
 // afterRowAction 列表行操作后的收尾:详情弹窗开着就顺带刷新它(组件内部会 emit changed
