@@ -102,6 +102,23 @@ Page({
     }));
     const settle = cartSettle(cfg, this.data.personCount);
 
+    // 加菜不重算茶位费/满减：两者按「整单」由后端以全部明细重算一次
+    // （append 接口内 RecalcAmount(effectivePerson, 全部明细)），摊进「仅加菜」
+    // 小计会让顾客以为被重复收费 —— 先付模式下顾客马上要付款，尤其伤信任。
+    // 加菜态合计只展示本次追加的菜品金额；整单金额以订单页为准。
+    if (this.data.appendMode) {
+      this.setData({
+        rows,
+        dishTotalText: money(settle.dishTotal),
+        seatFeeText: money(settle.seatFee),
+        discountText: money(settle.discount),
+        totalText: money(settle.dishTotal),
+        showSeatFee: false,
+        showDiscount: false
+      });
+      return;
+    }
+
     this.setData({
       rows,
       dishTotalText: money(settle.dishTotal),

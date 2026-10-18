@@ -861,8 +861,15 @@ const discount = computed(() => {
   if (!enabled || !(t > 0) || !(d > 0) || dishTotal.value < t) return 0;
   return round2(Math.min(Math.floor(dishTotal.value / t) * d, dishTotal.value));
 });
-// 未选菜时不展示茶位费(合计为 0),选菜后才计入茶位费与优惠
-const totalPrice = computed(() => (dishTotal.value > 0 ? round2(dishTotal.value + seatFee.value - discount.value) : 0));
+// 未选菜时不展示茶位费(合计为 0),选菜后才计入茶位费与优惠。
+// 加菜态例外:合计只含本次追加的菜品 —— 茶位费与满减由后端按整单重算一次
+// (append 接口 RecalcAmount(effectivePerson, 全部明细)),把整桌茶位费摊进
+// 「仅加菜」小计会让顾客以为被重复收费(先付模式下马上要付款,尤其伤信任)。
+const totalPrice = computed(() => {
+  if (dishTotal.value <= 0) return 0;
+  const appending = isActive.value && Number(currentOrder.value?.payStatus) === 0 && !foreign.value;
+  return appending ? dishTotal.value : round2(dishTotal.value + seatFee.value - discount.value);
+});
 
 // 结算栏显隐:仅「本次会话从未点过菜」时隐藏;购物车一旦出现过(含刷新后从持久化恢复)
 // 就置位并永不复位——之后清空、支付、取消都不再隐藏,给顾客一个稳定的加菜入口。

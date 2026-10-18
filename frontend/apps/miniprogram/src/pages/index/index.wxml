@@ -259,12 +259,10 @@
                       <text class="cny">¥</text>{{item.priceText}}<text
                         wx:if="{{item.manySpecs}}"
                         class="from"
-                      >
-                        起</text><text
+                      >起</text><text
                         wx:if="{{item.specName}}"
                         class="spec-name"
-                      >
-                        /{{item.specName}}</text>
+                      >/{{item.specName}}</text>
                     </block>
                     <text
                       wx:else

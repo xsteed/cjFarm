@@ -204,7 +204,7 @@
         v-else
         class="append-hint"
       >
-        本次加菜将累加到订单 #{{ currentOrder?.orderNo }}，最终金额以订单为准
+        本次加菜将累加到订单 #{{ currentOrder?.orderNo }}；茶位费与优惠按整单结算，最终金额以订单为准
       </div>
       <div
         v-if="canAppend"

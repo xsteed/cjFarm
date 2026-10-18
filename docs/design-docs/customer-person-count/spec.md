@@ -24,7 +24,7 @@
 4. **面板只做一件事：选人数**。不展示茶位费预览、不写解释文案——茶位费按现状只出现在购物车明细（「茶位费（N人）」行）里，进入面板不替购物车说话。
 5. **首次必须显式选择**：不预选人数，确认按钮在未选前禁用，避免「默认 1 人」在多人桌继续产生错误茶位费。
 6. **已选过则跳过**：H5 用 `sessionStorage`（按桌隔离）；小程序用 `App.session` 标记 + 本地存储（按桌码，60 分钟窗口）。刷新 / 冷启动不重复打扰。
-7. **不改后端接口与账务**：人数本来就随 `createOrder` 提交，后端 `RecalcAmount(personCount, items)` 按人重算茶位费；本设计只解决「进入时人数不对」。
+7. **后端只加一个轻量的桌级共享接口，不动账务**：选人数是「这张桌」的属性而不是「这部手机」的——一位客人选完后上报共享，同桌其他人扫码直接沿用。新增 `POST /customer/table/person`（上报）与桌台响应的 `pendingPersonCount` 字段，纯内存态 + 60 分钟 TTL，不落库；茶位费计价链路（`RecalcAmount`）不变。
 8. **不改现有购物车抽屉与订单页改人数入口**：它们是下单前/下单后的修正通道，本设计在其前面补一道「初始值」关卡。
 
 ---
@@ -185,16 +185,18 @@ onLoad（扫码 / 最近使用） → loadAll → 拉 config / table / menu / re
 
 **H5**（仅「无订单」路径需要）：
 
-1. `sessionStorage[dining:person:{tableId}]`（本次会话已选值）
-2. 用户在面板上显式选择
-3. `1`（兜底，仅在茶位费关闭或异常时使用）
+1. `sessionStorage[dining:person:{tableId}]`（本次会话本机已选值）
+2. 桌级共享值 `pendingPersonCount`（同桌其他设备已选过）
+3. 用户在面板上显式选择
+4. `1`（兜底，仅在茶位费关闭或异常时使用）
 
 **小程序**：
 
 1. `App.session.personChosen ? App.session.personCount : 无`
 2. 本地存储 `dining_mp_person:{tableCode}`（`at` 在 60 分钟内）
-3. 用户在面板上显式选择
-4. `1`（兜底）
+3. 桌级共享值 `pendingPersonCount`（同桌其他设备已选过）
+4. 用户在面板上显式选择
+5. `1`（兜底）
 
 > 有订单时（resume / 加菜 / 再点一单），人数以订单 `personCount` 为准，不走上表。
 
@@ -205,6 +207,7 @@ onLoad（扫码 / 最近使用） → loadAll → 拉 config / table / menu / re
 | H5 | `sessionStorage` | `dining:person:{tableId}` | 标签页会话；换桌不同 key；关掉重开即失效 |
 | 小程序 | `App.session.personChosen` | — | 本次运行（含页面切换） |
 | 小程序 | `wx.setStorageSync` | `dining_mp_person:{tableCode}`，值 `{ count, at }` | 60 分钟；换桌不同 key；同一部手机 = 同一位顾客 |
+| 服务端（两端共用） | 进程内存 `tablePersonByTable[tableID]` | 下单成功即清除；60 分钟 TTL；重启丢失（只是预填默认，最坏重新选一次） |
 
 **与现有隔离语义对齐**：
 - H5 的 `sessionStorage` 已经用于「订单归属认领」（`dining:mine:{tableId}:{orderNo}`）与购物车会话起点，本设计复用同一层语义：**同一标签页 = 同一批客人**。
@@ -660,6 +663,27 @@ onConfirmPerson(): void {
 
 顺序不能反：`restoreCart` 可能把人数恢复成 4，若先判了关卡再恢复，会出现「选了 4 又跳回 1」的闪烁。
 
+### 5.3 后端：桌级共享人数（本轮新增）
+
+选人数是「这张桌」的属性而不是「这部手机」的：一位客人选好后，同桌其他人扫码进来**直接沿用、不再弹面板**。为此新增一个轻量的内存态共享存储（`backend/application/service/table_person.go`）：
+
+| 接口/行为 | 说明 |
+|---|---|
+| `GET /customer/table/:id` | 响应新增 `pendingPersonCount`（0 = 还没人选，客户端视为「没选过」） |
+| `POST /customer/table/person` | 上报 `{tableId, personCount}`；1..20 之外的输入静默丢弃；同值重复上报无副作用（幂等） |
+| `CustomerCreateOrder` 成功 | `ClearTablePendingPerson(tableID)`：人数已固化进订单，共享值随之清除 |
+
+**并发语义（刻意不加锁）**：
+
+| 场景 | 行为 |
+|---|---|
+| 两人先后确认不同人数 | 后写覆盖先写：后确认者成为面板默认。但每人下单用的是**自己设备上**的 personCount，互不影响 |
+| 两人同时提交下单 | 由既有「一桌只允许一笔未结账单」约束串行化，胜出订单的人数即为准 |
+| 上报与下单并发 | 上报只改内存预填值，不参与计价；与下单事务无交集 |
+| 进程重启 | 内存丢失 = 预填丢失，最坏是下一位客人重新选一次；无账务影响 |
+
+> 为什么不落库：权威值是订单上的 `person_count`，共享值只是「让下一个人少点一步」的预填；内存 + 60 分钟 TTL（写入时顺带清扫过期条目）足够，且免去一次 schema 迁移。
+
 ---
 
 ## 6. 数据模型
@@ -684,10 +708,12 @@ onConfirmPerson(): void {
 
 ## 7. 接口设计
 
-**顾客端接口无变更。**
+**除「桌级共享人数」外无变更（见 §5.3）。**
 
 | 接口 | 说明 |
 |---|---|
+| `GET /customer/table/:ref` | 响应**新增** `pendingPersonCount`（0 = 还没人选） |
+| `POST /customer/table/person` | **新增**：入座人数上报 `{tableId, personCount}`，桌级共享 |
 | `GET /customer/config`（公开配置） | 已返回 `seat_fee_enabled` / `seat_fee`，前端据此判断是否弹面板 |
 | `POST /customer/order` | 已接收 `personCount`，后端 `CustomerCreateOrder` 已做 `1..100` 校验 |
 | `POST /customer/order/append` | 已接收 `personCount`，加菜沿用订单人数 |
@@ -702,7 +728,9 @@ onConfirmPerson(): void {
 | 场景 | 处理 |
 |---|---|
 | 面板显示期间 | 菜单在蒙层下**完整可见但不可操作**；蒙层拦截点击与滚动（H5 `touch-action:none`，小程序 `catchtouchmove`），确认后无缝继续，不重新渲染菜单 |
-| 面板内容 | 只有标题 / chip / 步进器 / 确认按钮，不含任何金额信息；茶位费照现状在购物车明细与底部合计里展示 |
+| 面板内容 | 只有标题 / 提示 / 格子 / 步进器 / 确认按钮，不含任何金额信息；茶位费照现状在购物车明细与底部合计里展示 |
+| 同桌另一部手机已选过 | 桌台接口带 `pendingPersonCount`，直接沿用不弹面板；本机已选过的优先于共享值 |
+| 两人几乎同时确认不同人数 | 后写覆盖先写（共享值只是预填默认）；下单人数以提交方设备上的 personCount 为准（见 §5.3） |
 | 茶位费开启但 `seat_fee` 为 0 / 负数 | 视为未开启，不弹面板（与 `cartSettle` / `RecalcAmount` 的 `f > 0` 口径一致） |
 | 顾客在面板上刷新页面 | 本会话未选过 → 菜单渲染后重新弹；已选过 → 直接可点 |
 | 顾客选了人数但一直没下单，关掉重开（H5） | 新标签页 = 新会话，重新弹（合理：可能是下一批客人） |
@@ -710,6 +738,7 @@ onConfirmPerson(): void {
 | 小程序换桌 | key 带 `tableCode`，不会串人数 |
 | 已有未结账订单 | 不弹；人数以订单为准 |
 | 加菜 | 不弹；`startAppend` 同步 `currentOrder.personCount` |
+| 加菜态金额展示（含先付模式未付款加菜） | 合计只含本次追加的菜品：茶位费与满减按「整单」由后端 `RecalcAmount(effectivePerson, 全部明细)` 重算**一次**，不摊进「仅加菜」小计（先付模式下顾客马上要付款，重复展示会被当成重复收费）；提示条说明「茶位费与优惠按整单结算，最终金额以订单为准」 |
 | 「不是本人的单」浏览模式 | 不弹；提交被拦截，人数不参与金额 |
 | 锁定 / 预约桌台 | 不弹；不进菜单 |
 | 输入非法（空 / `abc` / `0` / `21`） | 不写入 `personCount`；按钮禁用或提示「1~20」 |
@@ -783,7 +812,13 @@ onConfirmPerson(): void {
 
 ### 10.3 后端
 
-无改动。
+| # | 文件 | 改动 |
+|---|---|---|
+| B1 | `backend/application/service/table_person.go`（新增） | 桌级共享人数：内存 map + 60 分钟 TTL + 下单清除，含并发语义说明 |
+| B2 | `backend/application/service/customer_service.go` | `CustomerCreateOrder` 成功后 `ClearTablePendingPerson` |
+| B3 | `backend/interfaces/handler/customer.go` | `CustomerTable` 响应加 `pendingPersonCount`；新增 `CustomerSetTablePerson` |
+| B4 | `backend/main.go` | 注册 `POST /customer/table/person` |
+| B5 | `backend/application/service/table_person_test.go`（新增） | 共享值单测（覆盖 / TTL / 清除 / 越界） |
 
 ---
 
@@ -792,7 +827,7 @@ onConfirmPerson(): void {
 | 阶段 | 内容 | 说明 |
 |---|---|---|
 | **Phase 1（P0）** | F1~F4：H5 进入面板 + 持久化 + 再点一单 | 独立可发布，立即修正 H5 茶位费 |
-| **Phase 2（P0）** | M1~M10：小程序对齐 | 与 Phase 1 同一套交互；可同版本发布 |
+| **Phase 2（P0）** | B1~B5：后端桌级共享 + M1~M10：小程序对齐 | 后端为纯内存态、无 schema 变更，可与小程序同版本发布 |
 | **Phase 3（可选）** | H5 订单页补「未支付改人数」入口（接 `/customer/order/person`）；或面板加「稍后再选」入口（人数按 1 兜底） | 与小程序对齐的独立小需求，不在本次范围 |
 
 两端均为纯前端改动，无接口/DB 变更，可按端独立灰度、独立回滚。
@@ -820,7 +855,9 @@ onConfirmPerson(): void {
 - [ ] H5 刷新后人数与合计保持，不再回到 1。
 - [ ] 小程序同流程、同文案、同范围（1..20）；菜单同样在蒙层下可见、面板贴底。
 - [ ] 小程序冷启动（60 分钟内）不重复弹，人数保持。
+- [ ] 同桌另一部手机扫码进来不再弹面板，人数沿用先选者的上报值（下单后共享值清除）。
 - [ ] 已有订单 / 加菜 / 锁定桌台 / 浏览模式均不弹面板，行为与改造前一致。
 - [ ] 茶位费关闭的门店完全无感。
 - [ ] 「再点一单」沿用上一单人数，新单茶位费正确。
+- [ ] 加菜（含先付模式未付款时）不重复计收/展示茶位费：合计只含本次追加菜品，后端整单重算只收一次茶位费。
 - [ ] 两端测试通过：H5 `OrderPage.test.ts`、小程序 `entry/person/cartPersist` 用例。

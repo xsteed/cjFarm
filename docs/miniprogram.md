@@ -23,7 +23,7 @@
 
 | 能力 | 实现位置 | 说明 |
 |---|---|---|
-| 默认主页 | `src/pages/home/*` | 小程序首页（`app.json` 第一项）。没扫桌台码时落地在这里：微信内直接唤起扫码进桌、上次桌台 / 进行中订单续用、本店招牌橱窗。**扫码进桌仍然直达菜单**：后端出码的 `PagePath` 固定为 `pages/index/index`，扫码顾客不会多点一次 |
+| 默认主页 | `src/pages/home/*` | 小程序首页（`app.json` 第一项）。没扫桌台码时落地在这里：微信内直接唤起扫码进桌、上次桌台 / 进行中订单续用（**桌台详情确认存在才显示**，没有数据不出入口）、本店招牌橱窗。**扫码进桌仍然直达菜单**：后端出码的 `PagePath` 固定为 `pages/index/index`，扫码顾客不会多点一次 |
 | 扫小程序码 / 普通二维码进入 | `src/pages/index/index.ts` + `src/utils/scene.ts` | 支持 `scene=tableCode=X`、裸码值、`?tableCode=X`；无参数时用本地缓存兜底 |
 | 菜单浏览 | `src/pages/index/*` | 左侧分类 + 右侧菜品，右栏是**所有分类首尾相连的连续列表**（内容少的分类不会留白）；点分类平滑定位到对应分组标题，滚动时左侧高亮跟随，分组标题吸顶。菜品图/描述/价格（规格太多时显示「起」） |
 | 菜品搜索 | `src/pages/index/index.ts` + `packages/customer-core/src/search.ts` | 菜名 / 描述 / 规格名模糊搜索：按「包含」匹配，并支持菜名的顺序包含（「红肉」→「红烧肉」）；多关键词是「与」。搜索态隐藏左栏、结果回到顶部。搜索实现已抽到 `@dining/customer-core`，与 H5 共用同一份 |
@@ -194,7 +194,7 @@ export const API_ORIGIN = 'https://dining.example.com';
 | 办法 | 做法 | 注意 |
 |---|---|---|
 | 编译模式（贴近真实） | 点「编译」左边的模式下拉，选 `直接指定桌台码（调试用）` 或 `扫小程序码进入（scene=桌台码）`；下拉里没有就「添加编译模式」，启动页 `pages/index/index`、启动参数 `tableCode=<桌台码>` | 工具**只在打开项目时**读一次 `project.private.config.json`：手改配置后要重开项目，下拉里才会出现 |
-| 开发期兜底（最省事） | 什么都不用选，直接编译，再点首页的「继续点餐」 | 见下方 `DEV_TABLE_CODE`：开发版下首页用它兜底「继续点餐」，一键进本机那张桌；只对开发版生效 |
+| 开发期兜底（最省事） | 什么都不用选，直接编译，再点底部「点餐」tab | 见下方 `DEV_TABLE_CODE`：兜底只作用于**菜单页**的 onLoad；首页的「继续点餐」只认真实桌台数据（确认存在才显示），不参与兜底 |
 
 `src/config.ts` 里的兜底值：
 
@@ -205,6 +205,8 @@ export const DEV_TABLE_CODE = '8YG3Q335';
 
 `devTableCode()` 只在 `envVersion === 'develop'` 时返回它，体验版与正式版一律返回空串 ——
 所以线上不会出现「没扫码也默认进某张桌」。提测前把它置空即可。
+首页的「继续点餐」**不消费这个兜底**：它必须先拉到桌台详情（确认桌台还在）才显示，
+没有数据时宁可不出入口，也不亮一个点了只会报错的卡片。
 
 ---
 
@@ -384,7 +386,7 @@ POST /api/customer/pay/jsapi
 | `src/pages/order/__tests__/append.test.ts`（4） | 加菜跳转（页面栈里没有菜单页时不能死循环）、首屏加载失败的重试 |
 | `src/pages/pay/__tests__/paid.test.ts`（2） | 支付成功先落「已付款」再回拉详情；延时跳转期间顾客手动返回不重复导航 |
 | `src/components/spec-sheet/__tests__/confirm.test.ts`（3） | 弹层「确定」的防重入：连点只加一份 |
-| `src/pages/home/__tests__/home.test.ts`（8） | 默认主页：扫码进菜单（用 navigateTo，首页留在栈里）、扫到无关内容提示重扫 / 取消不提示、上次桌台回填与续用、进行中订单卡片（已完成的单不进）、招牌菜只取 `signature=1` 且多规格给最低价 |
+| `src/pages/home/__tests__/home.test.ts`（9） | 默认主页：扫码进菜单（用 navigateTo，首页留在栈里）、扫到无关内容提示重扫 / 取消不提示、上次桌台**确认存在才显示**续用入口（拉不到桌台详情就收起）、进行中订单卡片（已完成的单不进）、招牌菜只取 `signature=1` 且多规格给最低价 |
 | `src/utils/__tests__/scene.test.ts`（21） | 小程序码 scene / 裸码值 / urlencode / 多参数 / 非法编码 / 空值；小程序内扫码结果解析（`/order/<码>`、`?tableCode=`、小程序码 path、无关链接返回空串） |
 | `packages/customer-core/src/__tests__/search.test.ts` | 关键词拆分（空白/中英文逗号）、菜名与描述与规格名命中、顺序包含、多关键词「与」、空词短路、过滤时不改写原菜单（与 H5 共用同一份实现与用例） |
 | `src/utils/__tests__/nav.test.ts`（7） | 底部导航切页：已在目标页不跳、目标页在栈里就 `navigateBack`（含跨页 delta）、不在栈里 `redirectTo`（点餐页必须带 `append=1`，否则被弹回订单页） |

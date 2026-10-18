@@ -202,4 +202,31 @@ describe('菜单页 · 入座选人数', () => {
     expect(page?.data.needPerson).toBe(true);
     expect(app.session.personCount).toBe(1);
   });
+
+  it('同桌已有人选过（桌台接口带 pendingPersonCount）：直接沿用，不再弹面板', async () => {
+    // 另一部手机先选了 6 人并上报：本机扫码进来沿用桌级共享值
+    replyMenuLoad(SEAT_FEE_ON, { ...TABLE_OK, pendingPersonCount: 6 });
+    page?.onLoad({ scene: 'A1' });
+    await flush();
+    await flush();
+
+    expect(page?.data.needPerson).toBe(false);
+    expect(app.session.personCount).toBe(6);
+    expect(app.session.personChosen).toBe(true);
+  });
+
+  it('确认人数后上报后端（全桌共享，供同桌其他设备沿用）', async () => {
+    replyMenuLoad(SEAT_FEE_ON);
+    page?.onLoad({ scene: 'A1' });
+    await flush();
+    await flush();
+
+    page?.onPickPerson(pickOf(4));
+    page?.onConfirmPerson();
+    await flush();
+
+    const report = wxMock.requests.find(r => r.url.includes('/customer/table/person'));
+    expect(report).toBeTruthy();
+    expect(report?.data).toMatchObject({ tableId: 3, personCount: 4 });
+  });
 });

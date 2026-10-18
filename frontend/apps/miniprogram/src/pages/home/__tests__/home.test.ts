@@ -87,11 +87,12 @@ describe('默认主页', () => {
     await flush();
 
     expect(page.data.tableCode).toBe('');
+    expect(page.data.hasTable).toBe(false);
     expect(page.data.tableLabel).toBe('');
     expect(page.data.hasOrder).toBe(false);
   });
 
-  it('有上次的桌台：回填桌台名，「去点餐」带上桌台码进菜单', async () => {
+  it('有上次的桌台：确认存在后回填桌台名，「去点餐」带上桌台码进菜单', async () => {
     persistSession('A1', '');
     const page = await mount();
     replyHomeLoad({}, { tableId: 3, tableName: '大厅03桌', tableCode: 'A1' });
@@ -99,12 +100,29 @@ describe('默认主页', () => {
     page.onShow();
     await flush();
 
+    // 桌台详情确认存在，「继续点餐」才有资格显示
+    expect(page.data.hasTable).toBe(true);
     expect(page.data.tableCode).toBe('A1');
     expect(page.data.tableLabel).toBe('大厅03桌');
 
     page.onResumeMenu();
     // navigateTo：点完菜还能退回首页，首页不能从页面栈里消失
     expect(wxMock.navigations).toEqual([{ type: 'navigateTo', url: '/pages/index/index?tableCode=A1' }]);
+  });
+
+  it('桌台详情拉不到（已删 / 网络失败）：不显示「继续点餐」，也不给编造的通用文案', async () => {
+    persistSession('A1', '');
+    const page = await mount();
+    // 只有配置与菜单两个回包：桌台详情那次请求会拿到默认失败回包（code 200 + data null → 走 catch）
+    replyHomeLoad({});
+    page.onLoad({});
+    page.onShow();
+    await flush();
+
+    expect(page.data.hasTable).toBe(false);
+    expect(page.data.tableLabel).toBe('');
+    page.onResumeMenu();
+    expect(wxMock.navigations).toHaveLength(0);
   });
 
   it('会话里有进行中的订单：首屏给出查看入口', async () => {

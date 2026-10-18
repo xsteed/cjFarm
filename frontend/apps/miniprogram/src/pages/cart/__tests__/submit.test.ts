@@ -90,7 +90,9 @@ describe('购物车页 · 下单', () => {
     expect(page.data.appendMode).toBe(true);
     expect(page.data.submitText).toBe('提交加菜');
     expect(page.data.personCount).toBe(3);
-    expect(page.data.totalText).toBe('48.00'); // 42 + 3 人 × 2 元茶位费
+    // 加菜态合计只含本次追加的菜品：茶位费按整单由后端重算一次，不摊进「仅加菜」小计
+    expect(page.data.totalText).toBe('42.00');
+    expect(page.data.showSeatFee).toBe(false);
 
     wxMock.reply({ code: 200, msg: 'ok', data: { orderNo: 'D001' } });
     wxMock.reply({ code: 200, msg: 'ok', data: { orderNo: 'D001', orderStatus: 2, payStatus: 0 } });

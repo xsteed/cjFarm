@@ -41,9 +41,9 @@
       <view class="entry-go">查看 ›</view>
     </view>
 
-    <!-- 上次进入的桌台：不必重新找桌牌也能接着点 -->
+    <!-- 上次进入的桌台：桌台详情确认存在（hasTable）才显示，没有数据绝不亮空入口 -->
     <view
-      wx:if="{{tableCode}}"
+      wx:if="{{hasTable}}"
       class="card entry"
       bindtap="onResumeMenu"
     >
@@ -62,7 +62,7 @@
     >
       <view class="sec-head">
         <view class="sec-title">本店招牌</view>
-        <view class="sec-sub">{{tableCode ? '扫码后可点' : '先扫码进桌'}}</view>
+        <view class="sec-sub">{{hasTable ? '扫码后可点' : '先扫码进桌'}}</view>
       </view>
       <scroll-view
         class="sig-scroll"
@@ -79,6 +79,8 @@
             bindtap="onOpenDish"
           >
             <view class="sig-media">
+              <!-- 招牌角标：贴在图片左上角，售罄遮罩盖不全它（z-index 见 wxss） -->
+              <view class="sig-tag">招牌</view>
               <image
                 wx:if="{{item.image}}"
                 class="sig-img"
@@ -102,13 +104,9 @@
               </view>
             </view>
             <view class="sig-name">{{item.dishName}}</view>
-            <view class="sig-price">
-              <text class="cny">¥</text>{{item.priceText}}<text
-                wx:if="{{item.manySpecs}}"
-                class="sig-from"
-              >
-                起</text>
-            </view>
+            <!-- 价格行整段不允许折行/缩进：WXML 里标签之间的换行会渲染成空格，
+                 「¥48.00 起」里的空隙就是这么来的。要改排版先看这段注释。 -->
+            <view class="sig-price"><text class="cny">¥</text>{{item.priceText}}<text wx:if="{{item.manySpecs}}" class="sig-from">起</text></view>
           </view>
         </view>
       </scroll-view>

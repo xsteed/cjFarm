@@ -13,7 +13,7 @@
 // 接口全部是现成的公开接口（/customer/config、/customer/menu、/customer/table），
 // 后端零改动；任何一项失败都只影响对应区块，扫码主路径永远可用。
 import { getMenu, getPublicConfig, getTable } from '../../api/client';
-import { devTableCode, mediaUrl } from '../../config';
+import { mediaUrl } from '../../config';
 import { ORDER_STATUS } from '@dining/shared/dicts';
 import { money } from '@dining/shared/money';
 import { isActiveStatus } from '@dining/shared/orderStatus';
@@ -43,9 +43,15 @@ Page({
     slogan: '',
     /** 「我的」tab 是否显示：跟随后端会员开关 */
     showProfile: true,
-    /** 上次进入的桌台码（会话优先，其次本地缓存）：有值才显示「继续点餐」 */
+    /** 上次进入的桌台码（会话优先，其次本地缓存） */
     tableCode: '',
-    /** 桌台名（如「大厅03桌」）；接口没回来 / 桌台已删时退化为通用文案 */
+    /**
+     * 「继续点餐」是否可显示：**桌台详情拉到才算有数据**。
+     * 只有码值（尤其本地缓存可能是很久以前的）不算数 —— 桌台可能已删、缓存可能已失效，
+     * 那种情况下亮着入口只会把顾客带到一个报错页。
+     */
+    hasTable: false,
+    /** 桌台名（如「大厅03桌」）；确认前不显示入口，没有「通用文案」兜底 */
     tableLabel: '',
     /** 会话里的当前订单：进行中的单 */
     hasOrder: false,
@@ -77,9 +83,9 @@ Page({
   syncSession() {
     const s = sessionState();
     const persisted = readPersisted();
-    // 开发版兜底：普通编译不带桌台码，DEV_TABLE_CODE 让「继续点餐」仍能一键进本机那张桌；
-    // 体验版/正式版 devTableCode() 恒为空串，线上不会凭空多出一个入口。
-    const code = String(s.tableCode || persisted.tableCode || devTableCode() || '');
+    // 只认真实的桌台线索（本次会话 / 上次落盘的码），不做开发兜底：
+    // 没有数据就不该有「继续点餐」，否则顾客点进去只会看到一句报错。
+    const code = String(s.tableCode || persisted.tableCode || '');
     const order = s.currentOrder;
     const patch: Record<string, unknown> = { showProfile: memberEnabled() };
 
@@ -99,8 +105,9 @@ Page({
 
     if (code !== this.data.tableCode) {
       patch.tableCode = code;
-      // 换了桌台（或彻底没有）：旧的桌台名必须清掉，否则会显示成「继续点餐 · 上一桌」
-      patch.tableLabel = code ? '上次的桌台' : '';
+      // 先收起来等桌台详情确认，确认前绝不能亮着一个没有数据的入口
+      patch.hasTable = false;
+      patch.tableLabel = '';
     }
 
     this.setData(patch);
@@ -160,21 +167,24 @@ Page({
     return out;
   },
 
-  /** 拉桌台名：桌台可能已被删除，失败时保留通用文案，入口仍然可用。 */
+  /** 确认桌台还在、拿到桌台名：这一步成功，「继续点餐」才有资格显示。 */
   async loadTable(code: string): Promise<void> {
     this.loadedTableCode = code;
     try {
       const table = (await getTable(code)) as TableInfo;
       // 请求期间顾客可能又扫了别的桌：结果只回填给仍然匹配的那一桌
       if (this.data.tableCode !== code) return;
-      this.setData({ tableLabel: this.tableLabelOf(table) });
+      this.setData({
+        hasTable: true,
+        // 后端保证有桌台名；万一没有就用码值，绝不给一个编出来的「通用文案」
+        tableLabel: String(table.tableName || table.tableNo || '').trim() || code
+      });
     } catch {
-      /* 桌台不存在 / 网络不通：真正的错误由菜单页说明，首页不在这里拦人 */
+      // 桌台可能已被删除 / 网络不通：没有确认过的数据就不显示入口。
+      // 清掉已拉标记，下次回到首页（onShow）会再试一次。
+      this.loadedTableCode = '';
+      if (this.data.tableCode === code) this.setData({ hasTable: false, tableLabel: '' });
     }
-  },
-
-  tableLabelOf(table: TableInfo): string {
-    return String(table.tableName || table.tableNo || '').trim() || '上次的桌台';
   },
 
   /** 扫码点餐：扫桌面点餐码 → 带着桌台码进菜单。 */
@@ -200,14 +210,14 @@ Page({
 
   /** 继续点餐 → 带上次的桌台码回菜单（菜单页会自己处理加菜 / 清台确认）。 */
   onResumeMenu(): void {
+    if (!this.data.hasTable) return;
     const code = this.data.tableCode;
-    if (!code) return;
     wx.navigateTo({ url: `/pages/index/index?tableCode=${encodeURIComponent(code)}` });
   },
 
-  /** 点招牌菜：没有桌台就先引导扫码，有桌台就进菜单自己挑（规格 / 备注在菜单页）。 */
+  /** 点招牌菜：没有确认过的桌台就先引导扫码，有桌台就进菜单自己挑（规格 / 备注在菜单页）。 */
   onOpenDish(): void {
-    if (!this.data.tableCode) {
+    if (!this.data.hasTable) {
       toast.info('请先扫描桌面上的点餐码，再去点菜');
       return;
     }

@@ -220,6 +220,20 @@
   background: #f2f2f2;
 }
 
+/* 招牌角标：贴图片左上角，右下角收圆，与图片的左上直角形成对角 */
+.sig-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  padding: 4rpx 12rpx 4rpx 10rpx;
+  border-radius: 0 0 var(--r-sm) 0;
+  background: var(--brand-deep);
+  color: #fff;
+  font-size: 18rpx;
+  line-height: 1.4;
+}
+
 .sig-img {
   display: block;
   width: 200rpx;
