@@ -59,14 +59,16 @@
   box-shadow: var(--shadow-2);
 }
 
-/* 未登录：占位引导卡 */
+/* 未登录：占位引导卡。用品牌浅色渐变底代替生硬的虚线框，
+   视觉上向登录后的品牌渐变卡靠拢，更像「会员引导」而非「报错提示」 */
 .cardOff {
   display: flex;
   align-items: center;
-  gap: 24rpx;
-  padding: 36rpx 32rpx;
-  background: var(--card);
-  border: 2rpx dashed var(--ink-4);
+  gap: 28rpx;
+  padding: 40rpx 32rpx;
+  background: linear-gradient(135deg, #fff7f2 0%, #ffeee2 100%);
+  border: 2rpx solid rgb(240 72 31 / 10%);
+  box-shadow: 0 4rpx 16rpx rgb(240 72 31 / 6%);
 }
 
 .card-avatar {
@@ -83,8 +85,9 @@
 }
 
 .card-avatar-off {
-  background: var(--brand-soft);
-  color: var(--brand-deep);
+  background: #fff;
+  color: var(--brand);
+  box-shadow: 0 6rpx 18rpx rgb(240 72 31 / 16%);
 }
 
 .card-main {
@@ -157,6 +160,13 @@
 .wallet-action {
   font-size: 24rpx;
   color: var(--brand);
+}
+
+/* 「微信一键注册成为会员」文案较长，强制单行不换行；
+   上下边距与卡片、储值余额行保持一致的呼吸感（24/32rpx 节奏） */
+.btn-primary {
+  margin: 8rpx 0 32rpx;
+  white-space: nowrap;
 }
 
 /* 「修改昵称 / 退出登录」并排：两个都是低频次要操作，各占一半宽度更好点按。 */
