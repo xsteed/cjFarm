@@ -108,6 +108,14 @@
   color: var(--ink-3);
 }
 
+/* 未登录引导卡的右侧箭头：暗示整卡可点（点了即登录/注册） */
+.card-arrow {
+  flex: none;
+  color: var(--ink-4);
+  font-size: 40rpx;
+  line-height: 1;
+}
+
 .card-stat {
   flex: none;
   text-align: center;

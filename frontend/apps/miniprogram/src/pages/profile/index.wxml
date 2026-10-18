@@ -1,4 +1,5 @@
-<!-- 我的：会员卡 + 历史订单。登录自愿，未登录渲染注册引导卡。 -->
+<!-- 我的：会员卡 + 储值余额 + 历史订单。登录自愿，未登录也渲染登录后的完整结构，
+     只是会员卡显示头像占位与登录/注册引导（点卡即登录），订单/余额区为引导态。 -->
 <view class="page">
   <view
     wx:if="{{loading && !member}}"
@@ -21,8 +22,11 @@
   </view>
 
   <block wx:else>
-    <!-- 会员卡 -->
-    <view class="card {{loggedIn ? 'cardOn' : 'cardOff'}}">
+    <!-- 会员卡：登录与否都渲染同一结构；未登录时头像位是占位、整卡可点进登录 -->
+    <view
+      class="card {{loggedIn ? 'cardOn' : 'cardOff'}}"
+      bindtap="onCardTap"
+    >
       <block wx:if="{{loggedIn && member}}">
         <view class="card-avatar">{{avatarChar}}</view>
         <view class="card-main">
@@ -37,9 +41,13 @@
       <block wx:else>
         <view class="card-avatar card-avatar-off">会</view>
         <view class="card-main">
-          <view class="card-name">{{enabled ? '注册成为会员' : '会员功能未开启'}}</view>
-          <view class="card-sub">{{enabled ? '一键授权，随时查看历史订单' : '请联系商家在系统配置中开启'}}</view>
+          <view class="card-name">{{enabled ? '未登录' : '会员功能未开启'}}</view>
+          <view class="card-sub">{{enabled ? '点击登录 / 注册，随时查看历史订单' : '请联系商家在系统配置中开启'}}</view>
         </view>
+        <view
+          wx:if="{{enabled}}"
+          class="card-arrow"
+        >›</view>
       </block>
     </view>
 
@@ -71,37 +79,47 @@
       </button>
     </view>
 
-    <!-- 储值余额:整行可点,进钱包页(充值/流水) -->
+    <!-- 储值余额：登录与否都渲染（未登录为引导态）；整行可点，
+         已登录进钱包页（充值/流水），未登录触发登录 -->
     <view
-      wx:if="{{loggedIn}}"
+      wx:if="{{enabled}}"
       class="wallet-row"
       bindtap="onOpenWallet"
     >
       <view class="wallet-label">储值余额</view>
-      <view class="wallet-amount">¥{{balanceText}}</view>
+      <view class="wallet-amount">{{loggedIn ? '¥' + balanceText : '—'}}</view>
       <view
-        wx:if="{{canRecharge}}"
+        wx:if="{{loggedIn && canRecharge}}"
         class="wallet-action"
       >
         去充值 ›
       </view>
+      <view
+        wx:elif="{{!loggedIn}}"
+        class="wallet-action"
+      >
+        登录后查看 ›
+      </view>
     </view>
 
-    <!-- 历史订单 -->
+    <!-- 历史订单：未登录也显示区块，用引导文案代替空态 -->
     <view
-      wx:if="{{loggedIn}}"
+      wx:if="{{enabled}}"
       class="sec"
     >
       <view class="sec-head">
         <view class="sec-title">我的订单</view>
-        <view class="sec-sub">共 {{total}} 单</view>
+        <view
+          wx:if="{{loggedIn}}"
+          class="sec-sub"
+        >共 {{total}} 单</view>
       </view>
 
       <view
         wx:if="{{orders.length === 0}}"
         class="empty"
       >
-        还没有订单，去点一单吧
+        {{loggedIn ? '还没有订单，去点一单吧' : '登录后可查看历史订单'}}
       </view>
 
       <view
@@ -135,7 +153,7 @@
       </view>
 
       <button
-        wx:if="{{hasMore}}"
+        wx:if="{{loggedIn && hasMore}}"
         class="btn-ghost btn-more"
         disabled="{{loadingMore}}"
         bindtap="onLoadMore"

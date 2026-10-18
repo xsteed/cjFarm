@@ -1,8 +1,10 @@
-// 「我的」页：会员卡 + 历史订单。
+// 「我的」页：会员卡 + 储值余额 + 历史订单。
 //
-// 登录是自愿的（spec D1）：未登录渲染注册引导卡，点「微信一键注册成为会员」走
-// store/member 的静默登录；已登录渲染会员卡与本会员的跨桌历史订单。
-// 会员功能未开启（后端未配 AppSecret）时隐藏登录入口，只留说明。
+// 登录是自愿的（spec D1）：页面结构登录与否完全一致（会员卡 / 余额行 / 订单区），
+// 未登录时会员卡显示头像占位与登录/注册引导（点卡即登录，走 store/member 的
+// 静默登录），余额与订单区渲染引导文案而不是整个消失 —— 用户先看到「登录后有
+// 什么」，登录意愿才立得住。已登录渲染会员卡、余额与本会员的跨桌历史订单。
+// 会员功能未开启（管理端总闸关闭）时隐藏登录引导，只留说明。
 import { ORDER_STATUS } from '@dining/shared/dicts';
 import { money } from '@dining/shared/money';
 import { bindMemberPhone, deleteMemberAccount, getWallet, updateMemberProfile } from '../../api/client';
@@ -94,9 +96,20 @@ Page({
   /**
    * 充值与储值明细都已移到独立的「我的钱包」页：
    * 余额卡 + 金额网格 + 微信支付 + 流水，本页只留余额速览，点整行跳过去。
+   * 未登录时这一行是引导位：点它等同点登录，不进钱包页（钱包接口需要会员令牌）。
    */
   onOpenWallet(): void {
+    if (!this.data.loggedIn) {
+      void this.onLogin();
+      return;
+    }
     wx.navigateTo({ url: '/pages/wallet/index' });
+  },
+
+  /** 点会员卡：未登录且功能开启时等同点登录按钮；已登录点卡不做任何事。 */
+  onCardTap(): void {
+    if (this.data.loggedIn || !this.data.enabled) return;
+    void this.onLogin();
   },
 
   /** 手机号一键绑定：getPhoneNumber 回调的 code 与 wx.login 的 code 不是一个东西。 */
