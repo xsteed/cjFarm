@@ -387,6 +387,24 @@ func TestVisitParseUA(t *testing.T) {
 			device: "平板", osName: "Android", browser: "Chrome", model: "SM-T220",
 		},
 		{
+			// 鸿蒙 4.x 及以前的 UA 同时含 Android 与 HarmonyOS,必须判成鸿蒙;
+			// 机型要跳过 HarmonyOS 段与排在机型之后的 HMSCore 版本段。
+			name: "鸿蒙 4.x 华为浏览器(UA 含 Android,仍须判成鸿蒙)",
+			ua:   "Mozilla/5.0 (Linux; Android 10; HarmonyOS; NOH-AN00; HMSCore 6.3.0.332) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.88 HuaweiBrowser/13.0.5.302 Mobile Safari/537.36",
+			device: "手机", osName: "鸿蒙", browser: "Chrome", model: "NOH-AN00",
+		},
+		{
+			// 鸿蒙 NEXT 的官方默认 UA:既无 Android 也无 HarmonyOS。
+			name: "鸿蒙 NEXT 手机(OpenHarmony + ArkWeb)",
+			ua:   "Mozilla/5.0 (Phone;OpenHarmony 6.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 ArkWeb/6.0.0.42 Mobile",
+			device: "手机", osName: "鸿蒙", browser: "Chrome", model: "",
+		},
+		{
+			name: "鸿蒙 NEXT 平板(deviceType=Tablet)",
+			ua:   "Mozilla/5.0 (Tablet;OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1",
+			device: "平板", osName: "鸿蒙", browser: "Chrome", model: "",
+		},
+		{
 			name: "桌面 Edge(UA 带 Chrome,必须判成 Edge)",
 			ua:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36 Edg/120",
 			device: "电脑", osName: "Windows", browser: "Edge", model: "",

@@ -126,7 +126,12 @@ func clampText(s string, max int) string {
 // 不含机型,见 uaAndroidModel)。判定顺序有讲究:
 //   - 浏览器判定必须先于 Safari(Safari 的 UA 里含 Chrome 关键字的另有其人)、
 //     先于 Chrome(Edge/Opera 的 UA 里也带 Chrome);
-//   - 平板判定先于手机(Android 平板的 UA 不含 Mobile,手机才含)。
+//   - 平板判定先于手机(Android 平板的 UA 不含 Mobile,手机才含);
+//   - 鸿蒙判定必须先于 Android:鸿蒙 4.x 及以前的 UA 同时含 Android 与
+//     HarmonyOS(如 "Linux; Android 10; HarmonyOS; NOH-AN00"),先判
+//     Android 会让鸿蒙分支永远命中不到;鸿蒙 NEXT 的 UA 形如
+//     "Mozilla/5.0 (Phone;OpenHarmony 6.0) … ArkWeb/6.0.0.42 Mobile",
+//     既无 Android 也无 HarmonyOS,只能靠 OpenHarmony / ArkWeb 识别。
 func parseUA(ua string) (device, osName, browser, model string) {
 	u := strings.ToLower(ua)
 	// ---- 设备类型 ----
@@ -151,10 +156,12 @@ func parseUA(ua string) (device, osName, browser, model string) {
 		osName = "iOS"
 	case strings.Contains(u, "ipad"):
 		osName = "iPadOS"
+	// 鸿蒙必须先于 Android:鸿蒙 4.x 及以前的 UA 同时含 Android(见函数注释)。
+	case strings.Contains(u, "harmonyos"), strings.Contains(u, "openharmony"),
+		strings.Contains(u, "arkweb"):
+		osName = "鸿蒙"
 	case strings.Contains(u, "android"):
 		osName = "Android"
-	case strings.Contains(u, "harmonyos"):
-		osName = "鸿蒙"
 	case strings.Contains(u, "windows"):
 		osName = "Windows"
 	case strings.Contains(u, "macintosh"), strings.Contains(u, "mac os x"):
@@ -216,9 +223,13 @@ func uaAndroidModel(ua string) string {
 			tok = strings.TrimSpace(tok)
 			low := strings.ToLower(tok)
 			// 版本段(Android …)、兼容/WebView 标记、系统名、地区段
-			// (zh-CN 形态)都不可能是机型。
+			// (zh-CN 形态)都不可能是机型。鸿蒙 4.x 的 UA 段形如
+			// "Linux; Android 10; HarmonyOS; NOH-AN00; HMSCore 6.3.0.332",
+			// 系统名与 HMSCore 版本都排在机型之后,不剔除会把机型记成
+			// "HMSCore 6.3.0.332"。
 			if tok == "" || strings.HasPrefix(low, "android") ||
 				low == "u" || low == "wv" || low == "linux" ||
+				low == "harmonyos" || strings.HasPrefix(low, "hmscore") ||
 				(len(low) == 5 && low[2] == '-') {
 				continue
 			}
