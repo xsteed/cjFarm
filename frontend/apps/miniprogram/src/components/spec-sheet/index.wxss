@@ -28,6 +28,10 @@
   --ink-2: #4a4a4a;
   --ink-3: #8c8c8c;
   --ink-4: #c7c7c7;
+  /* +/- 圆按钮直径：与 app.wxss page 块的 --ops-btn 同值同源（48rpx，
+     610d98b 缩号后的口径）。组件样式隔离拿不到 page 上的变量，
+     数量步进器要用就必须在这里带一份副本 —— 漏了会让按钮塌缩。 */
+  --ops-btn: 48rpx;
   --line: #eee;
   --r-sm: 16rpx;
   --r-xl: 40rpx;
@@ -174,38 +178,45 @@
   margin-bottom: 0;
 }
 
-/* 与菜单页步进器同一套「CSS 短棒」画法：几何居中，不依赖字体基线 */
+/* 与菜单页步进器同一套「CSS 短棒」画法：几何居中，不依赖字体基线。
+   尺寸/笔画全部对齐点餐页 610d98b 之后的口径：直径走 --ops-btn（48rpx），
+   笔画 20rpx —— 弹层里按钮比菜品行大一号会显得笨重，居中负 margin 也
+   必须与笔画同步改（笔画 20rpx ↔ margin ∓10rpx，24/12 的旧配对会偏心）。 */
 .qty {
   display: flex;
   align-items: center;
-  gap: 16rpx;
+  gap: 12rpx;
 }
 
 .qty-btn {
   position: relative;
-  width: 56rpx;
-  height: 56rpx;
+  width: var(--ops-btn);
+  height: var(--ops-btn);
   border: 2rpx solid #ffd5c4;
   border-radius: 50%;
   box-sizing: border-box;
+  /* 横棒的颜色来源（currentColor）：减号白底 → 品牌橙；加号渐变底 → 白。
+     横棒如果写死品牌色，在加号的橙渐变上就「隐形」了 —— 表现为 + 缺一横。 */
+  color: var(--brand);
   background: #fff;
 }
 
-/* 横棒：加减共用 */
+/* 横棒：加减共用，颜色跟 currentColor 走（与菜品行 .st-btn 同方案） */
 .qty-btn::before {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 24rpx;
+  width: 20rpx;
   height: 4rpx;
-  margin: -2rpx 0 0 -12rpx;
+  margin: -2rpx 0 0 -10rpx;
   border-radius: 2rpx;
-  background: var(--brand);
+  background: currentColor;
   content: '';
 }
 
 /* 加号：实底渐变 + 白色横竖两棒（与菜品行的 .st-plus 同视觉） */
 .qty-plus {
+  color: #fff;
   border-color: transparent;
   background: linear-gradient(135deg, #ff8a50 0%, #f0481f 100%);
 }
@@ -215,26 +226,24 @@
   top: 50%;
   left: 50%;
   width: 4rpx;
-  height: 24rpx;
-  margin: -12rpx 0 0 -2rpx;
+  height: 20rpx;
+  margin: -10rpx 0 0 -2rpx;
   border-radius: 2rpx;
   background: #fff;
   content: '';
 }
 
-/* 到达边界（1 份）时减号灰显：点仍会触发但被 JS 收敛拦截 */
+/* 到达边界（1 份）时减号灰显：点仍会触发但被 JS 收敛拦截。
+   棒色走 currentColor，改 color 一处即可同时灰掉描边内容。 */
 .qty-btn.off {
   border-color: #eee;
-}
-
-.qty-btn.off::before {
-  background: var(--ink-4);
+  color: var(--ink-4);
 }
 
 .qty-num {
-  min-width: 56rpx;
+  min-width: 32rpx;
   color: var(--ink);
-  font-size: 30rpx;
+  font-size: 28rpx;
   font-weight: 700;
   text-align: center;
 }

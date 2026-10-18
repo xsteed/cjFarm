@@ -75,20 +75,40 @@
       </div>
 
       <div class="spec-foot">
-        <!-- 数量步进器:招牌菜 / 多规格菜都走弹层,下单位数在这里定(默认 1,最小 1,最大 99) -->
+        <!-- 数量步进器:招牌菜 / 多规格菜都走弹层,下单位数在这里定(默认 1,最小 1,最大 99)。
+             加减号用 SVG 短棒而不是字体「− / +」：字形跟着基线走，不同机型上下偏心 ——
+             与菜单页 op-stepper 同一画法同一尺寸，几何居中不依赖字体度量。 -->
         <div class="ft-stepper">
           <span
             class="ft-minus"
             :class="{ off: qty <= 1 }"
             @click="setQty(qty - 1)"
-            >−</span
-          >
+            ><svg
+              viewBox="0 0 24 24"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            >
+              <path d="M5 12h14" /></svg
+          ></span>
           <span class="ft-num">{{ qty }}</span>
           <span
             class="ft-plus"
             @click="setQty(qty + 1)"
-            >+</span
-          >
+            ><svg
+              viewBox="0 0 24 24"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            >
+              <path d="M12 5v14M5 12h14" /></svg
+          ></span>
         </div>
         <div class="ft-price"><i>¥</i>{{ priceText }}</div>
         <button
@@ -286,25 +306,34 @@ function onCustomInput(e: Event): void {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
+/* 与菜单页 op-stepper 同尺寸同画法（22px 圆 + SVG 短棒）：弹层是从菜品行
+   点进来的，同一套控件两处观感必须一致。字体「− / +」的字形随基线走、
+   不同机型上下偏心，弃用；SVG 以几何中心绘制，天然居中。 */
 .ft-minus,
 .ft-plus {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 1.5px solid var(--brand);
-  color: var(--brand-deep);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.ft-minus {
+  border: 1.5px solid #ffd5c4;
+  color: var(--brand);
+  background: #fff;
+}
+
+.ft-plus {
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
 }
 
 /* 已到最小份:减号置灰且点不动,不允许把下单数减到 0(要减去购物车里改) */
@@ -315,9 +344,9 @@ function onCustomInput(e: Event): void {
 }
 
 .ft-num {
-  min-width: 20px;
+  min-width: 14px;
   text-align: center;
-  font-size: 16px;
+  font-size: 12.5px;
   font-weight: 700;
   color: var(--ink);
 }
