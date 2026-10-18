@@ -400,6 +400,26 @@
         @new-order="startNewOrder"
       />
 
+      <!-- 本桌「已付款出餐中」的订单列表:currentOrder 只含未结账单,
+           出餐中的单在这里列出,点一条即可看进度(与菜单页顶部提示条同一数据源) -->
+      <div
+        v-else-if="view === 'order' && servingOrders.length"
+        class="serving-list"
+      >
+        <div class="sl-title">本桌正在出餐</div>
+        <button
+          v-for="o in servingOrders"
+          :key="o.orderId"
+          class="sl-item"
+          @click="openServing(o)"
+        >
+          <span class="sl-no">#{{ o.shortNo || o.orderNo }}</span>
+          <span class="sl-status">{{ ORDER_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}</span>
+          <span class="sl-go">查看进度 ›</span>
+        </button>
+        <p class="sl-hint">出餐中的订单已付款，无需再次支付</p>
+      </div>
+
       <!-- 还没下单:订单视图给空态而不是一片空白(导航常驻后进得来) -->
       <div
         v-else-if="view === 'order'"
@@ -1163,6 +1183,20 @@ function startNewOrder(): void {
   stopPolling();
 }
 
+// 订单 Tab 里点「出餐中」列表的一条:回拉完整详情后进入订单进度视图。
+// 回拉失败留在列表页(拦截器已提示),不误导顾客「点了没反应」。
+async function openServing(o: OrderSummary): Promise<void> {
+  const no = String(o.orderNo || '');
+  if (!no) return;
+  try {
+    currentOrder.value = await getOrderByNo(no, tableId.value);
+  } catch {
+    return;
+  }
+  view.value = 'order';
+  startPolling();
+}
+
 // 底部 tabbar 切页。加菜时随时切回订单页核对已下单菜品,购物车内容保留不丢。
 function switchView(v: 'menu' | 'order'): void {
   if (view.value === v) return;
@@ -1826,6 +1860,58 @@ onUnmounted(() => {
   background: #fff;
   display: flex;
   flex-direction: column;
+}
+
+/* 订单 Tab 的「出餐中订单」列表:currentOrder 只含未结账单,
+   已付款出餐中的单在这里列出,点一条看进度 */
+.serving-list {
+  flex: 1;
+  padding: 24px 20px 80px;
+  overflow-y: auto;
+}
+
+.sl-title {
+  margin-bottom: 14px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.sl-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card, 12px);
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sl-no {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.sl-status {
+  flex: 1;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.sl-go {
+  font-size: 12px;
+  color: var(--brand-deep, #f0481f);
+}
+
+.sl-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
 }
 
 /* 订单空态:还没下单时进「订单」页看到的是它(底部导航常驻后进得来)。

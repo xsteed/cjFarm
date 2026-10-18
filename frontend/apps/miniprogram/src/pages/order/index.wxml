@@ -7,6 +7,32 @@
     <view class="state-text">正在加载订单…</view>
   </view>
 
+  <!-- 本桌有「已付款出餐中」的订单（session.currentOrder 不含它们）：
+       先列出让顾客点一条看进度，而不是甩一句「没有找到进行中的订单」 -->
+  <view
+    wx:elif="{{showServingList}}"
+    class="serving-pick"
+  >
+    <view class="sp-title">本桌正在出餐</view>
+    <view
+      wx:for="{{servingRows}}"
+      wx:key="key"
+      class="sp-item"
+      data-no="{{item.orderNo}}"
+      bindtap="onOpenServing"
+    >
+      <text class="sp-label">{{item.label}}</text>
+      <text class="sp-go">查看进度 ›</text>
+    </view>
+    <view class="sp-hint">出餐中的订单已付款，无需再次支付</view>
+    <view
+      class="btn-ghost sp-menu"
+      bindtap="onGoMenu"
+    >
+      去点菜
+    </view>
+  </view>
+
   <view
     wx:elif="{{error}}"
     class="state"

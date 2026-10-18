@@ -873,4 +873,31 @@ describe('入座选人数（茶位费门店）', () => {
     expect(wrapper.text()).toContain('茶位费（5人）');
     wrapper.unmount();
   });
+
+  it('订单 Tab 列出出餐中的订单，点一条可看进度（不再是空态）', async () => {
+    getTableMock.mockResolvedValue({
+      ...tableNoOrder,
+      servingOrders: [{ orderId: 9, orderNo: 'NO009', shortNo: '009', personCount: 5, orderStatus: 2, payStatus: 1 }]
+    });
+    getOrderByNoMock.mockResolvedValue(
+      makeOrder({ orderNo: 'NO009', shortNo: '009', orderStatus: 2, payStatus: 1 })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // 切到订单 Tab：列表而不是「还没有进行中的订单」
+    await wrapper.findAll('.tb-item')[1].trigger('click');
+    await nextTick();
+    expect(wrapper.find('.serving-list').exists()).toBe(true);
+    expect(wrapper.find('.order-empty').exists()).toBe(false);
+    expect(wrapper.text()).toContain('本桌正在出餐');
+
+    // 点一条：回拉详情后进入进度视图
+    await wrapper.find('.sl-item').trigger('click');
+    await flushPromises();
+    expect(getOrderByNoMock).toHaveBeenCalledWith('NO009', 1);
+    expect(wrapper.find('.serving-list').exists()).toBe(false);
+    expect(wrapper.text()).toContain('制作中');
+    wrapper.unmount();
+  });
 });

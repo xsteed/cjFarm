@@ -26,7 +26,23 @@ import { money } from '@dining/shared/money';
 import { ORDER_STATUS } from '@dining/shared/dicts';
 import { ORDER_STATUS_CODE, isActiveStatus } from '@dining/shared/orderStatus';
 import { payStatusText, payStatusTheme } from '@dining/shared/orderDisplay';
-import type { OrderDetail } from '@dining/types';
+import type { OrderDetail, TableInfo } from '@dining/types';
+
+/** 「出餐中订单」列表行：WXML 不支持函数调用，标签文案在这里算好。 */
+interface ServingRow {
+  key: string;
+  orderNo: string;
+  label: string;
+}
+
+/** 桌台详情里的「已付款但出餐未完成」订单 → 列表行（#短号 · 状态）。 */
+function servingRowsOf(table: TableInfo | null): ServingRow[] {
+  return (table?.servingOrders || []).map((o, i) => ({
+    key: String(o.orderNo || `s${i}`),
+    orderNo: String(o.orderNo || ''),
+    label: `#${String(o.shortNo || o.orderNo || '')} · ${ORDER_STATUS[Number(o.orderStatus)]?.label || '处理中'}`
+  }));
+}
 
 interface OrderRow {
   key: string;
@@ -102,7 +118,13 @@ Page({
     steps: [] as StepRow[],
     showProgress: false,
     /** 支付凭证行：已支付时给出「已支付（微信）· 结账时间」，可核对可回看 */
-    paidInfo: ''
+    paidInfo: '',
+    /**
+     * 「出餐中订单」列表：本桌订单已付款、还在出餐时（session.currentOrder 不含它们），
+     * 订单 tab 列出这些单让顾客点一条看进度，而不是甩一句「没有找到进行中的订单」。
+     */
+    showServingList: false,
+    servingRows: [] as ServingRow[]
   },
 
   poller: null as Poller | null,
@@ -128,13 +150,18 @@ Page({
       this.setData({ loading: false });
       return;
     }
-    // 3) 冷启动：用本地记下的订单号回拉一次
+    // 3) 冷启动/从 tab 进来且本进程没有当前订单：本桌可能还有「已付款出餐中」的
+    //    订单（session.currentOrder 不含它们），先列出来让顾客点，再按订单号回拉
+    if (this.refreshServingList()) return;
     void this.recover();
   },
 
   onShow() {
     // 「我的」tab 跟随会员开关（要放在错误态 return 之前：出错时 tab 也不能丢）
     this.setData({ showProfile: memberEnabled() });
+    // 菜单页可能刚拉到桌台详情（里面有出餐中的订单）：没有正在看的订单时就重算列表，
+    // 有就切到列表（并清掉「没有找到进行中的订单」的错误态），没有才维持原状
+    if (!this.data.orderNo) this.refreshServingList();
     // 错误态不轮询：顾客没点「重试」之前，别一直打注定失败的请求
     if (!this.data.orderNo || this.data.error) return;
     // 刚用 query 冷启动时 recover 已经在拉数据，这一拍跳过（见 onLoad）
@@ -150,6 +177,34 @@ Page({
   onUnload() {
     this.stopPolling();
     this.clearUrgeTimer();
+  },
+
+  /**
+   * 重算「出餐中订单」列表：桌台详情里带 servingOrders 且当前没有正在看的订单时，
+   * 展示列表并清掉错误态。返回是否展示了列表（调用方据此决定还走不走 recover）。
+   */
+  refreshServingList(): boolean {
+    const rows = servingRowsOf(sessionState().table);
+    if (!rows.length) {
+      if (this.data.showServingList) this.setData({ showServingList: false, servingRows: [] });
+      return false;
+    }
+    this.setData({
+      loading: false,
+      error: '',
+      canRetry: false,
+      showServingList: true,
+      servingRows: rows
+    });
+    return true;
+  },
+
+  /** 点列表里的一条：按单号回拉详情并渲染（与菜单页点「出餐中」标签同一条路）。 */
+  onOpenServing(e: WechatMiniprogram.TouchEvent): void {
+    const orderNo = String(e.currentTarget.dataset.no || '');
+    if (!orderNo) return;
+    this.setData({ showServingList: false, orderNo });
+    void this.recover(orderNo);
   },
 
   /**
