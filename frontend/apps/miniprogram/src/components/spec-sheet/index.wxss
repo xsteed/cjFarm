@@ -163,6 +163,82 @@
   font-size: 26rpx;
 }
 
+/* 数量行：标题与步进器同一行（其余 sec 的标题是独立一行，这里收掉下边距） */
+.qty-sec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.qty-sec .sec-title {
+  margin-bottom: 0;
+}
+
+/* 与菜单页步进器同一套「CSS 短棒」画法：几何居中，不依赖字体基线 */
+.qty {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.qty-btn {
+  position: relative;
+  width: 56rpx;
+  height: 56rpx;
+  border: 2rpx solid #ffd5c4;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+/* 横棒：加减共用 */
+.qty-btn::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24rpx;
+  height: 4rpx;
+  margin: -2rpx 0 0 -12rpx;
+  border-radius: 2rpx;
+  background: var(--brand);
+  content: '';
+}
+
+/* 加号：实底渐变 + 白色横竖两棒（与菜品行的 .st-plus 同视觉） */
+.qty-plus {
+  border-color: transparent;
+  background: linear-gradient(135deg, #ff8a50 0%, #f0481f 100%);
+}
+
+.qty-plus::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4rpx;
+  height: 24rpx;
+  margin: -12rpx 0 0 -2rpx;
+  border-radius: 2rpx;
+  background: #fff;
+  content: '';
+}
+
+/* 到达边界（1 份）时减号灰显：点仍会触发但被 JS 收敛拦截 */
+.qty-btn.off {
+  border-color: #eee;
+}
+
+.qty-btn.off::before {
+  background: var(--ink-4);
+}
+
+.qty-num {
+  min-width: 56rpx;
+  color: var(--ink);
+  font-size: 30rpx;
+  font-weight: 700;
+  text-align: center;
+}
+
 .sheet-hint {
   padding: 0 32rpx 12rpx;
   color: var(--ink-3);

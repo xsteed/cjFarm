@@ -59,8 +59,18 @@ function fallbackLine(nextTop: number, viewH: number): number {
   return nextTop > viewH - BOTTOM_LINE ? viewH - BOTTOM_LINE : viewH / 2;
 }
 
-/** 招牌菜卡片最多展示几道：与首页「本店招牌」同一口径，再多这张卡就变成了第二份菜单 */
-const SIG_MAX = 8;
+/**
+ * 「本店招牌」合成分类的 id 与右栏分组锚点。
+ *
+ * 它不是后端分类：菜单接口只把招牌标记下在菜品上（`dish.signature`），
+ * 前端把 `signature=1` 的菜聚成「左栏第一项 + 右栏置顶分组」（与星巴克
+ * 「人气推荐」、麦当劳「人气套餐」同结构），不需要后端任何改动。
+ * 真实分类 id 来自后端（正整数），取 -1 不会撞车。
+ */
+const SIG_CAT_ID = -1;
+const SIG_SEC_ANCHOR = 'sig-sec';
+/** 合成分类在左栏与分组标题上的文案：与首页「本店招牌」橱窗保持一致 */
+const SIG_CAT_NAME = '本店招牌';
 
 /** 飞球自增 id：wx:key 用，保证连点时每个球都是独立节点（挂载即重播动画）。 */
 let flySeq = 0;
@@ -112,18 +122,41 @@ interface DishRow {
   cartQty: number;
 }
 
+/** 招牌菜卡片（WXML 不做函数调用，展示串都在这里算好；字段与首页橱窗一致）。 */
+interface SigCard {
+  dishId: number;
+  dishName: string;
+  image: string;
+  priceText: string;
+  /** 多个规格：价格是「起售价」，模板补一个「起」字 */
+  manySpecs: boolean;
+  soldOut: boolean;
+}
+
 /**
- * 右栏连续列表中的一行：分类标题 / 空分类提示 / 菜品。
+ * 右栏连续列表中的一行：分类标题 / 空分类提示 / 招牌卡片条 / 菜品。
  *
  * 用「扁平的一行」而不是「分类 → 菜品」两层嵌套：小程序模板里 wx:for 的别名
  * 会按未定义字段被 scripts/audit-wxml.mjs 拦下（除非把别名加进它的白名单）。
  * 扁平化还有个好处——分类之间是自然衔接的，上一个分类看完直接接下一个分类，
  * 内容少的分类不会在右侧留出一大片空白，让顾客误以为「这个分类只有这么点」。
+ *
+ * 「招牌卡片条」是唯一的嵌套特例（kind: 'sig'，整个分组收进一行的 cards 里）：
+ * 内层 wx:for 沿用默认 item 别名（与菜品行的 spec-chips 同写法），
+ * 所以每张卡片自带全部展示字段，不引入需要白名单的新别名。
  */
 type MenuRow =
   | { kind: 'sec'; key: string; anchor: string; categoryId: number; categoryName: string }
   | { kind: 'empty'; key: string }
+  | { kind: 'sig'; key: string; cards: SigCard[] }
   | ({ kind: 'dish'; key: string } & DishRow);
+
+/**
+ * 菜品行（dishRowOf 的返回类型）。
+ * 单独拆出来：dishRowOf 恒返回菜品行，标成 MenuRow 会让调用方到处收窄
+ * （招牌组要在同一行上改 key / 去角标，直接用这个类型才展开得干净）。
+ */
+type DishMenuRow = { kind: 'dish'; key: string } & DishRow;
 
 /** 分类标题的锚点：跳转用 categoryId 查，测量偏移用下标与标题顺序对齐。 */
 interface SectionRef {
@@ -160,17 +193,6 @@ interface SheetDish {
   initialRemark: string;
 }
 
-/** 招牌菜卡片（WXML 不做函数调用，展示串都在这里算好；字段与首页 SigDish 一致）。 */
-interface SigDish {
-  dishId: number;
-  dishName: string;
-  image: string;
-  priceText: string;
-  /** 多个规格：价格是「起售价」，模板补一个「起」字 */
-  manySpecs: boolean;
-  soldOut: boolean;
-}
-
 /**
  * 加入购物车所需的最小规格信息。
  * 字段都可选，这样 DishSpec（来自接口）与弹层 confirm 事件（来自组件）都能直接传入，
@@ -196,8 +218,6 @@ Page({
     activeCatId: 0,
     /** 右栏：所有分类首尾相连成一条列表，滚动时自动切换左侧高亮 */
     rows: [] as MenuRow[],
-    /** 右栏列表最上部的「本店招牌」卡片：与首页同款同口径，搜索态隐藏（见 signatureOf） */
-    sigDishes: [] as SigDish[],
     /** scroll-view 的 scroll-into-view 目标：点左侧分类时跳过去 */
     scrollIntoId: '',
     /** 左栏自己的 scroll-into-view 目标：分类多时让高亮项始终可见 */
@@ -459,14 +479,29 @@ Page({
       !adoptPendingPerson(info) &&
       !adoptServingPerson(info);
 
-    const cats: CatRow[] = this.menu.map((c, i) => ({
-      categoryId: Number(c.categoryId) || 0,
-      categoryName: String(c.categoryName || ''),
-      // 锚点用下标：HTML id 不能以数字开头，也不是每个分类都有 id
-      navId: `nav-${i}`,
-      // 角标在紧随其后的 refreshRows 里按购物车/订单算好补上
-      qty: 0
-    }));
+    // 「本店招牌」是合成分类，排在左栏第一项；右栏对应的置顶分组见 refreshRows。
+    // 没有招牌菜（或都没有规格）时整项不出现 —— 不留一个点进去是空组的入口。
+    const cats: CatRow[] = [];
+    if (this.signatureOf().length) {
+      cats.push({
+        categoryId: SIG_CAT_ID,
+        categoryName: SIG_CAT_NAME,
+        // 锚点用固定 id：合成分类没有「下标」可言
+        navId: 'nav-sig',
+        // 角标在紧随其后的 refreshRows 里按购物车/订单算好补上
+        qty: 0
+      });
+    }
+    this.menu.forEach((c, i) => {
+      cats.push({
+        categoryId: Number(c.categoryId) || 0,
+        categoryName: String(c.categoryName || ''),
+        // 锚点用下标：HTML id 不能以数字开头，也不是每个分类都有 id
+        navId: `nav-${i}`,
+        // 角标在紧随其后的 refreshRows 里按购物车/订单算好补上
+        qty: 0
+      });
+    });
 
     this.setData({
       loading: false,
@@ -475,10 +510,9 @@ Page({
       shopName: sessionState().shopName,
       tableLabel: this.tableLabelOf(info),
       cats,
+      // 首个分类可能就是「本店招牌」：初始高亮跟着它，右栏顶部正是招牌分组
       activeCatId: cats.length ? cats[0].categoryId : 0,
-      servingRows: this.servingRowsOf(info),
-      // 招牌菜卡片随菜单一起渲染（同一份接口数据，不额外请求）；搜索态由模板隐藏
-      sigDishes: this.signatureOf()
+      servingRows: this.servingRowsOf(info)
     });
     this.refreshRows();
 
@@ -519,6 +553,25 @@ Page({
     const ordered = this.orderedQtyMap();
     const rows: MenuRow[] = [];
     const sections: SectionRef[] = [];
+
+    // 「本店招牌」置顶分组：先于所有真实分类，与左栏第一项对应。
+    // 内容是横滑卡片条（与首页橱窗同款，图带「招牌」角标）：招牌菜在这里是
+    // 「橱窗」，点卡片进规格弹层选规格/备注；搜索态不渲染，搜出来的扁平结果
+    // 不该再混进一个招牌橱窗。
+    const sigCards = this.data.searching ? [] : this.signatureOf();
+    if (sigCards.length) {
+      sections.push({ categoryId: SIG_CAT_ID, anchor: SIG_SEC_ANCHOR });
+      rows.push({
+        kind: 'sec',
+        key: SIG_SEC_ANCHOR,
+        anchor: SIG_SEC_ANCHOR,
+        categoryId: SIG_CAT_ID,
+        categoryName: SIG_CAT_NAME
+      });
+      // 整个分组收进一行（kind: 'sig'）：横滑条高度固定，不参与逐行渲染，
+      // 也避免了招牌菜在列表里出现两份菜品行（见 MenuRow 的注释）
+      rows.push({ kind: 'sig', key: 'sig-strip', cards: sigCards });
+    }
 
     this.visibleMenu().forEach((c, i) => {
       const categoryId = Number(c.categoryId) || 0;
@@ -577,7 +630,7 @@ Page({
    *   ・2~3 个：行内列出 chip 直接点选，价格按所选规格给
    *   ・更多：行内放不下，只能进弹层，价格给最低价 +「起」
    */
-  dishRowOf(dish: Dish, ordered: Record<number, number>): MenuRow {
+  dishRowOf(dish: Dish, ordered: Record<number, number>): DishMenuRow {
     const dishId = Number(dish.dishId) || 0;
     const specs = (dish.specs || []) as DishSpec[];
     const specId = this.pickedSpecIdOf(dishId, specs);
@@ -621,20 +674,28 @@ Page({
   },
 
   /**
-   * 招牌菜卡片：与首页「本店招牌」同一份口径 —— 只取 `signature=1`、跳过没有规格的菜
-   * （那种菜根本下不了单），多规格给最低价 +「起」，售罄照常展示（盖遮罩不可点）。
+   * 「本店招牌」分组的横滑卡片：只取 `signature=1` 且有规格的菜（没有规格的根本
+   * 下不了单），按菜单原序；同一道菜被归进多个真实分类时只收一次（与 catQtyMap
+   * 「首次出现为准」同口径）。
    *
-   * 数据直接取自已加载的菜单，不额外请求：菜单页本来就有全量菜单，
-   * 招牌菜是同一份数据的另一种排法。
+   * **不设数量上限**：分组是菜单的一部分，横向滑多久由店家打的招牌标记决定，
+   * 悄悄截断会让左栏写着「本店招牌」、组里却少几道，顾客不知道还有没有。
+   * 真标了三十道，条就长，那是运营数据问题，前端不替它藏。
+   * （首页橱窗另受 8 道上限，那是进店前的 teaser，口径不同。）
+   *
+   * 数据直接取自已加载的菜单，不额外请求：菜单页本来就有全量菜单。
    */
-  signatureOf(): SigDish[] {
-    const out: SigDish[] = [];
+  signatureOf(): SigCard[] {
+    const out: SigCard[] = [];
+    const seen = new Set<number>();
     for (const c of this.menu) {
       for (const dish of (c.dishes || []) as Dish[]) {
         if (Number(dish.signature) !== 1) continue;
         const dishId = Number(dish.dishId) || 0;
+        if (!dishId || seen.has(dishId)) continue;
         const specs = (dish.specs || []) as DishSpec[];
-        if (!dishId || !specs.length) continue;
+        if (!specs.length) continue;
+        seen.add(dishId);
         const allSoldOut = specs.every(s => Number(s.stock) === 0);
         out.push({
           dishId,
@@ -645,7 +706,6 @@ Page({
           manySpecs: specs.length > 1,
           soldOut: Number(dish.soldOut) === 1 || allSoldOut
         });
-        if (out.length >= SIG_MAX) return out;
       }
     }
     return out;
@@ -768,6 +828,17 @@ Page({
 
   /** 点左侧分类：高亮并滚动到对应分组标题。 */
   jumpToCat(categoryId: number): void {
+    // 「本店招牌」的分组标题排在整个列表最顶上：滚到它就是滚回列表顶部。
+    // 刻意用 list-top 锚点而不是 sig-sec —— 分组标题是吸顶的（sticky top:0），
+    // 被滚过之后视觉上始终贴在顶上，个别基础库按视觉位置解析 scroll-into-view
+    // 会误判「已经在顶部」而不滚；list-top 是普通元素，位置永远真实。
+    if (categoryId === SIG_CAT_ID) {
+      this.programScroll(LIST_TOP_ANCHOR, {
+        activeCatId: SIG_CAT_ID,
+        navIntoId: this.navIdOf(SIG_CAT_ID)
+      });
+      return;
+    }
     const section = this.sections.find(s => s.categoryId === categoryId);
     if (!section) return;
     this.programScroll(section.anchor, {
@@ -799,6 +870,9 @@ Page({
    * 各分类的已点份数（左栏角标用），与 H5 MenuView.catQtyMap 同口径：
    * 购物车 + 当前订单已点一起计入。购物车条目只带 dishId，先建 dishId→categoryId
    * 的映射再按分类累计；同一菜出现在多个分类时以首次出现为准，数量不会重复计入。
+   *
+   * 「本店招牌」合成分类例外：它的菜同时待在真实分类里，份数两边各计一次
+   * （见方法末尾的注释）——它不是后端分类，不参与 dishCat 映射。
    */
   catQtyMap(): Map<number, number> {
     const dishCat = new Map<number, number>();
@@ -821,6 +895,19 @@ Page({
       const cid = dishCat.get(l.dishId);
       if (cid) m.set(cid, (m.get(cid) || 0) + l.quantity);
     }
+    // 「本店招牌」合成分类的角标：招牌菜的份数在真实分类里已各计过一次，
+    // 这里再给合成分类计一次。角标语义是「这个组里我点了多少份」——
+    // 同一道菜同时在招牌组和真实分类里，两边都亮（与美团/饿了么同口径，
+    // 顾客不会把角标加总去对订单）。想不亮只能是招牌项不显示角标，
+    // 那反而违背「哪组里有我的菜哪组亮」的直觉。
+    const sigIds = this.signatureOf().map(c => c.dishId);
+    if (sigIds.length) {
+      const inSig = new Set(sigIds);
+      let q = 0;
+      for (const id of sigIds) q += ordered[id] || 0;
+      for (const l of cartState()) if (inSig.has(l.dishId)) q += l.quantity;
+      if (q) m.set(SIG_CAT_ID, q);
+    }
     return m;
   },
 
@@ -838,8 +925,10 @@ Page({
   /** 点左侧分类：只滚动定位，不再重建右栏（右栏是所有分类的连续列表）。 */
   onSwitchCat(e: WechatMiniprogram.TouchEvent): void {
     const categoryId = Number(e.currentTarget.dataset.id) || 0;
-    // 已经停在这个分类上（高亮来自滚动联动）就没必要再滚一次
-    if (categoryId === this.data.activeCatId) return;
+    // 已经停在这个分类上（高亮来自滚动联动）就没必要再滚一次。
+    // 「本店招牌」例外：进页面时高亮默认就在它上面，若联动没来得及切换
+    // （偏移还没量好 / 停在触发线内），早退会让点击彻底失效 —— 点它必须真的滚回去。
+    if (categoryId === this.data.activeCatId && categoryId !== SIG_CAT_ID) return;
     this.jumpToCat(categoryId);
   },
 
@@ -864,23 +953,23 @@ Page({
   },
 
   /**
-   * 招牌菜卡片里的图加载失败：与菜品行共用 failedImgs（同一本坏图账）。
-   * 卡片与菜品行绑的是同一个 URL，一处破了另一处也会破 —— 两边一起置掉，
-   * 各只回写命中的那一处，不重建整表 / 整份 sigDishes。
+   * 「本店招牌」卡片里的图加载失败：记进 failedImgs（与菜品行同一本坏图账，
+   * 按 dish-<id> 记），只回写卡片里那一张，不重建整条卡片。
+   * 真实分类里同名行的图绑的是它自己的 binderror，破了会自己走 onImgError，
+   * 两处互不影响；重建列表时 dishRowOf / signatureOf 读同一本账，不会再把破图赋回来。
    */
   onSigImgError(e: WechatMiniprogram.CustomEvent): void {
     const dishId = Number(e.currentTarget.dataset.id) || 0;
     if (!dishId) return;
     if (!this.failedImgs) this.failedImgs = new Set<string>();
     this.failedImgs.add(`dish-${dishId}`);
-    this.blankDishRowImage(`dish-${dishId}`);
-    const idx = (this.data.sigDishes as SigDish[]).findIndex(d => d.dishId === dishId);
+    const idx = this.data.rows.findIndex(r => r.kind === 'sig');
     if (idx < 0) return;
-    const dish = this.data.sigDishes[idx];
-    if (!dish.image) return; // 已置空(重复触发)就不必再 setData
-    const patch: Record<string, string> = {};
-    patch[`sigDishes[${idx}].image`] = '';
-    this.setData(patch);
+    const row = this.data.rows[idx];
+    if (row.kind !== 'sig') return;
+    const ci = row.cards.findIndex(c => c.dishId === dishId);
+    if (ci < 0 || !row.cards[ci].image) return; // 已置空(重复触发)就不必再 setData
+    this.setData({ [`rows[${idx}].cards[${ci}].image`]: '' });
   },
 
   /**
@@ -1025,7 +1114,7 @@ Page({
   },
 
   /**
-   * 点「本店招牌」卡片里的菜：与点菜品行同一路径（开规格 / 备注弹层）。
+   * 点「本店招牌」卡片：与点菜品行同一路径（开规格 / 备注弹层）。
    * 顾客已经在菜单里、桌台已确认，不需要像首页那样先引导扫码进桌；
    * 售罄与「没有规格」由 openSheet 统一提示。
    */
@@ -1063,19 +1152,25 @@ Page({
     });
   },
 
-  /** itemRemark 省略 = 不修改该行已有备注（快捷「+」路径）；传空串才是显式清空。 */
-  addToCart(dishId: number, spec: SpecPick, itemRemark?: string): void {
+  /**
+   * itemRemark 省略 = 不修改该行已有备注（快捷「+」路径）；传空串才是显式清空。
+   * quantity 省略 = 加 1 份（快捷「+」）；规格弹层的「确定」带上用户选的份数。
+   */
+  addToCart(dishId: number, spec: SpecPick, itemRemark?: string, quantity = 1): void {
     const dish = this.findDish(dishId);
     if (!dish) return;
-    cartAdd({
-      dishId,
-      dishName: String(dish.dishName || ''),
-      specId: Number(spec.specId) || 0,
-      specName: String(spec.specName || ''),
-      price: Number(spec.price) || 0,
-      image: mediaUrl(dish.dishImage),
-      itemRemark
-    });
+    cartAdd(
+      {
+        dishId,
+        dishName: String(dish.dishName || ''),
+        specId: Number(spec.specId) || 0,
+        specName: String(spec.specName || ''),
+        price: Number(spec.price) || 0,
+        image: mediaUrl(dish.dishImage),
+        itemRemark
+      },
+      quantity
+    );
     this.syncRow(dishId);
   },
 
@@ -1104,12 +1199,14 @@ Page({
   },
 
   onSheetConfirm(e: WechatMiniprogram.CustomEvent): void {
-    const detail = e.detail as SpecPick & { itemRemark?: string };
+    const detail = e.detail as SpecPick & { itemRemark?: string; quantity?: number };
     const dishId = this.data.sheetDishId;
     if (dishId) {
       // 弹层里选的规格就是这道菜之后的「当前规格」：行内的 chip、价格、步进器都要跟着走
       this.specPicks()[dishId] = Number(detail.specId) || 0;
-      this.addToCart(dishId, detail, String(detail.itemRemark || ''));
+      // 份数由弹层的步进器给出（坏值兜底 1 份，cartAdd 里还会再收敛一次）
+      const quantity = Math.max(1, Math.floor(Number(detail.quantity) || 1));
+      this.addToCart(dishId, detail, String(detail.itemRemark || ''), quantity);
       toast.success('已加入购物车');
     }
     this.setData({ sheetVisible: false });

@@ -39,17 +39,22 @@ export function cartDishQty(dishId: number): number {
 }
 
 /** 加一份；同一 dish+spec 合并成一行。 */
-export function cartAdd(line: Omit<CartLine, 'key' | 'quantity' | 'itemRemark'> & { itemRemark?: string }): void {
+export function cartAdd(
+  line: Omit<CartLine, 'key' | 'quantity' | 'itemRemark'> & { itemRemark?: string },
+  quantity = 1
+): void {
+  // 数量必须被收敛成正整数：弹层传上来的值坏掉时按 1 份兜底，不静默丢加购
+  const qty = Math.max(1, Math.floor(Number(quantity) || 1));
   const key = `${line.dishId}:${line.specId}`;
   const cart = cartState();
   const exist = cart.find(l => l.key === key);
   if (exist) {
-    exist.quantity += 1;
+    exist.quantity += qty;
     if (line.itemRemark !== undefined) exist.itemRemark = line.itemRemark;
     saveCart();
     return;
   }
-  cart.push({ ...line, key, quantity: 1, itemRemark: line.itemRemark ?? '' });
+  cart.push({ ...line, key, quantity: qty, itemRemark: line.itemRemark ?? '' });
   saveCart();
 }
 

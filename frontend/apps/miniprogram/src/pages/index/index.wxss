@@ -337,74 +337,47 @@
   box-shadow: 0 2rpx 8rpx rgb(240 72 31 / 12%);
 }
 
-/* ---------- 本店招牌：菜品列表最上部的横向卡片（与首页「本店招牌」同款） ---------- */
-.sigcard {
-  margin: 20rpx 0 4rpx;
-  padding: 20rpx 20rpx 16rpx;
+/* ---------- 本店招牌：置顶分组下的横滑卡片条（与首页橱窗同款） ----------
+   标题由上方吸顶的分组标题承担，这里只画卡片本体：品牌浅底圈出一块，
+   与白底列表区分，也和招牌菜的品牌色呼应。 */
+.sigstrip {
+  margin: 12rpx 0 4rpx;
+  padding: 16rpx 16rpx 14rpx;
   border-radius: var(--r-md);
-  /* 用品牌浅底而不是白卡：白卡放在白底列表里看不出边界，浅暖橙既能区分块面，
-     又和招牌菜的品牌色呼应（--brand-ghost 与首页 serving 提示条同色） */
   background: var(--brand-ghost);
 }
 
-.sigcard-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 16rpx;
-}
-
-/* 标题前的品牌色小竖条：与分组标题 .sec::before 同一视觉语言 */
-.sigcard-title {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  color: var(--ink);
-  font-size: 28rpx;
-  font-weight: 700;
-}
-
-.sigcard-title::before {
-  width: 8rpx;
-  height: 26rpx;
-  border-radius: 4rpx;
-  background: var(--grad-brand-soft);
-  content: '';
-}
-
-.sigcard-sub {
-  color: var(--ink-3);
-  font-size: 20rpx;
-}
-
-/* 横向滑动的招牌菜：一屏放三道左右，剩下的滑出来（与首页同尺寸） */
-.sigcard-scroll {
+.sigstrip-scroll {
   width: 100%;
   white-space: nowrap;
 }
 
-.sigcard-row {
+.sigstrip-row {
   display: inline-flex;
   gap: 20rpx;
 }
 
-.sigcard-item {
+.sigstrip-item {
   flex: none;
   width: 200rpx;
 }
 
-.sigcard-media {
+/* 图片圆角必须与角标的左上圆角同值（都是 --r-md）：角标圆角比图片大的话，
+   角标会在左上角往里收，图片边缘露出一圈缝，看起来像没贴住（真机踩过）。
+   与菜品行的 .dish-img（--r-md）也保持一致。 */
+.sigstrip-media {
   position: relative;
   width: 200rpx;
   height: 150rpx;
   overflow: hidden;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: #f2f2f2;
 }
 
 /* 招牌角标：贴图片左上角，与菜品行的 .sig-tag 同视觉（品牌渐变 + 白字），
-   压在售罄遮罩之上（z-index 2 > 1），盖了遮罩仍认得出是招牌菜 */
-.sigcard-tag {
+   左上圆角与图片圆角同值才能严丝合缝地贴在圆角上（见 .sigstrip-media 注释），
+   右下收圆成对角，压在售罄遮罩之上（z-index 2 > 1），盖了遮罩仍认得出是招牌菜 */
+.sigstrip-tag {
   position: absolute;
   top: 0;
   left: 0;
@@ -418,14 +391,14 @@
   letter-spacing: 2rpx;
 }
 
-.sigcard-img {
+.sigstrip-img {
   display: block;
   width: 200rpx;
   height: 150rpx;
 }
 
 /* 没有图 / 图加载失败的占位：与真图同尺寸，避免卡片高度塌陷 */
-.sigcard-img-none {
+.sigstrip-img-none {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -433,7 +406,7 @@
   font-size: 20rpx;
 }
 
-.sigcard-mask {
+.sigstrip-mask {
   position: absolute;
   top: 0;
   right: 0;
@@ -448,7 +421,7 @@
   font-size: 24rpx;
 }
 
-.sigcard-name {
+.sigstrip-name {
   margin-top: 12rpx;
   overflow: hidden;
   color: var(--ink);
@@ -460,7 +433,7 @@
 
 /* 价格行走 flex + 垂直居中：¥ / 价格 / 「起」字号不同（24 / 26 / 20rpx），
    按 inline 排会因基线差异看起来高低不齐（与首页 sig-price 同处理） */
-.sigcard-price {
+.sigstrip-price {
   display: flex;
   align-items: center;
   margin-top: 4rpx;
@@ -470,7 +443,7 @@
 }
 
 /* 「起」与价格之间留一点空隙：紧贴在一起会看成「48.00起」一个整体字（同首页） */
-.sigcard-from {
+.sigstrip-from {
   margin-left: 6rpx;
   color: var(--ink-3);
   font-size: 20rpx;

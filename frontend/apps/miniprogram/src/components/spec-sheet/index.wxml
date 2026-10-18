@@ -80,6 +80,23 @@
           bindinput="onCustomInput"
         />
       </view>
+
+      <!-- 数量：步进器放弹层里（菜品行没有步进器的卡片入口也能选份数）；
+           减号到 1 份灰显，加号封顶 99 份，页脚价格 = 单价 × 数量 -->
+      <view class="sec qty-sec">
+        <view class="sec-title">数量</view>
+        <view class="qty">
+          <view
+            class="qty-btn {{qty <= 1 ? 'off' : ''}}"
+            catchtap="onQtyMinus"
+          ></view>
+          <view class="qty-num">{{qty}}</view>
+          <view
+            class="qty-btn qty-plus"
+            catchtap="onQtyPlus"
+          ></view>
+        </view>
+      </view>
     </scroll-view>
 
     <!-- 已在购物车里的菜再点开：明确告知「确定」是加份，改备注请去购物车 -->
@@ -87,7 +104,7 @@
       wx:if="{{inCartQty}}"
       class="sheet-hint"
     >
-      购物车已有 {{inCartQty}} 份，点「确定」会再加 1 份
+      购物车已有 {{inCartQty}} 份，点「确定」会再加 {{qty}} 份
     </view>
 
     <view class="sheet-ft">

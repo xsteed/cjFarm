@@ -28,6 +28,10 @@ interface RemarkChip {
   on: boolean;
 }
 
+/** 数量边界：最少 1 份（减到 1 减号灰显），最多 99 份（防误触连点爆量） */
+const QTY_MIN = 1;
+const QTY_MAX = 99;
+
 Component({
   properties: {
     visible: { type: Boolean, value: false },
@@ -45,6 +49,8 @@ Component({
     specChips: [] as SpecChip[],
     remarkChips: [] as RemarkChip[],
     custom: '',
+    /** 本次要加的份数：每次打开重置为 1（「确定」= 加 N 份，不是改成 N 份） */
+    qty: 1,
     priceText: '0.00',
     multiSpec: false,
     /** 防重入锁：连点「确定」会触发多个 confirm 事件，父页面每收一次就加一份菜（不进模板，只为持有状态） */
@@ -70,6 +76,8 @@ Component({
       this.setData(
         {
           multiSpec: specs.length > 1,
+          // 每次打开都是一次新的加购：数量回 1，页脚价格按 1 份算
+          qty: QTY_MIN,
           specChips: specs.map(s => ({
             specId: Number(s.specId),
             specName: String(s.specName || ''),
@@ -87,14 +95,28 @@ Component({
   },
 
   methods: {
-    /** 把当前选中规格的展示价同步到页脚。 */
+    /** 把「选中规格单价 × 数量」同步到页脚：改规格与改数量都会走到这里。 */
     syncPrice(): void {
       const cur = (this.data.specChips as SpecChip[]).find(c => c.on);
-      this.setData({ priceText: cur ? cur.priceText : '0.00' });
+      const qty = Number(this.data.qty) || QTY_MIN;
+      const unit = cur ? Number(cur.price) || 0 : 0;
+      this.setData({ priceText: money(unit * qty) });
     },
 
     noop(): void {
       /* 吞掉弹层内部的点击，避免冒泡到遮罩触发关闭 */
+    },
+
+    /** 减份数：最少 1 份，到边界点不动（按钮灰显 + 这里再拦一道）。 */
+    onQtyMinus(): void {
+      if (this.data.qty <= QTY_MIN) return;
+      this.setData({ qty: this.data.qty - 1 }, () => this.syncPrice());
+    },
+
+    /** 加份数：最多 99 份，防误触连点把金额点爆。 */
+    onQtyPlus(): void {
+      if (this.data.qty >= QTY_MAX) return;
+      this.setData({ qty: this.data.qty + 1 }, () => this.syncPrice());
     },
 
     onClose(): void {
@@ -132,6 +154,8 @@ Component({
         specId: spec ? spec.specId : 0,
         specName: spec ? spec.specName : '',
         price: spec ? spec.price : 0,
+        // 父页面按这个份数加购（cartAdd 会再收敛一次，弹层给出干净值即可）
+        quantity: this.data.qty,
         itemRemark: selected.join('、')
       });
     }

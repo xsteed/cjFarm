@@ -55,6 +55,48 @@ describe('规格弹层 · 确定键', () => {
 
     inst.onConfirm();
 
-    expect(inst.events[0].detail).toMatchObject({ specId: 9, specName: '份', price: 68 });
+    expect(inst.events[0].detail).toMatchObject({ specId: 9, specName: '份', price: 68, quantity: 1 });
+  });
+
+  it('数量步进器：加到 3 份 confirm 带上 3，减到边界 1 份不再往下减', async () => {
+    const inst = await mountSheet();
+    open(inst);
+
+    inst.onQtyPlus();
+    inst.onQtyPlus();
+    expect(inst.data.qty).toBe(3);
+    // 页脚价格 = 单价 × 数量
+    expect(inst.data.priceText).toBe('204.00');
+
+    inst.onQtyMinus();
+    inst.onQtyMinus();
+    inst.onQtyMinus();
+    expect(inst.data.qty).toBe(1);
+
+    inst.onConfirm();
+    expect(inst.events[0].detail).toMatchObject({ quantity: 1 });
+  });
+
+  it('关闭再打开：数量回 1，不会把上一次的份数带进下一次加购', async () => {
+    const inst = await mountSheet();
+    open(inst);
+    inst.onQtyPlus();
+    inst.onQtyPlus();
+
+    close(inst);
+    open(inst);
+    expect(inst.data.qty).toBe(1);
+
+    inst.onConfirm();
+    expect(inst.events[0].detail).toMatchObject({ quantity: 1 });
+  });
+
+  it('加到封顶 99 份后连点不再上涨', async () => {
+    const inst = await mountSheet();
+    open(inst);
+
+    for (let i = 0; i < 120; i++) inst.onQtyPlus();
+
+    expect(inst.data.qty).toBe(99);
   });
 });
