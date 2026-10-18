@@ -119,15 +119,15 @@ func clampText(s string, max int) string {
 	return string(r[:max])
 }
 
-// parseUA 从 User-Agent 解析出设备类型 / 操作系统 / 浏览器(尽力而为)。
+// parseUA 从 User-Agent 解析出设备类型 / 操作系统 / 浏览器 / 机型(尽力而为)。
 //
 // 手写轻量解析而非引入第三方库:这里只求「分布统计够用」的粗粒度结论
-// (iOS / Android / 微信 / 手机…),不追求机型级精确 —— 精确机型只有小程序
-// 端能拿到,走端上直传(见 enrichDevice)。判定顺序有讲究:
+// (iOS / Android / 微信 / 手机…),机型仅在安卓 UA 给出时提取(iOS 的 UA
+// 不含机型,见 uaAndroidModel)。判定顺序有讲究:
 //   - 浏览器判定必须先于 Safari(Safari 的 UA 里含 Chrome 关键字的另有其人)、
 //     先于 Chrome(Edge/Opera 的 UA 里也带 Chrome);
 //   - 平板判定先于手机(Android 平板的 UA 不含 Mobile,手机才含)。
-func parseUA(ua string) (device, osName, browser string) {
+func parseUA(ua string) (device, osName, browser, model string) {
 	u := strings.ToLower(ua)
 	// ---- 设备类型 ----
 	switch {
@@ -185,22 +185,68 @@ func parseUA(ua string) (device, osName, browser string) {
 	default:
 		browser = "其他"
 	}
-	return device, osName, browser
+	model = uaAndroidModel(ua)
+	return device, osName, browser, model
+}
+
+// uaAndroidModel 尽力从安卓 UA 的括号设备段提取机型。安卓 UA 常形如
+// "(Linux; Android 14; 2210132C Build/UKQ1.230917.001; wv)":机型在 Android
+// 版本之后,可能跟着 Build/ 指纹与 WebView 标记,地区段(zh-CN)偶尔插在
+// 中间。剔除版本段/标记段/地区段后取最后一段。iOS/iPadOS 的 UA 不含机型
+// (Apple 隐私策略),桌面端无机型概念,统一返回空。
+func uaAndroidModel(ua string) string {
+	rest := ua
+	for {
+		open := strings.IndexByte(rest, '(')
+		if open < 0 {
+			return ""
+		}
+		rest = rest[open+1:]
+		end := strings.IndexByte(rest, ')')
+		if end < 0 {
+			return ""
+		}
+		seg := rest[:end]
+		rest = rest[end+1:]
+		if !strings.Contains(strings.ToLower(seg), "android") {
+			continue // 设备段不在本括号组,继续找
+		}
+		var model string
+		for _, tok := range strings.Split(seg, ";") {
+			tok = strings.TrimSpace(tok)
+			low := strings.ToLower(tok)
+			// 版本段(Android …)、兼容/WebView 标记、系统名、地区段
+			// (zh-CN 形态)都不可能是机型。
+			if tok == "" || strings.HasPrefix(low, "android") ||
+				low == "u" || low == "wv" || low == "linux" ||
+				(len(low) == 5 && low[2] == '-') {
+				continue
+			}
+			model = tok
+		}
+		if i := strings.Index(model, "Build/"); i >= 0 {
+			model = model[:i]
+		}
+		return strings.TrimSpace(model)
+	}
 }
 
 // enrichDevice 汇总一次访问的终端信息(设备类型/OS/浏览器/机型)。
 //
-// 小程序端走 wx.getDeviceInfo 直传,比 UA 精确得多(尤其机型),因此小程序
-// 渠道优先采用端上值,UA 只做兜底;浏览器栏固定为「微信小程序」—— 小程序
-// 没有"浏览器"概念,真要看宿主版本,端上直传的 system 已足够区分。
+// 小程序端走 wx.getDeviceInfo 直传,比 UA 精确得多(尤其 iOS 机型,UA 根本
+// 不含),因此小程序渠道逐项覆盖,UA 只做兜底;浏览器栏固定为「微信小程序」
+// —— 小程序没有"浏览器"概念,真要看宿主版本,端上直传的 system 已足够区分。
+// H5 渠道 UA 解出什么存什么(安卓机型可解,iOS 天生无机型存空):打点接口
+// 公开无鉴权,机型可能被伪造,分布统计够用,不值得为此设防。
 func enrichDevice(in VisitInput) (device, osName, browser, model string) {
-	device, osName, browser = parseUA(in.UA)
-	// 机型只信小程序直传:H5 正常请求拿不到机型,带上的一律是伪造
-	// (打点接口公开无鉴权,不设防会污染机型分布)。
+	device, osName, browser, uaModel := parseUA(in.UA)
+	model = clampText(uaModel, 64)
 	if in.Channel != po.VisitChannelMiniprogram {
-		return device, osName, browser, ""
+		return
 	}
-	model = clampText(in.ClientModel, 64)
+	if v := clampText(in.ClientModel, 64); v != "" {
+		model = v
+	}
 	browser = "微信小程序"
 	// system 形如 "iOS 16.6" / "Android 13":取首个空格前的词归一。
 	if first := strings.Fields(strings.TrimSpace(in.ClientSystem)); len(first) > 0 {

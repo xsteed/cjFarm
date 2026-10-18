@@ -396,7 +396,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_visit_daily_uk ON tb_visit_daily(visit_dat
 | `os` | UA 解析（iOS/Android/Windows/macOS/鸿蒙/Linux/其他） | 端上 `system` 直传（更准） | 归一展示值,不带版本号(版本进不了分布统计,机型列有详情) |
 | `browser` | UA 解析（微信/支付宝/QQ浏览器/Chrome/Safari/Edge/Firefox/其他） | 固定「微信小程序」 | H5 能识别微信内打开(`MicroMessenger`) |
 | `device` | UA 解析（手机/平板/电脑/其他） | 端上 `platform` 归一 | Android 平板的 UA 不含 Mobile,据此区分 |
-| `model` | 留空(UA 只能到品牌档,不准的不存) | 端上 `model` 直传（如 iPhone 15 Pro） | **只信小程序渠道**:H5 正常请求拿不到机型,带上的一律是伪造 |
+| `model` | UA 解析(安卓括号段可解出型号,iOS 的 UA 不含机型、存空) | 端上 `model` 直传（如 iPhone 15 Pro）,优先于 UA | **能存就存,不设防**:打点接口公开无鉴权,机型可能被伪造,分布统计够用 |
 
 实现要点:
 

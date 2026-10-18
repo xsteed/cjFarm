@@ -354,44 +354,59 @@ func TestVisitParseUA(t *testing.T) {
 		name           string
 		ua             string
 		device, osName string
-		browser        string
+		browser, model string
 	}{
 		{
-			name: "微信内 iPhone H5",
+			name: "微信内 iPhone H5(iOS UA 不含机型)",
 			ua:   "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.49",
-			device: "手机", osName: "iOS", browser: "微信",
+			device: "手机", osName: "iOS", browser: "微信", model: "",
 		},
 		{
 			name: "Android Chrome",
 			ua:   "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
-			device: "手机", osName: "Android", browser: "Chrome",
+			device: "手机", osName: "Android", browser: "Chrome", model: "Pixel 7",
+		},
+		{
+			name: "微信内安卓 WebView(Build 指纹与 wv 标记剔除)",
+			ua:   "Mozilla/5.0 (Linux; Android 14; 2210132C Build/UKQ1.230917.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124 Mobile Safari/537.36 MicroMessenger/8.0.49",
+			device: "手机", osName: "Android", browser: "微信", model: "2210132C",
+		},
+		{
+			name: "安卓 UA 带地区段与 U 标记",
+			ua:   "Mozilla/5.0 (Linux; U; Android 11; zh-CN; M2012K11AC Build/RKQ1.211001.001) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+			device: "手机", osName: "Android", browser: "Chrome", model: "M2012K11AC",
+		},
+		{
+			name: "安卓 UA 无机型",
+			ua:   "Mozilla/5.0 (Linux; Android 6.0) AppleWebKit/537.36 Chrome/90 Mobile Safari/537.36",
+			device: "手机", osName: "Android", browser: "Chrome", model: "",
 		},
 		{
 			name: "Android 平板(UA 不含 Mobile)",
 			ua:   "Mozilla/5.0 (Linux; Android 12; SM-T220) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-			device: "平板", osName: "Android", browser: "Chrome",
+			device: "平板", osName: "Android", browser: "Chrome", model: "SM-T220",
 		},
 		{
 			name: "桌面 Edge(UA 带 Chrome,必须判成 Edge)",
 			ua:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36 Edg/120",
-			device: "电脑", osName: "Windows", browser: "Edge",
+			device: "电脑", osName: "Windows", browser: "Edge", model: "",
 		},
 		{
 			name: "桌面 Safari",
 			ua:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
-			device: "电脑", osName: "macOS", browser: "Safari",
+			device: "电脑", osName: "macOS", browser: "Safari", model: "",
 		},
 		{
 			name: "未知 UA",
 			ua:   "curl/8.4",
-			device: "其他", osName: "其他", browser: "其他",
+			device: "其他", osName: "其他", browser: "其他", model: "",
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			device, osName, browser := parseUA(c.ua)
-			if device != c.device || osName != c.osName || browser != c.browser {
-				t.Fatalf("parseUA = (%q,%q,%q), 期望 (%q,%q,%q)", device, osName, browser, c.device, c.osName, c.browser)
+			device, osName, browser, model := parseUA(c.ua)
+			if device != c.device || osName != c.osName || browser != c.browser || model != c.model {
+				t.Fatalf("parseUA = (%q,%q,%q,%q), 期望 (%q,%q,%q,%q)", device, osName, browser, model, c.device, c.osName, c.browser, c.model)
 			}
 		})
 	}
@@ -419,11 +434,18 @@ func TestVisitEnrichDevice(t *testing.T) {
 		t.Fatalf("windows 小程序 = (%q,%q,%q)", dev2, os2, br2)
 	}
 
-	// H5:UA 兜底,机型留空
+	// H5:iOS 的 UA 天生无机型存空;伪造的 client 字段不采纳
 	device, osName, browser, model = enrichDevice(VisitInput{Channel: po.VisitChannelH5,
 		UA: "iPhone; MicroMessenger/8.0", ClientModel: "伪造机型不应生效"})
 	if model != "" || browser != "微信" || osName != "iOS" || device != "手机" {
 		t.Fatalf("H5 兜底 = (%q,%q,%q,%q)", device, osName, browser, model)
+	}
+
+	// H5:安卓 UA 能解出机型就存
+	_, _, _, model = enrichDevice(VisitInput{Channel: po.VisitChannelH5,
+		UA: "Mozilla/5.0 (Linux; Android 13; Pixel 7) Chrome/120 Mobile Safari/537.36"})
+	if model != "Pixel 7" {
+		t.Fatalf("H5 安卓机型 = %q, 期望 Pixel 7", model)
 	}
 
 	// 超长截断:model 列 64 字符
