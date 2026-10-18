@@ -42,6 +42,23 @@ import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo
 /** 右栏顶部的锚点 id：换搜索词后要把列表拉回顶部（见 scrollListTop）。 */
 const LIST_TOP_ANCHOR = 'list-top';
 
+/** 顶部触发线：分组标题滚到列表顶部 20px 以内，即视为当前分类。 */
+const TOP_LINE = 20;
+/** 底部触发线：分组标题滚到列表可视区底部 20px 以内，即视为当前分类（仅末尾兜底用）。 */
+const BOTTOM_LINE = 20;
+
+/**
+ * 末尾兜底区的触发线（距列表可视区顶部的距离）：下一类标题起点在首屏底边框之外时用底部线
+ * （标题滚进可视区即切换）；整份菜单偏短、标题起点落在首屏里时退用视口中线，
+ * 否则底部线会在 scrollTop=0 时抢跑。
+ *
+ * 用于「标题连同后面的内容不足一屏、再滚也顶不到顶部触发线」的末尾短分类：
+ * 没有这条线，它们只能等「滚到底」特判把高亮一键蹦到最后一类，中间整个被跳过。
+ */
+function fallbackLine(nextTop: number, viewH: number): number {
+  return nextTop > viewH - BOTTOM_LINE ? viewH - BOTTOM_LINE : viewH / 2;
+}
+
 /** 招牌菜卡片最多展示几道：与首页「本店招牌」同一口径，再多这张卡就变成了第二份菜单 */
 const SIG_MAX = 8;
 
@@ -694,16 +711,34 @@ Page({
     if (this.spyLock || !this.offsets.length) return;
 
     const last = this.offsets[this.offsets.length - 1].categoryId;
+    let curIdx = 0;
     let cur = this.offsets[0].categoryId;
     // 已滚到底：末尾分类内容不足一屏时，它的标题永远顶不到列表顶部，
     // 不特判的话点最后一个分类会一直高亮在上一类。
     if (this.listHeight > 0 && this.scrollTop + this.listHeight >= Number(scrollHeight) - 2) {
       cur = last;
     } else {
-      for (const o of this.offsets) {
+      for (let i = 0; i < this.offsets.length; i++) {
         // 标题已滚到列表顶部 20px 以内，即视为当前分类
-        if (o.top <= this.scrollTop + 20) cur = o.categoryId;
+        if (this.offsets[i].top <= this.scrollTop + TOP_LINE) curIdx = i;
       }
+      // 末尾兜底：下一分类的标题再滚也顶不到顶部触发线（标题偏移 > 最大滚动距离 + 触发线，
+      // 即它连同后面的内容不足一屏）时，旧逻辑只能等「滚到底」特判把高亮一键蹦到最后一类，
+      // 中间的短分类（常见如只有一道菜、整块内容不满一屏的分类）整个被跳过，左栏看着就是
+      // 「直接划过、不停留」。这里给整个末尾区间换一条不抢跑的触发线，标题滚过线就切高亮：
+      // ・下一类标题起点在首屏底边框之外 → 底部触发线：标题滚进可视区即切换；
+      // ・标题起点落在首屏里（整份菜单偏短）→ 视口中线：底部线会在 scrollTop=0 时抢跑；
+      // ・标题起点在首屏上半区 → 触发位置 <= 0 会抢跑，该类只能继续靠「滚到底」特判。
+      // 触发位置随标题深度严格递增，来回滚不漏不跳；首个触发位置 > 0，不会刚进页面就误切。
+      const nextTop = this.offsets[curIdx + 1]?.top;
+      if (this.listHeight > 0 && nextTop !== undefined && nextTop > Number(scrollHeight) - this.listHeight + TOP_LINE) {
+        const line = fallbackLine(nextTop, this.listHeight);
+        for (let i = curIdx + 1; i < this.offsets.length; i++) {
+          const top = this.offsets[i].top;
+          if (top > line && top - line <= this.scrollTop) curIdx = i;
+        }
+      }
+      cur = this.offsets[curIdx].categoryId;
     }
     if (cur !== this.data.activeCatId) this.setData({ activeCatId: cur, navIntoId: this.navIdOf(cur) });
   },
