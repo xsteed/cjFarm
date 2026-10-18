@@ -144,27 +144,37 @@ func TestKitchenTicketMatureLayout(t *testing.T) {
 	})
 }
 
-// TestKitchenTicketRemarkBold 做法/忌口备注是后厨最容易做错菜的地方,统一加粗强调。
-func TestKitchenTicketRemarkBold(t *testing.T) {
+// TestKitchenTicketRemarkEnlarged 做法/忌口备注是后厨最容易做错菜的地方,
+// 与菜品行同款放大两倍(bigL: 左对齐放大)强调,仅靠加粗不够醒目。
+func TestKitchenTicketRemarkEnlarged(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 	lines := RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"})
 
-	bold := map[string]bool{}
+	big := map[string]bool{}
 	for _, l := range lines {
-		if text, ok := BoldText(l); ok {
-			bold[strings.TrimSpace(text)] = true
+		if text, ok := SplitBigLeftLine(l); ok {
+			big[strings.TrimSpace(text)] = true
 		}
 	}
-	if !bold["* 加辣"] {
-		t.Fatalf("单菜做法备注应加粗:\n%v", bold)
+	if !big["* 加辣"] {
+		t.Fatalf("单菜做法备注应放大:\n%v", big)
 	}
-	if !bold["整单备注: 不要香菜"] {
-		t.Fatalf("整单备注应加粗:\n%v", bold)
+	if !big["整单备注: 不要香菜"] {
+		t.Fatalf("整单备注应放大:\n%v", big)
 	}
-	// 普通菜名行不应加粗(否则整张票全是重点,等于没有重点)。
-	if bold["1. 凉拌青瓜 (份) x2"] || bold["共 2 道 3 份"] {
-		t.Fatalf("菜名/汇总行不应加粗:\n%v", bold)
+	// 放大行不得超宽:48 格纸倍宽后一行只有 24 格。
+	for _, l := range lines {
+		if text, ok := SplitBigLeftLine(l); ok && displayWidth(text) > 24 {
+			t.Fatalf("放大行超宽(放大后 %d 格 > 24): %q", displayWidth(text)*2, text)
+		}
+	}
+	// 顾客小票的备注保持只加粗不放大:小票是收银凭证,排版以紧凑对齐为先。
+	guest := RenderGuestTicket(o, items, 48)
+	for _, l := range guest {
+		if _, ok := SplitBigLeftLine(l); ok {
+			t.Fatalf("顾客小票备注不应放大: %q", l)
+		}
 	}
 }
 

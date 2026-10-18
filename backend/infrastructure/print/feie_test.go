@@ -97,22 +97,47 @@ func sampleOrder() (po.Order, []po.OrderItem) {
 	return o, items
 }
 
-// TestRenderTicketPickupNo 取餐号只印在厨房单上(后厨据此叫号);
-// 顾客小票不打印 —— 取餐号是「当面对号」用的,顾客把票拿走后再报号无从对应。
-// 未分配(历史订单/手工补录)时两票都不打印,避免露出无意义的 "0"。
+// TestRenderTicketPickupNo 取餐号各票都打印:厨房单据此叫号;顾客小票供先付模式下
+// 顾客对号、核对上菜。未分配(历史订单/手工补录)时两票都不打印,避免露出无意义的 "0"。
 func TestRenderTicketPickupNo(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 
-	t.Run("已分配取餐号:厨房单打印、顾客小票不打印", func(t *testing.T) {
+	t.Run("已分配取餐号:两票都打印", func(t *testing.T) {
 		o.PickupNo = 12
-		kitchen := strings.Join(RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"}), "\n")
-		if !strings.Contains(kitchen, "取餐号: 12") {
-			t.Errorf("厨房单应包含取餐号行, 实际:\n%s", kitchen)
+		for name, lines := range map[string][]string{
+			"厨房单": RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"}),
+			"顾客小票": RenderGuestTicket(o, items, 48),
+		} {
+			if !strings.Contains(strings.Join(lines, "\n"), "取餐号: 12") {
+				t.Errorf("%s 应包含取餐号行", name)
+			}
 		}
-		guest := strings.Join(RenderGuestTicket(o, items, 48), "\n")
-		if strings.Contains(guest, "取餐号") {
-			t.Errorf("顾客小票不应打印取餐号, 实际:\n%s", guest)
+	})
+
+	t.Run("并排放不下时取餐号退回单独一行", func(t *testing.T) {
+		o.PickupNo = 12
+		o.TableName = "二楼包间翡翠厅大圆桌"
+		for name, lines := range map[string][]string{
+			"80mm": RenderGuestTicket(o, items, 48),
+			"58mm": RenderGuestTicket(o, items, 32),
+		} {
+			var pickupLine string
+			for _, l := range lines {
+				if strings.Contains(l, "取餐号: 12") {
+					pickupLine = l
+					break
+				}
+			}
+			if pickupLine == "" {
+				t.Fatalf("%s 应打印取餐号", name)
+			}
+			if name == "80mm" && !strings.Contains(pickupLine, "桌号: 03") {
+				t.Errorf("80mm 取餐号应与桌号同行: %q", pickupLine)
+			}
+			if name == "58mm" && strings.Contains(pickupLine, "桌号") {
+				t.Errorf("58mm 放不下应退回单独一行, 不应折行: %q", pickupLine)
+			}
 		}
 	})
 
@@ -130,7 +155,7 @@ func TestRenderTicketPickupNo(t *testing.T) {
 }
 
 // TestGuestTicketHeaderLayout 票头版式:各票种店名统一放大居中加粗;顾客小票单据名
-// 居中弱化(不加粗)且不含取餐号,厨房单单据名保持左对齐、照常打印取餐号。
+// 居中弱化(不加粗)且取餐号并入桌号行,厨房单单据名放大左对齐、取餐号与短号并排。
 func TestGuestTicketHeaderLayout(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
@@ -156,6 +181,10 @@ func TestGuestTicketHeaderLayout(t *testing.T) {
 	if text, _ := SplitCenterLine(titleLine); BoldLine(text) {
 		t.Fatalf("单据名副标题应弱化(不加粗), got %q", text)
 	}
+	// 取餐号并入桌号行(80mm 放得下):先付模式下顾客凭它核对上菜;不单独加粗。
+	if !strings.Contains(strings.Join(guest, "\n"), "取餐号: 7  桌号: 03  大厅03桌") {
+		t.Fatalf("结账小票取餐号应与桌号同行:\n%s", strings.Join(guest, "\n"))
+	}
 
 	// 点菜单形态(trigger=order):单据名换成「【顾客小票】」,同样弱化居中。
 	order := RenderGuestOrderTicket(o, items, 48)
@@ -172,13 +201,14 @@ func TestGuestTicketHeaderLayout(t *testing.T) {
 		t.Fatalf("点菜单单据名应弱化居中, got %q", orderTitle)
 	}
 
-	// 厨房单:店名同样放大居中(与顾客小票一致),单据名保持左对齐,取餐号照常打印。
+	// 厨房单:店名同样放大居中(与顾客小票一致),单据名放大左对齐(bigL,不计入
+	// bigLinesOf 的居中放大行),取餐号照常打印。
 	kitchen := RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"})
 	if big := bigLinesOf(kitchen); len(big) != 2 || big[0] != shop {
 		t.Fatalf("厨房单店名应为放大行(各票种统一), got %v:\n%s", big, strings.Join(kitchen, "\n"))
 	}
-	if len(kitchen) < 2 || kitchen[1] != pad("【厨房单】", 48) {
-		t.Fatalf("厨房单单据名应保持左对齐原样, got %q", kitchen[1])
+	if len(kitchen) < 2 || kitchen[1] != bigLeftMarkLine("【厨房单】") {
+		t.Fatalf("厨房单单据名应放大左对齐, got %q", kitchen[1])
 	}
 	if !strings.Contains(strings.Join(kitchen, "\n"), "取餐号: 7") {
 		t.Fatalf("厨房单应照常打印取餐号:\n%s", strings.Join(kitchen, "\n"))

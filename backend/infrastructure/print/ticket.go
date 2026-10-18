@@ -164,6 +164,29 @@ func appendRemarkLines(lines []string, text string, width int) []string {
 	return lines
 }
 
+// appendKitchenItemRemark 厨房单的单菜备注:形态与顾客小票一致(「  * 加辣」),
+// 但按厨房单的备注规则放大(见 appendKitchenRemarkLines)。
+func appendKitchenItemRemark(lines []string, it po.OrderItem, width int) []string {
+	if strings.TrimSpace(it.Remark) == "" {
+		return lines
+	}
+	return appendKitchenRemarkLines(lines, "  * "+it.Remark, width)
+}
+
+// appendKitchenRemarkLines 追加一段厨房单备注:与菜品行同款,放大两倍出纸。
+//
+// 备注是后厨最容易看漏、做错菜的地方,仅加粗不够醒目 —— 与菜品行用同一套放大行
+// 机制(bigL: 左对齐放大):ESC/POS 落地 GS ! 倍宽倍高 + ESC E 加粗,飞鹅落地
+// <B> 放大一倍,预览按大字渲染(见 SplitBigLeftLine)。
+// 放大后每字符占两格,故先按倍宽行宽(w/2)折行再逐行放大,行宽不超纸宽;
+// 折行续行不重复前缀,与 appendRemarkLines 同一形态,只是强调方式从加粗换成放大。
+func appendKitchenRemarkLines(lines []string, text string, width int) []string {
+	for _, l := range splitLines(text, width/2) {
+		lines = append(lines, bigLeftMarkLine(l))
+	}
+	return lines
+}
+
 // splitBigLines 把文本按 max 半角格数折成多行(供放大行使用):
 //   - 优先在空格处断行(菜名 / 规格 / 份数是天然断点),不把「(大份)」拆成两半;
 //   - 单个词自身超宽(长菜名没有空格)时按字符硬折,与 splitLines 同规则。
@@ -207,29 +230,39 @@ func splitBigLines(text string, max int) []string {
 // 品牌区:店名统一放大居中加粗(见 shopNameLines),顾客小票与厨房单一致 ——
 // 品牌是票据上最该被一眼认出的信息,各类单子各打一套观感反而显得杂乱。
 // 单据名(【顾客小票】/【结账小票】/【厨房单】等)紧随其后:顾客小票弱化居中(副标题),
-// 厨房单保持左对齐(后厨靠它一眼分清票种,不宜弱化)。
+// 厨房单放大左对齐(后厨靠它一眼分清票种与拆单序号,见函数体内 kitchen 分支)。
 //
 // kitchen 为真时按「厨打单」惯例精简票头:
 //   - 桌号放大居中,且台名与桌号重复时不再另起一行(见 tableNoLines);
 //   - 单号用可口头报读的短号,并与取餐号并排一行;
 //   - 人数与下单时间并排一行,时间省到分。
 //
-// 顾客小票保持完整订单号、完整时间、各自独立成行,且不打印取餐号 —— 取餐号是「当面对号」
-// 用的,顾客把票拿走后再报号无从对应,留底凭证只需单号。
+// 顾客小票保持完整订单号、完整时间、各自独立成行,取餐号与桌号同行(58mm 也放得下;
+// 台名过长放不下时退回单独一行)—— 先付模式下顾客结完账仍在等上菜,凭票上的取餐号
+// 对号、核对出菜进度,它不再只是「当面对号」的临时凭证;完整订单号太长,不与取餐号并排。
 // shopName 为店名快照(空串表示按当前配置读取),见 shopNameLines。
 func ticketHeader(o po.Order, width int, title, noLabel, shopName string, kitchen bool) []string {
 	var lines []string
 	lines = append(lines, shopNameLines(shopName, width)...)
 	if strings.TrimSpace(title) != "" {
 		if kitchen {
-			lines = append(lines, pad(title, width))
+			// 厨房单单据名放大:与菜品/备注同一套放大行机制(bigL: 左对齐放大),
+			// 票种与拆单序号(【厨房单】1/2)远远可认。左对齐而非居中:一叠夹单
+			// 逐张核对序号时视线不必左右找起点,与整单菜品行同一理由。
+			// 超宽兜底(常规标题【厨房单】n/m 不会发生):退回正常字号,由
+			// BoldLine 形态反推保持加粗 —— 硬放大必然折坏标题,反而认不出票种。
+			if t := strings.TrimSpace(title); displayWidth(t) <= width/2 {
+				lines = append(lines, bigLeftMarkLine(t))
+			} else {
+				lines = append(lines, pad(title, width))
+			}
 		} else {
 			// 顾客小票的单据名副标题用机器居中(见 centerMarkPrefix),不再空格补位。
 			lines = append(lines, centerMarkLine(title))
 		}
 	}
-	// 取餐号是单据上唯一能口头传递的标识:顾客凭它向服务员报号、后厨据此叫号。
-	// 与单号互不替代 —— 单号用于事后追溯,取餐号用于当面交互;
+	// 取餐号是单据上唯一能口头传递的标识:后厨据此叫号,先付模式下顾客也凭它在
+	// 小票上报号、核对上菜。与单号互不替代 —— 单号用于事后追溯,取餐号用于当面交互;
 	// 未分配(历史订单/手工补录)时不打印,避免露出无意义的 "0"。
 	noLine := ""
 	if noLabel != "" && strings.TrimSpace(o.OrderNo) != "" {
@@ -245,8 +278,13 @@ func ticketHeader(o po.Order, width int, title, noLabel, shopName string, kitche
 	if kitchen {
 		// 两个短标识并排一行(58mm 上 13 + 2 + 9 = 24 格,留有余量);
 		// 超宽时交给 splitLines 折行,不会溢出纸宽。
+		// 整行加粗:取餐号是后厨叫号、当面报号的唯一口头标识,单号是商家后台
+		// 对账的入口,票面上都是要一眼找到的信息 —— 票头其余元素(单据名/桌号/
+		// 菜品/备注)已放大,这一行保持正常字号但加粗,信息层级仍清晰。
 		if merged := strings.TrimSpace(joinFields(noLine, pickup)); merged != "" {
-			lines = append(lines, splitLines(merged, width)...)
+			for _, l := range splitLines(merged, width) {
+				lines = append(lines, boldMarkLine(l))
+			}
 		}
 		lines = append(lines, tableNoLines(o, width, true)...)
 		// 人数在左、下单时间右对齐:同类信息(几个人、几点下的)并一行,右边时间好找。
@@ -257,7 +295,18 @@ func ticketHeader(o po.Order, width int, title, noLabel, shopName string, kitche
 	if noLine != "" {
 		lines = append(lines, pad(noLine, width))
 	}
-	lines = append(lines, tableNoLines(o, width, false)...)
+	// 取餐号并入桌号行:「取餐号: 12  桌号: 03  大厅03桌」在 58mm(32 格)也放得下,
+	// 80mm 则避免多出一条只剩几个字的稀疏行;台名过长并排放不下时退回单独成行,
+	// 宁可票头多一行也不折行 —— 票头字段折行比整票长一行更难读。
+	tableLines := tableNoLines(o, width, false)
+	if pickup != "" {
+		if merged := joinFields(pickup, strings.TrimSpace(tableLines[0])); displayWidth(merged) <= width {
+			tableLines[0] = pad(merged, width)
+		} else {
+			tableLines = append([]string{pad(pickup, width)}, tableLines...)
+		}
+	}
+	lines = append(lines, tableLines...)
 	return append(lines, pad(people, width), pad(createTime, width), hr(width))
 }
 
@@ -375,9 +424,10 @@ type KitchenTicketOptions struct {
 
 // RenderKitchenTicket 渲染厨房单(厨打单/夹单),版式对齐成熟 POS 的通行做法:
 //
-//   - 票头:桌号放大居中、单号用可口头报读的短号、时间省到分(见 ticketHeader);
+//   - 票头:单据名与桌号放大、单号用可口头报读的短号、时间省到分(见 ticketHeader);
 //   - 菜品区:整单逐道编号(便于划单报数),拆单则单道菜放大;赠菜带【赠】;
-//   - 做法/忌口:单菜备注缩进成子行,与整单备注一并加粗 —— 后厨最容易做错的地方;
+//   - 做法/忌口:单菜备注缩进成子行,与整单备注一并放大加粗 —— 后厨最容易做错的地方
+//     (见 appendKitchenRemarkLines);
 //   - 票尾:整单给一行「共 N 道 M 份」,出纸是否齐全一眼可比对;
 //     拆单批次的最后一张在票尾细线之下多加一行「====结束====」,标记整叠夹单到此为止(见 LastTicket)。
 func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts KitchenTicketOptions) []string {
@@ -410,7 +460,7 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts 
 		default:
 			lines = append(lines, splitLines(row, w)...)
 		}
-		lines = appendItemRemark(lines, it, w)
+		lines = appendKitchenItemRemark(lines, it, w)
 	}
 	if !opts.SingleDish && len(items) > 0 {
 		// 汇总紧跟菜品区收尾,不再插分隔线:两者是同一块内容(菜品清单及其总数),
@@ -419,7 +469,7 @@ func RenderKitchenTicket(o po.Order, items []po.OrderItem, paperWidth int, opts 
 	}
 	if strings.TrimSpace(o.OrderRemark) != "" {
 		lines = append(lines, hr(w))
-		lines = appendRemarkLines(lines, "整单备注: "+o.OrderRemark, w)
+		lines = appendKitchenRemarkLines(lines, "整单备注: "+o.OrderRemark, w)
 	}
 	// 票尾分隔线保持细线不变;拆单批次的最后一张在其下再加一行「====结束====」粗线
 	// (见 KitchenTicketOptions.LastTicket)—— 粗线即「这是最后一张」的视觉标记。
