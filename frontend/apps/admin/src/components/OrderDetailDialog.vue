@@ -60,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, h } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import {
   getOrder,
@@ -79,6 +79,7 @@ import OrderEditDialog from './OrderEditDialog.vue';
 import SettleDialog from './order/SettleDialog.vue';
 import CreditSettleDialog from './order/CreditSettleDialog.vue';
 import RefundDialog from './order/RefundDialog.vue';
+import { usePayFirst } from '../composables/usePayFirst';
 
 type SettleMode = 'pay' | 'settle';
 type DocType = 'kitchen' | 'guest';
@@ -109,6 +110,10 @@ const acting = ref(false);
 const settleDialogRef = ref<InstanceType<typeof SettleDialog> | null>(null);
 const creditDialogRef = ref<InstanceType<typeof CreditSettleDialog> | null>(null);
 const refundDialogRef = ref<InstanceType<typeof RefundDialog> | null>(null);
+
+// 先付模式开关(模块级单例,与订单管理/结算弹窗同源):用于「完成订单」确认弹窗
+// 追加不出小票的提示,见 onFinish。
+const payFirst = usePayFirst();
 
 // 标题桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号;与信息行/列表同口径
 const dialogTitle = computed(() => {
@@ -264,9 +269,26 @@ function onSettleCancel(): void {
 function onFinish(): void {
   const row = detail.value;
   if (!row) return;
+  // 先付单的小票已在「确认收款」时出过(printKitchenOnPaid),完成订单只是归档兜底,
+  // 不再出纸。提示单独成块排版,与订单管理卡片 onFinish 完全同一份渲染;牌子样式与
+  // 「确认收款」弹窗(SettleDialog .st-hint-print)一致,避免收银为「补小票」重复操作。
+  const finishBody = payFirst.value
+    ? () =>
+        h('div', { style: 'display:flex;flex-direction:column;gap:10px;' }, [
+          h('div', '确认后订单将归档并计入今日统计，桌台释放为空闲。'),
+          h(
+            'div',
+            {
+              style:
+                'padding:8px 12px;border:1px solid #ffd5c4;border-radius:8px;background:var(--brand-ghost,#fff8f5);color:var(--brand-deep,#f0481f);font-size:12px;line-height:1.5;'
+            },
+            [h('strong', '先付模式下不会打印小票'), h('span', '，仅归档并释放桌台。')]
+          )
+        ])
+    : '确认后订单将归档并计入今日统计，桌台释放为空闲。';
   const dlg = DialogPlugin.confirm({
-    header: '确认完成',
-    body: '确认后订单将归档并计入今日统计，桌台释放为空闲。',
+    header: '确认完成订单，释放桌台',
+    body: finishBody,
     onConfirm: async () => {
       try {
         await finishOrder({ orderId: row.orderId });

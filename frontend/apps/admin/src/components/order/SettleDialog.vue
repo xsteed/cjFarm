@@ -1,7 +1,7 @@
 <template>
   <t-dialog
     v-model:visible="settleVisible"
-    :header="settleForm.mode === 'pay' ? '订单收款' : '订单结算'"
+    :header="settleForm.mode === 'pay' ? '确认收款，打印订单' : '订单结算'"
     width="480px"
     :confirm-btn="{ content: '确认', theme: 'primary', loading: settleSubmitting }"
     @confirm="submitSettle"
@@ -51,6 +51,16 @@
             :label="p"
           />
         </t-select>
+      </div>
+
+      <!-- 先付模式确认收款(mode=pay):收款成功后由后端自动出厨房单与结账小票
+           (printKitchenOnPaid),且不像结算(mode=settle)能关打印开关,显式告知
+           收银点下确认会出纸,避免以为漏打而重复操作。 -->
+      <div
+        v-if="settleForm.mode === 'pay'"
+        class="st-hint st-hint-print"
+      >
+        确认收款后将触发打印机输出「厨房单」和「顾客结账小票」。
       </div>
 
       <div
@@ -291,6 +301,16 @@ defineExpose({ open });
   font-size: 12px;
   color: #999;
   line-height: 1.5;
+}
+
+/* 先付模式确认收款的出纸提示:会真实出纸,用主色系浅底牌子区别于普通灰字备注,
+   让收银在点确认前就知道这一下会吐两张纸(与 Roles.vue .admin-notice 同一视觉语言) */
+.st-hint-print {
+  padding: 8px 12px;
+  border: 1px solid #ffd5c4;
+  border-radius: 8px;
+  background: var(--brand-ghost, #fff8f5);
+  color: var(--brand-deep, #f0481f);
 }
 
 /* 打印开关横向排布:标签与开关同一行,避免被拉成和上面输入框一样的通栏 */
