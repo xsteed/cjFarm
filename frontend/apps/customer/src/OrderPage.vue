@@ -103,19 +103,22 @@
           </button>
         </div>
 
-        <!-- 本桌「已付款但出餐未完成」的订单:顾客可查看进度 -->
+        <!-- 本桌「已付款但出餐未完成」的订单:顾客可查看进度。
+             文字与订单标签保持同一行,标签多了向右滑动,不撑高菜单区 -->
         <div
           v-if="servingOrders.length"
           class="serving-banner"
         >
-          本桌还有 {{ servingOrders.length }} 笔订单正在出餐
-          <span
-            v-for="o in servingOrders"
-            :key="o.orderId"
-            class="serving-chip"
-          >
-            #{{ o.shortNo || o.orderNo }} · {{ ORDER_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}
-          </span>
+          <span class="serving-label">本桌还有 {{ servingOrders.length }} 笔订单正在出餐</span>
+          <div class="serving-scroll">
+            <span
+              v-for="o in servingOrders"
+              :key="o.orderId"
+              class="serving-chip"
+            >
+              #{{ o.shortNo || o.orderNo }} · {{ ORDER_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}
+            </span>
+          </div>
         </div>
 
         <MenuView
@@ -1000,6 +1003,20 @@ function adoptPendingPerson(tb: TableInfo): boolean {
   return true;
 }
 
+/**
+ * 本桌还有「已付款但出餐未完成」的订单 = 这桌人正在吃，茶位费已随那些单收过：
+ * 人数沿最近一笔，不再重复问。返回是否采纳。
+ */
+function adoptServingPerson(tb: TableInfo): boolean {
+  const serving = tb.servingOrders || [];
+  if (!serving.length) return false;
+  // 后端按订单倒序返回，首笔即最近一笔
+  const n = Math.floor(Number(serving[0]?.personCount) || 0);
+  if (!isValidPerson(n)) return false;
+  personCount.value = n;
+  return true;
+}
+
 /** 茶位费是否开启（进入面板只看它）。 */
 function seatFeeOn(cfg: PublicConfig): boolean {
   return cfg.seat_fee_enabled === '1' && Number(cfg.seat_fee) > 0;
@@ -1388,8 +1405,9 @@ async function load(): Promise<void> {
       // 菜单照常进：就算要选人数，顾客也应该先看到菜单（蒙层形式）
       const remembered = rememberedPerson();
       if (remembered) personCount.value = remembered;
-      // 桌级共享：别的手机选过（pendingPersonCount）则沿用；本机记忆优先
-      const adopted = !remembered && adoptPendingPerson(tb);
+      // 桌级共享：别的手机选过（pendingPersonCount）则沿用；本机记忆优先。
+      // 本桌还有已付款出餐中的订单时，人数沿最近一笔（茶位费已收过，不重复问）。
+      const adopted = !remembered && (adoptPendingPerson(tb) || adoptServingPerson(tb));
       view.value = 'menu';
       personGate.value = seatFeeOn(cfg) && !remembered && !adopted;
       if (personGate.value) personDraft.value = 0;
@@ -1958,25 +1976,47 @@ onUnmounted(() => {
   box-shadow: 0 4px 10px rgb(240 72 31 / 28%);
 }
 
-/* 本桌「已付款但出餐未完成」订单提示条:置顶于白色卡片内 */
+/* 本桌「已付款但出餐未完成」订单提示条:置顶于白色卡片内。
+   文字与订单标签同一行:标签区横向滚动,再多订单也不撑高菜单区 */
 .serving-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-shrink: 0;
   padding: 10px 16px;
   background: var(--brand-ghost);
   color: var(--ink-2);
   font-size: 12px;
-  line-height: 1.7;
   border-bottom: 1px solid var(--line);
 }
 
+.serving-label {
+  flex-shrink: 0;
+}
+
+/* 标签横向滚动区:滚动条隐藏,边缘露一点暗示可滑 */
+.serving-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.serving-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 .serving-chip {
-  display: inline-block;
-  margin: 2px 6px 0 0;
+  flex-shrink: 0;
   padding: 1px 8px;
   border-radius: var(--r-pill);
   background: #fff;
   color: var(--brand-deep);
   font-size: 11px;
+  white-space: nowrap;
 }
 
 /* 「不是本人的单」浏览模式提示条:文案 + 返回按钮两端对齐 */

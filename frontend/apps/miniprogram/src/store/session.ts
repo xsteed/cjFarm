@@ -141,6 +141,21 @@ export function adoptPendingPerson(table: TableInfo | null): boolean {
   return true;
 }
 
+/**
+ * 本桌还有「已付款但出餐未完成」的订单 = 这桌人正在吃，茶位费已随那些单收过：
+ * 人数沿最近一笔，不再重复问。返回是否采纳成功。
+ */
+export function adoptServingPerson(table: TableInfo | null): boolean {
+  const serving = table?.servingOrders || [];
+  if (!serving.length) return false;
+  // 后端按订单倒序返回，首笔即最近一笔
+  const n = Math.floor(Number(serving[0]?.personCount) || 0);
+  if (!isValidPerson(n)) return false;
+  setPersonCount(n);
+  markPersonChosen();
+  return true;
+}
+
 /** 把当前订单写回会话，并同步持久化（供下次按 orderNo 恢复）。 */
 export function applyOrder(order: OrderDetail | null): void {
   const s = sessionState();

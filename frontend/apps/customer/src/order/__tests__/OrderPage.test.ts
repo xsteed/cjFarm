@@ -852,4 +852,25 @@ describe('入座选人数（茶位费门店）', () => {
     expect(wrapper.find('.person-mask').exists()).toBe(false);
     wrapper.unmount();
   });
+
+  it('本桌有已付款出餐中的订单（茶位费已收过）：不弹面板，人数沿最近一笔', async () => {
+    getTableMock.mockResolvedValue({
+      ...tableNoOrder,
+      servingOrders: [{ orderId: 9, orderNo: 'NO009', shortNo: '009', personCount: 5, orderStatus: 2 }]
+    });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.person-mask').exists()).toBe(false);
+    // 出餐提示条：文字与订单标签在同一行（标签区可横向滑动）
+    expect(wrapper.find('.serving-banner').exists()).toBe(true);
+    expect(wrapper.find('.serving-label').text()).toContain('1 笔订单正在出餐');
+
+    // 人数沿用最近一笔已付款订单：加一道 28 元的菜 → 28 + 5×2 = 38
+    await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
+    await wrapper.find('.op-checkout').trigger('click');
+    await nextTick();
+    expect(wrapper.text()).toContain('茶位费（5人）');
+    wrapper.unmount();
+  });
 });

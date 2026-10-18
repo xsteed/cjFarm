@@ -229,4 +229,18 @@ describe('菜单页 · 入座选人数', () => {
     expect(report).toBeTruthy();
     expect(report?.data).toMatchObject({ tableId: 3, personCount: 4 });
   });
+
+  it('本桌有已付款出餐中的订单（茶位费已收过）：不弹面板，人数沿最近一笔', async () => {
+    replyMenuLoad(SEAT_FEE_ON, {
+      ...TABLE_OK,
+      servingOrders: [{ orderNo: 'D9', shortNo: '009', personCount: 5, orderStatus: 2 }]
+    });
+    page?.onLoad({ scene: 'A1' });
+    await flush();
+    await flush();
+
+    expect(page?.data.needPerson).toBe(false);
+    expect(app.session.personCount).toBe(5);
+    expect(app.session.personChosen).toBe(true);
+  });
 });

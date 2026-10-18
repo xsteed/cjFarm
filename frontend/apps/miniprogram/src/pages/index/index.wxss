@@ -302,29 +302,179 @@
   text-align: center;
 }
 
+/* 出餐提示条：文字与订单标签同一行，标签区横向滚动，再多订单也不撑高菜单区 */
 .serving {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
   flex-shrink: 0;
   padding: 20rpx 32rpx;
   border-bottom: 2rpx solid var(--line);
   background: var(--brand-ghost);
   color: var(--ink-2);
   font-size: 24rpx;
-  line-height: 1.7;
 }
 
+.serving-label {
+  flex-shrink: 0;
+}
+
+/* scroll-view 横向滚动：白底胶囊不换行，超出部分右滑查看 */
 .serving-chips {
-  margin-top: 6rpx;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .serving-chip {
   display: inline-block;
-  margin: 4rpx 12rpx 0 0;
+  margin-right: 12rpx;
   padding: 6rpx 18rpx;
   border-radius: var(--r-pill);
   background: #fff;
   color: var(--brand-deep);
   font-size: 22rpx;
   box-shadow: 0 2rpx 8rpx rgb(240 72 31 / 12%);
+}
+
+/* ---------- 本店招牌：菜品列表最上部的横向卡片（与首页「本店招牌」同款） ---------- */
+.sigcard {
+  margin: 20rpx 0 4rpx;
+  padding: 20rpx 20rpx 16rpx;
+  border-radius: var(--r-md);
+  /* 用品牌浅底而不是白卡：白卡放在白底列表里看不出边界，浅暖橙既能区分块面，
+     又和招牌菜的品牌色呼应（--brand-ghost 与首页 serving 提示条同色） */
+  background: var(--brand-ghost);
+}
+
+.sigcard-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+
+/* 标题前的品牌色小竖条：与分组标题 .sec::before 同一视觉语言 */
+.sigcard-title {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  color: var(--ink);
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.sigcard-title::before {
+  width: 8rpx;
+  height: 26rpx;
+  border-radius: 4rpx;
+  background: var(--grad-brand-soft);
+  content: '';
+}
+
+.sigcard-sub {
+  color: var(--ink-3);
+  font-size: 20rpx;
+}
+
+/* 横向滑动的招牌菜：一屏放三道左右，剩下的滑出来（与首页同尺寸） */
+.sigcard-scroll {
+  width: 100%;
+  white-space: nowrap;
+}
+
+.sigcard-row {
+  display: inline-flex;
+  gap: 20rpx;
+}
+
+.sigcard-item {
+  flex: none;
+  width: 200rpx;
+}
+
+.sigcard-media {
+  position: relative;
+  width: 200rpx;
+  height: 150rpx;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: #f2f2f2;
+}
+
+/* 招牌角标：贴图片左上角，与菜品行的 .sig-tag 同视觉（品牌渐变 + 白字），
+   压在售罄遮罩之上（z-index 2 > 1），盖了遮罩仍认得出是招牌菜 */
+.sigcard-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  padding: 2rpx 14rpx;
+  border-radius: var(--r-md) 0 var(--r-md) 0;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 700;
+  letter-spacing: 2rpx;
+}
+
+.sigcard-img {
+  display: block;
+  width: 200rpx;
+  height: 150rpx;
+}
+
+/* 没有图 / 图加载失败的占位：与真图同尺寸，避免卡片高度塌陷 */
+.sigcard-img-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-4);
+  font-size: 20rpx;
+}
+
+.sigcard-mask {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 45%);
+  color: #fff;
+  font-size: 24rpx;
+}
+
+.sigcard-name {
+  margin-top: 12rpx;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 26rpx;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 价格行走 flex + 垂直居中：¥ / 价格 / 「起」字号不同（24 / 26 / 20rpx），
+   按 inline 排会因基线差异看起来高低不齐（与首页 sig-price 同处理） */
+.sigcard-price {
+  display: flex;
+  align-items: center;
+  margin-top: 4rpx;
+  color: var(--brand-deep);
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+/* 「起」与价格之间留一点空隙：紧贴在一起会看成「48.00起」一个整体字（同首页） */
+.sigcard-from {
+  margin-left: 6rpx;
+  color: var(--ink-3);
+  font-size: 20rpx;
+  font-weight: 400;
 }
 
 /* ---------- 双栏：左分类 / 右菜品 ---------- */

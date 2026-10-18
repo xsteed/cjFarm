@@ -22,6 +22,7 @@ import {
   persistPersonChoice,
   readPersisted,
   adoptPendingPerson,
+  adoptServingPerson,
   restorePersonChoice,
   sessionState,
   setPersonCount
@@ -40,6 +41,9 @@ import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo
 
 /** 右栏顶部的锚点 id：换搜索词后要把列表拉回顶部（见 scrollListTop）。 */
 const LIST_TOP_ANCHOR = 'list-top';
+
+/** 招牌菜卡片最多展示几道：与首页「本店招牌」同一口径，再多这张卡就变成了第二份菜单 */
+const SIG_MAX = 8;
 
 /** 飞球自增 id：wx:key 用，保证连点时每个球都是独立节点（挂载即重播动画）。 */
 let flySeq = 0;
@@ -139,6 +143,17 @@ interface SheetDish {
   initialRemark: string;
 }
 
+/** 招牌菜卡片（WXML 不做函数调用，展示串都在这里算好；字段与首页 SigDish 一致）。 */
+interface SigDish {
+  dishId: number;
+  dishName: string;
+  image: string;
+  priceText: string;
+  /** 多个规格：价格是「起售价」，模板补一个「起」字 */
+  manySpecs: boolean;
+  soldOut: boolean;
+}
+
 /**
  * 加入购物车所需的最小规格信息。
  * 字段都可选，这样 DishSpec（来自接口）与弹层 confirm 事件（来自组件）都能直接传入，
@@ -164,6 +179,8 @@ Page({
     activeCatId: 0,
     /** 右栏：所有分类首尾相连成一条列表，滚动时自动切换左侧高亮 */
     rows: [] as MenuRow[],
+    /** 右栏列表最上部的「本店招牌」卡片：与首页同款同口径，搜索态隐藏（见 signatureOf） */
+    sigDishes: [] as SigDish[],
     /** scroll-view 的 scroll-into-view 目标：点左侧分类时跳过去 */
     scrollIntoId: '',
     /** 左栏自己的 scroll-into-view 目标：分类多时让高亮项始终可见 */
@@ -412,12 +429,18 @@ Page({
 
     // 「入座选人数」面板只在：茶位费开启 + 本桌无订单（含加菜态）+ 没人选过时出现。
     // 「选过」的判定按优先级：本机会话已选 > 本机冷启动恢复（60 分钟内）>
-    // 同桌共享值（别的手机选过、桌台接口带 pendingPersonCount）—— 都没命中才弹。
+    // 同桌共享值（别的手机选过、桌台接口带 pendingPersonCount）>
+    // 本桌已付款出餐订单的人数（茶位费已收过，沿最近一笔）—— 都没命中才弹。
     // 有订单时人数已写在订单里，一律不弹。
     const s = sessionState();
     const seatFeeOn = s.config?.seat_fee_enabled === '1' && Number(s.config.seat_fee) > 0;
     const needPerson =
-      !s.currentOrder && seatFeeOn && !s.personChosen && !restorePersonChoice() && !adoptPendingPerson(info);
+      !s.currentOrder &&
+      seatFeeOn &&
+      !s.personChosen &&
+      !restorePersonChoice() &&
+      !adoptPendingPerson(info) &&
+      !adoptServingPerson(info);
 
     const cats: CatRow[] = this.menu.map((c, i) => ({
       categoryId: Number(c.categoryId) || 0,
@@ -436,7 +459,9 @@ Page({
       tableLabel: this.tableLabelOf(info),
       cats,
       activeCatId: cats.length ? cats[0].categoryId : 0,
-      servingRows: this.servingRowsOf(info)
+      servingRows: this.servingRowsOf(info),
+      // 招牌菜卡片随菜单一起渲染（同一份接口数据，不额外请求）；搜索态由模板隐藏
+      sigDishes: this.signatureOf()
     });
     this.refreshRows();
 
@@ -576,6 +601,37 @@ Page({
       orderedQty: ordered[dishId] || 0,
       cartQty: line ? line.quantity : 0
     };
+  },
+
+  /**
+   * 招牌菜卡片：与首页「本店招牌」同一份口径 —— 只取 `signature=1`、跳过没有规格的菜
+   * （那种菜根本下不了单），多规格给最低价 +「起」，售罄照常展示（盖遮罩不可点）。
+   *
+   * 数据直接取自已加载的菜单，不额外请求：菜单页本来就有全量菜单，
+   * 招牌菜是同一份数据的另一种排法。
+   */
+  signatureOf(): SigDish[] {
+    const out: SigDish[] = [];
+    for (const c of this.menu) {
+      for (const dish of (c.dishes || []) as Dish[]) {
+        if (Number(dish.signature) !== 1) continue;
+        const dishId = Number(dish.dishId) || 0;
+        const specs = (dish.specs || []) as DishSpec[];
+        if (!dishId || !specs.length) continue;
+        const allSoldOut = specs.every(s => Number(s.stock) === 0);
+        out.push({
+          dishId,
+          dishName: String(dish.dishName || ''),
+          // 与菜品行共用一本坏图账（failedImgs 按 dish-<id> 记）：一处加载失败，两处都不闪破图
+          image: this.failedImgs?.has(`dish-${dishId}`) ? '' : mediaUrl(dish.dishImage),
+          priceText: money(Math.min(...specs.map(s => Number(s.price) || 0))),
+          manySpecs: specs.length > 1,
+          soldOut: Number(dish.soldOut) === 1 || allSoldOut
+        });
+        if (out.length >= SIG_MAX) return out;
+      }
+    }
+    return out;
   },
 
   /**
@@ -769,8 +825,35 @@ Page({
     if (!key) return;
     if (!this.failedImgs) this.failedImgs = new Set<string>();
     this.failedImgs.add(key);
-    // 只回写命中的那一行(rows[i]),不再整表重建:
-    // setData 的开销与本次传递的数据量成正比,菜单几十行时整份 rows 的序列化会卡住滑动。
+    this.blankDishRowImage(key);
+  },
+
+  /**
+   * 招牌菜卡片里的图加载失败：与菜品行共用 failedImgs（同一本坏图账）。
+   * 卡片与菜品行绑的是同一个 URL，一处破了另一处也会破 —— 两边一起置掉，
+   * 各只回写命中的那一处，不重建整表 / 整份 sigDishes。
+   */
+  onSigImgError(e: WechatMiniprogram.CustomEvent): void {
+    const dishId = Number(e.currentTarget.dataset.id) || 0;
+    if (!dishId) return;
+    if (!this.failedImgs) this.failedImgs = new Set<string>();
+    this.failedImgs.add(`dish-${dishId}`);
+    this.blankDishRowImage(`dish-${dishId}`);
+    const idx = (this.data.sigDishes as SigDish[]).findIndex(d => d.dishId === dishId);
+    if (idx < 0) return;
+    const dish = this.data.sigDishes[idx];
+    if (!dish.image) return; // 已置空(重复触发)就不必再 setData
+    const patch: Record<string, string> = {};
+    patch[`sigDishes[${idx}].image`] = '';
+    this.setData(patch);
+  },
+
+  /**
+   * 把右栏里某道菜的图置成占位（按行 key 定位）。
+   * 只回写命中的那一行(rows[i]),不再整表重建:
+   * setData 的开销与本次传递的数据量成正比,菜单几十行时整份 rows 的序列化会卡住滑动。
+   */
+  blankDishRowImage(key: string): void {
     const idx = this.data.rows.findIndex(r => r.kind === 'dish' && r.key === key);
     if (idx < 0) return;
     const row = this.data.rows[idx];
@@ -903,6 +986,15 @@ Page({
 
   /** 点菜名：打开规格 / 备注弹层。 */
   onOpenSheet(e: WechatMiniprogram.TouchEvent): void {
+    this.openSheet(Number(e.currentTarget.dataset.id) || 0);
+  },
+
+  /**
+   * 点「本店招牌」卡片里的菜：与点菜品行同一路径（开规格 / 备注弹层）。
+   * 顾客已经在菜单里、桌台已确认，不需要像首页那样先引导扫码进桌；
+   * 售罄与「没有规格」由 openSheet 统一提示。
+   */
+  onOpenSig(e: WechatMiniprogram.TouchEvent): void {
     this.openSheet(Number(e.currentTarget.dataset.id) || 0);
   },
 

@@ -97,12 +97,19 @@
         {{appendNotice}}
       </view>
 
+      <!-- 本桌「已付款但出餐未完成」的订单：显示进度，并可点进订单页看明细。
+           文字与订单标签同一行，标签多了横向滑动，不撑高菜单区 -->
       <view
         wx:if="{{servingRows.length}}"
         class="serving"
       >
-        本桌还有 {{servingRows.length}} 笔订单正在出餐，点标签可查看进度
-        <view class="serving-chips">
+        <text class="serving-label">本桌还有 {{servingRows.length}} 笔订单正在出餐</text>
+        <scroll-view
+          class="serving-chips"
+          scroll-x
+          enhanced
+          show-scrollbar="{{false}}"
+        >
           <text
             wx:for="{{servingRows}}"
             wx:key="key"
@@ -112,7 +119,7 @@
           >
             {{item.label}} ›
           </text>
-        </view>
+        </scroll-view>
       </view>
 
       <view class="menu-body">
@@ -151,8 +158,72 @@
           scroll-into-view="{{scrollIntoId}}"
           bindscroll="onScroll"
         >
-          <!-- 列表顶部锚点：换搜索词后用它把右栏拉回顶部（见 scrollListTop） -->
+          <!-- 列表顶部锚点：换搜索词后用它把右栏拉回顶部（见 scrollListTop）。
+               必须放在招牌卡片之前：锚点在卡片下方的话，清空搜索词滚回「顶部」时
+               卡片还留在视口外，顾客看不到它重新出现。 -->
           <view id="list-top"></view>
+
+          <!-- 本店招牌：横向卡片放在菜品列表最上部（与首页「本店招牌」同款）。
+               放在滚动列表里而不是白卡顶部：常驻会按张吃掉一屏菜品的高度，
+               做成列表第一项则随列表滚走、回顶部又可见。
+               点招牌菜直接开规格弹层 —— 顾客已在菜单里、桌台已确认，
+               不需要再跳一次（与首页「先扫码进桌」的引导不同）。
+               搜索态整块隐藏：搜结果时它只会把顾客要找的菜推下去。 -->
+          <view
+            wx:if="{{sigDishes.length && !searching}}"
+            class="sigcard"
+          >
+            <view class="sigcard-head">
+              <view class="sigcard-title">本店招牌</view>
+              <view class="sigcard-sub">左右滑动查看更多</view>
+            </view>
+            <scroll-view
+              class="sigcard-scroll"
+              scroll-x
+              enhanced
+              show-scrollbar="{{false}}"
+            >
+              <view class="sigcard-row">
+                <view
+                  wx:for="{{sigDishes}}"
+                  wx:key="dishId"
+                  class="sigcard-item"
+                  data-id="{{item.dishId}}"
+                  bindtap="onOpenSig"
+                >
+                  <view class="sigcard-media">
+                    <!-- 招牌角标：贴图片左上角，售罄遮罩盖不全它（z-index 见 wxss） -->
+                    <view class="sigcard-tag">招牌</view>
+                    <image
+                      wx:if="{{item.image}}"
+                      class="sigcard-img"
+                      src="{{item.image}}"
+                      mode="aspectFill"
+                      lazy-load
+                      data-id="{{item.dishId}}"
+                      binderror="onSigImgError"
+                    ></image>
+                    <view
+                      wx:else
+                      class="sigcard-img sigcard-img-none"
+                    >
+                      暂无图片
+                    </view>
+                    <view
+                      wx:if="{{item.soldOut}}"
+                      class="sigcard-mask"
+                    >
+                      售罄
+                    </view>
+                  </view>
+                  <view class="sigcard-name">{{item.dishName}}</view>
+                  <!-- 价格行整段不允许折行/缩进：WXML 里标签之间的换行会渲染成空格，
+                       「¥48.00 起」里的空隙就是这么来的（同首页 sig-price 注释） -->
+                  <view class="sigcard-price"><text class="cny">¥</text>{{item.priceText}}<text wx:if="{{item.manySpecs}}" class="sigcard-from">起</text></view>
+                </view>
+              </view>
+            </scroll-view>
+          </view>
 
           <!-- 所有分类首尾相连：上一个分类看完直接接下一个分类标题，
                内容少的分类不会留下大片空白，顾客能一直往下翻 -->
