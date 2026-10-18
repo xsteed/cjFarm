@@ -18,9 +18,9 @@ import {
 import { saveCart } from '../../store/cartPersist';
 import { applyOrder, markPersonChosen, persistPersonChoice, sessionState, setPersonCount } from '../../store/session';
 import { toast } from '../../utils/toast';
-import { money } from '@dining/shared/money';
-import { isActiveStatus } from '@dining/shared/orderStatus';
-import type { OrderDetail } from '@dining/types';
+import { money } from '../../shared/money';
+import { isActiveStatus } from '../../shared/orderStatus';
+import type { OrderDetail } from '../../types';
 
 interface CartRow {
   key: string;

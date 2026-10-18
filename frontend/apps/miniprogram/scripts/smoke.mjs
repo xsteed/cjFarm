@@ -89,7 +89,7 @@ if (!fs.existsSync(DIST)) {
   process.exit(1);
 }
 
-// app.js 必须先执行：它负责把 axios 实例装配到 wx.request（见 src/api/client.ts）
+// app.js 必须先执行：它负责完成接口层装配（baseURL / 提示实现，见 src/api/client.ts）
 const files = collect(DIST).sort((a, b) => {
   const score = f => (f.endsWith(`${path.sep}app.js`) ? 0 : 1);
   return score(a) - score(b) || a.localeCompare(b);

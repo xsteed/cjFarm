@@ -1,10 +1,10 @@
 // ============================================================================
 // 小程序构建脚本（esbuild）
 //
-// 为什么需要构建：原生小程序不能直接跑 TS，也不能在运行时解析 node_modules 里的
-// 裸包名（`@dining/api`、`axios`）。这里用 esbuild 把 `src/**/*.ts` 各自打成
-// 自包含的 CommonJS 文件，并把 `@dining/api`、`@dining/shared`、`@dining/types`、
-// `axios` 一并内联进产物，微信开发者工具直接指向 `dist/` 即可，无需「构建 npm」。
+// 为什么需要构建：原生小程序不能直接跑 TS。这里用 esbuild 把 `src/**/*.ts` 各自
+// 打成自包含的 CommonJS 文件 —— 类型 / 接口 / 工具全部自包含（src/types、
+// src/shared、src/core、src/api），没有 node_modules 裸包名需要解析，
+// 微信开发者工具直接指向 `dist/` 即可，无需「构建 npm」。
 //
 // 产物布局：src 的相对结构原样保留（src/pages/menu/index.ts → dist/pages/menu/index.js），
 // 同时把 .wxml/.wxss/.json/.png 等非 TS 文件按同结构拷过去。
@@ -90,5 +90,5 @@ if (watch) {
   await build(options);
   const n = copyAssets();
   console.log(`\n✓ 小程序产物已生成：dist/（含 ${n} 个非 TS 资源）`);
-  console.log('  用微信开发者工具「导入项目」指向 apps/miniprogram（miniprogramRoot=dist/）。');
+  console.log('  （dist/ 仅为 verify/CI 验证产物；日常开发无需构建 —— 开发者工具直接打开本项目，miniprogramRoot=src/ 由工具编译 TS。）');
 }

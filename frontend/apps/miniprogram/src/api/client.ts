@@ -1,81 +1,144 @@
 // ============================================================================
-// 接口层组装点
+// 接口装配 + 全部顾客端端点（自包含，不依赖 @dining/api）
 //
-// `@dining/api` 里已经建好 axios 实例与拦截器（响应解包 {code,msg,data}、
-// 统一中文错误文案、按路径注入顾客/管理端令牌、401 清登录态）。小程序端只做四件事把它「本地化」：
-//   1) 换传输层为 wx.request；
-//   2) 把 baseURL 指向已备案的 HTTPS 域名；
-//   3) 注入提示与 401 处理——这两件事在 Web 端由 main.ts / http.ts 默认实现承担，
-//      在小程序端由这里接管（这也是 packages 里留出 setUiNotifier 与
-//      setUnauthorizedHandler 两个口子的原因）；
-//   4) 注入存储后端（wx.storage），令牌读写从此与 Web 共用同一份逻辑。
-//
-// 页面统一 `import { getMenu, ... } from '../api/client'`，不要直接 import
-// '@dining/api'，否则拦截器可能在被装配之前就被使用。
+// 本文件在「模块加载期」完成两件事（被任意页面 import 即触发，仅一次）：
+//   1) configureHttp：把 baseURL 设成「后端 origin + /api」，超时 15s；
+//   2) setUiNotifier：把逻辑层的 error/warning/success 接到小程序的 wx.showToast。
+// app.ts 里 `import './api/client'` 正是为了这个副作用在请求发出前完成装配。
 // ============================================================================
-import { http } from '@dining/api';
-import { setStorageBackend } from '@dining/shared';
-import { setUiNotifier } from '@dining/shared/ui';
-import { API_BASE_URL, REQUEST_TIMEOUT_MS } from '../config';
-import { installMemberUnauthorizedHandler } from '../store/member';
-import { toast } from '../utils/toast';
-import { wxAdapter } from './wx-adapter';
+import { httpGet, httpPost, configureHttp } from './http';
+import { setUiNotifier } from '../shared/ui';
+import { API_ORIGIN } from '../config';
+import type {
+  Id,
+  MenuCategory,
+  OrderCreatePayload,
+  OrderCreateResult,
+  OrderDetail,
+  PayCreatePayload,
+  PayCreateResult,
+  PayQr,
+  PayQueryResult,
+  PublicConfig,
+  RemarkOption,
+  TableInfo,
+  UrgeResult,
+  MemberProvider,
+  MemberInfo,
+  MemberLoginResult,
+  MemberLoginPayload,
+  MemberOrderRow,
+  WalletInfo,
+  WalletRechargeParams,
+  WalletTxnRow,
+  VisitTrackPayload,
+  OrderPersonPayload,
+  PayJsapiPayload,
+  PayJsapiResult
+} from '../types';
 
-// ---- 1) 传输层 ----
-http.defaults.adapter = wxAdapter;
-http.defaults.baseURL = API_BASE_URL;
-http.defaults.timeout = REQUEST_TIMEOUT_MS;
-// 请求体保持对象，交给 wx.request 按 content-type 序列化（理由见 wx-adapter.ts 顶部注释）。
-http.defaults.transformRequest = [(data: unknown) => data];
-// 关掉 axios 默认的 transformRequest 后，Content-Type 需要自己声明。
-http.defaults.headers.post['Content-Type'] = 'application/json';
+// 装配：baseURL 指向后端 origin（见 config.ts 的 API_ORIGIN）。
+configureHttp({ baseURL: `${API_ORIGIN}/api`, timeoutMs: 15000 });
 
-// ---- 2) 提示 ----
-// 逻辑包不依赖任何 UI 库，只调用 @dining/shared 的 ui（success/warning/error）。
+// 通知落地：逻辑层只调 ui.error/success，由这里决定小程序怎么呈现。
 setUiNotifier({
-  success: (message: string) => toast.success(message),
-  warning: (message: string) => toast.warning(message),
-  error: (message: string) => toast.error(message)
+  success: (message: string) => wx.showToast({ title: message, icon: 'success' }),
+  warning: (message: string) => wx.showToast({ title: message, icon: 'none' }),
+  error: (message: string) => wx.showToast({ title: message, icon: 'none' })
 });
 
-// ---- 3) 存储后端 ----
-// @dining/shared 的 safeStorage 默认是 Web 的 localStorage；这里换成 wx.storage。
-// 换完之后，`packages/api/src/http.ts` 的请求拦截器（按 /customer/ 前缀自动注入
-// 顾客令牌）与会员模块的令牌持久化，三端共用同一份代码，不再各写一套。
-//
-// 读语义对齐 localStorage.getItem：键不存在时返回 null（wx.getStorageSync 返回空串）。
-setStorageBackend({
-  get(key: string): string | null {
-    try {
-      const v = wx.getStorageSync(key);
-      return v === '' || v === undefined || v === null ? null : String(v);
-    } catch {
-      return null;
-    }
-  },
-  set(key: string, value: string): void {
-    try {
-      wx.setStorageSync(key, value);
-    } catch {
-      /* 磁盘满 / 隐私限制：会员态退化为「本次会话内有效」，静默降级 */
-    }
-  },
-  remove(key: string): void {
-    try {
-      wx.removeStorageSync(key);
-    } catch {
-      /* 同上 */
-    }
-  }
-});
+// 顾客端
+export type { PayJsapiPayload, PayJsapiResult, WalletInfo, WalletRechargeParams, WalletTxnRow };
+export const getTable = (id: Id): Promise<TableInfo> => httpGet<TableInfo>(`/customer/table/${id}`);
+export const setTablePerson = (data: { tableId: number; personCount: number }): Promise<void> =>
+  httpPost<void>('/customer/table/person', data);
+export const getMenu = (): Promise<MenuCategory[]> => httpGet<MenuCategory[]>('/customer/menu');
+export const getRemarks = (): Promise<RemarkOption[]> => httpGet<RemarkOption[]>('/customer/remarks');
 
-// ---- 4) 401 ----
-// 小程序里会 401 的只有「会员专属接口」（顾客令牌 2h 过期是常态）：
-// 交给会员模块静默重登（wx.login 无感知），成功后调用方重放请求，不打断顾客。
-// 匿名点餐接口正常永远不会 401；真出现（域名/网关层问题）也不弹窗打断点餐，
-// 下一次会员数据请求会触发完整的重新登录并给出明确文案。
-installMemberUnauthorizedHandler();
+export const createOrder = (data: OrderCreatePayload): Promise<OrderCreateResult> =>
+  httpPost<OrderCreateResult>('/customer/order', data);
+export const appendOrder = (data: OrderCreatePayload): Promise<OrderCreateResult> =>
+  httpPost<OrderCreateResult>('/customer/order/append', data);
 
-// 顾客端用到的接口全部从这里转发；管理端接口也一并带出（原生小程序无 tree-shaking 负担顾虑，
-// 但页面不会调用它们，仅保留导出以便后续扩展）。
-export * from '@dining/api';
+// 按单号查订单详情。带当前桌台 tableId 时后端校验归属，防「凭单号遍历查他人订单」。
+export const getOrderByNo = (no: Id, tableId?: number): Promise<OrderDetail> =>
+  httpGet<OrderDetail>(`/customer/order/no/${no}${tableId ? `?tableId=${tableId}` : ''}`);
+
+// 会员自己的历史订单详情（跨桌、需登录，令牌过期由 401 兜底静默重登后重放）。
+export const getMyOrderDetail = (no: Id): Promise<OrderDetail> =>
+  httpGet<OrderDetail>(`/customer/order/mine/${encodeURIComponent(String(no))}`);
+
+// 顾客催菜：请求后厨加急（同单 3 分钟冷却，超频后端回传剩余秒数）。
+// config 可传 { silent: true }：冷却拒绝时不弹全局错误，由调用方读 data.cooldown 自行展示。
+export const urgeOrder = (
+  orderNo: Id,
+  tableId: number,
+  config?: { silent?: boolean }
+): Promise<UrgeResult> => httpPost<UrgeResult>('/customer/order/urge', { orderNo, tableId }, config);
+
+// 改就餐人数（不改菜品）：人数决定茶位费，后端重算金额。只允许「进行中且未支付」的订单。
+export const updateOrderPerson = (data: OrderPersonPayload): Promise<OrderDetail> =>
+  httpPost<OrderDetail>('/customer/order/person', data);
+
+export const getPayQr = (): Promise<PayQr> => httpGet<PayQr>('/customer/pay/qr');
+// 顾客端公开配置（无需登录）：店铺名 / 茶位费 / 促销 / 收款码。
+export const getPublicConfig = (): Promise<PublicConfig> => httpGet<PublicConfig>('/customer/config');
+
+// 在线支付（微信/支付宝 Native 扫码）
+export const createPay = (data: PayCreatePayload): Promise<PayCreateResult> =>
+  httpPost<PayCreateResult>('/customer/pay/create', data);
+export const queryPay = (orderNo: Id): Promise<PayQueryResult> =>
+  httpGet<PayQueryResult>('/customer/pay/query', { orderNo });
+
+// ---------------------------------------------------------------------------
+// 小程序内支付（JSAPI）：服务端拿 wx.login 的 code 换 openid，签好调起参数，
+// 小程序拿着参数直接 wx.requestPayment。后端未配商户号时返回业务错误，调用方据此
+// 降级到「收款码 + 前台结账」。
+// ---------------------------------------------------------------------------
+export const payJsapi = (data: PayJsapiPayload): Promise<PayJsapiResult> =>
+  httpPost<PayJsapiResult>('/customer/pay/jsapi', data);
+
+// ---------------------------------------------------------------------------
+// 顾客会员（账号 / 登录方式分离）：provider 只决定「凭据怎么换成身份」，响应体与令牌
+// 完全一致。小程序传 wx.login 的 code，网站/App 后续传手机号或账号密码即可。
+// ---------------------------------------------------------------------------
+export type { MemberProvider, MemberInfo, MemberLoginResult, MemberLoginPayload, MemberOrderRow };
+
+export const memberLogin = (data: MemberLoginPayload): Promise<MemberLoginResult> =>
+  httpPost<MemberLoginResult>('/customer/auth/login', data);
+export const memberProfile = (): Promise<MemberInfo> => httpGet<MemberInfo>('/customer/auth/profile');
+export const memberOrders = (
+  pageNum: number,
+  pageSize = 10
+): Promise<{ total: number; items: MemberOrderRow[] }> =>
+  httpGet<{ total: number; items: MemberOrderRow[] }>('/customer/order/mine', { pageNum, pageSize });
+export const updateMemberProfile = (data: { nickname: string }): Promise<MemberInfo> =>
+  httpPost<MemberInfo>('/customer/auth/profile', data);
+export const deleteMemberAccount = (): Promise<void> => httpPost<void>('/customer/auth/account');
+export const bindMemberPhone = (code: string): Promise<{ phone: string }> =>
+  httpPost<{ phone: string }>('/customer/auth/phone', { code });
+
+// ---------------------------------------------------------------------------
+// 储值（顾客自助，需会员令牌）
+// ---------------------------------------------------------------------------
+export const getWallet = (): Promise<WalletInfo> => httpGet<WalletInfo>('/customer/wallet');
+export const listWalletTxns = (
+  pageNum: number,
+  pageSize = 10
+): Promise<{ total: number; items: WalletTxnRow[] }> =>
+  httpGet<{ total: number; items: WalletTxnRow[] }>('/customer/wallet/txns', { pageNum, pageSize });
+export const createWalletRecharge = (data: { amount: number; code: string }): Promise<WalletRechargeParams> =>
+  httpPost<WalletRechargeParams>('/customer/wallet/recharge', data);
+export const getWalletRechargeStatus = (
+  rechargeNo: string
+): Promise<{ status: number; amount?: number }> =>
+  httpGet<{ status: number; amount?: number }>('/customer/wallet/recharge/status', { rechargeNo });
+export const payOrderByWallet = (orderNo: string): Promise<void> =>
+  httpPost<void>('/customer/wallet/pay', { orderNo });
+
+// ---------------------------------------------------------------------------
+// 访问统计打点：挂在顾客公开组下，故意不带登录态拦截（匿名打点天然干净）；
+// 失败时绝不能打扰点餐的顾客，故显式 silent，由调用方 .catch 静默消化。
+// ---------------------------------------------------------------------------
+export const reportVisit = (payload: VisitTrackPayload): Promise<unknown> =>
+  httpPost<unknown>('/customer/visit', payload, { silent: true });

@@ -522,6 +522,15 @@
   content: '';
 }
 
+/* 右栏吸顶标题的宿主：盖在 .dishes 之上，悬浮标题绝对定位于它的顶部 */
+.dishes-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .dishes {
   flex: 1;
   min-width: 0;
@@ -550,6 +559,36 @@
 }
 
 .sec::before {
+  width: 8rpx;
+  height: 26rpx;
+  border-radius: 4rpx;
+  background: var(--grad-brand-soft);
+  content: '';
+}
+
+/* ---------- JS 悬浮吸顶标题 ----------
+   scroll-view 内 position:sticky 在部分基础库/机型上不生效（.sec 注释），改由
+   onScroll 按 offsets 驱动：文案 = 当前分类；下一分类标题逼近顶部时 pinTop 变负
+   （translateY 顶出视口），再由列表里真正的 .sec 自然接替 —— 「钉顶→菜品滚完→
+   上移让位」不再依赖 sticky。外观与 .sec 完全一致，静止时与列表标题无缝重合 */
+.sec-pin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  /* 宿主没有内边距，不需要 .sec 那个负 margin：直接铺满 + 同款左右 padding */
+  padding: 22rpx 24rpx 12rpx;
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+.sec-pin::before {
   width: 8rpx;
   height: 26rpx;
   border-radius: 4rpx;

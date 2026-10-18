@@ -170,6 +170,12 @@ export class WxMock {
     },
     setClipboardData: (): void => {},
 
+    // ---- 窗口信息：菜单页 JS 吸顶标题按屏宽换算标题高度用（见 syncPinHeader）----
+    getWindowInfo: (): { windowWidth: number; windowHeight: number } => ({
+      windowWidth: 375,
+      windowHeight: 667
+    }),
+
     // ---- 扫码 / 导航栏标题 ----
     scanCode: (opt: {
       success?: (r: { result: string; path?: string }) => void;

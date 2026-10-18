@@ -1,9 +1,9 @@
 {
-  "description": "扫码点餐 · 微信小程序顾客端（源码在 src/，产物在 dist/，构建见 build.mjs）",
+  "description": "扫码点餐 · 微信小程序顾客端（原生结构：miniprogramRoot 直接指向 src/ 源码，TS 由开发者工具编译，无需预构建）",
   "projectname": "cjFarm-miniprogram",
   "appid": "wx0f4ab661c6cbe4eb",
   "compileType": "miniprogram",
-  "miniprogramRoot": "dist/",
+  "miniprogramRoot": "src/",
   "setting": {
     "urlCheck": true,
     "es6": false,
@@ -23,7 +23,7 @@
     "packNpmRelationList": [],
     "localPlugins": false,
     "disableUseStrict": false,
-    "useCompilerPlugins": false,
+    "useCompilerPlugins": ["typescript"],
     "condition": false,
     "babelSetting": {
       "ignore": [],

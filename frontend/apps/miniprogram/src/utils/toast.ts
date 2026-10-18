@@ -1,7 +1,7 @@
 // 全局轻提示封装。
 //
-// 它是 @dining/shared 的 ui 适配器在小程序端的实现（见 api/client.ts 的 setUiNotifier）：
-// 逻辑包（@dining/api）只负责「该提示什么」，不关心用什么弹。
+// 它是 shared/ui 通知接口在小程序端的实现（见 api/client.ts 的 setUiNotifier）：
+// 逻辑层（api/http）只负责「该提示什么」，不关心用什么弹。
 //
 // ⚠️ 只在**带图标**时才截断文案：微信对 `icon: 'success'` 的标题限制约 7 个汉字，
 // 但 `icon: 'none'` 允许两行、也不截断。错误原因（如后端返回的「桌台已被占用，请扫码后重试」）

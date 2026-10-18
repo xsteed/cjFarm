@@ -1,13 +1,13 @@
 // 购物车。
 //
-// 与 Web 端 `@dining/customer-core` 的 useCart 是「同一套规则的另一实现」：
+// 与 Web 端顾客端（Vue useCart）是「同一套规则的另一实现」：
 // 那边基于 Vue 的 ref/computed，这里基于「globalData 里的普通数组 + 页面手动 setData」。
 // 之所以没有直接复用：原生小程序没有 Vue 运行时，computed 无法工作
 // （详见 docs/miniprogram.md 5.1 节）。
 // 两端**计价规则**保持一致，但最终金额仍以后端重算为准。
 import type { GlobalData, CartLine } from '../types';
-import type { OrderCreateItem, PublicConfig } from '@dining/types';
-import { round2 } from '@dining/shared/money';
+import type { OrderCreateItem, PublicConfig } from '../types';
+import { round2 } from '../shared/money';
 import { saveCart } from './cartPersist';
 
 /** 购物车数组本体（跨页共享，见 src/types.ts 顶部注释）。 */
@@ -18,7 +18,7 @@ export function cartState(): CartLine[] {
 /**
  * 两位小数取整，避免浮点误差累积。
  *
- * 直接用 @dining/shared 的实现：两端各留一份时曾经漂移（一边加 EPSILON、一边没加），
+ * 实现收在 shared/money.ts（唯一来源）：多处各留一份时曾经漂移（一边加 EPSILON、一边没加），
  * 同一个购物车在 H5 与小程序会显示出相差 1 分的合计。
  */
 export { round2 };

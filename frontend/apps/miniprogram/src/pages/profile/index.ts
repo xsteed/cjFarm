@@ -5,8 +5,8 @@
 // 静默登录），余额与订单区渲染引导文案而不是整个消失 —— 用户先看到「登录后有
 // 什么」，登录意愿才立得住。已登录渲染会员卡、余额与本会员的跨桌历史订单。
 // 会员功能未开启（管理端总闸关闭）时隐藏登录引导，只留说明。
-import { ORDER_STATUS } from '@dining/shared/dicts';
-import { money } from '@dining/shared/money';
+import { ORDER_STATUS } from '../../shared/dicts';
+import { money } from '../../shared/money';
 import { bindMemberPhone, deleteMemberAccount, getWallet, updateMemberProfile } from '../../api/client';
 import { memberEnabled, memberLogin, memberLogout, memberOrders, memberProfile, memberState } from '../../store/member';
 import { sessionState } from '../../store/session';

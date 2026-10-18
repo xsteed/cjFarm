@@ -9,8 +9,8 @@
 //
 // 实现注意：WXML 的表达式只支持运算与属性访问，**不支持函数调用**（如
 // `selected.indexOf(x) > -1`），所以选中态一律在 JS 里预计算成 `on` 标记再渲染。
-import { money } from '@dining/shared/money';
-import type { DishSpec, RemarkOption } from '@dining/types';
+import { money } from '../../shared/money';
+import type { DishSpec, RemarkOption } from '../../types';
 
 /** 渲染用的规格 chip：price 供逻辑使用，priceText 供展示。 */
 interface SpecChip {

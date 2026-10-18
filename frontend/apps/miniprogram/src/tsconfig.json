@@ -1,0 +1,8 @@
+{
+  // 微信开发者工具的 TS 编译读取 miniprogramRoot 下的这份 tsconfig。
+  // 编译器选项继承上级（供 tsc --noEmit 类型检查用），这里只收窄 include：
+  // 只编译小程序源码自身 —— 测试（tests/、test/）在 miniprogramRoot 之外，
+  // 不会把 `import 'vitest'` 带进开发者工具的编译范围。
+  "extends": "../tsconfig.json",
+  "include": ["./**/*.ts"]
+}

@@ -6,25 +6,24 @@
 //   ・令牌 2h 有效，过期/401 时**静默重登一次**（wx.login 免费无感），顾客无感知；
 //   ・注册动作 = 点按钮 → wx.login（静默）→ POST /customer/auth/login，免表单免密码；
 //   ・登录方式可插拔：这里只负责「拿小程序凭据」（wx.login 的 code），
-//     真正的接口调用在 @dining/api 的 memberLogin，网站/App 换成各自的凭据即可。
+//     真正的接口调用在 api/client.ts 的 memberLogin，网站/App 换成各自的凭据即可。
 //
 // 状态本体挂在 App 实例上（跨页共享的原因见 src/types.ts 顶部注释）；
-// 令牌存本地存储（键名来自 @dining/shared，三端共用），冷启动后恢复。
+// 令牌存本地存储（键名见 shared/keys.ts），冷启动后恢复。
 //
-// ⚠️ 这里直接 import '@dining/api' 而不是 '../api/client' 是有意的：
-// 本模块要注册 401 策略，被 api/client.ts 反过来引入；若再从 client 导入会形成环。
-// 模块加载期不做任何请求（只定义函数），因此加载顺序不影响正确性。
+// 依赖方向说明：本模块 → api/client（端点）与 api/http（401 注册）都是单向的；
+// 401 处理器的注册动作由 app.ts 在装配阶段调用（installMemberUnauthorizedHandler），
+// api/client 不反向依赖本模块，避免形成循环加载。
 import {
   getMyOrderDetail as apiMyOrderDetail,
   memberLogin as apiMemberLogin,
   memberOrders as apiMemberOrders,
-  memberProfile as apiMemberProfile,
-  setUnauthorizedHandler
-} from '@dining/api';
-import { safeStorage } from '@dining/shared';
+  memberProfile as apiMemberProfile
+} from '../api/client';
+import { setUnauthorizedHandler } from '../api/http';
+import { safeStorage } from '../shared/storage';
 import { CUSTOMER_TOKEN_KEY } from '../config';
-import type { GlobalData, MemberInfo, MemberOrderRow, MemberState } from '../types';
-import type { OrderDetail } from '@dining/types';
+import type { GlobalData, MemberInfo, MemberOrderRow, MemberState, OrderDetail } from '../types';
 
 /** 取全局唯一的会员登录态（可读可写，写入后调用方自行 setData）。 */
 export function memberState(): MemberState {
@@ -122,7 +121,8 @@ async function memberedGet<T>(call: () => Promise<T>): Promise<T> {
   try {
     return await attempt();
   } catch (e) {
-    const status = (e as { response?: { status?: number } })?.response?.status;
+    // ApiError.status：401 = 令牌过期（http.ts 在 401 时已清掉本地令牌）
+    const status = (e as { status?: number })?.status;
     if (status !== 401) throw e;
     saveToken('');
     await memberLogin();

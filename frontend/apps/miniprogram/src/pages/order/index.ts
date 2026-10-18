@@ -22,11 +22,11 @@ import type { Poller } from '../../store/poller';
 import { memberEnabled } from '../../store/member';
 import { goToMenu } from '../../utils/nav';
 import { toast } from '../../utils/toast';
-import { money } from '@dining/shared/money';
-import { ORDER_STATUS } from '@dining/shared/dicts';
-import { ORDER_STATUS_CODE, isActiveStatus } from '@dining/shared/orderStatus';
-import { payStatusText, payStatusTheme } from '@dining/shared/orderDisplay';
-import type { OrderDetail, TableInfo } from '@dining/types';
+import { money } from '../../shared/money';
+import { ORDER_STATUS } from '../../shared/dicts';
+import { ORDER_STATUS_CODE, isActiveStatus } from '../../shared/orderStatus';
+import { payStatusText, payStatusTheme } from '../../shared/orderDisplay';
+import type { OrderDetail, TableInfo } from '../../types';
 
 /** 「出餐中订单」列表行：WXML 不支持函数调用，标签文案在这里算好。 */
 interface ServingRow {

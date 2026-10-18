@@ -17,9 +17,9 @@ import type { Poller } from '../../store/poller';
 import { goToOrder } from '../../utils/nav';
 import { memberState } from '../../store/member';
 import { toast } from '../../utils/toast';
-import { money } from '@dining/shared/money';
-import { ORDER_STATUS } from '@dining/shared/dicts';
-import type { OrderDetail } from '@dining/types';
+import { money } from '../../shared/money';
+import { ORDER_STATUS } from '../../shared/dicts';
+import type { OrderDetail } from '../../types';
 
 /** 支付状态轮询间隔：5s（H5 在线支付也是约每 15s 查一次单，这里更密一点）。 */
 const PAY_POLL_INTERVAL_MS = 5000;

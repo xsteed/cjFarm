@@ -11,7 +11,9 @@ import prettierConfig from 'eslint-config-prettier';
 // 根配置里已经把 apps/miniprogram/** 排除，两者不会互相干扰。
 // ============================================================================
 export default [
-  { ignores: ['dist/**', 'node_modules/**'] },
+  // src/**/*.js 是开发者工具 TS 插件落盘的编译产物（与 .ts 同名同目录），
+  // 不属于源码：不进 lint，也不进版本库（见 .gitignore）。
+  { ignores: ['dist/**', 'node_modules/**', 'src/**/*.js'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   // prettier 放最后：关闭格式类规则，避免与 prettier --write 互相改写

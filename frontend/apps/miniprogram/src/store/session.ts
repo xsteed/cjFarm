@@ -3,9 +3,9 @@
 // 状态本体挂在 App 实例的 globalData 上（理由见 src/types.ts 顶部注释）；
 // 本模块只提供「读写这份状态」的函数，页面照旧 `import { sessionState } from '../store/session'`。
 import { STORAGE_KEY } from '../config';
-import { clampPerson, isValidPerson } from '@dining/customer-core/person';
+import { clampPerson, isValidPerson } from '../core/person';
 import type { GlobalData, SessionState } from '../types';
-import type { OrderDetail, PublicConfig, TableInfo } from '@dining/types';
+import type { OrderDetail, PublicConfig, TableInfo } from '../types';
 
 /** 取到全局唯一的会话态对象（可读可写，写入后调用方自行 setData）。 */
 export function sessionState(): SessionState {
@@ -64,7 +64,7 @@ export function applyConfig(config: PublicConfig): void {
 /**
  * 更新就餐人数（1..20），返回收敛后的值。
  * 菜单页与购物车页都读它算茶位费，保证两页合计一致。
- * 区间常量与收敛规则收在 @dining/customer-core/person，与 H5 / 后端注释同一口径。
+ * 区间常量与收敛规则收在 core/person.ts，与后端注释同一口径。
  */
 export function setPersonCount(n: number): number {
   const next = clampPerson(n);

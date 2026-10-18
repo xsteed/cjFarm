@@ -127,6 +127,11 @@ release/
 outputs/
 *.local
 
+# ---------------- 小程序 ----------------
+# 开发者工具 TS 编译插件写在源码旁的产物（原生 TS 项目的标准行为），不入库
+frontend/apps/miniprogram/src/**/*.js
+
 # ---------------- AI 辅助开发 ----------------
 # 规划 / 任务 / 中间产物（plan.md、tasks.md 等），本机工作区数据，不入库
 .agent/
+.codebuddy

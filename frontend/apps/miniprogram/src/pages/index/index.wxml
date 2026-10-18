@@ -149,6 +149,10 @@
           </view>
         </scroll-view>
 
+        <!-- 吸顶标题宿主：scroll-view 内 position:sticky 不可靠（部分基础库不生效，
+             见 wxss .sec 注释），改为滚动时由 onScroll 驱动悬浮标题（.sec-pin）。
+             宿主盖在 .dishes 之上：悬浮标题绝对定位于它的 top:0，不随列表滚动 -->
+        <view class="dishes-wrap">
         <scroll-view
           class="dishes"
           scroll-y
@@ -393,6 +397,17 @@
           </view>
           <view class="list-pad"></view>
         </scroll-view>
+
+        <!-- JS 悬浮吸顶标题：文案 = 当前滚到的分类；下一分类标题逼近顶部时
+             pinTop 变负把它顶出视口，视觉上正是「菜品滚完、标题上移让位」 -->
+        <view
+          wx:if="{{pinSec}}"
+          class="sec-pin"
+          style="transform:translateY({{pinTop}}px)"
+        >
+          {{pinSec}}
+        </view>
+        </view>
       </view>
     </view>
   </block>

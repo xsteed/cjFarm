@@ -1,14 +1,18 @@
 // 小程序入口：创建跨页共享状态 + 装配接口层。
 //
-// `import './api/client'` 的副作用是在应用启动前把 axios 实例换到 wx.request、
-// 指向后端域名并注入提示/401 策略（见该文件说明）。放在 app.ts 里可以保证
+// `import './api/client'` 的副作用是在应用启动前完成接口层装配
+// （baseURL / 提示实现，见该文件说明）。放在 app.ts 里可以保证
 // 任何页面发请求之前一定已经装配完成。
 import './api/client';
-import { reportVisit } from '@dining/api';
-import { restoreMember } from './store/member';
+import { installMemberUnauthorizedHandler, restoreMember } from './store/member';
+import { reportVisit } from './api/client';
 import { mpVisitorId } from './utils/visitor';
 import { resolveLaunchTableCode } from './utils/scene';
 import type { GlobalData } from './types';
+
+// 401 处置策略：会员专属接口令牌过期时静默重登（见 store/member.ts）。
+// 必须在任何请求发出之前注册 —— 放在模块加载期，早于所有页面生命周期。
+installMemberUnauthorizedHandler();
 
 App<GlobalData>({
   // 跨页共享状态直接挂在 App 实例上（类型与原因见 src/types.ts）。

@@ -14,14 +14,14 @@
 // 后端零改动；任何一项失败都只影响对应区块，扫码主路径永远可用。
 import { getMenu, getPublicConfig, getTable } from '../../api/client';
 import { mediaUrl } from '../../config';
-import { ORDER_STATUS } from '@dining/shared/dicts';
-import { money } from '@dining/shared/money';
-import { isActiveStatus } from '@dining/shared/orderStatus';
+import { ORDER_STATUS } from '../../shared/dicts';
+import { money } from '../../shared/money';
+import { isActiveStatus } from '../../shared/orderStatus';
 import { memberEnabled } from '../../store/member';
 import { applyConfig, readPersisted, sessionState } from '../../store/session';
 import { scanTableCode } from '../../utils/scan';
 import { toast } from '../../utils/toast';
-import type { Dish, DishSpec, MenuCategory, TableInfo } from '@dining/types';
+import type { Dish, DishSpec, MenuCategory, TableInfo } from '../../types';
 
 /** 招牌菜卡片（WXML 不做函数调用，展示串都在这里算好，见 docs/miniprogram.md 5.3）。 */
 interface SigDish {

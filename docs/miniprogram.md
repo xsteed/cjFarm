@@ -26,7 +26,7 @@
 | 默认主页 | `src/pages/home/*` | 小程序首页（`app.json` 第一项）。没扫桌台码时落地在这里：微信内直接唤起扫码进桌、上次桌台 / 进行中订单续用（**桌台详情确认存在才显示**，没有数据不出入口）、本店招牌橱窗。**扫码进桌仍然直达菜单**：后端出码的 `PagePath` 固定为 `pages/index/index`，扫码顾客不会多点一次 |
 | 扫小程序码 / 普通二维码进入 | `src/pages/index/index.ts` + `src/utils/scene.ts` | 支持 `scene=tableCode=X`、裸码值、`?tableCode=X`；无参数时用本地缓存兜底 |
 | 菜单浏览 | `src/pages/index/*` | 左侧分类 + 右侧菜品，右栏是**所有分类首尾相连的连续列表**（内容少的分类不会留白）；点分类平滑定位到对应分组标题，滚动时左侧高亮跟随，分组标题吸顶。菜品图/描述/价格（规格太多时显示「起」） |
-| 菜品搜索 | `src/pages/index/index.ts` + `packages/customer-core/src/search.ts` | 菜名 / 描述 / 规格名模糊搜索：按「包含」匹配，并支持菜名的顺序包含（「红肉」→「红烧肉」）；多关键词是「与」。搜索态隐藏左栏、结果回到顶部。搜索实现已抽到 `@dining/customer-core`，与 H5 共用同一份 |
+| 菜品搜索 | `src/pages/index/index.ts` + `src/core/search.ts` | 菜名 / 描述 / 规格名模糊搜索：按「包含」匹配，并支持菜名的顺序包含（「红肉」→「红烧肉」）；多关键词是「与」。搜索态隐藏左栏、结果回到顶部。实现收在 `src/core/search.ts`（算法语义在单测里钉死） |
 | 行内规格 / 份数 | `src/pages/index/index.ts` | 规格 ≤3 个的菜在菜品行里直接点 chip 切换（与 H5 同口径：只算**所选规格**的份数），并在行内加减；规格更多只能进弹层 |
 | 本店招牌分组 | `src/pages/index/index.ts` | 菜单页的**前端合成分类**（后端只在菜品上打 `tb_dish.signature` 标记，零接口改动）：左栏第一项「本店招牌」+ 右栏置顶分组，分组内容是与首页橱窗同款的**横滑卡片条**（图带「招牌」角标、菜名、价格「起」、售罄遮罩；点卡片进规格弹层）。只取 `signature=1` 且有规格的菜、跨分类重复只收一次、**不限量**；无招牌菜时整项不出现；搜索态隐藏。卡片条收进右栏扁平列表的一行（`kind: 'sig'`，内层 wx:for 沿用默认 item 别名）；左栏角标在合成分类与真实分类**各自计一次**（与美团/饿了么同口径）。数据取自已加载的菜单，不额外请求 |
 | 售罄（人工） | 后端 `tb_dish.sold_out` + 管理端「售罄」开关 + 小程序/H5 顾客端 | 与「下架」正交：下架不再下发，售罄仍下发但置灰、盖「售罄」遮罩、不可下单 |
@@ -46,18 +46,18 @@
 | 订单恢复 | `src/store/session.ts` + 各页 `recover()` | 冷启动/从「最近使用」进入时，用本地缓存的 `tableCode`/`orderNo` 回到原桌原单；本桌还有出餐中订单时保留 `orderNo` 不清 |
 | 底部导航（首页 / 点餐 / 订单 / 我的） | `src/components/tab-bar/*` + `src/utils/nav.ts` | 常驻显示（未下单时订单页是空态，也能切过去）；点餐页带 `append=1` 打开，否则会被「本桌已有进行中订单」弹回订单页 |
 | 没带桌台码时扫码自救 | `src/pages/index/index.ts` + `src/utils/scan.ts` | 从底部导航直接切到点餐、而本次没扫过码时，错误态给的是「扫码点餐」而不是无效的「重新加载」；扫到码就地加载菜单，不用退回首页 |
-| 接口复用 | `src/api/wx-adapter.ts` + `src/api/client.ts` | **`@dining/api` 一行未改**：用 axios 自定义 adapter 把传输层换成 `wx.request` |
-| 类型复用 | `@dining/types` | 全部实体与请求/响应类型共用 |
-| 纯函数复用 | `@dining/shared/{money,dicts,orderStatus,orderDisplay}` | 金额格式化、状态字典、状态判定与 H5 同一份实现 |
-| 提示 / 401 可注入 | `@dining/shared/ui` + `setUnauthorizedHandler` | 复用重构时为跨端预留的两个口子 |
+| 接口层 | `src/api/http.ts` + `src/api/client.ts` | **自研 wx.request 封装**：业务码解包、中文错误文案、按路径注入顾客令牌、silent 静默、401 处置，不依赖 axios |
+| 类型自包含 | `src/types.ts` | 全部实体与请求/响应类型独立维护（后端响应形态为唯一权威来源） |
+| 工具自包含 | `src/shared/*` + `src/core/*` | 金额格式化、状态字典、状态判定、搜索 / 规格 / 人数口径独立实现，语义与 H5 对齐（各文件注释与单测说明） |
+| 提示 / 401 可注入 | `src/shared/ui` + `api/http 的 setUnauthorizedHandler` | 逻辑层不绑定 UI 实现；401 由会员模块静默重登 |
 
 ### 目录结构
 
 ```
 frontend/apps/miniprogram/
 ├── build.mjs              # esbuild 构建：TS → 自包含 CJS + 拷贝 wxml/wxss/json
-├── project.config.json    # 微信开发者工具配置（miniprogramRoot = dist/）
-├── tsconfig.json          # wx 全局类型 + packages 路径映射
+├── project.config.json    # 微信开发者工具配置（miniprogramRoot = src/，原生编译 TS，无需预构建）
+├── tsconfig.json          # wx 全局类型（类型全部自包含，无工作区路径映射）
 ├── eslint.config.js       # 独立配置：只有小程序全局，没有 globals.browser
 ├── vitest.config.ts       # 单测（Node 环境，与 Web 端 jsdom 那套互相独立）
 ├── test/                  # 单测脚手架：wx 替身 + App/Page 全局替身 + 页面实例构造
@@ -65,8 +65,10 @@ frontend/apps/miniprogram/
 └── src/
     ├── app.ts/json/wxss   # 入口与全局样式（token 对齐 Web 端 style.css）
     ├── config.ts          # ⚠️ API_ORIGIN 等必改项集中在这里
-    ├── types.ts           # 跨页共享状态类型
-    ├── api/               # wx-adapter.ts（axios→wx.request）+ client.ts（装配）
+    ├── types.ts           # 后端响应形态 + 跨页共享状态类型（唯一来源）
+    ├── shared/            # keys（存储键）/ storage（wx.storage 安全封装）/ visitor / money / dicts / orderStatus / orderDisplay / ui
+    ├── core/              # 纯函数口径：search（菜单搜索）/ spec（可点与售罄判定）/ person（人数边界）
+    ├── api/               # http.ts（wx.request 传输层）+ client.ts（装配 + 全部端点）
     ├── store/             # cart（购物车）/ cartPersist（购物车持久化）/ session（桌台与订单）/ poller（轮询）/ member（会员）
     ├── utils/             # toast / scene（桌台码解析）/ scan（扫码取桌台码）/ nav（四页切页）
     ├── components/        # tab-bar（底部主导航）/ cart-bar（底部结算栏）/ spec-sheet（规格备注弹层）
@@ -77,14 +79,14 @@ frontend/apps/miniprogram/
 
 ```bash
 cd frontend
-npm run mp:build     # 构建到 apps/miniprogram/dist
-npm run mp:dev       # 构建并监听（改 TS/资源自动同步）
 npm run mp:verify    # typecheck + eslint + WXML/WXSS 审计 + 单测 + 构建 + 产物冒烟
 npm run test -w @dining/app-miniprogram   # 只跑单测（用例数与覆盖见第六节）/ 加 :watch 进入监听
 ```
 
-构建后用微信开发者工具「导入项目」指向 `frontend/apps/miniprogram/`（已配 `miniprogramRoot: dist/`，
-且关闭了工具侧的 ES6 转换与「构建 npm」——依赖已内联进产物）。
+**日常开发不需要任何构建**：项目已是原生结构（`miniprogramRoot: src/`），微信开发者工具
+「导入项目」指向 `frontend/apps/miniprogram/` 即可，工具原生编译 TypeScript（配置见 `src/tsconfig.json`）。
+`dist/` 只在跑 `verify`/CI 时由 `build.mjs` 临时生成（产物冒烟用），gitignore，与开发流程无关。
+测试放在 `src/` 之外的 `tests/`（小程序源码与测试分离），工具扫描 `src/` 时不会碰到 `import 'vitest'`。
 
 ---
 
@@ -225,7 +227,7 @@ export const DEV_TABLE_CODE = '8YG3Q335';
   → 成功后主动查单（GET /api/customer/pay/query）确认到账，才置「已支付」
 ```
 
-实现位置：`pages/pay/index.ts` 的 `onPayOnline` + `packages/api` 的 `payJsapi`；
+实现位置：`pages/pay/index.ts` 的 `onPayOnline` + `api/client.ts` 的 `payJsapi`；
 后端 `handler.PayJsapi` + `pay.Wxpay.CreateJsapi` + `paySign`。
 
 **为什么付款成功后还要查单**：`wx.requestPayment` 的 success 只代表「顾客完成了付款动作」，
@@ -299,21 +301,26 @@ POST /api/customer/pay/jsapi
 
 ## 五、复用边界与已知取舍
 
-### 5.1 为什么没有复用 `@dining/customer-core`
+### 5.1 与 Web 端的实现关系：同规则、各自实现
 
-`packages/customer-core` 的 `useCart` / `useOrderPolling` / `useUrge` 都建立在 **Vue 响应式**
-（`ref` / `computed` / `Ref` 参数）之上，而**原生小程序没有 Vue 运行时**，`computed` 无从工作。
-所以小程序侧另写了一份等价实现（`src/store/cart.ts`、`src/store/poller.ts`、`pages/order` 里的催菜）。
+小程序端**不引用**工作区包（`@dining/{api,types,shared,customer-core}`）：类型、接口层、
+工具与纯函数口径全部自包含在 `src/`（`types.ts` / `shared/` / `core/` / `api/`）。
+原 `packages/customer-core` 的 `useCart` / `useOrderPolling` / `useUrge` 建立在 **Vue 响应式**
+之上，原生小程序没有 Vue 运行时，无法复用 —— 小程序侧另写了等价实现
+（`src/store/cart.ts`、`src/store/poller.ts`、`pages/order` 里的催菜）；
+原共享层的纯函数（金额格式化、状态字典、搜索、规格与人数口径）也已收进
+`src/shared/` 与 `src/core/` 独立维护。
 
-**代价（要记住的一点）**：计价规则（茶位费 / 满减 / 合计口径）与催菜冷却策略现在有**两处实现**，
-改动时 H5 与小程序必须同步。要消除这份重复，只有两条路：
+**代价（要记住的一点）**：计价规则（茶位费 / 满减 / 合计口径）、催菜冷却策略、
+搜索算法现在与 H5 是**两处实现**，改动时两端必须同步（各端都有单测钉住语义，
+漂移会在测试里暴露）。要消除这份重复，只有两条路：
 
 1. 改用 **uni-app**（Vue 3 + Vite）：`customer-core` 可原样复用，但需要引入 `@dcloudio/*` 工具链，
    且会与 Web 端共用同一套依赖树（有把已验证的 Web 构建一起搞崩的风险）；
 2. 把 `customer-core` 重写成**不依赖 Vue**（换成普通回调 + 可注入的调度器），两端都复用它。
 
-这一版选了「原生 + 重复一份薄逻辑」，理由是：UI 无论选哪个框架都要重写，而原生零工具链风险、
-可完全本地验证（见第六节）。**如果你的判断是「重复逻辑的长期成本 > 工具链风险」，告诉我，我改走 uni-app。**
+当前选了「原生 + 独立一份薄逻辑」，理由是：小程序端获得完全的独立性与零工具链风险，
+可完全本地验证（见第六节）。
 
 ### 5.2 有意不复用的部分
 
@@ -325,13 +332,13 @@ POST /api/customer/pay/jsapi
 
 ### 5.3 工程上的简化（不是缺陷，但要知道）
 
-- **不做代码分割**：产物是每页自包含的 CJS，axios 被内联进每个入口，9 个产物（5 页面 + 3 组件 + app）
-  的 JS 合计约 305KB，整个 `dist/`（含 wxml/wxss/json）约 460KB —— 主包上限 2MB，安全。
-  要压到 ~70KB 可改 `format: 'esm'` + `splitting: true`（小程序支持 ESM，但需真机回归）；
-  或把 axios 换成约 40 行的 `wx.request` 封装。
-- **模块级单例不可用**：因为不分包，每个页面是独立 bundle，`src/store/*.ts` 里的模块级变量在
-  各页面之间**不共享**。跨页状态因此挂在 App 实例上（`getApp<T>().session / .cart`），
-  这也是小程序的惯用法。修改 `src/store/*` 时务必保持这个约定（详见 `src/types.ts` 顶部注释）。
+- **`dist/` 仅为验证产物**：`verify`/CI 里的构建冒烟仍走 esbuild 打出每页自包含的 CJS
+  （9 个产物 JS 合计约 105KB，整个 `dist/` 约 160KB），用于在无 DOM 宿主里执行产物、
+  抓浏览器 API 泄漏。日常开发不产生也不需要它（开发者工具直接编译 `src/`）。
+- **跨页状态挂在 App 实例上**：`getApp<T>().session / .cart`。原生结构下模块文件本来
+  全局共享（这一约束源自旧的「每页独立打包」方式），但 App 实例约定继续保留 ——
+  它不依赖模块加载顺序，页面代码也更直白。修改 `src/store/*` 时务必保持这个约定
+  （详见 `src/types.ts` 顶部注释）。
 - **WXML 表达式不支持函数调用**：所有要显示的值都在 JS 里预计算成扁平字段
   （如 `specChips[].on`、`dishes[].priceText`）。新增模板逻辑时不要写 `array.indexOf(...)` 之类。
 - **CSS 版本基线是 iOS 14.5+**：布局大量使用 flex `gap` 与 `rgb(r g b / a%)` 颜色写法；
@@ -355,7 +362,7 @@ POST /api/customer/pay/jsapi
 
 | 门 | 做什么 | 能拦住什么 |
 |---|---|---|
-| `tsc --noEmit` | 用 `miniprogram-api-typings` 的 `wx` 类型 + packages 源码路径映射做全量类型检查 | 类型/接口字段写错、`@dining/*` 导出变更未同步 |
+| `tsc --noEmit` | 用 `miniprogram-api-typings` 的 `wx` 类型对全量源码（含单测）做类型检查 | 类型/接口字段写错、端点与 `src/types.ts` 定义不同步 |
 | `eslint .`（独立配置） | 只有小程序全局（`wx`/`App`/`Page`/`Component`），**没有** `globals.browser` | 误用浏览器 API（如 `document`、`localStorage`）写进小程序代码 |
 | `scripts/audit-wxml.mjs` | 静态交叉核对每个 `.wxml` 的 `{{字段}}`、`bind*/catch*`、传给子组件的 kebab-case 属性，是否都在同名 `.ts` 的 `data`/`properties`/方法里 | **模板是字符串里的弱类型绑定**：字段名/方法名/属性名拼错时 tsc 与 eslint 都不会报，只在真机上渲染成空白 |
 | `scripts/audit-wxss.mjs` | 用 postcss 解析全部 `.wxss`，检查 `var(--x)` 有声明，并**按作用域**校验模板用到的每个 class 都有定义（页面 = 自身 + app.wxss；组件 = 仅自身，因为组件默认样式隔离） | 样式语法错误、token 名拼错、类名拼错、**组件误用全局类**（这类只表现为「样式没生效」，肉眼极难发现） |
@@ -378,7 +385,6 @@ POST /api/customer/pay/jsapi
 
 | 用例文件 | 覆盖点 |
 |---|---|
-| `src/api/__tests__/wx-adapter.test.ts`（18） | URL 与 params 拼接（编码、跳过空值）、content-type 规则、AxiosHeaders 归一化、method/timeout 透传、`validateStatus` 判定与 `AxiosError` 的 code/response、网络失败映射；再经真实 axios 实例验证「解包 `{code,msg,data}`」「业务错误弹中文提示」「silent 不弹」「401 走注入的策略」 |
 | `src/store/__tests__/cart.test.ts`（14） | 跨页共享（状态在 App 实例上）、同规格合并/异规格分行、减到 0 移除、备注覆盖、浮点收敛、茶位费/满减倍数/上限/合计口径 |
 | `src/pages/cart/__tests__/submit.test.ts`（7） | 空车拦截、首次下单与加菜判别（含人数沿用订单值）、幂等键在同一次重试中复用、业务错误时「不跳转 + 不丢购物车 + 保留幂等键」、提交中重复点击不发第二次请求、人数联动合计、移除需确认 |
 | `src/pages/cart/__tests__/remark.test.ts`（5） | 就地改单项备注：只改文字不加份数；老基础库拿不到输入内容时不清掉已有备注；下单成功但详情回拉失败时带 `orderNo` 跳订单页兜底 |
@@ -390,7 +396,8 @@ POST /api/customer/pay/jsapi
 | `src/pages/home/__tests__/home.test.ts`（9） | 默认主页：扫码进菜单（用 navigateTo，首页留在栈里）、扫到无关内容提示重扫 / 取消不提示、上次桌台**确认存在才显示**续用入口（拉不到桌台详情就收起）、进行中订单卡片（已完成的单不进）、招牌菜只取 `signature=1` 且多规格给最低价 |
 | `src/pages/index/__tests__/signature.test.ts`（9） | 菜单页「本店招牌」合成分类：左栏第一项 + 右栏分组标题 + 横滑卡片条（初始高亮在它上）；卡片只取 `signature=1` 且跳过无规格菜、跨分类重复只收一次、多规格给最低价 +「起」、售罄置灰；角标合成分类与真实分类各计一次；点卡片开规格弹层不跳转、售罄只提示不进车；卡片坏图只回写那一张；搜索态整组消失；无招牌菜整项不出现 |
 | `src/utils/__tests__/scene.test.ts`（21） | 小程序码 scene / 裸码值 / urlencode / 多参数 / 非法编码 / 空值；小程序内扫码结果解析（`/order/<码>`、`?tableCode=`、小程序码 path、无关链接返回空串） |
-| `packages/customer-core/src/__tests__/search.test.ts` | 关键词拆分（空白/中英文逗号）、菜名与描述与规格名命中、顺序包含、多关键词「与」、空词短路、过滤时不改写原菜单（与 H5 共用同一份实现与用例） |
+| `src/api/__tests__/http.test.ts`（8） | 接口传输层：业务码解包、业务失败转 ApiError（保留响应体供催菜冷却读取）、silent 不弹全局提示、HTTP 错误文案优先级、网络失败与超时、401 触发处理器、/customer/ 路径自动带顾客令牌、GET 查询参数拼 URL |
+| `src/core/__tests__/search.test.ts`（11） | 菜单模糊搜索：关键词拆分（空白/中英文逗号）、菜名与描述与规格名命中、顺序包含、多关键词「与」、空词短路、过滤时不改写原菜单 |
 | `src/utils/__tests__/nav.test.ts`（7） | 底部导航切页：已在目标页不跳、目标页在栈里就 `navigateBack`（含跨页 delta）、不在栈里 `redirectTo`（点餐页必须带 `append=1`，否则被弹回订单页） |
 | `src/utils/__tests__/toast.test.ts`（3） | 只有带图标的提示才截断到 7 字，纯文字提示完整保留 |
 

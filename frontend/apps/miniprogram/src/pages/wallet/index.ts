@@ -5,7 +5,7 @@
 // 充值链路与订单支付共用同一个回调地址,这里轮询入账状态只为即时刷新余额。
 import { createWalletRecharge, getWallet, getWalletRechargeStatus, listWalletTxns } from '../../api/client';
 import type { WalletInfo, WalletTxnRow } from '../../api/client';
-import { money } from '@dining/shared/money';
+import { money } from '../../shared/money';
 import { sessionState } from '../../store/session';
 import { toast } from '../../utils/toast';
 

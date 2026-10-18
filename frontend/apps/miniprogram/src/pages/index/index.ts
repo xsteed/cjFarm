@@ -30,14 +30,14 @@ import {
 import { toast } from '../../utils/toast';
 import { resolveTableCode } from '../../utils/scene';
 import { scanTableCode } from '../../utils/scan';
-import { money } from '@dining/shared/money';
-import { ORDER_STATUS } from '@dining/shared/dicts';
-import { isActiveStatus } from '@dining/shared/orderStatus';
+import { money } from '../../shared/money';
+import { ORDER_STATUS } from '../../shared/dicts';
+import { isActiveStatus } from '../../shared/orderStatus';
 // 搜索与「几个规格算多」都与 H5 共用同一份实现：改一处两端同步
-import { filterMenu } from '@dining/customer-core/search';
-import { INLINE_SPEC_MAX } from '@dining/customer-core/spec';
-import { PERSON_MAX, PERSON_MIN, isValidPerson } from '@dining/customer-core/person';
-import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo } from '@dining/types';
+import { filterMenu } from '../../core/search';
+import { INLINE_SPEC_MAX } from '../../core/spec';
+import { PERSON_MAX, PERSON_MIN, isValidPerson } from '../../core/person';
+import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo } from '../../types';
 
 /** 右栏顶部的锚点 id：换搜索词后要把列表拉回顶部（见 scrollListTop）。 */
 const LIST_TOP_ANCHOR = 'list-top';
@@ -248,6 +248,9 @@ Page({
     /** 该菜在购物车里的现有份数：弹层据此提示「确定后是再加一份」 */
     sheetInCart: 0,
     sheetDish: { dishName: '', specs: [], initialSpecId: 0, initialRemark: '' } as SheetDish,
+    /** JS 悬浮吸顶标题：当前分类名 + 让位位移（px，负值 = 顶出视口），见 syncPinHeader */
+    pinSec: '',
+    pinTop: 0,
     /** 抛物线飞球列表：每次「+」挂载一个新节点，挂载即播放动画，动画完由 JS 移除 */
     flyBalls: [] as FlyBall[]
   },
@@ -264,6 +267,9 @@ Page({
   /** 右栏可视高度与当前位置，用于判断「是否已滚到底」。 */
   listHeight: 0,
   scrollTop: 0,
+
+  /** 悬浮吸顶标题的自身高度（px）：首次滚动时按 70rpx 换算并缓存（见 syncPinHeader）。 */
+  pinH: 0,
 
   /** 分类标题偏移是否需要补量（滚在中间时量不准，等滚回顶部再补，见 measureSections）。 */
   needMeasure: false,
@@ -801,6 +807,45 @@ Page({
       cur = this.offsets[curIdx].categoryId;
     }
     if (cur !== this.data.activeCatId) this.setData({ activeCatId: cur, navIntoId: this.navIdOf(cur) });
+    // 悬浮吸顶标题与左栏高亮同源（都用 offsets/scrollTop），每次滚动都要同步
+    this.syncPinHeader();
+  },
+
+  /**
+   * JS 悬浮吸顶标题：scroll-view 内 position:sticky 在部分基础库/机型上不生效
+   * （.sec 的注释），改由滚动驱动 —— 按 offsets 找当前分类名钉到 .sec-pin
+   * （wxml 里绝对定位于右栏顶部，不随列表滚）；
+   * 下一分类标题逼近顶部时 pinTop 变负（translateY 把它顶出视口），由列表里
+   * 真正的 .sec 自然接替 —— 「钉顶 → 菜品滚完 → 上移让位」不再依赖 sticky。
+   *
+   * 与 onScroll 的高亮判定同用 TOP_LINE 触发线，标题与左栏高亮永远一致。
+   */
+  syncPinHeader(): void {
+    const st = this.scrollTop;
+    const offsets = this.offsets;
+    if (!offsets.length) return;
+    let idx = 0;
+    for (let i = 0; i < offsets.length; i++) {
+      if (offsets[i].top <= st + TOP_LINE) idx = i;
+    }
+    let name = '';
+    for (const c of this.data.cats as CatRow[]) {
+      if (c.categoryId === offsets[idx].categoryId) {
+        name = c.categoryName;
+        break;
+      }
+    }
+    // 标题高度估算：.sec 的 padding 22+12rpx + 行高 ≈ 70rpx，按屏宽换算成 px
+    if (!this.pinH) {
+      const win = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync();
+      this.pinH = (70 * win.windowWidth) / 750;
+    }
+    // 下一分类标题距视口顶不足一条标题高：把悬浮标题按差值顶上去，刚好同步让位
+    const nextTop = offsets[idx + 1] ? offsets[idx + 1].top : Number.MAX_SAFE_INTEGER;
+    const pinTop = nextTop - st < this.pinH ? nextTop - st - this.pinH : 0;
+    if (name !== this.data.pinSec || pinTop !== this.data.pinTop) {
+      this.setData({ pinSec: name, pinTop });
+    }
   },
 
   /** 左栏里某个分类的 scroll-into-view 锚点（分类多到滚出可视区时，用它把高亮项带回来）。 */

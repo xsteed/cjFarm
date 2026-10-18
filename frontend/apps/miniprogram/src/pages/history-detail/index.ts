@@ -13,11 +13,11 @@ import { linesFromItems } from '../../store/cartPersist';
 import { memberOrderDetail } from '../../store/member';
 import { sessionState } from '../../store/session';
 import { toast } from '../../utils/toast';
-import { money } from '@dining/shared/money';
-import { ORDER_STATUS } from '@dining/shared/dicts';
-import { isActiveStatus } from '@dining/shared/orderStatus';
-import { payStatusText, payStatusTheme } from '@dining/shared/orderDisplay';
-import type { MenuCategory, OrderDetail } from '@dining/types';
+import { money } from '../../shared/money';
+import { ORDER_STATUS } from '../../shared/dicts';
+import { isActiveStatus } from '../../shared/orderStatus';
+import { payStatusText, payStatusTheme } from '../../shared/orderDisplay';
+import type { MenuCategory, OrderDetail } from '../../types';
 
 /** 明细行（WXML 不做函数调用，展示串全部预计算）。 */
 interface Row {
