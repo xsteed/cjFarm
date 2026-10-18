@@ -22,7 +22,7 @@
       bindtap="onOpenServing"
     >
       <text class="sp-label">{{item.label}}</text>
-      <text class="sp-go">查看进度 ›</text>
+      <text class="sp-go">查看订单 ›</text>
     </view>
     <view class="sp-hint">出餐中的订单已付款，无需再次支付</view>
     <view

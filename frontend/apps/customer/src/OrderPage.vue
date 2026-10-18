@@ -415,7 +415,7 @@
         >
           <span class="sl-no">#{{ o.shortNo || o.orderNo }}</span>
           <span class="sl-status">{{ ORDER_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}</span>
-          <span class="sl-go">查看进度 ›</span>
+          <span class="sl-go">查看订单 ›</span>
         </button>
         <p class="sl-hint">出餐中的订单已付款，无需再次支付</p>
       </div>
