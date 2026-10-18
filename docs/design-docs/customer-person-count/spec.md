@@ -345,11 +345,11 @@ function startNewOrder(): void {
     <div class="ps-title">本桌用餐几位？</div>
     <div class="ps-hint">选好人数，即刻点餐～</div>
 
-    <div class="pg-chips">
+    <div class="pg-grid">
       <button
         v-for="n in PERSON_CHIPS"
         :key="n"
-        class="pg-chip"
+        class="pg-cell"
         :class="{ on: personDraft === n }"
         @click="personDraft = n"
       >{{ n }}</button>
@@ -438,7 +438,7 @@ function startNewOrder(): void {
 }
 ```
 
-chip 用品牌色高亮，`disabled` 态降低透明度；`.pg-chips` 单行排列（8 个 chip 在 480px 宽度内放得下）。整体面板高度约 180~200px。
+chip 用品牌色高亮，`disabled` 态降低透明度；`.pg-grid` 五列两行等宽格子（1~10，每格约 65px 宽）。整体面板高度约 200~230px。
 
 > 两个实现细节：
 > 1. `input` 直接 `v-model.number` 时输入 `abc` 会变成空串；`confirmPerson` 里再做一次 `Math.floor(Number(...))` 与范围校验，非法值不会写入。
@@ -576,11 +576,11 @@ onConfirmPerson(): void {
     <view class="ps-title">本桌用餐几位？</view>
     <view class="ps-hint">选好人数，即刻点餐～</view>
 
-    <view class="pg-chips">
+    <view class="pg-grid">
       <view
         wx:for="{{personChips}}"
         wx:key="*this"
-        class="pg-chip {{personDraft === item ? 'on' : ''}}"
+        class="pg-cell {{personDraft === item ? 'on' : ''}}"
         data-n="{{item}}"
         bindtap="onPickPerson"
       >{{item}}</view>
@@ -643,7 +643,7 @@ onConfirmPerson(): void {
 }
 ```
 
-其余 `.pg-chip` / `.pg-stepper` / `.pg-confirm` 与 H5 对齐（品牌橙、chip 单选高亮、步进器左 + 确认按钮右的同一行布局）。
+其余 `.pg-cell` / `.pg-stepper` / `.pg-confirm` 与 H5 对齐（品牌橙、格子单选高亮、步进器左 + 确认按钮右的同一行布局）。
 
 #### 5.2.5 购物车页 / 订单页标记「已选」
 
@@ -826,7 +826,7 @@ onConfirmPerson(): void {
 
 | 阶段 | 内容 | 说明 |
 |---|---|---|
-| **Phase 1（P0）** | F1~F4：H5 进入面板 + 持久化 + 再点一单 | 独立可发布，立即修正 H5 茶位费 |
+| **Phase 1（P0）** | F1~F4：H5 进入面板 + 持久化 + 再点一单（已实现） | 独立可发布，立即修正 H5 茶位费 |
 | **Phase 2（P0）** | B1~B5：后端桌级共享 + M1~M10：小程序对齐 | 后端为纯内存态、无 schema 变更，可与小程序同版本发布 |
 | **Phase 3（可选）** | H5 订单页补「未支付改人数」入口（接 `/customer/order/person`）；或面板加「稍后再选」入口（人数按 1 兜底） | 与小程序对齐的独立小需求，不在本次范围 |
 

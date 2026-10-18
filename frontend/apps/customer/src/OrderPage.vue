@@ -700,6 +700,65 @@
       @close="closeSheet"
       @confirm="confirmSheet"
     />
+
+    <!-- 入座选人数：半透明蒙层 + 贴底面板（茶位费门店）。菜单在蒙层下可见但点不了，
+         顾客扫码后不会面对陌生页面；面板只做「选人数」一件事，茶位费照旧在购物车明细里 -->
+    <div
+      v-if="personGate"
+      class="person-mask"
+    >
+      <div class="person-sheet">
+        <div class="ps-title">本桌用餐几位？</div>
+        <div class="ps-hint">选好人数，即刻点餐～</div>
+
+        <div class="pg-grid">
+          <button
+            v-for="n in PERSON_CHIPS"
+            :key="n"
+            class="pg-cell"
+            :class="{ on: personDraft === n }"
+            @click="personDraft = n"
+          >
+            {{ n }}
+          </button>
+        </div>
+
+        <div class="ps-row">
+          <div class="pg-stepper">
+            <button
+              class="pg-step"
+              :disabled="personDraft <= PERSON_MIN"
+              @click="personDraft = Math.max(PERSON_MIN, personDraft - 1)"
+            >
+              −
+            </button>
+            <input
+              v-model.number="personDraft"
+              class="pg-num"
+              type="number"
+              inputmode="numeric"
+              :min="PERSON_MIN"
+              :max="PERSON_MAX"
+              placeholder="—"
+            />
+            <button
+              class="pg-step"
+              :disabled="personDraft >= PERSON_MAX"
+              @click="personDraft = Math.min(PERSON_MAX, personDraft + 1)"
+            >
+              +
+            </button>
+          </div>
+          <button
+            class="pg-confirm"
+            :disabled="personDraft < PERSON_MIN || personDraft > PERSON_MAX"
+            @click="confirmPerson"
+          >
+            {{ personDraft >= PERSON_MIN ? `开始点餐（${personDraft}人）` : '请先选择人数' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -716,12 +775,14 @@ import {
   getPublicConfig,
   getRemarks,
   getTable,
-  reportVisit
+  reportVisit,
+  setTablePerson
 } from '@dining/api';
 import QRCode from 'qrcode';
 import type { MenuCategory, OrderDetail, OrderSummary, PublicConfig, RemarkOption, TableInfo } from '@dining/types';
 import { isActiveStatus, safeSession, ui, visitorId } from '@dining/shared';
 import { useCart, useOrderPolling, useUrge } from '@dining/customer-core';
+import { PERSON_MAX, PERSON_MIN, isValidPerson } from '@dining/customer-core';
 import type { ViewState } from '@dining/customer-core';
 import { setCustomerTitle } from './title';
 import { useCartPersist } from './composables/useCartPersist';
@@ -753,6 +814,12 @@ const config = ref<PublicConfig>({});
 const shopName = ref('扫码点餐');
 const cartVisible = ref(false);
 const personCount = ref(1);
+// 「入座选人数」蒙层（茶位费门店）：盖在菜单上方，菜单可见但点不了
+const personGate = ref(false);
+// 蒙层面板上的草稿值：0 = 还没选（不预选，人数必须被显式选出来）
+const personDraft = ref(0);
+/** 快捷人数格子（1~10，五列两行）；11~20 走步进器与直接输入。 */
+const PERSON_CHIPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const orderRemark = ref('');
 const submitting = ref(false);
 const currentOrder = ref<OrderDetail | null>(null);
@@ -787,6 +854,14 @@ const payDoneSub = computed(() => {
 const imgErrs = ref(new Set<number>());
 // 菜单搜索关键词:放在页面层,搜索框与菜单列表共用(搜索框在白卡顶部,菜单里面只做过滤)
 const keyword = ref('');
+// 人数变化统一落 sessionStorage：购物车抽屉改人数、加菜同步、再点一单都覆盖，
+// 刷新后即使不弹面板也能恢复到上次的值（与购物车持久化同一会话语义）
+watch(personCount, v => {
+  if (tableId.value <= 0) return;
+  const n = Math.floor(Number(v) || 0);
+  if (n >= PERSON_MIN && n <= PERSON_MAX) safeSession.set(personKey(), String(n));
+});
+
 // 搜索框展开态:hero 头部的搜索按钮控制展开,空词点 × 收起
 const searchOpen = ref(false);
 // 收起搜索页时清掉关键词,回到菜单页不残留搜索态
@@ -904,6 +979,48 @@ const orderedQty = (dishId: number | undefined) =>
   // 「不是本人的单」浏览模式下不显示上一桌的「已点」标记,避免泄露他人点了什么
   (foreign.value ? 0 : orderedMap.value[dishId as number]) || 0;
 
+// ---- 入座选人数（茶位费门店） ----
+// 人数是「这张桌」的属性：判定链 = 本机会话已选 > 桌级共享值 > 弹面板。
+
+function personKey(): string {
+  return `dining:person:${tableId.value}`;
+}
+
+/** 本会话为这张桌选过的人数；没选过返回 0。 */
+function rememberedPerson(): number {
+  const v = Math.floor(Number(safeSession.get(personKey())) || 0);
+  return v >= PERSON_MIN && v <= PERSON_MAX ? v : 0;
+}
+
+/** 桌级共享值：同桌其他设备已选过时直接沿用（返回是否采纳）。 */
+function adoptPendingPerson(tb: TableInfo): boolean {
+  const n = Math.floor(Number(tb.pendingPersonCount) || 0);
+  if (!isValidPerson(n)) return false;
+  personCount.value = n;
+  return true;
+}
+
+/** 茶位费是否开启（进入面板只看它）。 */
+function seatFeeOn(cfg: PublicConfig): boolean {
+  return cfg.seat_fee_enabled === '1' && Number(cfg.seat_fee) > 0;
+}
+
+function confirmPerson(): void {
+  const n = Math.floor(Number(personDraft.value) || 0);
+  if (!isValidPerson(n)) return;
+  personCount.value = n;
+  safeSession.set(personKey(), String(n));
+  // view 本来就是 'menu'：面板一收，菜单已渲染好，顾客直接点菜
+  personGate.value = false;
+  // 全桌共享：上报给后端，同桌其他手机扫码进来直接沿用、不再重复选。
+  // fire-and-forget：上报失败只影响「别人免选」这一体验，绝不打断自己的点餐。
+  if (tableId.value > 0) {
+    void setTablePerson({ tableId: tableId.value, personCount: n }).catch(() => {
+      /* 静默：面板是体验优化，不是下单链路的一环 */
+    });
+  }
+}
+
 // 订单是否仍在进行中(1已下单/2制作中/3已上齐)。
 // 加菜还需未支付;催菜只要求进行中——已付款但迟迟未上齐的订单同样可以催。
 const isActive = computed(() => isActiveStatus(currentOrder.value?.orderStatus));
@@ -1016,10 +1133,13 @@ function startAppend(): void {
 
 // 顾客侧已结束(已结账/完成/取消)后的「再点一单」:清空当前订单与购物车,回菜单开新单。
 function startNewOrder(): void {
+  // 「再点一单」是同一批客人继续吃：人数沿用上一单，避免新单按 1 人收茶位费。
+  // 旧单没有人数(理论上不会)时退回本会话记忆值，再退回 1。
+  const prev = Number(currentOrder.value?.personCount) || rememberedPerson() || 1;
   currentOrder.value = null;
   cart.value = [];
   orderRemark.value = '';
-  personCount.value = 1;
+  personCount.value = Math.max(PERSON_MIN, Math.min(PERSON_MAX, prev));
   view.value = 'menu';
   // 必须显式停轮询:pollOnce 在 currentOrder 为空时会直接 return 不发请求,
   // 但 3 秒的定时器会一直空转到组件卸载(「再点一单」后长时间停在菜单页)。
@@ -1265,7 +1385,14 @@ async function load(): Promise<void> {
     } else if (lockStatus.value) {
       view.value = 'locked';
     } else {
+      // 菜单照常进：就算要选人数，顾客也应该先看到菜单（蒙层形式）
+      const remembered = rememberedPerson();
+      if (remembered) personCount.value = remembered;
+      // 桌级共享：别的手机选过（pendingPersonCount）则沿用；本机记忆优先
+      const adopted = !remembered && adoptPendingPerson(tb);
       view.value = 'menu';
+      personGate.value = seatFeeOn(cfg) && !remembered && !adopted;
+      if (personGate.value) personDraft.value = 0;
     }
     // 购物车要等订单归属定下来再恢复:它的 key 与恢复口径都依赖 currentOrder。
     // 浏览模式同样恢复 —— 顾客挑好的菜在刷新后不丢,清台后能直接提交
@@ -1940,6 +2067,173 @@ onUnmounted(() => {
 
 .resume-btn:active {
   opacity: 0.85;
+}
+
+/* ---------- 入座选人数：半透明蒙层 + 贴底面板（茶位费门店） ----------
+   菜单照常渲染，蒙层只是盖在上面：顾客扫码后立刻看得到菜品，不会因为
+   「什么都没有」而心烦。z-index 高于结算栏(90)/底部导航(88)，低于抽屉(1500)。 */
+.person-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgb(15 15 20 / 45%);
+  animation: pg-fade 0.2s ease-out;
+}
+
+@keyframes pg-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.person-sheet {
+  width: 100%;
+  max-width: 480px;
+  padding: 18px 18px calc(16px + env(safe-area-inset-bottom));
+  border-radius: 18px 18px 0 0;
+  background: #fff;
+  box-shadow: 0 -16px 48px rgb(0 0 0 / 18%);
+  animation: pg-up 0.24s cubic-bezier(0.22, 0.9, 0.36, 1);
+}
+
+@keyframes pg-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0.4;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.ps-title {
+  color: var(--ink, #1a1a1a);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-align: center;
+}
+
+/* 一行中性提示：只交代「选完就能点菜」这个下一步，不涉及金额 */
+.ps-hint {
+  margin-top: 4px;
+  margin-bottom: 14px;
+  color: var(--ink-3, #8c8c8c);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 快捷人数 1~10：五列两行等宽格子，点按没有瞄准压力 */
+.pg-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pg-cell {
+  width: calc((100% - 32px) / 5);
+  height: 44px;
+  border: 1.5px solid var(--line, #eee);
+  border-radius: var(--r-md, 12px);
+  background: #fafafa;
+  box-sizing: border-box;
+  color: var(--ink-2, #4a4a4a);
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.pg-cell.on {
+  border-color: var(--brand, #ff6b35);
+  background: var(--brand-soft, #fff1ea);
+  color: var(--brand-deep, #f0481f);
+  font-weight: 700;
+  box-shadow: 0 4px 16px rgb(240 72 31 / 16%);
+}
+
+/* 步进器（左）+ 确认按钮（右）：同一行，高度对齐 */
+.ps-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.pg-stepper {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 14px;
+  border: 1.5px solid var(--line, #eee);
+  border-radius: var(--r-pill, 999px);
+  background: #fafafa;
+  box-sizing: border-box;
+}
+
+.pg-step {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--brand-deep, #f0481f);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pg-step:disabled {
+  color: var(--ink-4, #c7c7c7);
+  cursor: not-allowed;
+}
+
+.pg-num {
+  width: 40px;
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--ink, #1a1a1a);
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.pg-num::-webkit-outer-spin-button,
+.pg-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pg-confirm {
+  flex: 1;
+  height: 46px;
+  border: none;
+  border-radius: var(--r-pill, 999px);
+  background: linear-gradient(135deg, var(--brand, #ff6b35), var(--brand-deep, #f0481f));
+  box-shadow: 0 8px 18px rgb(240 72 31 / 28%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pg-confirm:disabled {
+  background: #d9d9d9;
+  box-shadow: none;
+  cursor: not-allowed;
 }
 </style>
 

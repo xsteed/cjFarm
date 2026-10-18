@@ -306,10 +306,9 @@
 import { computed, nextTick, ref } from 'vue';
 import type { OrderDetail } from '@dining/types';
 import type { CartItem } from '@dining/customer-core';
-
-/** 人数上下限:与小程序会话(setPersonCount)、管理端编辑弹窗三方统一 —— 茶位费按人数算,口径不一致会产生异常大额 */
-const PERSON_MIN = 1;
-const PERSON_MAX = 20;
+// 人数上下限收在共享层（与小程序 setPersonCount、管理端编辑弹窗同一口径）：
+// 茶位费按人数算，两端不一致会产生异常大额
+import { PERSON_MAX, PERSON_MIN } from '@dining/customer-core';
 
 /** 点数字直接输入:大桌不必连点 19 下加号 */
 const editingCount = ref(false);

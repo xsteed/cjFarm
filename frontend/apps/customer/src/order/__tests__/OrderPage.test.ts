@@ -12,6 +12,7 @@ import {
   getRemarks,
   getTable,
   reportVisit,
+  setTablePerson,
   urgeOrder
 } from '@dining/api';
 import type { MenuCategory, OrderDetail, PublicConfig, RemarkOption, TableInfo } from '@dining/types';
@@ -55,6 +56,7 @@ vi.mock('@dining/api', () => ({
   urgeOrder: vi.fn(),
   createPay: vi.fn(),
   queryPay: vi.fn(),
+  setTablePerson: vi.fn(),
   // 站点访问统计打点(挂载即上报一次,失败静默)
   reportVisit: vi.fn(() => Promise.resolve())
 }));
@@ -68,6 +70,7 @@ const getOrderByNoMock = vi.mocked(getOrderByNo);
 const urgeOrderMock = vi.mocked(urgeOrder);
 const createPayMock = vi.mocked(createPay);
 const reportVisitMock = vi.mocked(reportVisit);
+const setTablePersonMock = vi.mocked(setTablePerson);
 
 // CartDrawer 只依赖 t-drawer 一个 TDesign 组件,用同名全局组件按 visible 渲染默认插槽即可稳定驱动内部交互。
 const TDrawerStub = defineComponent({
@@ -753,6 +756,100 @@ describe('先付模式 · 页面落点与待付款引导', () => {
 
     expect(wrapper.find('.pay-wrap').exists()).toBe(false);
     expect(wrapper.find('.st-payfirst-tip').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+// 茶位费按人数算，人数默认 1 会让多人桌少收。这组用例守住「入座先选人数」：
+// 只在「茶位费开启 + 新桌未选过」时弹；菜单必须先渲染（蒙层不是白板）；
+// 不预选；同桌共享（pendingPersonCount 沿用 / 确认后上报）。
+describe('入座选人数（茶位费门店）', () => {
+  const seatFeeConfig: PublicConfig = { ...configFixture, seat_fee_enabled: '1', seat_fee: '2' };
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    getTableMock.mockResolvedValue(tableNoOrder);
+    getPublicConfigMock.mockResolvedValue(seatFeeConfig);
+    setTablePersonMock.mockResolvedValue(undefined);
+  });
+
+  it('茶位费开启 + 新桌未选过：菜单照常渲染，面板盖在上面且未选不可确认', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.person-mask').exists()).toBe(true);
+    // 菜单已渲染：顾客扫码后看到的是「菜单 + 蒙层」，不是白板
+    expect(wrapper.text()).toContain('宫保鸡丁');
+    const confirm = wrapper.find('.pg-confirm');
+    expect(confirm.exists()).toBe(true);
+    expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('选 4 人确认：面板收起、人数生效、上报桌级共享', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await wrapper.findAll('.pg-cell')[3].trigger('click'); // 4
+    await wrapper.find('.pg-confirm').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('.person-mask').exists()).toBe(false);
+    expect(setTablePersonMock).toHaveBeenCalledWith({ tableId: 1, personCount: 4 });
+    // 合计含 4 人茶位费：加一道 28 元的菜 → 28 + 4×2 = 36
+    await wrapper.findAll('.op-dish')[0].find('.op-add').trigger('click');
+    await wrapper.find('.op-checkout').trigger('click');
+    await nextTick();
+    expect(wrapper.text()).toContain('茶位费（4人）');
+    wrapper.unmount();
+  });
+
+  it('点数字直接输入：覆盖 11~20 的桌况', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await wrapper.find('.pg-num').setValue('12');
+    await wrapper.find('.pg-confirm').trigger('click');
+    await flushPromises();
+
+    expect(setTablePersonMock).toHaveBeenCalledWith({ tableId: 1, personCount: 12 });
+    wrapper.unmount();
+  });
+
+  it('茶位费关闭：不弹面板，行为与改造前一致', async () => {
+    getPublicConfigMock.mockResolvedValue(configFixture);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.person-mask').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('同桌其他设备已选过（pendingPersonCount）：直接沿用，不弹面板', async () => {
+    getTableMock.mockResolvedValue({ ...tableNoOrder, pendingPersonCount: 6 });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.person-mask').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('本会话已选过（刷新重进）：不弹面板且人数恢复', async () => {
+    sessionStorage.setItem('dining:person:1', '5');
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.person-mask').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('本桌已有未结账订单：不弹面板（人数以订单为准）', async () => {
+    sessionStorage.clear();
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: makeOrder() });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('.person-mask').exists()).toBe(false);
     wrapper.unmount();
   });
 });
