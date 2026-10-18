@@ -1,4 +1,15 @@
 <view class="page">
+  <!-- 左上角返回：tab 切页（redirectTo，栈深 1）没有原生返回箭头，自己画一个；
+       从菜单页「出餐中」标签 navigateTo 进来时原生箭头已在，showBack 为 false 不重复画 -->
+  <view
+    wx:if="{{showBack}}"
+    class="page-back"
+    bindtap="onBack"
+  >
+    <view class="pb-arrow"></view>
+    <text class="pb-text">返回</text>
+  </view>
+
   <view
     wx:if="{{loading}}"
     class="state"

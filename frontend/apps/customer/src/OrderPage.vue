@@ -80,7 +80,9 @@
         :shop-name="shopName"
         :table="table"
         :show-search="view === 'menu'"
+        :show-back="orderViewActive"
         @search="searchOpen = true"
+        @back="backFromOrder"
       />
 
       <!-- 白色圆角卡片:承载出餐提示条 + 菜单,整体上移盖住 hero 底部。
@@ -1181,6 +1183,24 @@ function startNewOrder(): void {
   // 必须显式停轮询:pollOnce 在 currentOrder 为空时会直接 return 不发请求,
   // 但 3 秒的定时器会一直空转到组件卸载(「再点一单」后长时间停在菜单页)。
   stopPolling();
+}
+
+// 订单相关视图(进度/已结账/完成/取消)才显示左上角返回按钮。
+const orderViewActive = computed(
+  () =>
+    (view.value === 'order' || view.value === 'settled' || view.value === 'done' || view.value === 'canceled') &&
+    !!currentOrder.value
+);
+
+// 左上角返回：看的是从「出餐中订单」列表点进来的已付款订单 → 回列表；
+// 自己的进行中订单 → 回点餐页（与底部 tab 的「点餐」同效果）。
+function backFromOrder(): void {
+  if (servingOrders.value.length && Number(currentOrder.value?.payStatus) === 1) {
+    currentOrder.value = null;
+    stopPolling();
+    return;
+  }
+  view.value = 'menu';
 }
 
 // 订单 Tab 里点「出餐中」列表的一条:回拉完整详情后进入订单进度视图。

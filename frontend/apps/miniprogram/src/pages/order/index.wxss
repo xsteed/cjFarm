@@ -10,6 +10,26 @@
   background: var(--bg);
 }
 
+/* 左上角返回：tab 切页没有原生返回箭头时自绘（栈里有上一层就交给原生箭头） */
+.page-back {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-shrink: 0;
+  padding: 20rpx 32rpx 0;
+  color: var(--ink-2);
+  font-size: 26rpx;
+}
+
+/* 左向箭头：CSS 边框旋转 45°，与加减号同一套几何画法 */
+.pb-arrow {
+  width: 13rpx;
+  height: 13rpx;
+  border-left: 4rpx solid currentColor;
+  border-bottom: 4rpx solid currentColor;
+  transform: rotate(45deg);
+}
+
 .state {
   display: flex;
   flex: 1;

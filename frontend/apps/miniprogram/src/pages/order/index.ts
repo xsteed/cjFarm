@@ -124,7 +124,14 @@ Page({
      * 订单 tab 列出这些单让顾客点一条看进度，而不是甩一句「没有找到进行中的订单」。
      */
     showServingList: false,
-    servingRows: [] as ServingRow[]
+    servingRows: [] as ServingRow[],
+    /**
+     * 左上角返回按钮。小程序切 tab 走 redirectTo（页面栈深 1），原生导航栏没有返回箭头；
+     * 而从菜单页「出餐中」标签 navigateTo 进来时原生箭头已在，不再重复画一个。
+     */
+    showBack: false,
+    /** 当前订单是从「出餐中订单」列表点进来的：返回时先回列表 */
+    fromServingList: false
   },
 
   poller: null as Poller | null,
@@ -134,6 +141,8 @@ Page({
   skipFirstTick: false,
 
   onLoad(options: Record<string, string | undefined>) {
+    // 没有原生返回箭头时（tab 切页 redirectTo，栈深 1）才画自己的返回按钮
+    this.setData({ showBack: getCurrentPages().length <= 1 });
     // 1) 菜单页点「出餐中」标签进来时带 orderNo（那是已付款的单，session 里没有）
     const fromQuery = String(options?.orderNo || '').trim();
     if (fromQuery) {
@@ -158,7 +167,7 @@ Page({
 
   onShow() {
     // 「我的」tab 跟随会员开关（要放在错误态 return 之前：出错时 tab 也不能丢）
-    this.setData({ showProfile: memberEnabled() });
+    this.setData({ showProfile: memberEnabled(), showBack: getCurrentPages().length <= 1 });
     // 菜单页可能刚拉到桌台详情（里面有出餐中的订单）：没有正在看的订单时就重算列表，
     // 有就切到列表（并清掉「没有找到进行中的订单」的错误态），没有才维持原状
     if (!this.data.orderNo) this.refreshServingList();
@@ -203,8 +212,24 @@ Page({
   onOpenServing(e: WechatMiniprogram.TouchEvent): void {
     const orderNo = String(e.currentTarget.dataset.no || '');
     if (!orderNo) return;
-    this.setData({ showServingList: false, orderNo });
+    this.setData({ showServingList: false, orderNo, fromServingList: true });
     void this.recover(orderNo);
+  },
+
+  /**
+   * 左上角返回：从「出餐中订单」列表点进来的先回列表（订单还在出餐就回得去），
+   * 其他情况回点餐页。栈里没有可返回的页面时 goToMenu 会 redirectTo 打开菜单页。
+   */
+  onBack(): void {
+    if (this.data.fromServingList) {
+      this.setData({ fromServingList: false, orderNo: '' });
+      this.stopPolling();
+      this.clearUrgeTimer();
+      // 列表没了（订单刚好出餐完成、被清台）就回点餐页，别把顾客留在空页
+      if (!this.refreshServingList()) goToMenu();
+      return;
+    }
+    goToMenu();
   },
 
   /**

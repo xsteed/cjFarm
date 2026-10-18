@@ -6,7 +6,7 @@
 //
 // 注意：脚手架只造实例、不跑生命周期，onLoad 由用例手动触发（与 person.test 一致）。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { bootApp, mountPage } from '../../../../test/harness';
+import { bootApp, mountPage, setCurrentPages } from '../../../../test/harness';
 import type { PageInstance } from '../../../../test/harness';
 import { flush, wxMock } from '../../../../test/mock-wx';
 import { STORAGE_KEY } from '../../../config';
@@ -99,5 +99,77 @@ describe('订单页 · 出餐中订单列表', () => {
     expect(p2.data.showServingList).toBe(false);
     expect(p2.data.error).toBeTruthy();
     p2.onUnload();
+  });
+});
+
+// 左上角返回按钮：tab 切页走 redirectTo（栈深 1）没有原生返回箭头，需要自绘；
+// 从菜单页 navigateTo 进来时原生箭头已在，不再重复画。
+describe('订单页 · 左上角返回', () => {
+  let page: PageInstance | null = null;
+
+  beforeEach(async () => {
+    const app = await bootApp();
+    app.session.tableId = 7;
+    app.session.currentOrder = null;
+    app.session.table = { tableId: 7, tableCode: 'A1', servingOrders: [] };
+    wxMock.reset();
+    wxMock.storage.set(STORAGE_KEY, { tableCode: 'A1', orderNo: '' });
+  });
+
+  afterEach(() => {
+    page?.onUnload();
+    page = null;
+  });
+
+  it('栈深 1（tab 切页）：显示自绘返回按钮', async () => {
+    setCurrentPages([{ route: 'pages/order/index' }]);
+    page = await mountPage('order', () => import('../index'));
+    page.onLoad({});
+    await flush();
+    expect(page?.data.showBack).toBe(true);
+  });
+
+  it('栈里有上一层（菜单页 navigateTo 进来）：不画，交给原生返回箭头', async () => {
+    setCurrentPages([{ route: 'pages/index/index' }, { route: 'pages/order/index' }]);
+    page = await mountPage('order', () => import('../index'));
+    page.onLoad({});
+    await flush();
+    expect(page?.data.showBack).toBe(false);
+  });
+
+  it('从餐中订单列表点进来的详情：返回先回列表', async () => {
+    const app = await bootApp();
+    app.session.table = {
+      tableId: 7,
+      tableCode: 'A1',
+      servingOrders: [servingOrder()]
+    };
+    setCurrentPages([{ route: 'pages/order/index' }]);
+    page = await mountPage('order', () => import('../index'));
+    page.onLoad({});
+    await flush();
+
+    wxMock.reply({ code: 200, msg: 'ok', data: servingOrder() });
+    page.onOpenServing({ currentTarget: { dataset: { no: 'D009' } } } as never);
+    await flush();
+    await flush();
+    expect(page?.data.showServingList).toBe(false);
+
+    page.onBack();
+    expect(page?.data.showServingList).toBe(true);
+    expect(page?.data.fromServingList).toBe(false);
+  });
+
+  it('自己的订单：返回回点餐页', async () => {
+    const app = await bootApp();
+    app.session.currentOrder = servingOrder({ orderNo: 'D001', payStatus: 0, orderStatus: 1 });
+    setCurrentPages([{ route: 'pages/order/index' }]);
+    page = await mountPage('order', () => import('../index'));
+    page.onLoad({});
+    await flush();
+
+    page.onBack();
+    // goToMenu：栈里没有菜单页 → redirectTo 打开（带 append=1）
+    expect(wxMock.navigations.some(n => n.type === 'redirectTo' && n.url === '/pages/index/index?append=1')).toBe(true);
   });
 });

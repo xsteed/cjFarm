@@ -900,4 +900,46 @@ describe('入座选人数（茶位费门店）', () => {
     expect(wrapper.text()).toContain('制作中');
     wrapper.unmount();
   });
+
+  it('订单详情左上角有返回：餐中订单退回列表，自己的订单回点餐页', async () => {
+    getTableMock.mockResolvedValue({
+      ...tableNoOrder,
+      servingOrders: [{ orderId: 9, orderNo: 'NO009', shortNo: '009', personCount: 5, orderStatus: 2, payStatus: 1 }]
+    });
+    getOrderByNoMock.mockResolvedValue(
+      makeOrder({ orderNo: 'NO009', shortNo: '009', orderStatus: 2, payStatus: 1 })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // 菜单视图不显示返回按钮
+    expect(wrapper.find('.op-backbtn').exists()).toBe(false);
+
+    // 订单 Tab → 列表 → 点一条进详情：返回按钮出现
+    await wrapper.findAll('.tb-item')[1].trigger('click');
+    await wrapper.find('.sl-item').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.op-backbtn').exists()).toBe(true);
+
+    // 餐中订单：返回 → 回列表（不是回菜单）
+    await wrapper.find('.op-backbtn').trigger('click');
+    await nextTick();
+    expect(wrapper.find('.serving-list').exists()).toBe(true);
+
+    wrapper.unmount();
+
+    // 自己的进行中订单：返回 → 回点餐页
+    sessionStorage.setItem('dining:mine:1:NO001', '1'); // 认领过：直接进订单页
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: makeOrder() });
+    getOrderByNoMock.mockResolvedValue(makeOrder());
+    const own = mountPage();
+    await flushPromises();
+    expect(own.find('.op-backbtn').exists()).toBe(true);
+    await own.find('.op-backbtn').trigger('click');
+    await nextTick();
+    // 回点餐页：菜单的搜索入口出现，订单明细卡消失
+    expect(own.find('.op-searchbtn').exists()).toBe(true);
+    expect(own.find('.st-card').exists()).toBe(false);
+    own.unmount();
+  });
 });

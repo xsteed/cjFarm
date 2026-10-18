@@ -1,7 +1,26 @@
 <template>
   <div class="op-hero">
-    <!-- 单行布局:店名靠左(过长省略),桌号胶囊与搜索小圆钮成组靠右 -->
+    <!-- 单行布局:返回(仅订单视图)靠左,店名靠左(过长省略),桌号胶囊与搜索小圆钮成组靠右 -->
     <div class="op-row">
+      <button
+        v-if="showBack"
+        class="op-backbtn"
+        aria-label="返回"
+        @click="emit('back')"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M15 5l-7 7 7 7" />
+        </svg>
+      </button>
       <div class="op-shop">
         {{ shopName || '扫码点餐' }}
       </div>
@@ -52,10 +71,13 @@ const props = defineProps<{
   table: TableInfo;
   /** 是否显示搜索入口(仅菜单视图) */
   showSearch?: boolean;
+  /** 是否显示左上角返回(订单相关视图) */
+  showBack?: boolean;
 }>();
 
 const emit = defineEmits<{
   search: [];
+  back: [];
 }>();
 
 const tableLabel = computed(() => props.table.tableName || (props.table.tableNo ? `${props.table.tableNo}号桌` : ''));
@@ -145,6 +167,27 @@ const tableLabel = computed(() => props.table.tableName || (props.table.tableNo 
   font-weight: 600;
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+/* 左上角返回:与搜索钮同款圆形玻璃底,仅订单相关视图出现 */
+.op-backbtn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 20%);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.op-backbtn:active {
+  background: rgb(255 255 255 / 32%);
 }
 
 /* 搜索入口:与桌号胶囊同高的小圆钮,放大镜用纯 CSS(与 MenuSearch 同款) */
