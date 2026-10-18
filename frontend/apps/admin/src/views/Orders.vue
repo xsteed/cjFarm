@@ -77,6 +77,14 @@
             label="挂账已结"
           />
         </t-select>
+        <!-- 只看新单:已下单且商家从未操作过,与卡片「新」角标同口径 -->
+        <t-checkbox
+          v-model="query.newOnly"
+          class="new-only-check"
+          @change="onSearch"
+        >
+          只看新单
+        </t-checkbox>
         <t-button
           theme="primary"
           @click="onSearch"
@@ -117,6 +125,16 @@
               <search-icon />
             </template>
           </t-input>
+          <t-button
+            :theme="query.newOnly ? 'primary' : 'default'"
+            :variant="query.newOnly ? 'base' : 'outline'"
+            class="m-filter-btn m-new-btn"
+            :class="{ on: query.newOnly }"
+            aria-label="只看新单"
+            @click="toggleNewOnly"
+          >
+            新
+          </t-button>
           <t-button
             theme="primary"
             variant="outline"
@@ -509,6 +527,11 @@
             />
           </t-select>
         </label>
+        <label class="ff ff-row">
+          <span class="ff-k">只看新单</span>
+          <!-- 与卡片「新」角标同口径:已下单且商家从未操作过 -->
+          <t-switch v-model="query.newOnly" />
+        </label>
       </div>
       <template #footer>
         <t-button
@@ -595,9 +618,10 @@ interface OrderQuery {
   orderStatus: string;
   payStatus: string;
   settleFilter: string;
+  newOnly: boolean;
 }
 
-const query = reactive<OrderQuery>({ orderNo: '', tableNo: '', tableName: '', orderStatus: '', payStatus: '', settleFilter: '' });
+const query = reactive<OrderQuery>({ orderNo: '', tableNo: '', tableName: '', orderStatus: '', payStatus: '', settleFilter: '', newOnly: false });
 const pagination = reactive({ current: 1, pageSize: 10, total: 0 });
 const { isMobile } = useIsMobile();
 // 移动端下拉刷新当前列表(沿用当前筛选与页码)
@@ -718,6 +742,8 @@ async function load(silent = false): Promise<void> {
     } else if (query.settleFilter) {
       params.settleType = query.settleFilter;
     }
+    // 只看新单:已下单且商家从未操作过,与卡片「新」角标同口径
+    if (query.newOnly) params.newOnly = '1';
     const res = await listOrders(params);
     if (seq !== loadSeq) return;
     // 后端条目字段全可选(OrderSummary),这里归一化成列表渲染依赖的必填形态,
@@ -953,11 +979,19 @@ function applyFilters(): void {
   onSearch();
 }
 
+// toggleNewOnly 移动端搜索栏的「新」快捷开关:开=只看新单,关=恢复全部。
+function toggleNewOnly(): void {
+  query.newOnly = !query.newOnly;
+  pagination.current = 1;
+  load();
+}
+
 function resetFilters(): void {
   query.tableNo = '';
   query.tableName = '';
   query.payStatus = '';
   query.settleFilter = '';
+  query.newOnly = false;
   // 订单号搜索框与桌面端共用同一个 query.orderNo,漏清会让「重置」后关键词仍在;
   // 同时回到第一页,否则重置完仍停在第 N 页,看起来「没生效」。
   query.orderNo = '';

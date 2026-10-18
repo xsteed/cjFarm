@@ -100,6 +100,19 @@
       <view class="btn-ghost foot-minor" bindtap="onBack">返回订单</view>
       <!-- 后端开通 JSAPI 时给真正的在线支付入口；没开通仍是「手动查一次」的降级路径 -->
       <view
+        wx:if="{{!paid && canWallet}}"
+        class="btn-primary foot-main {{checking ? 'dim' : ''}}"
+        bindtap="onPayWallet"
+      >
+        余额支付（¥{{walletBalanceText}}）
+      </view>
+      <view
+        wx:if="{{!paid && !canWallet && walletShort}}"
+        class="foot-wallet-tip"
+      >
+        储值余额 ¥{{walletBalanceText}}，不足以支付本单，可在「我的 → 储值余额」充值
+      </view>
+      <view
         wx:if="{{!paid && canJsapi}}"
         class="btn-primary foot-main {{checking ? 'dim' : ''}}"
         bindtap="onPayOnline"

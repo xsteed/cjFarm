@@ -8,7 +8,15 @@
 import { getOrderByNo, updateOrderPerson, urgeOrder } from '../../api/client';
 import { ORDER_POLL_INTERVAL_MS, URGE_COOLDOWN_FALLBACK_S } from '../../config';
 import { cartClear } from '../../store/cart';
-import { applyOrder, readPersisted, resetOrder, sessionState, setPersonCount } from '../../store/session';
+import {
+  applyOrder,
+  markPersonChosen,
+  persistPersonChoice,
+  readPersisted,
+  resetOrder,
+  sessionState,
+  setPersonCount
+} from '../../store/session';
 import { createPoller } from '../../store/poller';
 import type { Poller } from '../../store/poller';
 import { memberEnabled } from '../../store/member';
@@ -406,6 +414,9 @@ Page({
       })) as OrderDetail;
       // 三处同步：会话人数（购物车页/菜单页的茶位费都读它）、订单快照、本页渲染
       setPersonCount(Number(order.personCount) || personCount);
+      // 显式改过人数即「已选」：落盘后冷启动不再弹「选人数」面板
+      markPersonChosen();
+      persistPersonChoice();
       applyOrder(order);
       this.render(order);
       toast.success(`已更新为 ${Number(order.personCount) || personCount} 人`);

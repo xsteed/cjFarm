@@ -298,6 +298,19 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 		// 非成功通知(如关闭/退款通知)无需处理订单支付状态,直接应答成功。
 		return true
 	}
+	// 充值单(R 开头)与订单(D 开头)共用同一个回调地址,靠单号前缀分流。
+	// 充值入账同样是「金额一致性 + 幂等」两条防线,细节在 service.WalletRechargeCredit。
+	if strings.HasPrefix(notify.OrderNo, "R") {
+		if err := service.WalletRechargeCredit(notify.OrderNo, channel, notify.ChannelTradeNo, notify.AmountCents); err != nil {
+			if errors.Is(err, service.ErrRechargeNotFound) {
+				logger.CtxWarnf(ctx, "[wallet] 充值单不存在,应答成功 单%s", notify.OrderNo)
+				return true
+			}
+			logger.CtxErrorf(ctx, "[wallet][告警] 充值入账失败,应答失败待渠道重试 单%s: %v", notify.OrderNo, err)
+			return false
+		}
+		return true
+	}
 	o, err := service.GetOrderAmount(notify.OrderNo)
 	if err != nil {
 		// 必须区分「订单不存在」与「DB 瞬时故障」:
@@ -546,10 +559,15 @@ func PayRefund(c *gin.Context) {
 		return
 	}
 	paymentID, channel := flow.PaymentID, flow.Channel
-	provider, err := pay.Get(channel)
-	if err != nil || !provider.Enabled() {
-		fail(c, "支付渠道未配置，无法在线退款")
-		return
+	// 余额支付订单:原路退回 = 退回储值余额,同步完成,不走渠道抽象与异步查询。
+	isWallet := channel == service.PayChannelWallet
+	var provider pay.Provider
+	if !isWallet {
+		provider, err = pay.Get(channel)
+		if err != nil || !provider.Enabled() {
+			fail(c, "支付渠道未配置，无法在线退款")
+			return
+		}
 	}
 
 	ctx := c.Request.Context()
@@ -584,6 +602,29 @@ func PayRefund(c *gin.Context) {
 
 	SetAuditDetail(c, "order", strconv.Itoa(p.OrderID),
 		fmt.Sprintf("发起退款 ¥%.2f（%s），原因：%s", po.ToYuan(refundCents), channelName(channel), reason))
+
+	// 余额支付订单:原路退回 = 退回储值余额,同步完成(钱本来就在店里)。
+	if isWallet {
+		if err := service.WalletRefundForOrder(orderNo, refundCents, reason); err != nil {
+			fail(c, "余额退回失败，请稍后重试")
+			return
+		}
+		// 退款台账照常落:渠道退款号没有,用 WR 前缀的本地流水号占位。
+		if err := service.ApplyRefundSuccess(ctx, refundID, paymentID, orderNo, refundCents, "WR"+refundNo); err != nil {
+			// 钱已退回余额但账没记上:立刻把刚退的钱扣回(补偿),否则会留下
+			// 「余额已加、退款单停在处理中」的不一致,且重试被额度占用挡死。
+			if rbErr := service.WalletRefundRollback(orderNo, refundCents); rbErr != nil {
+				log.Errorf("[pay][告警] 退款入账失败且回滚也失败(请人工核对余额与退款单) 退款单%d 金额%d分: %v", refundID, refundCents, rbErr)
+			} else {
+				log.Warnf("[pay] 退款入账失败,已自动回滚余额 退款单%d 金额%d分", refundID, refundCents)
+			}
+			fail(c, "退款入账失败，请稍后重试")
+			return
+		}
+		log.Infof("[pay] 余额退款成功 退款单%s 金额%d分 操作人%s", refundNo, refundCents, adminName(c))
+		okMsg(c, "退款成功（已退回储值余额）")
+		return
+	}
 
 	result, err := provider.Refund(orderNo, refundNo, refundCents, totalCents)
 	if err != nil {

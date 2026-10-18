@@ -241,6 +241,8 @@ func TestManagedSettingKeysComplete(t *testing.T) {
 		FeieUkey: "feie-secret", AgentToken: "agent-secret",
 		// 先付/后付模式:后加入的受管键,fixture 必须同步覆盖(见本测试的守护说明)。
 		PayFirstEnabled: "1",
+		// 会员功能总闸:后加入的受管键,fixture 必须同步覆盖(见本测试的守护说明)。
+		MemberEnabled: "1",
 	}
 	w, c := newSaveContext(cfg)
 	SettingSave(c)

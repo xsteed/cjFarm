@@ -32,6 +32,9 @@ export interface TableInfo extends Extensible {
   currentOrder?: OrderSummary | OrderDetail | null;
   // 顾客扫码时,该桌「已付款但出餐未完成」的订单,用于查看出餐进度。
   servingOrders?: OrderSummary[] | null;
+  // 桌级共享的「入座人数」（茶位费门店）：同桌另一部手机已选过时非 0，
+  // 顾客端直接沿用、不再弹选人数面板；0 = 本桌还没人选（下单后即清除）。
+  pendingPersonCount?: number;
   // 用餐耗时(桌台列表接口实时计算,不落库):openTime 该桌最早一笔进行中订单的
   // 开台时间;diningMinutes 距现在的分钟数。空闲桌台两个字段都不出现。
   openTime?: string;
@@ -492,6 +495,8 @@ export interface PublicConfig extends Extensible {
   pay_first_enabled?: string;
   /** 会员功能开关：后端已配置小程序 AppID/AppSecret 才为 "1"，顾客端据此显隐登录入口。 */
   member_enabled?: string;
+  /** 储值自助充值开关(默认 0):只管「能否自助充值」,不影响已有余额的消费与退款。 */
+  wallet_recharge_enabled?: string;
   /**
    * 小程序内支付（JSAPI）开关：顾客端据此决定结账页是否出现「微信支付」按钮
    * （`wxpay_jsapi_enabled === '1'`）。后端 `CustomerSettings()` 已下发，

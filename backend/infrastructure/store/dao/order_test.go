@@ -125,6 +125,29 @@ func TestMarkOrderViewedWritesFirstTimeOnly(t *testing.T) {
 	}
 }
 
+// 只看新单筛选:仅命中「已下单且从未操作过」的订单;已操作过的、非已下单状态的都不命中。
+func TestListOrdersNewOnlyFilter(t *testing.T) {
+	orderDaoInitDB(t)
+	newID := orderDaoCreate(t, "D-NEWONLY-0001", 1)
+	viewedID := orderDaoCreateAt(t, "D-NEWONLY-0002", 2, "02")
+	doneID := orderDaoCreateAt(t, "D-NEWONLY-0003", 3, "03")
+
+	if err := MarkOrderViewed(viewedID); err != nil {
+		t.Fatalf("标记已操作失败: %v", err)
+	}
+	if _, err := store.DB.Exec(`UPDATE tb_order SET order_status=4 WHERE order_id=?`, doneID); err != nil {
+		t.Fatalf("更新订单状态失败: %v", err)
+	}
+
+	total, list, err := ListOrders(OrderQuery{NewOnly: true}, 1, 10)
+	if err != nil {
+		t.Fatalf("只看新单查询失败: %v", err)
+	}
+	if total != 1 || len(list) != 1 || list[0].OrderID != newID {
+		t.Fatalf("只看新单应仅命中未操作的在途单: total=%d, 命中=%+v", total, list)
+	}
+}
+
 func TestGetActiveOrderByTable(t *testing.T) {
 	orderDaoInitDB(t)
 

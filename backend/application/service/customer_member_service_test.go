@@ -37,8 +37,11 @@ func TestCustomerLoginNewThenReturn(t *testing.T) {
 	if !first.IsNew {
 		t.Fatal("首次登录应标记为注册(isNew=true)")
 	}
-	if first.Customer.OpenID != "openid-member-1" {
-		t.Fatalf("档案 openid 不符: %+v", first.Customer)
+	// 档案本身不再带 openid:它是「登录方式」的凭据,存在 tb_customer_identity。
+	if c, err := dao.GetCustomerByIdentity(po.CustomerProviderWxMP, "openid-member-1"); err != nil || c == nil {
+		t.Fatalf("应能按 wx_mp 身份查回档案: c=%+v err=%v", c, err)
+	} else if c.CustomerID != first.Customer.CustomerID {
+		t.Fatalf("身份指向的档案不符: %d vs %d", c.CustomerID, first.Customer.CustomerID)
 	}
 	if first.Token == "" {
 		t.Fatal("应签发顾客令牌")
@@ -271,6 +274,105 @@ func TestCustomerCreateOrderAttribution(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("加菜属于同一单,不应重复计数, got %d", count)
+	}
+}
+
+// TestCustomerUpdateProfileNickname 会员自助改昵称:去空格、超长拒绝、头像不被清空。
+func TestCustomerUpdateProfileNickname(t *testing.T) {
+	customerSvcInit(t)
+	res := customerLoginByOpenidForTest(t, "openid-nick")
+	id := res.Customer.CustomerID
+
+	c, err := CustomerUpdateProfile(id, "  小明  ")
+	if err != nil {
+		t.Fatalf("改昵称应成功: %v", err)
+	}
+	if c.Nickname != "小明" {
+		t.Fatalf("昵称应去掉首尾空格, got %q", c.Nickname)
+	}
+
+	// 边界:正好上限通过,超一个字拒绝。
+	if _, err := CustomerUpdateProfile(id, strings.Repeat("字", maxNicknameRunes)); err != nil {
+		t.Fatalf("上限长度应通过: %v", err)
+	}
+	if _, err := CustomerUpdateProfile(id, strings.Repeat("字", maxNicknameRunes+1)); err == nil {
+		t.Fatal("超长昵称应被拒绝")
+	}
+
+	// 头像原样保留:只改昵称不能把后台设置的头像清掉。
+	if err := dao.UpdateCustomerProfile(id, "x", "http://a.png"); err != nil {
+		t.Fatal(err)
+	}
+	c, err = CustomerUpdateProfile(id, "小红")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AvatarURL != "http://a.png" {
+		t.Fatalf("改昵称不应清空头像, got %q", c.AvatarURL)
+	}
+
+	// 不存在的会员。
+	if _, err := CustomerUpdateProfile(999999, "无人"); err == nil {
+		t.Fatal("不存在的会员应被拒绝")
+	}
+}
+
+// TestSetMemberStatus 管理端启停用:非法状态/不存在拒绝,停用后登录立即被拒,重复调用幂等。
+func TestSetMemberStatus(t *testing.T) {
+	customerSvcInit(t)
+	res := customerLoginByOpenidForTest(t, "openid-status")
+	id := res.Customer.CustomerID
+
+	if err := SetMemberStatus(id, 2); err == nil {
+		t.Fatal("非法状态应被拒绝")
+	}
+	if err := SetMemberStatus(999999, po.CustomerStatusDisabled); err == nil {
+		t.Fatal("不存在的会员应被拒绝")
+	}
+
+	if err := SetMemberStatus(id, po.CustomerStatusDisabled); err != nil {
+		t.Fatalf("停用失败: %v", err)
+	}
+	// 停用后令牌校验与再次登录都应被拒 —— 「停用立即生效」靠的就是每次查 status。
+	if _, status := AuthenticateCustomerToken(res.Token); status != CustomerAuthzDisabled {
+		t.Fatalf("停用后令牌应立即失效, got status=%v", status)
+	}
+	if _, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, "openid-status", ""); err == nil {
+		t.Fatal("停用后不应能登录")
+	}
+
+	if err := SetMemberStatus(id, po.CustomerStatusEnabled); err != nil {
+		t.Fatalf("启用失败: %v", err)
+	}
+	// 幂等:状态本来就对,直接成功不写库。
+	if err := SetMemberStatus(id, po.CustomerStatusEnabled); err != nil {
+		t.Fatalf("重复启用应成功: %v", err)
+	}
+}
+
+// TestCustomerDeleteAccountService 注销后同一 openid 再登录会重新建档(新 ID)。
+func TestCustomerDeleteAccountService(t *testing.T) {
+	customerSvcInit(t)
+	res := customerLoginByOpenidForTest(t, "openid-del")
+	id := res.Customer.CustomerID
+
+	if err := CustomerDeleteAccount(id); err != nil {
+		t.Fatalf("注销失败: %v", err)
+	}
+	if c, err := dao.GetCustomerByID(id); err != nil || c != nil {
+		t.Fatalf("注销后档案应不存在, got %+v err=%v", c, err)
+	}
+	// 令牌无状态:档案没了,校验自然失败(不需要额外的吊销逻辑)。
+	if _, status := AuthenticateCustomerToken(res.Token); status == CustomerAuthzOK {
+		t.Fatal("注销后令牌不应再通过校验")
+	}
+
+	again, err := customerLoginByIdentity(context.Background(), po.CustomerProviderWxMP, "openid-del", "")
+	if err != nil {
+		t.Fatalf("注销后应能重新注册: %v", err)
+	}
+	if !again.IsNew || again.Customer.CustomerID == id {
+		t.Fatalf("应重新建档为新会员: isNew=%v id=%d(原 %d)", again.IsNew, again.Customer.CustomerID, id)
 	}
 }
 

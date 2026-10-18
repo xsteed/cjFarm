@@ -54,6 +54,9 @@ func setupAPI(r *gin.Engine) {
 
 		// ---- 顾客端(公开) ----
 		api.GET("/customer/table/:id", handler.CustomerTable)
+		// 入座选人数上报（茶位费门店）：同桌共享，别人扫码进来不再重复选。
+		// 公开接口 + 幂等（同值重复上报无副作用），见 handler.CustomerSetTablePerson。
+		api.POST("/customer/table/person", handler.CustomerSetTablePerson)
 		api.GET("/customer/menu", handler.CustomerMenu)
 		api.GET("/customer/remarks", handler.CustomerRemarks)
 		api.GET("/customer/config", handler.CustomerSetting)
@@ -70,6 +73,17 @@ func setupAPI(r *gin.Engine) {
 		// 过期由小程序端静默重登(见 docs/design-docs/customer-member/spec.md)。
 		api.POST("/customer/auth/login", handler.CustomerMemberLogin)
 		api.GET("/customer/auth/profile", handler.CustomerAuthRequired, handler.CustomerMemberProfile)
+		// 完善资料(昵称)与注销会员:均为顾客自助,必须带会员令牌。
+		api.POST("/customer/auth/profile", handler.CustomerAuthRequired, handler.CustomerMemberUpdateProfile)
+		api.DELETE("/customer/auth/account", handler.CustomerAuthRequired, handler.CustomerMemberDeleteAccount)
+		// 手机号快速绑定(getPhoneNumber 按钮):手机号作为一种登录方式存身份表。
+		api.POST("/customer/auth/phone", handler.CustomerAuthRequired, handler.BindPhone)
+		// 储值:余额/流水/充值(微信 JSAPI)/余额支付,全部必须带会员令牌。
+		api.GET("/customer/wallet", handler.CustomerAuthRequired, handler.WalletInfo)
+		api.GET("/customer/wallet/txns", handler.CustomerAuthRequired, handler.WalletTxns)
+		api.POST("/customer/wallet/recharge", handler.CustomerAuthRequired, handler.WalletRecharge)
+		api.GET("/customer/wallet/recharge/status", handler.CustomerAuthRequired, handler.WalletRechargeStatus)
+		api.POST("/customer/wallet/pay", handler.CustomerAuthRequired, handler.WalletPay)
 		api.GET("/customer/order/mine", handler.CustomerAuthRequired, handler.CustomerMyOrders)
 		// 历史订单详情:跨桌,归属只认会员身份(customer_id),不能用 tableId 校验
 		// —— 顾客早已离开那张桌(见 service.CustomerMyOrderDetail)。
@@ -118,6 +132,15 @@ func setupAPI(r *gin.Engine) {
 			admin.POST("/user/resetPassword", handler.UserResetPassword)
 			admin.POST("/user/toggleStatus", handler.UserToggleStatus)
 			admin.DELETE("/user/:id", handler.UserDelete)
+
+			// 会员管理(顾客会员,与上面的员工账号是两套体系):只读列表 + 启停用。
+			// 不提供后台新建/删除 —— 档案由顾客自助注册与注销,后台代建会留下
+			// 没有登录方式的孤儿档案(见 handler/member.go 顶部说明)。
+			admin.GET("/member/list", handler.MemberList)
+			admin.POST("/member/status", handler.MemberToggleStatus)
+			// 储值:某会员的余额与流水 / 后台调账(赠送或扣减)。
+			admin.GET("/member/wallet", handler.MemberWalletDetail)
+			admin.POST("/member/wallet/adjust", handler.MemberWalletAdjust)
 
 			// 角色与权限
 			admin.GET("/role/list", handler.RoleList)

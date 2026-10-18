@@ -20,6 +20,7 @@ App<GlobalData>({
     config: null,
     currentOrder: null,
     personCount: 1,
+    personChosen: false,
     orderRemark: ''
   },
   cart: [],

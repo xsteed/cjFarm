@@ -17,8 +17,9 @@ Component({
     /** 当前页所属的 tab：home（首页）| menu（点餐）| order（订单）| profile（我的） */
     active: { type: String, value: 'home' },
     /**
-     * 是否显示「我的」（会员）tab。跟随后端开关：系统配置里配了小程序
-     * AppID/AppSecret 才显示；关闭时回到三档导航，会员入口整体消失。
+     * 是否显示「我的」（会员）tab。跟随后端独立总闸（管理端「营业设置 →
+     * 会员功能」，tb_config 的 member_enabled）：关闭时回到三档导航，
+     * 会员入口整体消失。与 AppSecret 等登录能力配置无关。
      */
     showProfile: { type: Boolean, value: true }
   },

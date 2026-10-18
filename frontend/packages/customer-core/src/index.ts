@@ -7,6 +7,7 @@
 //
 // 纯 DOM 相关的交互(如菜单滚动联动 useScrollSpy)属于「Web 版 UI 逻辑」，
 // 留在 apps/customer 内，不进本包。
+export * from './person';
 export * from './search';
 export * from './spec';
 export * from './useCart';

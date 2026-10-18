@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS tb_role (
 
 **为什么权限用 CSV 而不是独立 `tb_role_perm` 表**
 
-- 全部权限点共 28 个，最长 CSV 约 480 字符，`VARCHAR(4000)` 仍有 8 倍余量。
+- 全部权限点共 32 个，最长 CSV 约 560 字符，`VARCHAR(4000)` 仍有 7 倍余量。
 - 角色数量是个位数，读取场景永远是「一次性读全量」，没有「反查哪些角色拥有 X」的需求。
 - 省掉一张表和一次事务，与项目现有务实风格一致（`tb_config` 也是键值对而非多表）。
 - 代价：不能用 SQL 直接按权限点筛选角色（当前不需要）。若将来需要，再加映射表并做一次回填即可。
@@ -162,7 +162,7 @@ tb_user       ──→ tb_refund.operator(退款操作人 = real_name)
 
 ## 四、权限模型
 
-### 4.1 权限点目录（28 个，13 个模块）
+### 4.1 权限点目录（32 个，15 个模块）
 
 定义在 `backend/internal/store/permission.go`，是**唯一事实来源**；前端通过 `GET /perm/catalog` 拉取，不硬编码。
 
@@ -181,6 +181,8 @@ tb_user       ──→ tb_refund.operator(退款操作人 = real_name)
 | 挂账 | `credit:view` / `credit:settle` | 挂账查看 / 挂账核销 |
 | 退款 | `refund:view` / `refund:operate` | 退款查看 / 发起退款 |
 | 报表 | `report:view` | 数据报表 |
+| 会员 | `member:view` / `member:edit` | 顾客会员查看 / 会员启停用（后台无新建与删除） |
+| 储值 | `wallet:view` / `wallet:edit` | 储值余额与流水查看 / 储值调账（赠送、扣减） |
 | 系统 | `config:view` / `config:edit` | 系统配置查看 / 修改 |
 | 员工 | `user:view` / `user:edit` | 员工查看 / 员工管理 |
 | 角色 | `role:view` / `role:edit` | 角色查看 / 角色权限管理 |
@@ -218,6 +220,10 @@ tb_user       ──→ tb_refund.operator(退款操作人 = real_name)
 | `refund:view` | ✓ | ✓ | ✓ | |
 | `refund:operate` | ✓ | **✗** | | |
 | `report:view` | ✓ | ✓ | | |
+| `member:view` | ✓ | ✓ | ✓ | |
+| `member:edit` | ✓ | ✓ | | |
+| `wallet:view` | ✓ | ✓ | ✓ | |
+| `wallet:edit` | ✓ | ✓ | | |
 | `config:view` | ✓ | ✓ | | |
 | `config:edit` | ✓ | ✓ | | |
 | `user:view` | ✓ | | | |
@@ -226,12 +232,12 @@ tb_user       ──→ tb_refund.operator(退款操作人 = real_name)
 | `role:edit` | ✓ | | | |
 | `log:view` | ✓ | ✓ | | |
 | `log:manage` | ✓ | | | |
-| **合计** | **28** | **22** | **13** | **6** |
+| **合计** | **32** | **26** | **15** | **6** |
 
 **角色定位说明**
 
 - **超级管理员 `admin`**：全权。**权限不可被修改**（写接口直接拒绝 + 每次启动强制恢复为全量），这是防锁死的最后一道保险。
-- **店长 `manager`**：日常最高权限，能改配置、看报表，但**不能管员工和权限**，也**不能发起退款**
+- **店长 `manager`**：日常最高权限，能改配置、看报表、管理会员，但**不能管员工和权限**，也**不能发起退款**
   （退款通常需要老板本人操作；如需放开，复制一个自定义角色即可）。
 - **收银员 `cashier`**：只做前厅收银 —— 看基础资料、处理订单全流程、核销挂账、查退款记录，
   不碰配置、报表、退款发起。
@@ -463,7 +469,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 **`SyncBuiltinRoles` 细节**
 
 - 内置角色用 `INSERT IGNORE` 补齐（沿用 `InsertIgnoreInto`），**不覆盖**商户改过的权限。
-- **唯一例外**：`role_key='admin'` 的角色，`perms` 每次启动**强制重置为全量（28 个）**。
+- **唯一例外**：`role_key='admin'` 的角色，`perms` 每次启动**强制重置为全量（32 个）**。
   这是防锁死的最后保险 —— 即使有人（或某个 bug）清空了 admin 权限，重启即自愈。
 
 ### 6.3 防锁死规则（写入层强制）
@@ -516,7 +522,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 
 | 文件 | 内容 |
 |---|---|
-| `internal/store/permission.go` | 权限点目录（28 个 + 模块分组 + 中文名）、`EditImpliesView` 归一化、权限码校验 |
+| `internal/store/permission.go` | 权限点目录（32 个 + 模块分组 + 中文名）、`EditImpliesView` 归一化、权限码校验 |
 | `internal/store/user.go` | 员工/角色 CRUD、`GetUserByUsername`、`GetAuthByID`（user JOIN role）、`CountActiveAdmins`、`EnsureAdminUser`、`SyncBuiltinRoles`、`NormalizeRolePerms`、`EnsureUsernameAvailable`、`EnsureRoleNotReferenced` |
 | `internal/handler/user.go` | 员工接口：list / save / update / resetPassword / toggleStatus / delete |
 | `internal/handler/role.go` | 角色接口：list / save / update / delete / catalog（权限目录）+ 防锁死校验 |
@@ -662,7 +668,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 | `TestAdminRoutePermCoverage` | 遍历 `r.Routes()`，断言每条 `/api/admin/*` 路由都在 `routePerms` 中登记 —— **新增路由忘登记权限会直接测试失败**（fail-closed 下会线上 403）。当前覆盖 65 条 |
 | `TestRoutePermsHaveNoDeadEntries` | 反向校验：权限表里的条目必须真实存在于路由树（防「删了接口忘删条目」与路径拼错） |
 | `TestCustomerRoutesStayPublic` | 14 条顾客端/登录公开路由必须存在**且**不得出现在权限表里（防误挂 AdminAuth 把扫码点餐打断） |
-| `TestEveryPermCodeIsUsedOrDeclaredMenuOnly` | 目录里 28 个权限码，每个都要么被至少一条路由引用、要么在 `handler.menuOnlyPerms` 显式声明为菜单级（当前 27 + 1）。**这是补上 `credit:view` 那类「权限码没人用」漏洞的守卫** |
+| `TestEveryPermCodeIsUsedOrDeclaredMenuOnly` | 目录里 32 个权限码，每个都要么被至少一条路由引用、要么在 `handler.menuOnlyPerms` 显式声明为菜单级（当前 31 + 1）。**这是补上 `credit:view` 那类「权限码没人用」漏洞的守卫** |
 | `TestAdminWriteRoutesHaveAuditMeta` | 遍历写操作路由（POST/PUT/PATCH/DELETE），断言每条都在 `handler.routeAudit` 中登记审计元信息 —— 审计中间件是 fail-open 的，漏登记的后果是**静默不记录**，只能靠测试拦 |
 | `TestAuditMetasHaveNoDeadEntries` | 反向校验：审计表条目必须真实存在于路由树 |
 
@@ -670,7 +676,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 
 | 测试 | 断言内容 |
 |---|---|
-| `TestPermCatalogIntegrity` | 目录 28 个权限码 / 13 个模块结构完整，无重复、无非法命名 |
+| `TestPermCatalogIntegrity` | 目录 32 个权限码 / 15 个模块结构完整，无重复、无非法命名 |
 | `TestNormalizePermsEditImpliesView` | 「非 view 隐含同模块 view」规则 |
 | `TestNormalizePermsCrossModuleImplies` | 跨模块隐含依赖（`credit:view`→`order:view`、`user:view`→`role:view`），含两环串联 `credit:settle`→`credit:view`→`order:view`；**并断言隐含是单向的**（`order:view` 不得反推 `credit:view`） |
 | `TestPermImpliesTable` | 隐含表自身没写坏：key/value 都必须是已登记权限码（**拼错会静默失效**，最难发现的一类 bug）、不可自指、不可同模块、不可成环 |
@@ -695,7 +701,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 
 1. 用 `admin` 令牌创建 4 个员工，各绑定一个内置角色。
 2. **对每个角色，逐个权限点验证**：有权限的接口返回 200，无权限的返回 **403**（且 msg = `没有操作权限`）。
-   这是本次改造最核心的验收项 —— 28 个权限点 × 4 角色，用脚本批量断言，不靠人工点。
+   这是本次改造最核心的验收项 —— 32 个权限点 × 4 角色，用脚本批量断言，不靠人工点。
 3. 顾客端 13 个公开接口在**不带任何令牌**下仍全部 200（回归确认未被误收紧）。
 4. 停用某员工后，其旧令牌立即 401。
 5. 修改某角色权限后，该角色员工的旧令牌立即按新权限判定（验证「无缓存、即时生效」）。
@@ -757,7 +763,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 | 锁死自己无法管理权限 | 系统不可用 | admin 角色权限每次启动强制恢复全量 + 9 条防锁死规则 + 不能改自己角色 |
 | MySQL 侧用户名唯一性依赖应用层 | 极端并发下可能重名 | 与既有 `table_code` 同构；创建走事务内查重；文档记录该已知差异 |
 | 每请求一次查库 | 轻微延迟增加 | 管理端 QPS 极低；主键查询微秒级；必要时可加短 TTL 缓存而不改接口 |
-| 权限点粒度不够细 | 商户想更细控制 | 28 个点已覆盖全部接口；未来可细分（如`order:settle:refund`）而不改变现有结构 |
+| 权限点粒度不够细 | 商户想更细控制 | 32 个点已覆盖全部接口；未来可细分（如`order:settle:refund`）而不改变现有结构 |
 | 前端按钮显隐漏改 | 露出不该有的按钮 | 后端强制拦截（403）；前端按第 4.3 节表格逐项对齐，并用自检页验证 |
 | 商户不熟悉角色配置 | 配错权限 | 4 个内置角色开箱可用；角色页按模块分组 + 中文名 + 模块全选；admin 不可改 |
 | 订单历史 `update_by` 是「收银员」 | 老数据无法追溯 | 不追溯（无数据源）；新数据开始记录真实姓名；文档说明分界线 |
@@ -791,7 +797,7 @@ store.NormalizeRolePerms() // 3. 修正历史脏数据:edit 隐含 view、剔除
 
 ```
 权限判定三层：路由守卫(体验) → AdminAuth(401 身份) → RequirePerm(403 权限)
-权限来源    ：tb_user.role_id → tb_role.perms(CSV) → 28 个权限点
+权限来源    ：tb_user.role_id → tb_role.perms(CSV) → 32 个权限点
 唯一事实来源：internal/store/permission.go（后端定义，前端拉取）
 防锁死三板斧：admin 权限启动强制恢复 + 9 条写入规则 + 不能动自己
 兼容保障    ：老库自动建表；admin/admin123 照常登录并成为超级管理员；顾客端零改动

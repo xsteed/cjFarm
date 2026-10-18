@@ -31,6 +31,8 @@ type OrderQuery struct {
 	SettleType   string // normal/free/credit
 	CreditStatus *int   // nil 表示不限
 	SettleRemark string // 结算备注(免单原因/挂账人)模糊匹配
+	// NewOnly 只看新单:已下单且商家从未操作过(viewed_at 为空),口径与列表 isNew 一致。
+	NewOnly bool
 }
 
 // UrgeQuery 催菜列表筛选条件;零值字段表示不限。
@@ -51,6 +53,7 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 		SettleType:   q.SettleType,
 		CreditStatus: q.CreditStatus,
 		SettleRemark: q.SettleRemark,
+		NewOnly:      q.NewOnly,
 	}, pageNum, pageSize)
 	if err != nil {
 		return 0, nil, nil, err

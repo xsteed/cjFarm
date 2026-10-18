@@ -161,11 +161,13 @@ export async function memberOrderDetail(orderNo: string): Promise<OrderDetail> {
 }
 
 /**
- * 会员功能是否开启（公开配置下发；未开启时「我的」页隐藏登录入口，只留说明）。
- * 配置还没拉到时按「开启」处理：误点了也会拿到后端的明确文案，不会误伤真开店的场景。
+ * 会员功能是否开启（管理端「营业设置 → 会员功能」独立总闸，随公开配置下发）。
+ * 未开启时顾客端整体隐藏会员入口。fail-closed：配置还没拉到时按「未开启」处理
+ * （后端出厂默认也是关），配置到位后各页 onShow 会再刷新一次 —— 宁可入口晚一屏
+ * 出现，也不在商家已关掉会员时闪现入口。
  */
 export function memberEnabled(): boolean {
-  return String(getApp<GlobalData>().session.config?.member_enabled ?? '1') !== '0';
+  return getApp<GlobalData>().session.config?.member_enabled === '1';
 }
 
 /**

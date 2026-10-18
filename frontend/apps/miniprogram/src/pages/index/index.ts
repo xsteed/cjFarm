@@ -6,7 +6,7 @@
 // 流程：解析桌台码 → 拉公开配置 / 桌台 / 菜单 / 备注 → 本桌已有进行中订单则直接进订单页，
 // 否则渲染菜单。交互：左侧分类、右侧菜品，「+」快速加入（多规格时进规格弹层），
 // 点菜名进规格/备注弹层；份数增减与提交下单都在购物车页。
-import { getMenu, getPublicConfig, getRemarks, getTable } from '../../api/client';
+import { getMenu, getPublicConfig, getRemarks, getTable, setTablePerson } from '../../api/client';
 import { devTableCode, mediaUrl } from '../../config';
 import { cartAdd, cartChangeQty, cartCount, cartDishQty, cartSettle, cartState } from '../../store/cart';
 import { restoreCart } from '../../store/cartPersist';
@@ -17,9 +17,14 @@ import {
   applyTable,
   clearCurrentOrder,
   markOwnOrder,
+  markPersonChosen,
   ownOrderMark,
+  persistPersonChoice,
   readPersisted,
-  sessionState
+  adoptPendingPerson,
+  restorePersonChoice,
+  sessionState,
+  setPersonCount
 } from '../../store/session';
 import { toast } from '../../utils/toast';
 import { resolveTableCode } from '../../utils/scene';
@@ -30,6 +35,7 @@ import { isActiveStatus } from '@dining/shared/orderStatus';
 // 搜索与「几个规格算多」都与 H5 共用同一份实现：改一处两端同步
 import { filterMenu } from '@dining/customer-core/search';
 import { INLINE_SPEC_MAX } from '@dining/customer-core/spec';
+import { PERSON_MAX, PERSON_MIN, isValidPerson } from '@dining/customer-core/person';
 import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo } from '@dining/types';
 
 /** 右栏顶部的锚点 id：换搜索词后要把列表拉回顶部（见 scrollListTop）。 */
@@ -174,6 +180,11 @@ Page({
     servingRows: [] as ServingRow[],
     /** 加菜提示条文案（本桌有进行中且未支付的订单时非空，见 refreshRows） */
     appendNotice: '',
+    /** 「入座选人数」面板（茶位费门店）：菜单渲染完成后盖上；蒙层上的草稿值，0 = 还没选 */
+    needPerson: false,
+    personDraft: 0,
+    /** 快捷人数 1~10（五列两行格子）；11~20 走步进器与直接输入 */
+    personChips: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     /** 备选备注（传给 spec-sheet 渲染 chip） */
     remarks: [] as RemarkOption[],
     cartCount: 0,
@@ -396,7 +407,18 @@ Page({
     // 上次没提交的车（被杀进程 / 冷启动重进）：按刚拉到的菜单复核后放回。
     // 必须在这里 —— 紧随其后的 refreshRows 要按购物车算角标与合计。
     // 内存里已有车时 restoreCart 内部会直接返回，不会覆盖顾客正在点的东西。
+    // 恢复出人数会顺带 markPersonChosen（store/cartPersist），所以必须先于关卡判断。
     restoreCart(this.menu);
+
+    // 「入座选人数」面板只在：茶位费开启 + 本桌无订单（含加菜态）+ 没人选过时出现。
+    // 「选过」的判定按优先级：本机会话已选 > 本机冷启动恢复（60 分钟内）>
+    // 同桌共享值（别的手机选过、桌台接口带 pendingPersonCount）—— 都没命中才弹。
+    // 有订单时人数已写在订单里，一律不弹。
+    const s = sessionState();
+    const seatFeeOn = s.config?.seat_fee_enabled === '1' && Number(s.config.seat_fee) > 0;
+    const needPerson =
+      !s.currentOrder && seatFeeOn && !s.personChosen && !restorePersonChoice() && !adoptPendingPerson(info);
+
     const cats: CatRow[] = this.menu.map((c, i) => ({
       categoryId: Number(c.categoryId) || 0,
       categoryName: String(c.categoryName || ''),
@@ -417,6 +439,10 @@ Page({
       servingRows: this.servingRowsOf(info)
     });
     this.refreshRows();
+
+    // 面板最后盖上：菜单已完整渲染，顾客扫码后看到的是「完整菜单 + 半透明蒙层」，
+    // 而不是白板等人数 —— 这是把选人数做成蒙层面板而不是独立页的原因。
+    if (needPerson) this.setData({ needPerson: true, personDraft: 0 });
   },
 
   /** 把后端错误转成顾客能看懂、且知道下一步做什么的文案（与 H5 friendlyLoadError 同口径）。 */
@@ -988,6 +1014,77 @@ Page({
   onGoCart(): void {
     if (!this.data.cartCount) return;
     wx.navigateTo({ url: '/pages/cart/index' });
+  },
+
+  // ---------- 入座选人数（茶位费门店的贴底面板） ----------
+
+  /** 蒙层空方法：catchtouchmove 需要一个真实存在的处理器才能拦住背景滚动。 */
+  noop(): void {},
+
+  /** 点快捷人数 chip：直接选中（面板不预选，人数必须被显式选出来）。 */
+  onPickPerson(e: WechatMiniprogram.TouchEvent): void {
+    const n = Number(e.currentTarget.dataset.n) || 0;
+    if (!isValidPerson(n)) return;
+    this.setData({ personDraft: n });
+  },
+
+  /**
+   * 步进器 − / +。还没选过（草稿为 0）时按「−」不产生选择：
+   * 人数只能被显式加出来或点出来，不能从「默认 1 人」里混过去。
+   */
+  onPersonDraft(e: WechatMiniprogram.TouchEvent): void {
+    const delta = Number(e.currentTarget.dataset.delta) || 0;
+    const cur = Number(this.data.personDraft) || 0;
+    if (cur < PERSON_MIN && delta < 0) return;
+    const next = Math.max(PERSON_MIN, Math.min(PERSON_MAX, cur + delta));
+    if (next === cur) return;
+    this.setData({ personDraft: next });
+  },
+
+  /** 点数字：弹可编辑输入框，覆盖 11~20 与快速输入（与订单页改人数同款交互）。 */
+  onInputPerson(): void {
+    const current = Number(this.data.personDraft) || 0;
+    wx.showModal({
+      title: '本桌用餐几位？',
+      content: current ? String(current) : '',
+      editable: true,
+      placeholderText: '1~20 人',
+      confirmText: '确定',
+      success: r => {
+        if (!r.confirm) return;
+        // 老基础库不给 content：保持草稿不动（不能当 0 处理，那会变成「选了 0」）
+        if (typeof r.content !== 'string') return;
+        const text = r.content.trim();
+        if (!text) return;
+        const n = Number(text);
+        if (!Number.isInteger(n) || !isValidPerson(n)) {
+          toast.info('用餐人数需在 1~20 人之间');
+          return;
+        }
+        this.setData({ personDraft: n });
+      }
+    });
+  },
+
+  /** 确认人数：写会话 + 标记已选 + 落盘，收起面板直接点菜（菜单无需重渲染）。 */
+  onConfirmPerson(): void {
+    const n = Math.floor(Number(this.data.personDraft) || 0);
+    if (!isValidPerson(n)) {
+      toast.info('用餐人数需在 1~20 人之间');
+      return;
+    }
+    setPersonCount(n);
+    markPersonChosen();
+    persistPersonChoice();
+    // 全桌共享：上报给后端，同桌其他手机扫码进来直接沿用、不再重复选。
+    // fire-and-forget：上报失败只影响「别人免选」这一体验，绝不打断自己的点餐。
+    if (sessionState().tableId > 0) {
+      void setTablePerson({ tableId: sessionState().tableId, personCount: n }).catch(() => {
+        /* 静默：面板是体验优化，不是下单链路的一环 */
+      });
+    }
+    // 菜单一直在渲染（面板只是盖在上面）：收掉蒙层即可直接点菜
+    this.setData({ needPerson: false });
   },
 
   /** 点顶部「出餐中」提示条：跳订单页看该单进度（订单页优先用 query 里的 orderNo）。 */

@@ -462,13 +462,11 @@ var schemaTemplate = []string{
 	// 无 del_flag:会员不做软删除,注销直接物理删(档案不含敏感信息,见 spec 2.6)。
 	// 昵称/头像由用户主动填写,不强制,未填时前端显示「微信用户」。
 	//
-	// ⚠️ openid 列是 P0 过渡期遗留:拆表时把唯一约束搬到了 tb_customer_identity,
-	// 但本列仍 NOT NULL + 唯一索引,微信登录继续写一份。删列 / 放开可空是
-	// 「接第二个登录方式之前」的前置动作(P2),见 spec §7.2 —— 唯一索引不先删,
-	// 非微信建档写空串会撞「只允许一行空串」的唯一约束。
+	// 历史:openid 曾直接做本表的唯一键。P0 拆表时保留了一版(过渡),
+	// P2 已彻底删除 —— 老库由启动迁移 migrateCustomerOpenid 搬迁并删列,
+	// 新库不再有这一列。登录查档一律走 tb_customer_identity。
 	`CREATE TABLE IF NOT EXISTS tb_customer (
 		customer_id      {{PK}},
-		openid           VARCHAR(64)  NOT NULL,
 		nickname         VARCHAR(64)  DEFAULT '',
 		avatar_url       VARCHAR(255) DEFAULT '',
 		status           INTEGER      DEFAULT 1,
@@ -499,6 +497,61 @@ var schemaTemplate = []string{
 		credential       VARCHAR(255) DEFAULT '',
 		unionid          VARCHAR(64)  DEFAULT NULL,
 		last_login_time {{TSTYPE}} DEFAULT NULL,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
+	){{OPTS}}`,
+
+	// 储值账户(1:1 挂在会员上,主键即 customer_id,不另设自增 ID)。
+	//
+	// 金额一律以「分」存 INTEGER(全库统一口径,见 migrations/README.md 第七节)。
+	// 余额只由 wallet DAO 在事务内增减(带 balance>=? 守卫),任何绕过 DAO 的
+	// 直接 UPDATE 都可能把余额写成负数 —— 流水与余额对不上时以流水为准。
+	//
+	// 不设 del_flag:储值账户随会员注销物理删除(注销事务里一并清)。
+	`CREATE TABLE IF NOT EXISTS tb_wallet (
+		customer_id    INTEGER PRIMARY KEY,
+		balance        INTEGER      DEFAULT 0,
+		total_recharge INTEGER      DEFAULT 0,
+		total_consume  INTEGER      DEFAULT 0,
+		total_gift     INTEGER      DEFAULT 0,
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
+	){{OPTS}}`,
+
+	// 储值流水(台账,只增不改 —— 调账/退款都追加新行,余额变动必须与流水对得上)。
+	//
+	// biz_type: recharge 充值 / consume 消费 / refund 退回 / gift 后台赠送 / adjust 后台扣减。
+	// amount 带符号:正数入账、负数出账;balance_after 是本笔变动后的余额,
+	// 逐行累加必须等于当前余额 —— 对账脚本就靠这条不变式。
+	// operator 只在后台调账时有值(操作人姓名);顾客自助的充值/消费/退回为空。
+	`CREATE TABLE IF NOT EXISTS tb_wallet_txn (
+		txn_id         {{PK}},
+		customer_id    INTEGER      NOT NULL,
+		biz_type       VARCHAR(16)  NOT NULL,
+		amount         INTEGER      NOT NULL,
+		balance_after  INTEGER      NOT NULL,
+		order_no       VARCHAR(32)  DEFAULT '',
+		payment_no     VARCHAR(64)  DEFAULT '',
+		reason         VARCHAR(255) DEFAULT '',
+		operator       VARCHAR(64)  DEFAULT '',
+		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
+	){{OPTS}}`,
+
+	// 储值充值单:顾客在小程序里发起的充值,走微信 JSAPI 支付,回调成功后入账。
+	//
+	// 单号固定以 R 开头(订单是 D 开头)—— 支付回调 handler 靠前缀分流:
+	// R 开头走充值入账,D 开头走订单入账。status: 0 待支付 / 1 已入账。
+	// 回调用条件更新(status=0 → 1)做幂等,微信重发的通知不会重复加钱。
+	`CREATE TABLE IF NOT EXISTS tb_recharge (
+		recharge_id      {{PK}},
+		recharge_no      VARCHAR(32)  NOT NULL,
+		customer_id      INTEGER      NOT NULL,
+		amount           INTEGER      NOT NULL,
+		status           INTEGER      DEFAULT 0,
+		channel          VARCHAR(16)  DEFAULT '',
+		channel_trade_no VARCHAR(64)  DEFAULT '',
+		pay_time        VARCHAR(32) DEFAULT NULL,
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
@@ -745,14 +798,15 @@ var indexDefs = []indexDef{
 	{Name: "idx_order_credit_settle_time", Table: "tb_order", Columns: "credit_settle_time"},
 	// 会员「我的订单」按时间倒序分页(见 tb_customer)。
 	{Name: "idx_order_customer", Table: "tb_order", Columns: "customer_id, create_time"},
-	// 会员登录按 openid 精确查档;唯一索引同时兜底「并发首登建档」的幂等性。
-	// ⚠️ P0 过渡期保留(见 schemaTemplate 的 tb_customer 注释):登录查档已改走
-	// tb_customer_identity,本索引在 P2 删列时一并移除。
-	{Name: "idx_customer_openid", Table: "tb_customer", Columns: "openid", Unique: true},
 	// 会员登录查档主路径(provider + external_id),同时兜底并发首登的幂等性。
+	// (历史上还有 idx_customer_openid,P2 删列时一并移除 —— 见 migrateCustomerOpenid)
 	{Name: "idx_identity_provider_external", Table: "tb_customer_identity", Columns: "provider, external_id", Unique: true},
 	// 「这个人绑了哪几种登录方式」:后续解绑 / 多端合并要用。
 	{Name: "idx_identity_customer", Table: "tb_customer_identity", Columns: "customer_id"},
+	// 充值单按单号查(支付回调 / 前端轮询入账状态);单号唯一同时兜底并发建单。
+	{Name: "idx_recharge_no", Table: "tb_recharge", Columns: "recharge_no", Unique: true},
+	// 会员的储值流水(「我的」页与后台流水按时间倒序翻页)。
+	{Name: "idx_wallet_txn_customer", Table: "tb_wallet_txn", Columns: "customer_id, txn_id"},
 	// 同一人的多个 openid 共享 unionid,按它反查可把多端归到一个人;非唯一(必然重复)。
 	{Name: "idx_identity_unionid", Table: "tb_customer_identity", Columns: "unionid"},
 	{Name: "idx_order_item_order", Table: "tb_order_item", Columns: "order_id"},
@@ -1023,6 +1077,10 @@ func migrate(stmts []string) {
 	// 老库不会被上面的循环重建,这里检测旧定义并原地重建。
 	recreateRoleKeyIndex()
 
+	// P2:让 tb_customer.openid 彻底退役(登录方式已由 tb_customer_identity 承载)。
+	// 放在建索引之后:identity 表与其唯一索引已就绪,搬迁才有地方落、也才能去重。
+	migrateCustomerOpenid()
+
 	// 历史数据回填:老订单没有实收金额,按「已支付即全额实收」补齐,保证报表口径连续。
 	DB.Exec(`UPDATE tb_order SET paid_amount = total_amount - COALESCE(refund_amount,0)
 		WHERE pay_status=1 AND (paid_amount IS NULL OR paid_amount=0) AND (settle_type IS NULL OR settle_type='normal')`)
@@ -1045,6 +1103,53 @@ func migrate(stmts []string) {
 		}
 	}
 	logger.Infof("[db] update_time 自动维护就绪(方言 %s)", dialect)
+}
+
+// migrateCustomerOpenid 让 tb_customer.openid 彻底退役(P2)。
+//
+// 背景:登录方式已迁到 tb_customer_identity(provider + external_id),openid 只是其中
+// 一种。老库里这列还带着 NOT NULL + 唯一索引 —— 唯一索引只允许**一行**空串,
+// 所以第二个登录方式(手机号等)永远建不成档。必须删列,而不是留着不用。
+//
+// 幂等:列不存在直接返回(新库 / 已升级过的库),重复启动零副作用。
+// 安全:先搬迁、再删索引、最后删列;搬迁或删索引失败就中止启动,绝不在数据未搬完时删列。
+//
+// 方言差异:SQLite 3.35+ 与 MySQL 5.7+ 都支持 DROP COLUMN(项目内置 SQLite 3.46),
+// 但 SQLite 不允许删除**仍被索引引用**的列,必须先删唯一索引。
+func migrateCustomerOpenid() {
+	if !columnExists("tb_customer", "openid") {
+		return
+	}
+
+	// 1) 搬迁:兼容「跳过 P0 直接从老版本升上来」的库 —— 它们的 openid 还没进 identity 表。
+	//    NOT EXISTS 守卫与索引是否存在无关,重复执行零变更。
+	if _, err := DB.Exec(`INSERT INTO tb_customer_identity(customer_id, provider, external_id, last_login_time, create_time)
+		SELECT c.customer_id, ?, c.openid, c.last_login_time, c.create_time
+		FROM tb_customer c
+		WHERE COALESCE(c.openid,'') <> ''
+		  AND NOT EXISTS (SELECT 1 FROM tb_customer_identity i
+		                  WHERE i.provider=? AND i.external_id=c.openid)`,
+		po.CustomerProviderWxMP, po.CustomerProviderWxMP); err != nil {
+		logger.Fatalf("[db] 搬迁 tb_customer.openid → tb_customer_identity 失败,已中止启动(不会删列): %v", err)
+	}
+
+	// 2) 删唯一索引。MySQL 的 DROP INDEX 需要 ON <table>;SQLite 不需要。
+	if indexExists("idx_customer_openid") {
+		stmt := `DROP INDEX IF EXISTS idx_customer_openid`
+		if dialect == DialectMySQL {
+			stmt = `DROP INDEX idx_customer_openid ON tb_customer`
+		}
+		if _, err := DB.Exec(stmt); err != nil {
+			logger.Fatalf("[db] 删除索引 idx_customer_openid 失败,已中止启动(不会删列): %v", err)
+		}
+	}
+
+	// 3) 删列。删不掉就起不来 —— 否则建档会因 NOT NULL 缺值而失败,表现是「注册不了会员」,
+	//    比启动失败更难排查。
+	if _, err := DB.Exec(`ALTER TABLE tb_customer DROP COLUMN openid`); err != nil {
+		logger.Fatalf("[db] 删除 tb_customer.openid 失败,已中止启动: %v", err)
+	}
+	logger.Infof("[db] 已退役 tb_customer.openid(登录方式统一由 tb_customer_identity 承载)")
 }
 
 // backfillMealTimes 把历史订单的用餐起止时间补齐到新列(幂等,只写 NULL 行)。

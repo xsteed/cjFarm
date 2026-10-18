@@ -237,6 +237,33 @@
             下面两道防线用来兜住这种情况，按你的营业习惯决定开不开。
           </div>
 
+          <t-form-item label="会员功能">
+            <div class="biz-item">
+              <div class="biz-control">
+                <t-switch
+                  v-model="form.member_enabled"
+                  :custom-value="['1', '0']"
+                />
+                <span class="biz-state">{{ form.member_enabled === '1' ? '已开启' : '已关闭' }}</span>
+              </div>
+              <div class="biz-lead">
+                <b>开启</b>：小程序底部出现「我的」，顾客可微信一键注册会员、查看历史订单。<b>默认关闭</b>。
+              </div>
+              <ul class="biz-points">
+                <li><b>关闭（默认）</b>：小程序端整体隐藏会员入口，会员登录/注册一律拒绝，已登录顾客也会被退出。</li>
+                <li>它是独立总闸：开不开由你决定，与小程序 AppSecret 是否已配置无关。</li>
+              </ul>
+              <div
+                v-if="form.member_enabled === '1' && !form.wx_app_secret"
+                class="biz-warn"
+              >
+                已开启会员，但尚未配置小程序 AppSecret（「在线支付」页 →
+                小程序桌牌码）：顾客点「注册成为会员」会提示失败。<br />
+                请先到「在线支付」页填写小程序 AppSecret，或暂时关闭会员功能。
+              </div>
+            </div>
+          </t-form-item>
+
           <t-form-item label="先付模式">
             <div class="biz-item">
               <div class="biz-control">
@@ -437,7 +464,8 @@
                 style="width: 320px"
               />
               <span class="tip">
-                打印在结账小票末尾的文案，可改成店铺口号；顾客小票（点菜单）与加菜小票不打印页脚。清空则结账小票也不打。保存后到「打印记录 → 预览」即可看到效果，无需真实出纸。
+                打印在结账小票末尾的文案，可改成店铺口号；顾客小票（点菜单）与加菜小票不打印页脚。清空则结账小票也不打。保存后到「打印记录
+                → 预览」即可看到效果，无需真实出纸。
               </span>
             </t-space>
           </t-form-item>
@@ -450,7 +478,9 @@
                 v-model="form.print_guest_show_discount"
                 :custom-value="['1', '0']"
               />
-              <span class="tip">关闭后结账小票不再单列优惠行；有优惠金额时才出现该行。点菜单（下单时那张）不出优惠行。</span>
+              <span class="tip"
+                >关闭后结账小票不再单列优惠行；有优惠金额时才出现该行。点菜单（下单时那张）不出优惠行。</span
+              >
             </t-space>
           </t-form-item>
           <t-form-item label="下单出点菜单">
@@ -463,7 +493,8 @@
                 :custom-value="['1', '0']"
               />
               <span class="tip">
-                开启后顾客每次下单（后付模式），小票机会出一张「点菜单」（已点菜品 + 当前合计），作为点菜凭证当场可核对。
+                开启后顾客每次下单（后付模式），小票机会出一张「点菜单」（已点菜品 +
+                当前合计），作为点菜凭证当场可核对。
                 嫌它与结账小票重复、想省纸的门店可关闭；关闭后下单只打厨房单，加菜小票与结账小票不受影响。
                 先付模式下下单不出单，收款成功直接出结账小票（点菜单与付款凭证合一），不受本开关影响。
               </span>
@@ -587,6 +618,22 @@
                 开启后顾客在微信小程序里可直接调起微信支付，全程不离开小程序。<br />
                 前提：上方「微信 AppID」必须是<b>小程序</b>的 AppID，且下方「小程序 AppSecret」已填写；
                 缺任一项时顾客点了只会看到「支付暂不可用」，仍可用收款码或到前台结账。
+              </span>
+            </t-space>
+          </t-form-item>
+          <t-form-item label="储值自助充值">
+            <t-space
+              direction="vertical"
+              style="align-items: flex-start"
+            >
+              <t-switch
+                v-model="form.wallet_recharge_enabled"
+                :custom-value="['1', '0']"
+              />
+              <span class="tip">
+                开启后顾客可在小程序「我的钱包」里自助充值（微信支付）。<br />
+                前提：已开通「小程序内支付」。关闭只隐藏充值入口，
+                <b>不影响顾客已充值余额的消费与退款</b> —— 那是顾客的钱，进得来就出得去。
               </span>
             </t-space>
           </t-form-item>
@@ -1172,6 +1219,8 @@ interface ConfigForm {
   wxpay_enabled: string;
   /** 小程序内支付（JSAPI）：开启后结账页出现「微信支付」按钮 */
   wxpay_jsapi_enabled: string;
+  /** 储值自助充值：开启后顾客钱包页出现充值入口（余额消费/退款不受影响） */
+  wallet_recharge_enabled: string;
   alipay_enabled: string;
   wxpay_mchid: string;
   wxpay_appid: string;
@@ -1210,6 +1259,8 @@ interface ConfigForm {
   biz_date_cutoff_hour: number | string;
   // 先付模式开关:'1' 先付 / '0' 后付(默认)
   pay_first_enabled: string;
+  // 会员功能总闸:'1' 开放 / '0' 关闭,控制小程序「我的」入口与会员登录注册
+  member_enabled: string;
 }
 
 // 后端 config 全量字段:entities 的 ConfigData 只声明了公开配置子集,这里补齐
@@ -1246,6 +1297,7 @@ type ConfigPayloadFull = ConfigData & {
   stale_alert_enabled?: string;
   stale_alert_hours?: string;
   biz_date_cutoff_hour?: string;
+  member_enabled?: string;
   // 一次性指令:传 '1' 表示主动清空 agent_token(敏感项留空只表示「不修改」)。
   agent_token_clear?: string;
 };
@@ -1267,6 +1319,7 @@ const form = reactive<ConfigForm>({
   pay_qr_ali: '',
   wxpay_enabled: '0',
   wxpay_jsapi_enabled: '0',
+  wallet_recharge_enabled: '0',
   alipay_enabled: '0',
   wxpay_mchid: '',
   wxpay_appid: '',
@@ -1304,7 +1357,9 @@ const form = reactive<ConfigForm>({
   // 营业日切换时刻：出厂默认 0 = 按自然日 00:00 切换
   biz_date_cutoff_hour: 0,
   // 先付/后付模式：出厂默认后付('0')，与后端 settingDefaults 一致
-  pay_first_enabled: '0'
+  pay_first_enabled: '0',
+  // 会员功能总闸：出厂默认关('0')，与后端 settingDefaults 一致
+  member_enabled: '0'
 });
 
 // 先付模式下没有任何「顾客可自助付款」的渠道时给出警示：
@@ -1335,6 +1390,7 @@ const FLAG_KEYS = [
   'promotion_enabled',
   'wxpay_enabled',
   'wxpay_jsapi_enabled',
+  'wallet_recharge_enabled',
   'alipay_enabled',
   'print_enabled',
   'print_kitchen_show_price',
@@ -1343,7 +1399,8 @@ const FLAG_KEYS = [
   'print_guest_on_order',
   'stale_release_enabled',
   'stale_alert_enabled',
-  'pay_first_enabled'
+  'pay_first_enabled',
+  'member_enabled'
 ] as const;
 
 function normFlag(v: unknown): '1' | '0' {

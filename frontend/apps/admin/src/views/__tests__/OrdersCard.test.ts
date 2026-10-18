@@ -306,6 +306,20 @@ describe('Orders 订单管理页 · 移动端订单卡片按钮矩阵', () => {
     wrapper.unmount();
   });
 
+  it('筛选:移动端点「新」快捷开关,列表请求带 newOnly=1 且回到第 1 页', async () => {
+    payFirstState.value = false;
+    listOrdersMock.mockResolvedValue({ total: 1, items: [order({ orderId: 1, isNew: true })] });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    const newBtn = wrapper.find('.m-new-btn');
+    expect(newBtn.exists()).toBe(true);
+    await newBtn.trigger('click');
+    await flushPromises();
+    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ newOnly: '1', pageNum: 1 }));
+    wrapper.unmount();
+  });
+
   it('后付模式:卡片保持 详情 / 开始制作 / 后付款结账 / 取消订单', async () => {
     payFirstState.value = false;
     listOrdersMock.mockResolvedValue({ total: 1, items: [order({ orderStatus: 1, payStatus: 0 })] });

@@ -6,6 +6,7 @@
     "pages/order/index",
     "pages/pay/index",
     "pages/profile/index",
+    "pages/wallet/index",
     "pages/history-detail/index"
   ],
   "window": {

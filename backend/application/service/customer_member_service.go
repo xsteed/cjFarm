@@ -11,9 +11,11 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"dining-system/domain/po"
 	"dining-system/infrastructure/logger"
@@ -33,25 +35,15 @@ type ProviderPayload struct {
 	Code string
 }
 
-// customerProviderEnabled 各登录方式当前是否可用。
+// memberSwitchOn 会员功能总开关(管理端「营业设置 → 会员功能」,tb_config 的 member_enabled)。
 //
-// 新增 provider 时在这里登记一行,会员总开关会自动跟随。否则会出现
-// 「接了手机号登录,但没配微信的部署打不开会员」—— 旧口径把会员开关
-// 绑死在微信配置上,是接第二个端时的第一个坑(见 spec D5)。
-var customerProviderEnabled = map[string]func() bool{
-	po.CustomerProviderWxMP: weapp.MemberEnabled,
-}
-
-// MemberEnabled 会员功能总开关:任一登录方式可用即为开启。
-// 顾客端公开配置里带上该标记,前端据此显隐「注册成为会员」入口。
-func MemberEnabled() bool {
-	for _, enabled := range customerProviderEnabled {
-		if enabled() {
-			return true
-		}
-	}
-	return false
-}
+// 它是唯一的显隐/放行口径,与登录能力(AppSecret 是否配置)解耦 —— 显隐归
+// 商家运营决定,不被技术配置顺手决定(spec 12.5 的预留设计)。
+//
+// 「默认关」语义(fail-closed):只有明确 "1" 才算开启,其余(含配置缺失、脏值)
+// 一律按关闭处理,与 SettingFlag 同一口径 —— 宁可少一个会员入口,也不要在
+// 未配 AppSecret 的部署上出现「入口在、点注册必失败」的哑火状态。
+func memberSwitchOn() bool { return dao.GetSetting("member_enabled") == "1" }
 
 // CustomerLoginResult 顾客登录/注册的结果:令牌 + 会员档案 + 是否首次(注册)。
 type CustomerLoginResult struct {
@@ -73,6 +65,11 @@ func CustomerLogin(ctx context.Context, code, ip string) (CustomerLoginResult, e
 // provider 缺省为 wx_mp:老版本小程序的请求体只有 {code},加了这一维之后
 // 它们一行不改也必须能继续登录(spec D4)。
 func CustomerLoginByProvider(ctx context.Context, provider string, p ProviderPayload, ip string) (CustomerLoginResult, error) {
+	// 总闸先于一切:管理端关闭会员后,连静默重登也不放行 —— 否则入口虽藏了,
+	// 令牌过期触发的自动重登仍会绕过开关继续续命会员态。
+	if !memberSwitchOn() {
+		return CustomerLoginResult{}, errors.New("会员功能未开启")
+	}
 	provider = po.NormalizeCustomerProvider(provider)
 	if !po.IsKnownCustomerProvider(provider) {
 		return CustomerLoginResult{}, errors.New("暂不支持该登录方式")
@@ -174,6 +171,80 @@ func NotifyCustomerOrder(customerID int) {
 		return
 	}
 	dao.TouchCustomerOrder(customerID)
+}
+
+// ============================================================================
+// 顾客自助:完善资料 / 注销
+// ============================================================================
+
+// maxNicknameRunes 昵称长度上限。tb_customer.nickname 是 VARCHAR(64),
+// 取 32 个字符留余量(后台列表/会员卡都要能一行放下)。
+const maxNicknameRunes = 32
+
+// CustomerUpdateProfile 会员自助完善资料(目前只有昵称)。
+//
+// 头像不支持顾客自助修改:上传接口 /api/common/upload 要求管理端权限,
+// 给顾客开一条上传通道是另一个功能(还要防滥用),本期不做。这里读原值回写,
+// 避免「只改昵称」把头像清空。
+func CustomerUpdateProfile(customerID int, nickname string) (*po.Customer, error) {
+	nickname = strings.TrimSpace(nickname)
+	if utf8.RuneCountInString(nickname) > maxNicknameRunes {
+		return nil, fmt.Errorf("昵称最多 %d 个字", maxNicknameRunes)
+	}
+	c, err := dao.GetCustomerByID(customerID)
+	if err != nil {
+		return nil, errors.New("系统繁忙，请稍后再试")
+	}
+	if c == nil {
+		return nil, errors.New("请先登录")
+	}
+	if err := dao.UpdateCustomerProfile(customerID, nickname, c.AvatarURL); err != nil {
+		logger.Warnf("[member] 更新会员资料失败(id=%d): %v", customerID, err)
+		return nil, errors.New("保存失败，请稍后再试")
+	}
+	return dao.GetCustomerByID(customerID)
+}
+
+// CustomerDeleteAccount 注销会员(顾客自助)。
+//
+// 语义见 spec §2.6:档案与登录方式物理删除,历史订单保留但归属置 0(变回匿名单)。
+// 令牌无状态,注销后下一次请求会因为查不到档案而 401,不需要额外的吊销逻辑。
+func CustomerDeleteAccount(customerID int) error {
+	if err := dao.DeleteCustomerAccount(customerID); err != nil {
+		logger.Warnf("[member] 注销会员失败(id=%d): %v", customerID, err)
+		return errors.New("注销失败，请稍后再试")
+	}
+	return nil
+}
+
+// ============================================================================
+// 管理端:会员管理
+// ============================================================================
+
+// ListMembers 分页查询会员(后台会员页)。
+func ListMembers(keyword string, status *int, pageNum, pageSize int) (int, []dao.MemberRow, error) {
+	return dao.ListMembers(dao.MemberQuery{
+		Keyword: strings.TrimSpace(keyword),
+		Status:  status,
+	}, pageNum, pageSize)
+}
+
+// SetMemberStatus 启用/停用会员。停用后现有令牌在下一次校验时立即失效(每次都查 status)。
+func SetMemberStatus(customerID, status int) error {
+	if status != po.CustomerStatusEnabled && status != po.CustomerStatusDisabled {
+		return errors.New("会员状态不合法")
+	}
+	c, err := dao.GetCustomerByID(customerID)
+	if err != nil {
+		return errors.New("系统繁忙，请稍后再试")
+	}
+	if c == nil {
+		return errors.New("会员不存在")
+	}
+	if c.Status == status {
+		return nil
+	}
+	return dao.SetCustomerStatus(customerID, status)
 }
 
 // ============================================================================

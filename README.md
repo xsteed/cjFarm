@@ -418,9 +418,13 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
   - 订单 `order/list|get/:id|board|status|pay|settle|settle/cancel|credit/settle|finish|cancel|edit`
   - 报表 `report/summary|dailyTrend|monthlyTrend|dishRank|hourly|settleMix|diningDuration|visits`（`visits` = 站点访问统计：PV/UV/新访客/渠道/扫码入口 Top）
   - 员工 `user/list|save|update|resetPassword/:id|status/:id|delete/:id`（改密/启停/删除）
+  - 会员 `member/list|status`（顾客会员：列表 / 启停用；**不提供后台新建与删除**，档案由顾客自助注册与注销）
+  - 储值 `member/wallet|wallet/adjust`（某会员的余额与流水 / 后台调账：正数赠送、负数扣减，原因必填）
   - 角色 `role/list|save|update|delete/:id`、权限点目录 `perm/catalog`
 - 打印代理 `/api/agent/print/*`（门店侧程序调用，代理令牌鉴权，不属于管理端）：`ping`、`pull`、`ack`（见 [`docs/print-agent.md`](docs/print-agent.md)）
 - 顾客端 `/api/customer/*`（公开）：`table/:id`（`id` 同时接受桌台稳定码或数字 ID）、`menu`、`remarks`、`config`、`order`、`order/no/:orderNo`、`pay/qr`、`visit`（站点访问统计打点，恒 200、失败不影响点餐）
+- 顾客会员 `/api/customer/auth/*`（登录接口公开，其余需顾客令牌）：`login`（微信一键注册/登录，可选 `phoneCode` 一并绑手机号）、`phone`（手机号绑定）、`profile`（GET 会员卡 / POST 改昵称）、`account`（DELETE 注销）、`order/mine[/:orderNo]`（历史订单）
+- 顾客储值 `/api/customer/wallet*`（需顾客令牌）：`wallet`（余额）、`wallet/txns`（流水）、`wallet/recharge`（微信 JSAPI 充值）、`wallet/recharge/status`（入账轮询）、`wallet/pay`（余额支付订单；充值单号 R 开头，与订单 D 开头共用回调地址、靠前缀分流）
 - 上传 `/api/common/upload`（需登录且具备「菜品管理」或「系统配置修改」权限，仅限图片）
 
 > 鉴权失败状态码：**401** = 未登录/令牌失效（前端清登录态并跳登录页）；**403** = 已登录但无该操作权限（前端仅弹提示，不退出）。业务错误统一 **400**。
@@ -468,8 +472,8 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 
 管理端不再只有一个固定账号，支持**多员工 + 角色 + 权限点**，粒度细到单个接口。
 
-- **权限点**：共 28 个、分 13 个模块（`table`/`category`/`dish`/`remark`/`printer`/`order`/
-  `credit`/`refund`/`report`/`config`/`user`/`role`/`log`），命名 `模块:动作`。
+- **权限点**：共 32 个、分 15 个模块（`table`/`category`/`dish`/`remark`/`printer`/`order`/
+  `credit`/`refund`/`report`/`member`/`wallet`/`config`/`user`/`role`/`log`），命名 `模块:动作`。
 - **隐含规则**（保存角色与每次启动时归一化，管理员勾不掉）：
   ① 任一非 `view` 权限自动隐含同模块的 `view`（勾了「编辑」自动带上「查看」）；
   ② 跨模块数据依赖：`credit:view` → `order:view`（挂账列表其实就是订单数据）、
@@ -479,9 +483,9 @@ cd backend && make build-agent    # 产出 Linux amd64/arm64 + Windows amd64 三
 
   | 角色 | `role_key` | 权限数 | 定位 |
   |---|---|---|---|
-  | 超级管理员 | `admin` | 28（全量） | 全部功能；**每次启动强制恢复为全量**，防止误改锁死 |
-  | 店长 | `manager` | 22 | 日常最高权限：可改配置、看报表、查操作日志，但不能管理员工/角色，也不能发起退款 |
-  | 收银员 | `cashier` | 13 | 前厅收银：订单全流程 + 挂账核销 + 基础资料查看（**不含**配置/报表/退款） |
+  | 超级管理员 | `admin` | 32（全量） | 全部功能；**每次启动强制恢复为全量**，防止误改锁死 |
+  | 店长 | `manager` | 26 | 日常最高权限：可改配置、看报表、查操作日志、管理会员与储值，但不能管理员工/角色，也不能发起退款 |
+  | 收银员 | `cashier` | 15 | 前厅收银：订单全流程 + 挂账核销 + 会员与储值查看（**不含**配置/报表/退款/会员启停用/储值调账） |
   | 员工 | `staff` | 6 | 后厨/服务员通用：只读基础资料，订单可流转（接单/上菜/完成/处理催菜） |
 
 - **两个高危动作只给超级管理员**：退款发起 `refund:operate`、操作日志清理 `log:manage`

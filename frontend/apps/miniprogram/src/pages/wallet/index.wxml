@@ -1,0 +1,118 @@
+<!-- 我的钱包：余额 + 充值（管理端开关控制）+ 储值流水 -->
+<view class="page">
+  <view
+    wx:if="{{loading}}"
+    class="state"
+  >
+    <view class="spinner"></view> 加载中…
+  </view>
+
+  <view
+    wx:elif="{{error}}"
+    class="state"
+  >
+    <view class="state-err">{{error}}</view>
+    <button
+      class="btn-ghost"
+      bindtap="onRetry"
+    >
+      重新加载
+    </button>
+  </view>
+
+  <block wx:else>
+    <!-- 余额卡 -->
+    <view class="balance-card">
+      <view class="bal-label">储值余额（元）</view>
+      <view class="bal-num">{{balanceText}}</view>
+      <view class="bal-stats">
+        <view class="stat">
+          <view class="stat-num">{{info.totalRecharge}}</view>
+          <view class="stat-label">累计充值</view>
+        </view>
+        <view class="stat">
+          <view class="stat-num">{{info.totalConsume}}</view>
+          <view class="stat-label">累计消费</view>
+        </view>
+        <view class="stat">
+          <view class="stat-num">{{info.totalGift}}</view>
+          <view class="stat-label">累计赠送</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 充值区：管理端开关 + 微信支付任一未开通就整块隐藏 -->
+    <view
+      wx:if="{{canRecharge}}"
+      class="panel"
+    >
+      <view class="panel-title">充值</view>
+      <view class="amount-grid">
+        <view
+          wx:for="{{[100,200,500,1000]}}"
+          wx:key="*this"
+          class="amount-cell {{preset === item ? 'on' : ''}}"
+          data-amount="{{item}}"
+          bindtap="onPickPreset"
+        >
+          {{item}} 元
+        </view>
+      </view>
+      <view class="custom-row">
+        <input
+          class="custom-input"
+          type="number"
+          placeholder="自定义金额（整数元）"
+          value="{{customAmount}}"
+          bindinput="onCustomInput"
+        />
+      </view>
+      <button
+        class="btn-primary"
+        disabled="{{recharging}}"
+        bindtap="onRecharge"
+      >
+        {{recharging ? '拉起支付…' : '微信支付'}}
+      </button>
+      <view class="panel-tip">充值后可用于到店消费抵扣；余额不设有效期，注销会员时未消费余额按门店规则处理。</view>
+    </view>
+
+    <!-- 流水 -->
+    <view class="panel">
+      <view class="panel-title">储值明细</view>
+      <view
+        wx:if="{{txns.length === 0}}"
+        class="empty"
+      >
+        暂无储值记录
+      </view>
+      <view
+        wx:for="{{txns}}"
+        wx:key="txnId"
+        class="txn"
+      >
+        <view class="txn-main">
+          <view class="txn-type">{{item.typeText}}</view>
+          <view class="txn-sub">{{item.timeText}}<text wx:if="{{item.orderNo}}"> · {{item.orderNo}}</text></view>
+        </view>
+        <view class="txn-right">
+          <view class="txn-amt {{item.amountClass}}">{{item.amountText}}</view>
+          <view class="txn-bal">余额 {{item.balanceText}}</view>
+        </view>
+      </view>
+      <button
+        wx:if="{{hasMore}}"
+        class="btn-ghost btn-more"
+        disabled="{{loadingMore}}"
+        bindtap="onLoadMore"
+      >
+        {{loadingMore ? '加载中…' : '加载更多'}}
+      </button>
+    </view>
+  </block>
+
+  <tab-bar
+    active="profile"
+    show-profile="{{true}}"
+  />
+</view>

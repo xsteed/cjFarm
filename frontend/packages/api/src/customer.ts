@@ -17,6 +17,10 @@ import type {
 
 // 顾客端
 export const getTable = (id: Id): Promise<TableInfo> => http.get<unknown, TableInfo>(`/customer/table/${id}`);
+// 入座选人数上报（茶位费门店）：同桌共享，其他设备扫码进来直接沿用、不再重复选。
+// 调用方 fire-and-forget，失败静默 —— 它只影响「别人免选」的体验，绝不阻断点餐。
+export const setTablePerson = (data: { tableId: number; personCount: number }): Promise<void> =>
+  http.post<unknown, void>('/customer/table/person', data);
 export const getMenu = (): Promise<MenuCategory[]> => http.get<unknown, MenuCategory[]>('/customer/menu');
 export const getRemarks = (): Promise<RemarkOption[]> => http.get<unknown, RemarkOption[]>('/customer/remarks');
 export const createOrder = (data: OrderCreatePayload): Promise<OrderCreateResult> =>
@@ -113,6 +117,8 @@ export interface MemberInfo {
   /** 入会日期。 */
   memberSince: string;
   orderCount: number;
+  /** 已绑手机号（脱敏 139****0001）；未绑定为空串。 */
+  phone?: string;
 }
 
 export interface MemberLoginResult {
@@ -151,3 +157,27 @@ export const memberOrders = (pageNum: number, pageSize = 10): Promise<{ total: n
   http.get<unknown, { total: number; items: MemberOrderRow[] }>('/customer/order/mine', {
     params: { pageNum, pageSize }
   });
+
+/**
+ * 完善会员资料(目前只有昵称)。
+ *
+ * 头像不在这个接口里:顾客可上传需要一条独立的上传通道(现有上传接口要管理端权限),
+ * 属于另一个功能。只传昵称时服务端会原样保留已设置的头像。
+ */
+export const updateMemberProfile = (data: { nickname: string }): Promise<MemberInfo> =>
+  http.post<unknown, MemberInfo>('/customer/auth/profile', data);
+
+/**
+ * 注销会员(不可撤销)。
+ *
+ * 档案与登录方式被物理删除,历史订单归入门店的匿名单(不再出现在「我的订单」)。
+ * 令牌无状态:注销后下次请求查不到档案即 401,前端清本地令牌即可。
+ */
+export const deleteMemberAccount = (): Promise<void> => http.delete<unknown, void>('/customer/auth/account');
+
+/**
+ * 绑定手机号(getPhoneNumber 按钮的 code,与 wx.login 的 code 不是同一个东西)。
+ * 返回脱敏后的手机号(139****0001)。同一手机号全店只能属于一个会员。
+ */
+export const bindMemberPhone = (code: string): Promise<{ phone: string }> =>
+  http.post<unknown, { phone: string }>('/customer/auth/phone', { code });

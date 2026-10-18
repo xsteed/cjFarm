@@ -14,6 +14,7 @@
 | 32 | `20261018000000_tb_customer_identity_create.sql` | 顾客会员身份表 `tb_customer_identity`（账号与登录方式解耦），并把存量 `tb_customer.openid` 搬迁为 `provider='wx_mp'` 的身份记录 |
 | 33 | `20261018010000_tb_customer_drop_openid.sql` | 退役 `tb_customer.openid`：再搬一次（兼容跳过 32 号的库）→ 删唯一索引 → 删列。**删列后非微信登录才能建档** |
 | 34 | `20261018020000_tb_order_add_viewed_at.sql` | 订单补「商家首次操作时间」`viewed_at`（NULL = 新单未操作过，列表据此打「新」角标；仅查看不算），存量订单回填为已操作 |
+| 35 | `20261018030000_tb_config_member_enabled.sql` | 会员功能总闸 `tb_config.member_enabled`（默认 `'0'` 关闭）：管理端「营业设置 → 会员功能」独立开关，控制小程序「我的」入口显隐与会员登录/注册放行，不再由 AppSecret 推导 |
 
 > 32/33 两号是配套的：32 建身份表并首次搬迁，33 删掉 `openid` 列。
 > 只跑 32 不跑 33 也能用（P0 状态），但第二个登录方式仍会被 `openid` 的唯一索引挡住。
@@ -36,6 +37,19 @@
 
 例外：`tb_config` 的写入走 REPLACE（整行替换），写 `create_time` 会把首次落库时间冲掉，
 因此只在种子语句里写一次 `create_time`，之后改配置只推进 `update_time`。
+
+## 加列规范（全局约定）
+
+`ALTER TABLE ... ADD COLUMN` **必须显式带 `AFTER <已有列>`**，不得省略：
+
+- 增量脚本会落到存量库，缺省 `AFTER` 时 MySQL 把新列追加到表**末尾**，
+  而 `full/{mysql,sqlite}/schema.sql` 里新列是写在**中间**（紧挨语义相邻列）的；
+  两侧字段顺序不一致会让 `store.alterCols` 启动补列时的列顺序与全量建表对不上，
+  排查困难、也影响人工审计时的可读性。
+- `AFTER` 的取值以 `full/mysql/schema.sql` 中该列**实际所在位置**为准
+  （见上方 34 号脚本：`viewed_at AFTER meal_end_time`）。
+- SQLite 不支持 `AFTER` 语法、且加列只能追加到末尾，**无需也不能写 `AFTER`**；
+  仅 MySQL 侧增量脚本需要。但两边最终列顺序都应以 `full/schema.sql` 的建表语句为单一事实来源。
 
 ## MySQL 侧执行前必读（28 号脚本）
 

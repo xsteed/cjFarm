@@ -20,6 +20,8 @@ type Settings struct {
 	// 依赖项:小程序 AppID(填在 wxpay_appid)+ AppSecret(wx_app_secret)+
 	// 商户 API 私钥与证书 —— 缺任一都调不起收银台,所以默认关(fail-closed)。
 	WxpayJsapiEnabled string `json:"wxpay_jsapi_enabled"`
+	// 储值自助充值开关(默认 0):只管「顾客能否自助充值」,不影响已有余额的消费与退款。
+	WalletRechargeEnabled string `json:"wallet_recharge_enabled"`
 	// 微信支付商户参数(wxpay_apiv3_key 为敏感项:已配置回显 ****** 占位,原样带回或留空均表示不修改)
 	WxpayMchid            string `json:"wxpay_mchid"`
 	WxpayAppid            string `json:"wxpay_appid"`
@@ -72,6 +74,9 @@ type Settings struct {
 	// 先付模式开关("1"=先付,其余=后付)。开启后顾客下单需先完成支付,后厨在收款成功后才出单制作;
 	// 关闭(出厂默认)为后付模式:下单即出单做菜,餐后/离店前再结账。
 	PayFirstEnabled string `json:"pay_first_enabled"`
+	// 会员功能总闸("1"=开放,"0"=关闭)。控制小程序「我的」入口显隐与会员登录/注册放行;
+	// 与 AppSecret 等登录能力配置解耦(没配密钥时入口照常出现,注册会得到明确错误文案)。
+	MemberEnabled string `json:"member_enabled"`
 	// 配置内容指纹(乐观锁):SettingList 下发,SettingSave 原样带回校验。
 	Version string `json:"version,omitempty"`
 }

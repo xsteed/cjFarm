@@ -33,7 +33,7 @@ type PermGroup struct {
 	Perms []PermDef `json:"perms"`
 }
 
-// permGroups 权限目录: 13 个模块 / 28 个权限点。
+// permGroups 权限目录: 15 个模块 / 32 个权限点。
 var permGroups = []PermGroup{
 	{Key: "table", Name: "桌台", Perms: []PermDef{
 		{Code: "table:view", Name: "桌台查看"},
@@ -72,6 +72,18 @@ var permGroups = []PermGroup{
 	}},
 	{Key: "report", Name: "报表", Perms: []PermDef{
 		{Code: "report:view", Name: "数据报表查看"},
+	}},
+	// 顾客会员:数据来自 tb_customer(小程序「注册成为会员」),与管理端员工账号无关。
+	// 只有「查看」与「启停用」两种动作 —— 会员档案的增删由顾客自己触发,
+	// 后台不代客建档(否则会出现没有登录方式、谁也登不进去的孤儿档案)。
+	{Key: "member", Name: "会员", Perms: []PermDef{
+		{Code: "member:view", Name: "会员查看"},
+		{Code: "member:edit", Name: "会员管理(启停用)"},
+	}},
+	// 储值:动钱,与会员查看分开收口 —— 能看会员的人未必能调账。
+	{Key: "wallet", Name: "储值", Perms: []PermDef{
+		{Code: "wallet:view", Name: "储值查看(余额/流水)"},
+		{Code: "wallet:edit", Name: "储值调账(赠送/扣减)"},
 	}},
 	{Key: "config", Name: "系统配置", Perms: []PermDef{
 		{Code: "config:view", Name: "系统配置查看"},
@@ -345,10 +357,12 @@ var builtinRoleSeeds = []builtinRoleSeed{
 			"credit:view", "credit:settle",
 			"refund:view",
 			"report:view",
+			"member:view", "member:edit",
+			"wallet:view", "wallet:edit",
 			"config:view", "config:edit",
 			"log:view",
 		},
-		Remark: "日常最高权限:可改配置、看报表、查操作日志,但不能管理员工与权限,也不能发起退款。",
+		Remark: "日常最高权限:可改配置、看报表、查操作日志、管理会员,但不能管理员工与权限,也不能发起退款。",
 	},
 	{
 		Key: RoleKeyCashier, Name: "收银员", Sort: 3,
@@ -361,8 +375,12 @@ var builtinRoleSeeds = []builtinRoleSeed{
 			"order:view", "order:operate", "order:settle", "order:edit", "order:cancel",
 			"credit:view", "credit:settle",
 			"refund:view",
+			// 会员只读:收银台要能按昵称认人,但启停用是管理动作,留给店长。
+			"member:view",
+			// 储值只读:能看到客人余额方便收银,调账动钱留给店长。
+			"wallet:view",
 		},
-		Remark: "前厅收银:处理订单全流程与挂账核销,不涉及配置、报表与退款发起。",
+		Remark: "前厅收银:处理订单全流程与挂账核销,可查会员与储值,不涉及配置、报表、退款发起与会员启停用。",
 	},
 	{
 		Key: RoleKeyStaff, Name: "员工", Sort: 4,

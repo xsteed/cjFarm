@@ -75,62 +75,70 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '挂账管理', perm: 'credit:view', icon: 'MoneyIcon', menuOrder: 7, group: 'order' }
       },
       {
+        // 顾客会员(小程序自助注册),与「员工管理」是两套体系:
+        // 这里看的是顾客账号,启停用按钮在页面内再按 member:edit 判断。
+        path: 'members',
+        name: 'Members',
+        component: () => import('./views/Members.vue'),
+        meta: { title: '会员管理', perm: 'member:view', icon: 'MemberIcon', menuOrder: 8 }
+      },
+      {
         path: 'report',
         name: 'Report',
         component: () => import('./views/Report.vue'),
-        meta: { title: '数据报表', perm: 'report:view', icon: 'ChartBarIcon', menuOrder: 8 }
+        meta: { title: '数据报表', perm: 'report:view', icon: 'ChartBarIcon', menuOrder: 9 }
       },
       {
         path: 'printers',
         name: 'Printers',
         component: () => import('./views/Printers.vue'),
-        meta: { title: '打印机管理', perm: 'printer:view', icon: 'PrintIcon', menuOrder: 9, group: 'print' }
+        meta: { title: '打印机管理', perm: 'printer:view', icon: 'PrintIcon', menuOrder: 10, group: 'print' }
       },
       {
         path: 'printlogs',
         name: 'PrintLogs',
         component: () => import('./views/PrintLogs.vue'),
         // 补打动作本身还要求 printer:edit(后端接口已按此登记)。
-        meta: { title: '打印记录', perm: 'printer:view', icon: 'FileIcon', menuOrder: 10, group: 'print' }
+        meta: { title: '打印记录', perm: 'printer:view', icon: 'FileIcon', menuOrder: 11, group: 'print' }
       },
       {
         path: 'config',
         name: 'Config',
         component: () => import('./views/Config.vue'),
-        meta: { title: '系统配置', perm: 'config:view', icon: 'SettingIcon', menuOrder: 11, group: 'system' }
+        meta: { title: '系统配置', perm: 'config:view', icon: 'SettingIcon', menuOrder: 12, group: 'system' }
       },
       {
         path: 'users',
         name: 'Users',
         component: () => import('./views/Users.vue'),
-        meta: { title: '员工管理', perm: 'user:view', icon: 'UserIcon', menuOrder: 12, group: 'system' }
+        meta: { title: '员工管理', perm: 'user:view', icon: 'UserIcon', menuOrder: 13, group: 'system' }
       },
       {
         path: 'roles',
         name: 'Roles',
         component: () => import('./views/Roles.vue'),
-        meta: { title: '角色权限', perm: 'role:view', icon: 'LockOnIcon', menuOrder: 13, group: 'system' }
+        meta: { title: '角色权限', perm: 'role:view', icon: 'LockOnIcon', menuOrder: 14, group: 'system' }
       },
       {
         path: 'operlogs',
         name: 'OperLogs',
         component: () => import('./views/OperLogs.vue'),
         // 操作日志只给「能查」的人看;清理按钮在页面内再按 log:manage 二次判断。
-        meta: { title: '操作日志', perm: 'log:view', icon: 'HistoryIcon', menuOrder: 14, group: 'system' }
+        meta: { title: '操作日志', perm: 'log:view', icon: 'HistoryIcon', menuOrder: 15, group: 'system' }
       },
       {
         // 登录设备:管理自己的「记住我」免登录会话(查看/吊销),不设权限点,登录即可。
         path: 'devices',
         name: 'Devices',
         component: () => import('./views/Devices.vue'),
-        meta: { title: '登录设备', icon: 'UserCircleIcon', menuOrder: 15, group: 'system' }
+        meta: { title: '登录设备', icon: 'UserCircleIcon', menuOrder: 16, group: 'system' }
       },
       {
         // 修改密码:个人账号设置,不设权限点,登录即可访问。
         path: 'change-password',
         name: 'ChangePassword',
         component: () => import('./views/ChangePassword.vue'),
-        meta: { title: '修改密码', icon: 'LockOnIcon', menuOrder: 16, group: 'system' }
+        meta: { title: '修改密码', icon: 'LockOnIcon', menuOrder: 17, group: 'system' }
       },
       {
         // 兜底页:账号一个可用菜单都没有时落在这里,避免「空白布局」式的白屏。

@@ -51,13 +51,41 @@
     >
       {{pending ? '登录中…' : '微信一键注册成为会员'}}
     </button>
-    <button
+    <view
       wx:if="{{loggedIn}}"
-      class="btn-ghost btn-logout"
-      bindtap="onLogout"
+      class="actions-row"
     >
-      退出登录
-    </button>
+      <button
+        wx:if="{{!phone}}"
+        class="btn-ghost btn-half"
+        open-type="getPhoneNumber"
+        bindgetphonenumber="onGetPhoneNumber"
+      >
+        绑定手机号
+      </button>
+      <button
+        class="btn-ghost btn-half"
+        bindtap="onLogout"
+      >
+        退出登录
+      </button>
+    </view>
+
+    <!-- 储值余额:整行可点,进钱包页(充值/流水) -->
+    <view
+      wx:if="{{loggedIn}}"
+      class="wallet-row"
+      bindtap="onOpenWallet"
+    >
+      <view class="wallet-label">储值余额</view>
+      <view class="wallet-amount">¥{{balanceText}}</view>
+      <view
+        wx:if="{{canRecharge}}"
+        class="wallet-action"
+      >
+        去充值 ›
+      </view>
+    </view>
 
     <!-- 历史订单 -->
     <view
@@ -114,6 +142,15 @@
       >
         {{loadingMore ? '加载中…' : '加载更多'}}
       </button>
+    </view>
+
+    <!-- 注销入口放最底部：不可撤销，不该和常用操作挨在一起 -->
+    <view
+      wx:if="{{loggedIn}}"
+      class="danger-zone"
+      bindtap="onDeleteAccount"
+    >
+      注销会员
     </view>
   </block>
 

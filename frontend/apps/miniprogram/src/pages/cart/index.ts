@@ -16,7 +16,7 @@ import {
   cartToItems
 } from '../../store/cart';
 import { saveCart } from '../../store/cartPersist';
-import { applyOrder, sessionState, setPersonCount } from '../../store/session';
+import { applyOrder, markPersonChosen, persistPersonChoice, sessionState, setPersonCount } from '../../store/session';
 import { toast } from '../../utils/toast';
 import { money } from '@dining/shared/money';
 import { isActiveStatus } from '@dining/shared/orderStatus';
@@ -159,6 +159,10 @@ Page({
     const delta = Number(e.currentTarget.dataset.delta) || 0;
     const next = setPersonCount(this.data.personCount + delta);
     if (next === this.data.personCount) return;
+    // 显式改过人数即「已选」：记进会话并落盘，
+    // 下次冷启动菜单页不会再被「选人数」面板拦一次
+    markPersonChosen();
+    persistPersonChoice();
     this.setData({ personCount: next });
     this.render();
   },

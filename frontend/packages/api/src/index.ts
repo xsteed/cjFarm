@@ -2,6 +2,8 @@ export * from './http';
 export * from './auth';
 export * from './user';
 export * from './customer';
+export * from './member';
+export * from './wallet';
 export * from './order';
 export * from './printer';
 export * from './report';

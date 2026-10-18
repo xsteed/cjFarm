@@ -11,11 +11,11 @@ import (
 
 func TestPermCatalogIntegrity(t *testing.T) {
 	codes := AllPermCodes()
-	// 28 = 13 个模块 / 28 个权限点。这个数字是「权限目录完整性」的锚:
+	// 32 = 15 个模块 / 32 个权限点。这个数字是「权限目录完整性」的锚:
 	// 扩容时必须同步更新内置角色、README 与前端文档,所以刻意保持硬编码 ——
 	// 改了目录却忘了别处,这里会立刻提醒你。
-	if len(codes) != 28 {
-		t.Fatalf("权限点应为 28 个, got %d", len(codes))
+	if len(codes) != 32 {
+		t.Fatalf("权限点应为 32 个, got %d", len(codes))
 	}
 	// 目录里不应有重复码,且每个码都必须能被识别。
 	seen := map[string]bool{}
@@ -193,9 +193,9 @@ func TestBuiltinRoleMatrix(t *testing.T) {
 		key  string
 		want int
 	}{
-		{RoleKeyAdmin, 28},
-		{RoleKeyManager, 22},
-		{RoleKeyCashier, 13},
+		{RoleKeyAdmin, 32},
+		{RoleKeyManager, 26},
+		{RoleKeyCashier, 15},
 		{RoleKeyStaff, 6},
 	}
 	for _, tc := range cases {
@@ -216,6 +216,28 @@ func TestBuiltinRoleMatrix(t *testing.T) {
 		if HasPermCode(perms, "user:edit") || HasPermCode(perms, "role:edit") {
 			t.Fatalf("角色 %s 不应拥有员工/角色管理权限", key)
 		}
+	}
+	// 会员:店长可启停用,收银员只读(收银台要能按昵称认人),员工不可见。
+	if !HasPermCode(ParsePerms(BuiltinRolePerms(RoleKeyManager)), "member:edit") {
+		t.Fatal("店长应能管理会员(启停用)")
+	}
+	cashier := ParsePerms(BuiltinRolePerms(RoleKeyCashier))
+	if !HasPermCode(cashier, "member:view") || HasPermCode(cashier, "member:edit") {
+		t.Fatal("收银员应能查会员、但不能启停用")
+	}
+	if HasPermCode(ParsePerms(BuiltinRolePerms(RoleKeyStaff)), "member:view") {
+		t.Fatal("员工角色不应看到会员")
+	}
+	// 储值:店长可调账,收银员只读(看得到余额、动不了钱),员工不可见。
+	if !HasPermCode(ParsePerms(BuiltinRolePerms(RoleKeyManager)), "wallet:edit") {
+		t.Fatal("店长应能调储值账")
+	}
+	if !HasPermCode(ParsePerms(BuiltinRolePerms(RoleKeyCashier)), "wallet:view") ||
+		HasPermCode(ParsePerms(BuiltinRolePerms(RoleKeyCashier)), "wallet:edit") {
+		t.Fatal("收银员应能查储值、但不能调账")
+	}
+	if HasPermCode(ParsePerms(BuiltinRolePerms(RoleKeyStaff)), "wallet:view") {
+		t.Fatal("员工角色不应看到储值")
 	}
 	// 员工角色只读资料 + 订单流转。
 	staff := ParsePerms(BuiltinRolePerms(RoleKeyStaff))

@@ -301,10 +301,10 @@ func TestVisitRangeQueries(t *testing.T) {
 		t.Fatalf("会员数 = %d(err=%v), 期望 0(空 tb_customer)", n, err)
 	}
 	// 会员数种一条:CountMembers 只数启用中的。
-	if _, err := store.DB.Exec(`INSERT INTO tb_customer(openid, nickname, status, create_time) VALUES('o1','x',1,'2026-10-01 00:00:00')`); err != nil {
+	if _, err := store.DB.Exec(`INSERT INTO tb_customer(nickname, status, create_time) VALUES('x',1,'2026-10-01 00:00:00')`); err != nil {
 		t.Fatalf("插入会员失败: %v", err)
 	}
-	if _, err := store.DB.Exec(`INSERT INTO tb_customer(openid, nickname, status, create_time) VALUES('o2','y',0,'2026-10-01 00:00:00')`); err != nil {
+	if _, err := store.DB.Exec(`INSERT INTO tb_customer(nickname, status, create_time) VALUES('y',0,'2026-10-01 00:00:00')`); err != nil {
 		t.Fatalf("插入停用会员失败: %v", err)
 	}
 	if n, err := CountMembers(); err != nil || n != 1 {

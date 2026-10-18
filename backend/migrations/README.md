@@ -16,7 +16,7 @@ backend/migrations/
 │   └── mysql/
 │       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
 │       └── seed.sql
-└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 7 个文件、编号 26~32，文件名一致）
+└── incr/                                                  # 增量脚本：老库按文件名时间顺序升级（两库各 10 个文件、编号 26~35，文件名一致）
     ├── sqlite/
     │   ├── 20260920020000_tb_order_urge_create.sql                    # 01 催菜/加菜记录表
     │   ├── 20260920021000_tb_payment_refund_create.sql                # 02 支付/退款流水表
@@ -49,9 +49,12 @@ backend/migrations/
 │   ├── 20261016000000_tb_print_log_add_snapshot_columns.sql       # 29 打印台账补「票据标识 + 票面快照」三列
 │   ├── 20261017000000_tb_order_drop_legacy_time_columns.sql       # 30 删除 tb_order 遗留 begin_time / end_time
 │   ├── 20261017010000_tb_visit_log_visitor_daily_create.sql       # 31 站点访问统计三张表（明细 / 访客 / 日聚合）
-│   └── 20261018000000_tb_customer_identity_create.sql              # 32 顾客会员身份表（账号与登录方式解耦）
+│   ├── 20261018000000_tb_customer_identity_create.sql              # 32 顾客会员身份表（账号与登录方式解耦）
+│   ├── 20261018010000_tb_customer_drop_openid.sql                  # 33 退役 tb_customer.openid（登录走身份表）
+│   ├── 20261018020000_tb_order_add_viewed_at.sql                    # 34 订单补「商家首次操作时间」viewed_at（新单角标）
+│   └── 20261018030000_tb_config_member_enabled.sql                   # 35 会员功能总闸 member_enabled（管理端独立开关，默认关）
     └── mysql/                                             # 与 sqlite/ 同名同序，内容按 MySQL 语法适配
-        └──（同上 7 个文件）
+        └──（同上 10 个文件）
 ```
 
 > 下文「归属脚本」中的 incr 编号即上表 01~25 的序号。
@@ -142,7 +145,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `IF EXISTS` 语法，重复执行报 `no such column` / `check that column/key exists`，
 > 属正常现象、可忽略（详见 `incr/README.md` 的幂等性说明）。
 
-## 四、表清单（共 26 张）
+## 四、表清单（共 29 张）
 
 | # | 表名 | 说明 | 种子数据 | 归属脚本 |
 |---|---|---|---|---|
@@ -153,7 +156,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 5 | `tb_remark` | 备注选项 | 6 项 | full |
 | 6 | `tb_printer` | 打印机（ESC/POS 网络 + 飞鹅云） | 2 台（停用） | full |
 | 7 | `tb_config` | 系统配置（键值对） | 39 项 | full |
-| 8 | `tb_order` | 订单主表（42 列） | 运行时产生 | full + incr 03/04/10/14/16/21/22/26（`meal_start_time`/`meal_end_time`）/30（删遗留 `begin_time`/`end_time`） |
+| 8 | `tb_order` | 订单主表（43 列） | 运行时产生 | full + incr 03/04/10/14/16/21/22/26（`meal_start_time`/`meal_end_time`）/30（删遗留 `begin_time`/`end_time`）/34（`viewed_at` 商家首次操作时间） |
 | 9 | `tb_order_item` | 订单明细 | 运行时产生 | full + incr 15/19 |
 | 10 | `tb_order_urge` | 催菜/加菜记录 | 运行时产生 | incr 01 |
 | 11 | `tb_payment` | 支付流水（在线支付） | 运行时产生 | incr 02/10/14 |
@@ -167,11 +170,14 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 19 | `tb_print_agent` | 本地打印代理注册与令牌状态 | 运行时产生 | full + incr 11 |
 | 20 | `tb_image` | 图片内容表（菜品图 / 收款码 / 上传图二进制） | 启动时写入出厂图 | full |
 | 21 | `tb_day_seq` | 按营业日维护「当日取餐号」的计数器 | 运行时产生 | full + incr 22 |
-| 22 | `tb_customer` | 小程序会员（openid 建档，用于「我的订单」与会员归属） | 运行时产生 | full + incr 20/21 |
+| 22 | `tb_customer` | 会员档案（账号，与登录方式无关；用于「我的订单」与订单归属）。`openid` 列已由 incr 33 删除 | 运行时产生 | full + incr 20/21/33 |
 | 23 | `tb_visit_log` | 访问明细（站点 PV/UV 打点，「待办」性质，按保留天数清理） | 运行时产生 | full + incr 31 |
 | 24 | `tb_visitor` | 访客注册表（独立访客档案，「新访客」精确口径，长期保留） | 运行时产生 | full + incr 31 |
 | 25 | `tb_visit_daily` | 日聚合台账（每日每渠道 PV/UV/新访客，报表主读，长期保留） | 运行时产生 | full + incr 31 |
 | 26 | `tb_customer_identity` | 会员登录方式（provider + external_id 绑定，账号与登录方式解耦；为 App/网站预留） | 运行时产生 | full + incr 32 |
+| 27 | `tb_wallet` | 会员储值账户（余额 / 累计充值 / 累计消费 / 累计赠送，主键即 customer_id） | 运行时产生 | full |
+| 28 | `tb_wallet_txn` | 储值流水（台账只增不改，balance_after 逐行累加必须等于当前余额） | 运行时产生 | full |
+| 29 | `tb_recharge` | 储值充值单（微信 JSAPI 支付，单号 R 开头与订单 D 开头靠前缀分流回调） | 运行时产生 | full |
 
 > `tb_print_job` 与 `tb_print_log` 的分工：前者是「待办」（送达即结案，可定期清理），
 > 后者是「台账」（给商家查「这单打了没」，长期保留），两者由 `print_log_id` 关联。
@@ -183,7 +189,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 > `tb_role` 的 4 个内置角色（admin / manager / cashier / staff）每次启动由
 > `store.SyncBuiltinRoles()` 幂等校准；其中 `admin` 的权限**强制恢复为全量**，防止误改锁死。
 
-## 五、索引清单（共 42 个）
+## 五、索引清单（共 43 个）
 
 | 索引名 | 表 | 类型 | 用途 |
 |---|---|---|---|
@@ -196,10 +202,11 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_order_pay_time` | tb_order | 普通 | 报表按收款到账时间 |
 | `idx_order_credit_settle_time` | tb_order | 普通 | 报表按挂账核销时间 |
 | `idx_order_customer` | tb_order | 普通（2 列） | 会员「我的订单」按时间倒序分页 |
-| `idx_customer_openid` | tb_customer | UNIQUE | **P0 过渡期遗留**：登录查档已改走 `tb_customer_identity`，本索引在 P2 删列时一并移除（见 `docs/design-docs/customer-member-identity/spec.md` §7.2） |
-| `idx_identity_provider_external` | tb_customer_identity | UNIQUE（2 列） | 会员登录查档主路径；同时兜底「并发首登建档」的幂等性 |
+| `idx_identity_provider_external` | tb_customer_identity | UNIQUE（2 列） | 会员登录查档主路径；同时兜底「并发首登建档」的幂等性（`idx_customer_openid` 已随 incr 33 删除） |
 | `idx_identity_customer` | tb_customer_identity | 普通 | 查「这个人绑了哪几种登录方式」（解绑 / 多端合并） |
 | `idx_identity_unionid` | tb_customer_identity | 普通 | 同一人的多个 openid 共享 unionid，按它反查归并；必然重复故非唯一 |
+| `idx_recharge_no` | tb_recharge | UNIQUE | 充值单号唯一，回调与前端轮询按单号定位 |
+| `idx_wallet_txn_customer` | tb_wallet_txn | 普通（2 列） | 会员储值流水按时间倒序翻页 |
 | `idx_order_item_order` | tb_order_item | 普通 | 明细按订单 |
 | `idx_payment_order` | tb_payment | 普通 | 流水按订单号 |
 | `idx_payment_channel_trade` | tb_payment | UNIQUE（2 列） | 渠道交易号防重 |
@@ -315,6 +322,12 @@ go test ./...
    `ALTER TABLE` 追加的列）；`incr/` 则保留**逐步演进过程**，供老库按序升级。
 6. **主密钥别丢**：`tb_config` 中的敏感项是 AES-256-GCM 密文，主密钥在
    `backend/data/master.key`。搬迁数据库时必须把它一并带走，否则密文无法解密。
+7. **加列必须带 `AFTER`**（仅 MySQL 增量脚本）：`ALTER TABLE ... ADD COLUMN ... AFTER <已有列>`
+   不能省略。`full/schema.sql` 里新列写在语义相邻列**中间**，若增量脚本不写 `AFTER`，
+   MySQL 会把列追加到表**末尾**，导致 `store.alterCols` 启动补列后的列顺序与全量建表对不上。
+   `AFTER` 的取值以 `full/mysql/schema.sql` 中该列实际位置为准（如 `viewed_at AFTER meal_end_time`）。
+   SQLite 不支持 `AFTER` 且加列只能追加末尾，**无需也不能写**；两库最终列顺序都以
+   `full/schema.sql` 为单一事实来源。详见 [`incr/README.md`](./incr/README.md)。
 
 ### MySQL 大图写入注意
 

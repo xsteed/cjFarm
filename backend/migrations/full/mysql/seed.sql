@@ -5,7 +5,7 @@
 -- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的种子数据生成,
 -- 请勿手工修改;需要调整初始数据时改 Go 定义后重新生成。
 --
--- 内容:系统配置 44 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
+-- 内容:系统配置 46 项、内置角色 4 个、桌台 8 张、分类 6 个、菜品 21 道、规格 32 条、备注 6 项、打印机 2 台。
 -- 执行方式:mysql -u dining -p dining < seed.sql
 -- 幂等性  :全部使用 INSERT IGNORE + 显式主键,可重复执行不会产生重复数据。
 --
@@ -27,6 +27,7 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_api_url', 'https:/
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_ukey', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('feie_user', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('h5_base_url', 'http://localhost:8080');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('member_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_first_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_ali', '/uploads/pay_ali.jpg');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('pay_qr_wx', '/uploads/pay_wx.png');
@@ -47,6 +48,7 @@ INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('shop_name', '长健农�
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_alert_hours', '4');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('stale_release_enabled', '0');
+INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wallet_recharge_enabled', '0');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_app_secret', '');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wx_code_env_version', 'release');
 INSERT IGNORE INTO tb_config(cfg_key, cfg_value) VALUES('wxpay_apiv3_key', '');  -- 敏感项,落库前会自动加密
@@ -150,7 +152,7 @@ INSERT IGNORE INTO tb_printer(printer_id, printer_name, printer_type, ip, port, 
 
 -- 内置角色(4 个):admin 为全量权限,权限矩阵见 infrastructure/store/permission.go
 -- 员工账号(tb_user)由后端启动引导自动创建,不在此脚本中预置。
-INSERT IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(1, 'admin', '超级管理员', 'table:view,table:edit,category:view,category:edit,dish:view,dish:edit,remark:view,remark:edit,printer:view,printer:edit,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view,refund:operate,report:view,config:view,config:edit,user:view,user:edit,role:view,role:edit,log:view,log:manage', 'all', 1, 1, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '拥有全部权限。权限不可修改,每次启动强制恢复为全量,防止锁死系统。');
-INSERT IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(2, 'manager', '店长', 'table:view,table:edit,category:view,category:edit,dish:view,dish:edit,remark:view,remark:edit,printer:view,printer:edit,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view,report:view,config:view,config:edit,log:view', 'all', 1, 2, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '日常最高权限:可改配置、看报表、查操作日志,但不能管理员工与权限,也不能发起退款。');
-INSERT IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(3, 'cashier', '收银员', 'table:view,category:view,dish:view,remark:view,printer:view,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view', 'all', 1, 3, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '前厅收银:处理订单全流程与挂账核销,不涉及配置、报表与退款发起。');
+INSERT IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(1, 'admin', '超级管理员', 'table:view,table:edit,category:view,category:edit,dish:view,dish:edit,remark:view,remark:edit,printer:view,printer:edit,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view,refund:operate,report:view,member:view,member:edit,wallet:view,wallet:edit,config:view,config:edit,user:view,user:edit,role:view,role:edit,log:view,log:manage', 'all', 1, 1, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '拥有全部权限。权限不可修改,每次启动强制恢复为全量,防止锁死系统。');
+INSERT IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(2, 'manager', '店长', 'table:view,table:edit,category:view,category:edit,dish:view,dish:edit,remark:view,remark:edit,printer:view,printer:edit,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view,report:view,member:view,member:edit,wallet:view,wallet:edit,config:view,config:edit,log:view', 'all', 1, 2, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '日常最高权限:可改配置、看报表、查操作日志、管理会员,但不能管理员工与权限,也不能发起退款。');
+INSERT IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(3, 'cashier', '收银员', 'table:view,category:view,dish:view,remark:view,printer:view,order:view,order:operate,order:settle,order:edit,order:cancel,credit:view,credit:settle,refund:view,member:view,wallet:view', 'all', 1, 3, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '前厅收银:处理订单全流程与挂账核销,可查会员与储值,不涉及配置、报表、退款发起与会员启停用。');
 INSERT IGNORE INTO tb_role(role_id, role_key, role_name, perms, data_scope, is_builtin, sort_order, status, del_flag, create_time, update_time, remark) VALUES(4, 'staff', '员工', 'table:view,category:view,dish:view,remark:view,order:view,order:operate', 'all', 1, 4, 1, '0', '2026-09-12 13:06:43', '2026-09-12 13:06:43', '后厨/服务员通用:只读基础资料,订单可流转(接单/上菜/完成/处理催菜)。');

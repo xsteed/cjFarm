@@ -380,4 +380,61 @@
     active="menu"
     show-profile="{{showProfile}}"
   />
+
+  <!-- 入座选人数：茶位费门店的新桌顾客，菜单渲染完成后盖上的贴底面板。
+       菜单在半透明蒙层下「可见但点不了」（catchtouchmove 拦背景滚动），
+       顾客扫码后不会面对白屏；面板只做「选人数」一件事，
+       茶位费照旧只出现在购物车明细里 -->
+  <view
+    wx:if="{{needPerson}}"
+    class="person-mask"
+    catchtouchmove="noop"
+  >
+    <view class="person-sheet">
+      <view class="ps-grip"></view>
+      <view class="ps-title">本桌用餐几位？</view>
+      <view class="ps-hint">选好人数，即刻点餐～</view>
+
+      <!-- 快捷人数 1~10：五列两行等宽格子，点按没有瞄准压力；
+           11~20 的桌况走下面的步进器，或点数字直接输入 -->
+      <view class="pg-grid">
+        <view
+          wx:for="{{personChips}}"
+          wx:key="*this"
+          class="pg-cell {{personDraft === item ? 'on' : ''}}"
+          data-n="{{item}}"
+          hover-class="pg-cell-hover"
+          hover-stay-time="60"
+          bindtap="onPickPerson"
+        >{{item}}</view>
+      </view>
+
+      <view class="ps-row">
+        <view class="pg-stepper">
+          <view
+            class="pg-step {{personDraft <= 1 ? 'off' : ''}}"
+            data-delta="-1"
+            bindtap="onPersonDraft"
+          ></view>
+          <view
+            class="pg-num {{personDraft >= 1 ? '' : 'empty'}}"
+            bindtap="onInputPerson"
+          >{{personDraft || '—'}}</view>
+          <view
+            class="pg-step pg-plus {{personDraft >= 20 ? 'off' : ''}}"
+            data-delta="1"
+            bindtap="onPersonDraft"
+          ></view>
+        </view>
+        <view
+          class="btn-primary pg-confirm {{personDraft >= 1 ? '' : 'dim'}}"
+          hover-class="pg-btn-hover"
+          hover-stay-time="60"
+          bindtap="onConfirmPerson"
+        >
+          {{personDraft >= 1 ? '开始点餐（' + personDraft + '人）' : '请先选择人数'}}
+        </view>
+      </view>
+    </view>
+  </view>
 </view>

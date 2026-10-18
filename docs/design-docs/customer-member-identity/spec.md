@@ -2,7 +2,7 @@
 
 **作者**：CodeBuddy（设计起草 + 实施）
 **日期**：2026-10-18
-**状态**：P0 已实施（2026-10-18）
+**状态**：P0 + P2 + 会员运营闭环已实施（2026-10-18）
 **关联代码**：`backend/domain/po/customer.go`、`backend/infrastructure/store/{schema.go,dao/customer.go}`、`backend/application/service/{customer_member_service.go,auth_service.go}`、`backend/interfaces/handler/customer_auth.go`、`backend/infrastructure/weapp/auth.go`、`frontend/packages/{shared/src/safeStorage.ts,api/src/{http.ts,customer.ts}}`、`frontend/apps/miniprogram/src/{store/member.ts,api/client.ts}`
 
 **前置**：[`../customer-member/spec.md`](../customer-member/spec.md)（会员一期，已实施）
@@ -191,6 +191,21 @@ Content-Type: application/json
 
 其余接口（`/auth/profile`、`/order/mine`）与下单/加菜的 `CustomerAuthOptional` **一律不动**。
 
+### 4.1 会员运营闭环（P2 功能，已实施）
+
+| 方法与路径 | 鉴权 | 说明 |
+|---|---|---|
+| `POST /api/customer/auth/profile` | 顾客令牌 | 改昵称（≤32 字，去首尾空格）；头像原样保留 |
+| `DELETE /api/customer/auth/account` | 顾客令牌 | 注销：事务内删档案 + 删登录方式 + 订单归属置 0 |
+| `GET /api/admin/member/list` | `member:view` | 关键词（昵称）+ 状态筛选 + 分页；聚合登录方式 |
+| `POST /api/admin/member/status` | `member:edit` | 启停用；停用即让该会员的现有令牌失效 |
+
+**后台刻意不提供新建 / 删除会员**：档案必须由顾客自助注册产生（要带一条登录方式），
+后台代建只会留下谁也登不进去的孤儿档案；删除是顾客自己的权利（「我的」页有入口）。
+
+为什么注销要把订单归属置 0 而不是删订单：订单是门店的经营数据与报表口径来源，
+删掉会让营业额凭空减少；置 0 后它变回匿名单，历史账目不受影响。
+
 ---
 
 ## 5. 登录流程（含并发首登）
@@ -204,7 +219,7 @@ loginByProvider(ctx, provider, payload, ip)
   │     └─ 命中 → 校验 tb_customer.status → TouchCustomerLogin → 签发令牌
   └─ 慢路径（首次出现）：事务内建档 + 绑定
         BEGIN
-          id := INSERT tb_customer(...)                        -- P0 兼容期同时写 openid
+          id := INSERT tb_customer(...)                        -- 只写档案，不含任何凭据
           INSERT tb_customer_identity(id, provider, extID, unionid)
         COMMIT
         └─ 唯一冲突（并发首登）→ ROLLBACK → 按 (provider, extID) 重查 → 登录分支
@@ -242,16 +257,9 @@ loginByProvider(ctx, provider, payload, ip)
 
 ## 6. 前端通用化
 
-### 6.1 `safeStorage` 目前是 Web 专属的
+### 6.1 改造前：`safeStorage` 是 Web 专属的（已修）
 
-```10:17:frontend/packages/shared/src/safeStorage.ts
-export const safeStorage = {
-  get(key: string): string | null {
-    try {
-      return window.localStorage.getItem(key);
-    } catch {
-      return null;
-```
+改造前它直接读 `window.localStorage`，小程序只能另写一套 `wx.getStorageSync`：
 
 小程序现在靠 `apps/miniprogram/src/api/client.ts` 单独注册拦截器绕过去。要三端通用，
 照 `setUiNotifier`（`packages/shared/src/ui.ts`）的既有模式加一个存储后端注入口：
@@ -274,36 +282,29 @@ export const safeStorage = { /* 转发到 backend，读写失败静默 */ };
 > ⚠️ 改动 `safeStorage` 会同时影响 `visitor.ts` 的访客 ID 存储，改完必须回归
 > 「同一设备两次扫码仍是同一访客」。
 
-### 6.2 令牌注入按 URL 前缀分流
+### 6.2 令牌注入按 URL 前缀分流（已实施）
 
-```16:22:frontend/packages/api/src/http.ts
-http.interceptors.request.use(config => {
-  const token = safeStorage.get(LS_TOKEN);
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-```
-
-这里只注入**管理端**令牌。改为按前缀选择：
+改造前 `packages/api/src/http.ts` 的请求拦截器**只注入管理端令牌**（`LS_TOKEN`），
+小程序的顾客令牌靠 `api/client.ts` 里另注册一个拦截器补上。现在按前缀选择：
 
 ```ts
-const token = (config.url ?? '').startsWith('/customer/')
-  ? safeStorage.get(LS_CUSTOMER_TOKEN)   // 顾客令牌
-  : safeStorage.get(LS_TOKEN);           // 管理端令牌
+// packages/api/src/http.ts
+const token = safeStorage.get(isCustomerPath(config.url) ? LS_CUSTOMER_TOKEN : LS_TOKEN);
 ```
 
-改完之后，`apps/miniprogram/src/api/client.ts` 里那段独立的顾客令牌拦截器可以删掉，
-三端共用一份逻辑。
+`apps/miniprogram/src/api/client.ts` 里那段独立的顾客令牌拦截器已删除，
+三端共用同一份注入逻辑。
 
 > ⚠️ `LS_CUSTOMER_TOKEN` **不要**加进 `authKeys.ts` 的 `AUTH_KEYS` ——
 > 那个列表是「管理端登出时清空」，把顾客令牌放进去会导致管理端一退出，顾客也被踢下线
 > （同一浏览器里管理端和顾客端是两个身份）。
 
-### 6.3 会员接口下沉到 `packages/api`
+### 6.3 会员接口下沉到 `packages/api`（已实施）
 
-现在 `memberLogin / memberProfile / memberOrders` 全在小程序 `store/member.ts` 里直接
-`http.post('/customer/auth/login')`，`packages/api/src/customer.ts` 里没有。
-下沉之后 Web/App 直接复用，只各自实现「登录动作」（小程序 `wx.login`、网站短信验证码）。
+改造前 `memberLogin / memberProfile / memberOrders` 全写在小程序 `store/member.ts` 里
+直接 `http.post('/customer/auth/login')`。现已下沉到 `packages/api/src/customer.ts`，
+小程序只保留「拿凭据」（`wx.login`）这一段；网站/App 接进来时换成短信验证码即可，
+页面代码不用重写。
 
 ---
 
@@ -321,22 +322,33 @@ const token = (config.url ?? '').startsWith('/customer/')
 **为什么 P0 不删 `openid` / 不删唯一索引**：本期只实现 `wx_mp`，openid 始终有值，
 老约束不碍事；保留它还能在过渡期多一道保险。少动一次表结构，少一次回归风险。
 
-### 7.2 P2（接第二个 provider 之前必须完成）
+### 7.2 P2（已实施 2026-10-18）：直接删列
 
-| 步骤 | SQLite | MySQL | 说明 |
-|---|---|---|---|
-| 1 | `DROP INDEX idx_customer_openid` | `DROP INDEX idx_customer_openid ON tb_customer` | 必须先删。否则非微信建档写 `''` 时，多个空串会**撞唯一约束** |
-| 2 | 整表重建 | `ALTER TABLE tb_customer MODIFY openid VARCHAR(64) NULL` | 见下方说明 |
-| 3 | 代码停止写 `openid`（或直接 `DROP COLUMN`） | 同左 | 列为空壳后再删 |
+**结论先行**：不需要整表重建。SQLite 3.35+ 与 MySQL 5.7+ 都支持
+`ALTER TABLE ... DROP COLUMN`（项目内置 SQLite 3.46，且 incr 30 号已有删列先例），
+所以只要**先删索引再删列**即可：
 
-> ⚠️ **关键细节：多行必须用 NULL，不能用空串。**
-> 两库的唯一索引都把 `NULL` 视为不同值（可多行），把 `''` 视为相同值（只允许一行）。
+| 步骤 | SQLite | MySQL |
+|---|---|---|
+| 1. 搬迁（兼容跳过 P0 的库） | `INSERT ... SELECT` `tb_customer.openid` → `tb_customer_identity` | 同左 |
+| 2. 删唯一索引 | `DROP INDEX idx_customer_openid` | `DROP INDEX idx_customer_openid ON tb_customer` |
+| 3. 删列 | `ALTER TABLE tb_customer DROP COLUMN openid` | 同左 |
+
+> ⚠️ 顺序不能反：SQLite 不允许删除**仍被索引引用**的列。
 >
-> ⚠️ **SQLite 不支持 `ALTER COLUMN`**，而 `store.migrate()` 只做
-> `CREATE TABLE IF NOT EXISTS` + `ADD COLUMN`（`schema.go:930-964`），
-> 改可空必须走「建新表 → INSERT SELECT → 删旧表 → 改名」的整表重建。
-> 会员表数据量小（几十~几千行），重建成本可忽略；但这一步**不能靠启动迁移自动完成**，
-> 必须落 `incr/` 手工脚本。
+> ⚠️ 不建议「把列放开可空」那条路 —— 只删唯一索引而不删列，多行空串虽然不再冲突，
+> 但会留下一列永远没人读的死数据，且 `NOT NULL` 仍要求建档时写一个假值。
+> 直接删列最干净。
+
+**启动迁移（关键）**：`deploy.sh` 不跑 `incr/` 脚本，老库升级靠的是后端启动时的
+`store.migrateCustomerOpenid()`（`schema.go`）。它做三件事且完全幂等：
+
+1. 列不存在 → 直接返回（新库 / 已升级过的库）；
+2. 列存在 → 先搬迁（`NOT EXISTS` 守卫，兼容从未跑过 P0 的库），再删索引、删列；
+3. 搬迁或删索引失败 → `Fatalf` 中止启动，**绝不在数据未搬完时删列**。
+
+删列失败也中止启动：否则建档会因 `openid` 缺失而失败，线上表现是「注册不了会员」，
+比启动失败更难排查。
 
 ### 7.3 脚本与生成物
 
@@ -344,10 +356,11 @@ const token = (config.url ?? '').startsWith('/customer/')
 |---|---|
 | 改表结构定义 | `backend/infrastructure/store/schema.go`（`schemaTemplate` + `indexDefs`） |
 | 重新生成 full 脚本 | `cd backend && go run ./cmd/gensql` |
-| 手工补 incr 脚本 | `migrations/incr/{sqlite,mysql}/20261018000000_tb_customer_identity_create.sql`（已提供） |
+| 手工补 incr 脚本 | `migrations/incr/{sqlite,mysql}/20261018000000_tb_customer_identity_create.sql`（P0）、`20261018010000_tb_customer_drop_openid.sql`（P2） |
 | 校验一致性 | `go run ./cmd/gensql -check`（CI 等价；`sqlgen_test.go` 会在 `go test` 时自动跑） |
 
-`migrations/README.md` 的「表清单（25 张）/ 索引清单（39 个）」在执行本方案后需同步更新为 26 张 / 42 个。
+`migrations/README.md` 的「表清单 / 索引清单」已同步为 **26 张 / 41 个**
+（P0 时是 42 个，P2 删掉了 `idx_customer_openid`）。
 
 ---
 
@@ -357,10 +370,10 @@ const token = (config.url ?? '').startsWith('/customer/')
 
 | 文件 | 改动 |
 |---|---|
-| `domain/po/customer.go` | 新增 `CustomerIdentity` 结构；`Customer.OpenID` 标「P0 兼容期保留，P2 删除」 |
-| `infrastructure/store/schema.go` | `schemaTemplate` 加表；`indexDefs` 加 3 个索引；`idx_customer_openid` 在 P0 **保留** |
-| `infrastructure/store/dao/customer.go` | 新增 `GetCustomerByIdentity` / `InsertIdentityTx` / `TouchIdentityLogin`；`InsertCustomerTx` 改为可传入事务；`GetCustomerByOpenid` 标废弃，P2 删 |
-| `application/service/customer_member_service.go` | `CustomerLogin` 改为按 provider 分派；`customerLoginByOpenid` 保留为 `wx_mp` 的实现；建档+绑定改为单事务 |
+| `domain/po/customer.go` | 新增 `CustomerIdentity` 结构；P2 已删除 `Customer.OpenID` |
+| `infrastructure/store/schema.go` | `schemaTemplate` 加表；`indexDefs` 加 3 个索引；P2 删除 `tb_customer.openid` 列与 `idx_customer_openid`，并新增启动迁移 `migrateCustomerOpenid()` |
+| `infrastructure/store/dao/customer.go` | 新增 `GetCustomerByIdentity` / `InsertIdentityTx` / `TouchIdentityLogin` / `CreateCustomerWithIdentity`；P2 删除 `GetCustomerByOpenid` 与所有 `openid` 读写 |
+| `application/service/customer_member_service.go` | `CustomerLogin` 改为按 provider 分派；`customerLoginByIdentity` 承接查档/建档/签发；建档+绑定改为单事务 |
 | `interfaces/handler/customer_auth.go` | login 收 `provider`（缺省 `wx_mp`），未实现的 provider 返回「暂不支持该登录方式」 |
 | `application/service/customer_service.go` | `memberEnabledFlag()` 改口径（D5） |
 | `infrastructure/weapp/auth.go` | **不动**（它就是 `wx_mp` 的实现） |
@@ -384,7 +397,8 @@ const token = (config.url ?? '').startsWith('/customer/')
 
 | 层 | 验收点 |
 |---|---|
-| 数据迁移 | 老库执行 incr 脚本后，`tb_customer` 每行都能在 identity 表找到唯一一条 `wx_mp` 映射；重复执行零变更 |
+| 数据迁移 | 老库执行 incr 脚本后，`tb_customer` 每行都能在 identity 表找到唯一一条 `wx_mp` 映射；重复执行零变更。**P2**：启动迁移后 `openid` 列与 `idx_customer_openid` 均已消失，且能新增无 openid 的档案（`TestMigrateCustomerOpenidFromLegacyDB`） |
+| P2 解锁 | 非微信 provider（phone / password / apple）可各自独立建档（`TestNonWechatProviderCanRegister`）—— 这是 P0 阶段被旧唯一索引挡住的能力 |
 | 登录语义 | 新客建档（`isNew=true`）、老客复登（`isNew=false`）、停用会员被拒 |
 | **并发首登** | 同一 openid 并发登录，**只产生一个 `tb_customer` 行**、一个 identity 行（§5.1 的孤儿行回归） |
 | 契约兼容 | 请求体不带 `provider` 时按 `wx_mp` 处理；现有小程序端代码不改也能登录 |
@@ -413,8 +427,9 @@ const token = (config.url ?? '').startsWith('/customer/')
 
 | 项 | 原因 |
 |---|---|
-| 管理端会员管理页 | 独立特性（`UpdateCustomerProfile` / `SetCustomerStatus` 目前是死代码，见 §11 P2） |
-| 手机号 / 密码 provider 的实现 | 只登记枚举，实现放 P2 |
+| 后台新建 / 删除会员 | 档案由顾客自助注册与注销；后台代建会留下没有登录方式的孤儿档案 |
+| 顾客自助上传头像 | 现有上传接口要管理端权限，给顾客开一条通道是另一个功能（还要防滥用） |
+| 手机号 / 密码 provider 的实现 | 只登记枚举，实现放后续 |
 | 积分 / 储值 / 优惠券 | 要新增账户表 + 流水表 + 退款冲正，等运营方案定了再动表结构 |
 | H5 扫码点餐接入会员 | 保持匿名，`CustomerAuthOptional` 继续放行无令牌请求 |
 | refresh token | D6：停用靠查库，长令牌已够 |
@@ -426,13 +441,15 @@ const token = (config.url ?? '').startsWith('/customer/')
 | 期 | 内容 | 成本 |
 |---|---|---|
 | **P0（本 spec）** | 拆 `tb_customer_identity`、只接 `wx_mp`、接口加 `provider` 缺省值、前端存储/令牌通用化 | 1 张表 + 1 次搬迁 + DAO 局部改造，**小程序端零改动** |
+| **P2 结构解耦** | ✅ 已完成：删 `idx_customer_openid` + 删 `tb_customer.openid` 列，登录完全走 identity 表 | 1 次启动迁移 + 2 个 incr 脚本 |
+| **会员运营闭环** | ✅ 已完成：管理端会员页（列表/搜索/启停用，`member:view` / `member:edit`）、顾客自助改昵称（`POST /customer/auth/profile`）、自助注销（`DELETE /customer/auth/account`） | 2 个接口 + 1 个权限模块 + 1 个管理页 |
 | P1 | JSAPI 支付 + 订阅消息（openid 已备好，见 `docs/miniprogram.md` 4.1 / 4.3） | 中 |
-| P2 | 手机号验证码（App/网站）、管理端会员页、P2 迁移（删 `idx_customer_openid` + 开放 `openid` 可空） | 中大 |
+| P2 功能 | 手机号验证码（App/网站）—— 唯一还缺的对外能力 | 中大 |
 | P3 | 积分 / 储值 / 优惠券，挂 `customer_id` | 大 |
 
 ---
 
-## 12. 决策记录（P0 已按推荐执行）
+## 12. 决策记录（P0 + P2 已按推荐执行）
 
 1. **D1** 本期只实现 `wx_mp`，其余 provider 仅登记枚举 ✅
 2. **D3** identity 表不设 `status`，账号可用性只由 `tb_customer.status` 裁决 ✅
@@ -440,6 +457,11 @@ const token = (config.url ?? '').startsWith('/customer/')
    `customerProviderEnabled`），不再直接判断微信配置 ✅
 4. **令牌 TTL 分端**：本期只有小程序，维持 2h 不变；网站 7d / App 30d 的值等到接端时
    随 provider 一起定（签发文签名不变，只改 TTL 参数即可）⏸ P2
-5. **是否要让管理端强制关闭会员**：本期不做独立开关。若后续出现「配置齐备但要对外关闭」
-   的诉求，在 `tb_config` 增加 `member_enabled` 并由管理端控制 —— 届时它是总闸，
-   与「任一 provider 可用」取与关系。
+5. **管理端会员总闸** ✅ 已落地：`tb_config` 增加 `member_enabled`（出厂默认 "1"，
+   「默认开」语义：只有明确 "0" 才关），由管理端「营业设置 → 会员功能」控制。
+   它是唯一的显隐/放行口径 —— 公开配置下发的 `member_enabled` 直接取库值，
+   **不再与「任一 provider 可用」取与**（显隐归商家运营决定，不被 AppSecret 等
+   技术配置顺手决定）；登录与静默重登在 `CustomerLoginByProvider` 入口同受总闸约束。
+6. **P2 采用「直接删列」而不是「放开可空」** ✅：`DROP COLUMN` 两库都支持（SQLite 3.46），
+   先删索引再删列即可，无需整表重建；只放开可空会留下一列永远没人读的死数据。
+   老库由启动迁移 `migrateCustomerOpenid()` 自动完成（不依赖运维跑脚本）。

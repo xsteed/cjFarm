@@ -176,17 +176,19 @@ func CustomerSettings() map[string]string {
 		"wxpay_jsapi_enabled": flag("wxpay_jsapi_enabled"),
 		// 先付/后付模式:顾客端据此决定「下单后是否直达支付页/是否提示先付款」
 		"pay_first_enabled": flag("pay_first_enabled"),
-		// 会员功能开关:小程序 AppID/AppSecret 已配置才开放「注册成为会员」
+		// 会员功能开关:管理端独立总闸(「营业设置 → 会员功能」),不再由
+		// AppSecret 等登录能力推导 —— 显隐归商家运营决定,与技术配置解耦
+		// (闸口见 memberSwitchOn,登录与静默重登同受它约束)。
 		"member_enabled": memberEnabledFlag(),
+		// 储值自助充值开关(默认 0):只管「能否自助充值」,不影响已有余额的消费与退款。
+		"wallet_recharge_enabled": flag("wallet_recharge_enabled"),
 	}
 }
 
-// memberEnabledFlag 会员功能开关的归一化("1"/"0")。
-//
-// 口径统一为「任一登录方式可用」(见 MemberEnabled):不再在这里重复判断微信
-// 配置 —— 否则接上手机号登录后,没配微信的部署会被误判成「会员未开启」。
+// memberEnabledFlag 会员功能开关的归一化("1"/"0"):「默认关」语义(fail-closed),
+// 与 memberSwitchOn 同一口径 —— 只有库里明确 "1" 才下发 "1"。
 func memberEnabledFlag() string {
-	if MemberEnabled() {
+	if memberSwitchOn() {
 		return "1"
 	}
 	return "0"
@@ -337,6 +339,9 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 	// 幂等命中走上面的 errDuplicateRequest 分支提前返回,走到这里的一定是「本次真实插入」,
 	// 据此维护会员卡展示列,不会重复计数。
 	NotifyCustomerOrder(customerID)
+	// 人数已固化进订单：清掉「入座选人数」的桌级共享值（见 table_person.go），
+	// 避免残留的预填默认被后续进桌的客人沿用。
+	ClearTablePendingPerson(tableID)
 
 	return CustomerCreateOrderResult{
 		OrderID:        orderID,

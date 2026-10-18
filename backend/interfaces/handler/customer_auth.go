@@ -13,6 +13,7 @@ import (
 
 	"dining-system/application/service"
 	"dining-system/domain/po"
+	"dining-system/infrastructure/store/dao"
 )
 
 // ctxKeyCustomerID 顾客会员 ID 在 gin context 里的键名。
@@ -87,8 +88,9 @@ func memberView(c *po.Customer) gin.H {
 // isNew 区分「🎉 注册成功，已加入会员」与「欢迎回来」两种前端反馈。
 func CustomerMemberLogin(c *gin.Context) {
 	var p struct {
-		Provider string `json:"provider"`
-		Code     string `json:"code"`
+		Provider  string `json:"provider"`
+		Code      string `json:"code"`
+		PhoneCode string `json:"phoneCode"` // getPhoneNumber 的 code(可选):登录同时一键绑手机号
 	}
 	if err := c.ShouldBindJSON(&p); err != nil {
 		fail(c, "参数错误")
@@ -101,21 +103,64 @@ func CustomerMemberLogin(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
+	// 手机号绑定是「增强信息」:失败绝不影响登录本身 —— 顾客的主诉求是点餐,
+	// 手机号拿不到(未开通组件/用户取消)不该把人挡在门外。
+	phone := ""
+	if strings.TrimSpace(p.PhoneCode) != "" {
+		if m, e := service.BindCustomerPhone(c.Request.Context(), res.Customer.CustomerID, p.PhoneCode); e == nil {
+			phone = m
+		}
+	}
 	ok(c, gin.H{
 		"token":    res.Token,
 		"isNew":    res.IsNew,
 		"customer": memberView(res.Customer),
+		"phone":    phone,
 	})
 }
 
 // CustomerMemberProfile 会员卡信息(需顾客登录态)。
+// 带上已绑手机号(脱敏):前端据此决定「绑定手机号」按钮是否还出现。
 func CustomerMemberProfile(c *gin.Context) {
 	cust, err := service.CustomerMemberProfile(customerIDFrom(c))
 	if err != nil {
 		unauthorized(c, err.Error())
 		return
 	}
+	mv := memberView(cust)
+	mv["phone"] = po.MaskPhone(dao.GetCustomerPhone(cust.CustomerID))
+	ok(c, mv)
+}
+
+// CustomerMemberUpdateProfile 会员自助完善资料(目前只有昵称)。
+// 只收 nickname:头像需要一条「顾客可上传」的通道(现有上传接口要管理端权限),
+// 属于另一个功能,本期不做 —— 服务端会原样保留已有头像。
+func CustomerMemberUpdateProfile(c *gin.Context) {
+	var p struct {
+		Nickname string `json:"nickname"`
+	}
+	if err := c.ShouldBindJSON(&p); err != nil {
+		fail(c, "参数错误")
+		return
+	}
+	cust, err := service.CustomerUpdateProfile(customerIDFrom(c), p.Nickname)
+	if err != nil {
+		fail(c, err.Error())
+		return
+	}
 	ok(c, memberView(cust))
+}
+
+// CustomerMemberDeleteAccount 注销会员(顾客自助,不可撤销)。
+//
+// 档案与登录方式物理删除,历史订单保留但归属置 0(见 spec §2.6)。
+// 令牌无状态,注销后下一次请求查不到档案即 401,不需要额外的吊销逻辑。
+func CustomerMemberDeleteAccount(c *gin.Context) {
+	if err := service.CustomerDeleteAccount(customerIDFrom(c)); err != nil {
+		fail(c, err.Error())
+		return
+	}
+	okMsg(c, "会员已注销")
 }
 
 // CustomerMyOrders 会员的历史订单(跨桌,按下单时间倒序分页)。

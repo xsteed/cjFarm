@@ -1,0 +1,195 @@
+/* 我的钱包：余额卡 + 充值 + 流水。
+ * 沿用 app.wxss 的 token（--brand / --card / --ink 等）与工具类（.btn-primary/.btn-ghost/.empty）。 */
+
+.page {
+  min-height: 100vh;
+  padding: 24rpx 24rpx calc(var(--tabbar-h) + 32rpx);
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+.state {
+  padding: 120rpx 0;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 26rpx;
+}
+
+.state-err {
+  margin-bottom: 24rpx;
+  color: var(--danger);
+}
+
+.spinner {
+  display: inline-block;
+  width: 32rpx;
+  height: 32rpx;
+  margin-right: 8rpx;
+  border: 4rpx solid var(--brand-soft);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- 余额卡（与会员卡同一品牌渐变，视觉上是一家人） ---- */
+.balance-card {
+  padding: 40rpx 32rpx;
+  background: var(--grad-brand);
+  border-radius: 20rpx;
+  color: #fff;
+  margin-bottom: 24rpx;
+}
+
+.bal-label {
+  font-size: 24rpx;
+  color: rgb(255 255 255 / 78%);
+}
+
+.bal-num {
+  margin: 8rpx 0 24rpx;
+  font-size: 72rpx;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.bal-stats {
+  display: flex;
+  gap: 48rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid rgb(255 255 255 / 22%);
+}
+
+.stat {
+  min-width: 0;
+}
+
+.stat-num {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.stat-label {
+  margin-top: 2rpx;
+  font-size: 20rpx;
+  color: rgb(255 255 255 / 78%);
+}
+
+/* ---- 面板（充值 / 流水共用） ---- */
+.panel {
+  margin-bottom: 24rpx;
+  padding: 28rpx 28rpx 32rpx;
+  background: var(--card);
+  border-radius: 16rpx;
+}
+
+.panel-title {
+  margin-bottom: 20rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.panel-tip {
+  margin-top: 16rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* 充值金额网格：2×2，选中态描边高亮 */
+.amount-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16rpx;
+}
+
+.amount-cell {
+  padding: 28rpx 0;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  border: 2rpx solid var(--line);
+  border-radius: 14rpx;
+  color: var(--ink);
+}
+
+.amount-cell.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.custom-row {
+  margin: 16rpx 0 24rpx;
+}
+
+.custom-input {
+  width: 100%;
+  padding: 22rpx 24rpx;
+  box-sizing: border-box;
+  border: 2rpx solid var(--line);
+  border-radius: 14rpx;
+  font-size: 28rpx;
+}
+
+/* ---- 流水 ---- */
+.txn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--line);
+}
+
+.txn:last-of-type {
+  border-bottom: none;
+}
+
+.txn-main {
+  min-width: 0;
+}
+
+.txn-type {
+  font-size: 28rpx;
+  color: var(--ink);
+}
+
+.txn-sub {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--ink-3);
+}
+
+.txn-right {
+  text-align: right;
+}
+
+.txn-amt {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.txn-bal {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: var(--ink-3);
+}
+
+.up {
+  color: var(--brand-deep);
+}
+
+.down {
+  color: var(--ink);
+}
+
+.btn-more {
+  margin-top: 16rpx;
+}

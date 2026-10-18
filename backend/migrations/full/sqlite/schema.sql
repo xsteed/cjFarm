@@ -1,16 +1,16 @@
 -- ============================================================================
--- ç¹é¤ç®¡çç³»ç» â å¨éå»ºè¡¨èæ¬(SQLite)
--- æä»¶å:schema.sql ââ å¨éå»ºè¡¨èæ¬(éç¨å½å)
+-- 点餐管理系统 — 全量建表脚本(SQLite)
+-- 文件名:schema.sql —— 全量建表脚本(通用命名)
 -- ----------------------------------------------------------------------------
--- æ¬æä»¶ç± `go run ./cmd/gensql` ä» backend/infrastructure/store çè¡¨ç»æå®ä¹çæ,
--- è¯·å¿æå·¥ä¿®æ¹;éè¦åæ´è¡¨ç»ææ¶æ¹ Go å®ä¹åéæ°çæã
+-- 本文件由 `go run ./cmd/gensql` 从 backend/infrastructure/store 的表结构定义生成,
+-- 请勿手工修改;需要变更表结构时改 Go 定义后重新生成。
 --
--- éç¨åºæ¯:å¨æ°é¨ç½² / ä»é¶å»ºåº,æ§è¡åå¾å°ä¸åç«¯ä»£ç å®å¨ä¸è´çåºç»æ
---           (å·²åå«åå²ä¸éè¿ ALTER TABLE è¿½å çææå)ã
--- æ§è¡æ¹å¼:sqlite3 data/dining.db < schema.sql
--- å¹ç­æ§  :å¨é¨ä½¿ç¨ IF NOT EXISTS,å¯éå¤æ§è¡ã
+-- 适用场景:全新部署 / 从零建库,执行后得到与后端代码完全一致的库结构
+--           (已包含历史上通过 ALTER TABLE 追加的所有列)。
+-- 执行方式:sqlite3 data/dining.db < schema.sql
+-- 幂等性  :全部使用 IF NOT EXISTS,可重复执行。
 --
--- éé¢çº¦å®:ææéé¢å­æ®µä»¥ãåãä¸ºåä½å­ INTEGER,API å±ç± po.ToYuan è½¬åã
+-- 金额约定:所有金额字段以「分」为单位存 INTEGER,API 层由 po.ToYuan 转元。
 -- ============================================================================
 
 PRAGMA foreign_keys = OFF;
@@ -220,28 +220,29 @@ CREATE TABLE IF NOT EXISTS tb_order (
         credit_settle_time VARCHAR(32) DEFAULT NULL,
         credit_settle_by   VARCHAR(64) DEFAULT '',
         paid_amount     INTEGER      DEFAULT 0,
-        -- èµ ééé¢(å):èµ éèåæåä»·è®¡çéé¢åè®¡,ä¸è®¡å¥åºæ¶éé¢(è®©å©å£å¾)ã
+        -- 赠送金额(分):赠送菜品按原价计的金额合计,不计入应收金额(让利口径)。
         gift_amount     INTEGER      DEFAULT 0,
-        -- ä¸åä¼å:0 = å¿å(åå²åä¸æªç»å½å);ä¼åä½ç³»è§ tb_customerã
-        -- è¯·æ±ä½ä¸å¸¦è¯¥å¼,ä¸å¾ä»¥é¡¾å®¢ä»¤çä¸ºå(é²æ­¢ä¼ªé å½å±)ã
+        -- 下单会员:0 = 匿名(历史单与未登录单);会员体系见 tb_customer。
+        -- 请求体不带该值,一律以顾客令牌为准(防止伪造归属)。
         customer_id     INTEGER      DEFAULT 0,
-        -- ç»è´¦æ¶(ç¶æè¢«ç½® 4 å)çè®¢åç¶æå¿«ç§:æ¤éç»ç®æ¶æ¢å¤å°ç»è´¦åççå®ç¶æ,
-        -- èä¸æ¯æ æ¡ä»¶åå° 3(è®¢åå¯è½å¨ 1/2 ç¶æè¢«æåç»è´¦,æ¤éååºåå° 1/2 ç»§ç»­å¶ä½æµç¨)ã
-        -- 0 è¡¨ç¤ºåå²æ°æ®æªè®°å½(æ¤éæ¶åéä¸º 3)ã
+        -- 结账时(状态被置 4 前)的订单状态快照:撤销结算时恢复到结账前的真实状态,
+        -- 而不是无条件回到 3(订单可能在 1/2 状态被提前结账,撤销后应回到 1/2 继续制作流程)。
+        -- 0 表示历史数据未记录(撤销时回退为 3)。
         pre_settle_status INTEGER     DEFAULT 0,
-        -- è¥ä¸æ¥(YYYY-MM-DD)ä¸å½æ¥åé¤å·:ä¸ä¾é¡¾å®¢å£å¤´æ¥å· / å¨æ¿å«å·,æ¯å¤©ä» 1 éå¢,
-        -- ä¸ä¸å¯æä¸¾çåé¨åå· order_no åå¸å¶è(è§ tb_day_seq çæ³¨é)ã
-        -- biz_date ç¼ºç NULL èéç©ºä¸²çç¨æ:è®©ãéä¸ååå¥çè¡ãä¸åä¸ä¸é¢
-        -- (biz_date, pickup_no) çå¯ä¸å¤å® ââ ä¸¤ç§æ°æ®åºå¯¹å« NULL çç»åé½ä¸å¤éå¤ã
+        -- 营业日(YYYY-MM-DD)与当日取餐号:专供顾客口头报号 / 厨房叫号,每天从 1 递增,
+        -- 与不可枚举的内部单号 order_no 各司其职(见 tb_day_seq 的注释)。
+        -- biz_date 缺省 NULL 而非空串的用意:让「非下单写入的行」不参与下面
+        -- (biz_date, pickup_no) 的唯一判定 —— 两种数据库对含 NULL 的组合都不判重复。
         biz_date   VARCHAR(10) DEFAULT NULL,
         pickup_no  INTEGER     DEFAULT 0,
-        -- ç¨é¤èµ·æ­¢æ¶é´(è½åºå¼):
-        --   meal_start_time ââ ä¸åæ¶åå¥(ç¨é¤å¼å§);
-        --   meal_end_time   ââ è®¢åèµ°å°ç»æ(4 å·²å®æ / 5 å·²åæ¶)æ¶åå¥(ç¨é¤ç»æ)ã
-        -- é»è®¤ NULL èéç©ºä¸²:åºåãè¿æ²¡ç»æãä¸ãæ¶é´æªç¥ã,åå¡«èæ¬ä¸æ¥è­¦ SQL ä¸ç¼æäºã
+        -- 用餐起止时间(落库值):
+        --   meal_start_time —— 下单时写入(用餐开始);
+        --   meal_end_time   —— 订单走到终态(4 已完成 / 5 已取消)时写入(用餐结束)。
+        -- 默认 NULL 而非空串:区分「还没结束」与「时间未知」,回填脚本与报警 SQL 一眼明了。
         meal_start_time VARCHAR(32) DEFAULT NULL,
         meal_end_time VARCHAR(32) DEFAULT NULL,
-        -- 商家首次查看/操作该订单的时间:NULL = 还没人看过，列表据此打「新」角标。
+        -- 商家首次实际操作该订单的时间:NULL = 还没操作过(仅打开详情查看不算)。
+        -- 列表据此给「已下单」的未操作订单打「新」角标,任意操作后写入,只写一次。
         viewed_at VARCHAR(32) DEFAULT NULL,
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
         update_time VARCHAR(32) DEFAULT NULL
@@ -257,11 +258,11 @@ CREATE TABLE IF NOT EXISTS tb_order_item (
         quantity  INTEGER      DEFAULT 1,
         amount    INTEGER      DEFAULT 0,
         remark    VARCHAR(255) DEFAULT '',
-        -- å èæ¹æ¬¡:1=é¦æ¬¡ä¸å,æ¯æ¬¡å è +1,ç¨äºèåæç»éåºåãé¦æ¬¡ä¸å/ç¬¬Næ¬¡å èãã
+        -- 加菜批次:1=首次下单,每次加菜 +1,用于菜品明细里区分「首次下单/第N次加菜」。
         batch_no  INTEGER      DEFAULT 1,
-        -- å¹ç­é®:åä¸æ¬¡ä¸å/å èæäº¤çæææç»å±äº«åä¸ client_request_id,ç¨äºå»é(éå½åä½)ã
+        -- 幂等键:同一次下单/加菜提交的所有明细共享同一 client_request_id,用于去重(适当冗余)。
         client_request_id VARCHAR(64) DEFAULT '',
-        -- æ¯å¦èµ é:0 æ­£å¸¸è®¡è´¹ 1 èµ é(åå®¶æ¹åæ è®°,amount è®° 0,åä»·è®¡å¥è®¢å gift_amount)ã
+        -- 是否赠送:0 正常计费 1 赠送(商家改单标记,amount 记 0,原价计入订单 gift_amount)。
         is_gift   INTEGER      DEFAULT 0,
         gift_reason VARCHAR(255) DEFAULT '',
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
@@ -307,9 +308,9 @@ CREATE TABLE IF NOT EXISTS tb_refund (
         reason            VARCHAR(255) DEFAULT '',
         operator          VARCHAR(64)  DEFAULT '',
         fail_reason       VARCHAR(255) DEFAULT '',
-        -- 1 = éå¤æ¯ä»èªå¨éå(é¡¾å®¢å¨ä¸¤ä¸ªæ¸ éåä»äºä¸ç¬,åå°çä¸ç¬åè·¯éå)ã
-        -- è¿ç±»éæ¬¾çéé¢ä»æªè®¡å¥è®¢åè¥æ¶(paid_amount),å æ­¤ä¸è®¡å¥è®¢åéæ¬¾é¢åº¦ã
-        -- ä¹ä¸æ£åè®¢åå®æ¶ ââ ä¸æ®ééæ¬¾(SumRefunded/applyRefundSuccess)ä¸¥æ ¼åºåã
+        -- 1 = 重复支付自动退回(顾客在两个渠道各付了一笔,后到的一笔原路退回)。
+        -- 这类退款的金额从未计入订单营收(paid_amount),因此不计入订单退款额度、
+        -- 也不扣减订单实收 —— 与普通退款(SumRefunded/applyRefundSuccess)严格区分。
         is_duplicate      INTEGER      DEFAULT 0,
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
         update_time VARCHAR(32) DEFAULT NULL
@@ -350,7 +351,6 @@ CREATE TABLE IF NOT EXISTS tb_user (
     );
 CREATE TABLE IF NOT EXISTS tb_customer (
         customer_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-        openid           VARCHAR(64)  NOT NULL,
         nickname         VARCHAR(64)  DEFAULT '',
         avatar_url       VARCHAR(255) DEFAULT '',
         status           INTEGER      DEFAULT 1,
@@ -369,6 +369,40 @@ CREATE TABLE IF NOT EXISTS tb_customer_identity (
         credential       VARCHAR(255) DEFAULT '',
         unionid          VARCHAR(64)  DEFAULT NULL,
         last_login_time VARCHAR(32) DEFAULT NULL,
+        create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
+        update_time VARCHAR(32) DEFAULT NULL
+    );
+CREATE TABLE IF NOT EXISTS tb_wallet (
+        customer_id    INTEGER PRIMARY KEY,
+        balance        INTEGER      DEFAULT 0,
+        total_recharge INTEGER      DEFAULT 0,
+        total_consume  INTEGER      DEFAULT 0,
+        total_gift     INTEGER      DEFAULT 0,
+        create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
+        update_time VARCHAR(32) DEFAULT NULL
+    );
+CREATE TABLE IF NOT EXISTS tb_wallet_txn (
+        txn_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id    INTEGER      NOT NULL,
+        biz_type       VARCHAR(16)  NOT NULL,
+        amount         INTEGER      NOT NULL,
+        balance_after  INTEGER      NOT NULL,
+        order_no       VARCHAR(32)  DEFAULT '',
+        payment_no     VARCHAR(64)  DEFAULT '',
+        reason         VARCHAR(255) DEFAULT '',
+        operator       VARCHAR(64)  DEFAULT '',
+        create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
+        update_time VARCHAR(32) DEFAULT NULL
+    );
+CREATE TABLE IF NOT EXISTS tb_recharge (
+        recharge_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        recharge_no      VARCHAR(32)  NOT NULL,
+        customer_id      INTEGER      NOT NULL,
+        amount           INTEGER      NOT NULL,
+        status           INTEGER      DEFAULT 0,
+        channel          VARCHAR(16)  DEFAULT '',
+        channel_trade_no VARCHAR(64)  DEFAULT '',
+        pay_time        VARCHAR(32) DEFAULT NULL,
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
         update_time VARCHAR(32) DEFAULT NULL
     );
@@ -549,6 +583,24 @@ CREATE TRIGGER IF NOT EXISTS trg_tb_customer_identity_touch
         BEGIN
             UPDATE tb_customer_identity SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
         END;
+CREATE TRIGGER IF NOT EXISTS trg_tb_wallet_touch
+        AFTER UPDATE ON tb_wallet FOR EACH ROW
+        WHEN NEW.update_time IS OLD.update_time
+        BEGIN
+            UPDATE tb_wallet SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
+        END;
+CREATE TRIGGER IF NOT EXISTS trg_tb_wallet_txn_touch
+        AFTER UPDATE ON tb_wallet_txn FOR EACH ROW
+        WHEN NEW.update_time IS OLD.update_time
+        BEGIN
+            UPDATE tb_wallet_txn SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
+        END;
+CREATE TRIGGER IF NOT EXISTS trg_tb_recharge_touch
+        AFTER UPDATE ON tb_recharge FOR EACH ROW
+        WHEN NEW.update_time IS OLD.update_time
+        BEGIN
+            UPDATE tb_recharge SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
+        END;
 CREATE TRIGGER IF NOT EXISTS trg_tb_remember_token_touch
         AFTER UPDATE ON tb_remember_token FOR EACH ROW
         WHEN NEW.update_time IS OLD.update_time
@@ -570,9 +622,10 @@ CREATE INDEX IF NOT EXISTS idx_order_create_time ON tb_order(create_time);
 CREATE INDEX IF NOT EXISTS idx_order_pay_time ON tb_order(pay_time);
 CREATE INDEX IF NOT EXISTS idx_order_credit_settle_time ON tb_order(credit_settle_time);
 CREATE INDEX IF NOT EXISTS idx_order_customer ON tb_order(customer_id, create_time);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_openid ON tb_customer(openid);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_provider_external ON tb_customer_identity(provider, external_id);
 CREATE INDEX IF NOT EXISTS idx_identity_customer ON tb_customer_identity(customer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recharge_no ON tb_recharge(recharge_no);
+CREATE INDEX IF NOT EXISTS idx_wallet_txn_customer ON tb_wallet_txn(customer_id, txn_id);
 CREATE INDEX IF NOT EXISTS idx_identity_unionid ON tb_customer_identity(unionid);
 CREATE INDEX IF NOT EXISTS idx_order_item_order ON tb_order_item(order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_order ON tb_payment(order_no);

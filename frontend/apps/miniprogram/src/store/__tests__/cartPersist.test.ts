@@ -94,6 +94,8 @@ describe('cartPersist', () => {
     expect(cartState()).toHaveLength(2);
     expect(cartState()[0]).toMatchObject({ dishId: 101, quantity: 2, image: '/uploads/101.png' });
     expect(app.session.personCount).toBe(4);
+    // 恢复出的人数本身就是一次「已选」证据：菜单页不会再弹「选人数」面板
+    expect(app.session.personChosen).toBe(true);
     expect(app.session.orderRemark).toBe('少放辣');
   });
 

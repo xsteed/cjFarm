@@ -15,7 +15,7 @@
 -- 适用范围:仅用于存量库升级;新库请直接执行 migrations/full/mysql/schema.sql
 -- (建表语句已包含该表)。后端启动时 store.migrate 也会建等价的表与索引。
 --
--- 幂等性:建表为 IF NOT EXISTS;搬迁用 NOT EXISTS 守卫(不依赖索引),重复执行零变更;
+-- 幂等性:建表为 IF NOT EXISTS,搬迁用 NOT EXISTS 守卫(不依赖索引),重复执行零变更。
 --         MySQL 的 CREATE INDEX 没有 IF NOT EXISTS 语法,重复执行会报
 --         Duplicate key name,属可忽略的正常现象(见 incr/README.md)。
 CREATE TABLE IF NOT EXISTS tb_customer_identity (

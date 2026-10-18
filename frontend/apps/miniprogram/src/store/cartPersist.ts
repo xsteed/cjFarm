@@ -17,7 +17,7 @@
 // 恢复时必须按当前菜单复核：隔了一段时间回来，菜可能已下架、规格可能卖完、价格可能调过。
 // 所以「菜没了 / 规格没了 / 已售罄」整行丢掉（不留半截状态让人困惑），价格一律取菜单现值。
 import { isOrderable, isSoldOut } from '@dining/customer-core/spec';
-import { setPersonCount } from './session';
+import { setPersonCount, markPersonChosen } from './session';
 import type { CartLine, GlobalData } from '../types';
 import type { Dish, MenuCategory } from '@dining/types';
 
@@ -191,7 +191,12 @@ export function restoreCart(menu: MenuCategory[]): boolean {
   // 原地替换而不是换引用：各页面都是通过 cartState() 现取 getApp().cart
   app.cart.length = 0;
   app.cart.push(...valid);
-  if (Number(data.personCount) > 0) setPersonCount(Number(data.personCount));
+  if (Number(data.personCount) > 0) {
+    setPersonCount(Number(data.personCount));
+    // 恢复出的人数本身就是一次「已选」证据：有车 = 之前进店时已经选过，
+    // 标记后菜单页不会再弹「选人数」面板
+    markPersonChosen();
+  }
   s.orderRemark = String(data.orderRemark || '');
   return true;
 }

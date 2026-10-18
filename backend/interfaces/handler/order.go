@@ -58,6 +58,10 @@ func OrderList(c *gin.Context) {
 	if v := c.Query("creditStatus"); v != "" {
 		q.CreditStatus = intArg(v)
 	}
+	// 只看新单:已下单且商家从未操作过(viewed_at 为空),口径与列表「新」角标一致。
+	if v := c.Query("newOnly"); v == "1" || v == "true" {
+		q.NewOnly = true
+	}
 	total, list, pending, err := service.ListOrders(q, pageNum, pageSize)
 	if err != nil {
 		fail(c, err.Error())

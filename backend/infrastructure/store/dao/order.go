@@ -325,6 +325,8 @@ type OrderQuery struct {
 	// 挂账人是自由文本,必须在服务端过滤:前端只过滤当前页会让第 2 页起的命中记录
 	// 永远搜不到,同时把分页总数改成「本页命中数」,页数与内容完全对不上。
 	SettleRemark string
+	// NewOnly 只看新单:已下单(order_status=1)且商家从未操作过(viewed_at IS NULL)。
+	NewOnly bool
 }
 
 // ListOrders 按条件分页查询订单列表。
@@ -371,6 +373,11 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 	if q.SettleRemark != "" {
 		where = append(where, "COALESCE(settle_remark,'') LIKE ?")
 		args = append(args, "%"+q.SettleRemark+"%")
+	}
+	// 只看新单:「已下单且商家从未操作过」(viewed_at IS NULL,口径与列表 isNew 一致)。
+	// 新单必然 order_status=1,显式带上与「新」角标口径完全对齐,避免筛选结果与角标对不上。
+	if q.NewOnly {
+		where = append(where, "order_status=1", "viewed_at IS NULL")
 	}
 	cond := " WHERE " + strings.Join(where, " AND ")
 
@@ -951,6 +958,26 @@ func UpdateOrderAmountAndPersonTx(tx *sql.Tx, orderID, personCount int, dishCent
 func MarkOrderPaidByChannel(orderNo, payType, transactionID, channel string) (bool, error) {
 	now := store.Now()
 	res, err := store.DB.Exec(`UPDATE tb_order SET pay_status=1, pay_type=?, pay_time=?,
+		transaction_id=?, pay_channel=?, settle_type='normal', settle_time=?,
+		paid_amount=total_amount-COALESCE(refund_amount,0),
+		credit_status=0, credit_amount=0, pre_settle_status=order_status, update_time=?
+		WHERE order_no=? AND pay_status=0 AND order_status IN (1,2,3)`,
+		payType, now, transactionID, channel, now, now, orderNo)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// MarkOrderPaidByChannelTx 是 MarkOrderPaidByChannel 的事务版本,字段口径完全一致。
+//
+// 余额支付在同一个事务里完成「扣储值余额 → 落支付流水 → 订单入账」,
+// 三者要么同时生效要么同时回滚 —— 渠道支付靠回调重试兜底,余额扣掉后没有重试,
+// 事务是唯一保障。
+func MarkOrderPaidByChannelTx(tx *sql.Tx, orderNo, payType, transactionID, channel string) (bool, error) {
+	now := store.Now()
+	res, err := tx.Exec(`UPDATE tb_order SET pay_status=1, pay_type=?, pay_time=?,
 		transaction_id=?, pay_channel=?, settle_type='normal', settle_time=?,
 		paid_amount=total_amount-COALESCE(refund_amount,0),
 		credit_status=0, credit_amount=0, pre_settle_status=order_status, update_time=?

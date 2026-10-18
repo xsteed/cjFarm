@@ -48,6 +48,14 @@ var routePerms = map[string]string{
 	"POST /api/admin/user/toggleStatus":  "user:edit",
 	"DELETE /api/admin/user/:id":         "user:edit",
 
+	// ---- 会员管理(顾客会员,与员工账号不是一套体系) ----
+	"GET /api/admin/member/list":    "member:view",
+	"POST /api/admin/member/status": "member:edit",
+
+	// ---- 储值(动钱,与会员查看分开收口) ----
+	"GET /api/admin/member/wallet":        "wallet:view",
+	"POST /api/admin/member/wallet/adjust": "wallet:edit",
+
 	// ---- 角色与权限 ----
 	"GET /api/admin/role/list":    "role:view",
 	"POST /api/admin/role/save":   "role:edit",

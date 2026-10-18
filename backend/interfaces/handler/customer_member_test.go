@@ -58,16 +58,16 @@ func memberPost(r *gin.Engine, path, token, body string) *httptest.ResponseRecor
 	return w
 }
 
-// memberSeed 直插一个会员档案并附两笔订单:一笔归属会员、一笔匿名。
+// memberSeed 建一个会员档案(绑 wx_mp 身份)并附两笔订单:一笔归属会员、一笔匿名。
 // (不经 CustomerLogin:那需要打桩微信的 code2session,跨包做不到,也不必。)
 // 返回会员档案/会员令牌/匿单单号。
 func memberSeed(t *testing.T) (*po.Customer, string, string) {
 	t.Helper()
-	id, err := dao.InsertCustomer(po.Customer{OpenID: "openid-handler"})
+	id, err := dao.CreateCustomerWithIdentity(po.CustomerProviderWxMP, "openid-handler", "")
 	if err != nil {
 		t.Fatalf("插入会员失败: %v", err)
 	}
-	cust, err := dao.GetCustomerByID(int(id))
+	cust, err := dao.GetCustomerByID(id)
 	if err != nil || cust == nil {
 		t.Fatalf("回读会员失败: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestMemberProfileRequiresToken(t *testing.T) {
 func TestMemberProfileAndMyOrders(t *testing.T) {
 	memberInitDB(t)
 	r := memberRouter()
-	cust, token, anonOrderNo := memberSeed(t)
+	_, token, anonOrderNo := memberSeed(t)
 
 	w := memberGet(r, "/api/customer/auth/profile", token)
 	if w.Code != http.StatusOK {
@@ -119,7 +119,8 @@ func TestMemberProfileAndMyOrders(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "微信用户") {
 		t.Fatalf("未填昵称应显示「微信用户」, got %s", w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), cust.OpenID) {
+	// openid 是站内标识(现在存在 tb_customer_identity.external_id),绝不能出现在响应里。
+	if strings.Contains(w.Body.String(), "openid-handler") {
 		t.Fatal("openid 是站内标识,绝不能出现在接口响应里")
 	}
 
@@ -182,6 +183,11 @@ func TestMemberLoginParameterValidation(t *testing.T) {
 func TestMemberLoginUnsupportedProvider(t *testing.T) {
 	memberInitDB(t)
 	r := memberRouter()
+	// 本测试只考察 provider 分派:会员总闸(出厂默认关)要先打开,
+	// 否则请求在闸口就被拒,到不了分派逻辑。
+	if err := dao.SetSetting("member_enabled", "1"); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, provider := range []string{"phone", "password", "apple", "wechat"} {
 		w := memberPost(r, "/api/customer/auth/login", "", `{"provider":"`+provider+`","code":"c"}`)

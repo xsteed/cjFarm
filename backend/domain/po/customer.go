@@ -11,11 +11,8 @@ import "strings"
 //   - 昵称/头像由用户主动填写,不强制,未填时前端显示「微信用户」。
 type Customer struct {
 	CustomerID int
-	// OpenID 是 P0 过渡期遗留列:tb_customer.openid(NOT NULL + 唯一索引)在拆表时保留,
-	// 微信小程序登录仍会写入一份;其它登录方式在 P2 之前不会走到建档路径。
-	// P2 放开可空并删列后,本字段一并删除 —— 新代码不要读它,登录查档一律走
-	// dao.GetCustomerByIdentity。
-	OpenID        string
+	// 注:openid 不在本结构里。它是「微信小程序」这一种登录方式的凭据,
+	// 存在 tb_customer_identity.external_id;档案本身与登录方式无关。
 	Nickname      string
 	AvatarURL     string
 	Status        int // 1 启用 0 停用(停用后现有令牌在下次校验时立即失效)

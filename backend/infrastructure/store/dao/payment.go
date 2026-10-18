@@ -78,6 +78,30 @@ func GetOrderAmountTx(tx *sql.Tx, orderNo string) (po.Order, error) {
 	return o, err
 }
 
+// MarkPaymentPaidTx 是 MarkPaymentPaid 的事务版本。
+//
+// 余额支付必须把「扣储值余额、落支付流水、订单入账」放进同一个事务 ——
+// 渠道支付有回调重试兜底,余额扣掉之后没有任何重试机制,事务是唯一的原子性保障。
+func MarkPaymentPaidTx(tx *sql.Tx, orderNo, channel, channelTradeNo string) (bool, error) {
+	var paymentID int64
+	err := tx.QueryRow(`SELECT payment_id FROM tb_payment WHERE order_no=? AND channel=? AND status=? ORDER BY payment_id DESC LIMIT 1`,
+		orderNo, channel, PayStatusPending).Scan(&paymentID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	res, err := tx.Exec(`UPDATE tb_payment SET channel_trade_no=?, status=?, notify_time=?, update_time=?
+		WHERE payment_id=? AND status=?`,
+		channelTradeNo, PayStatusPaid, store.Now(), store.Now(), paymentID, PayStatusPending)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // GetPayment 查询某订单某渠道最近一条支付流水。
 //
 // 只填充 po.Payment 的 PaymentID/Status/Amount 三列(调用方只需要这三项),

@@ -26,6 +26,13 @@ export interface SessionState {
    */
   personCount: number;
   /**
+   * 是否已「显式选择」过人数（选人数面板确认 / 购物车步进 / 订单页改人数）。
+   * 与 personCount 分开：personCount 可能来自购物车恢复或订单现值，
+   * 不能据此判断顾客有没有做过选择 —— 茶位费门店进入菜单时必须选一次，
+   * 选过（本会话内）就不再弹。
+   */
+  personChosen: boolean;
+  /**
    * 整单备注。同样放会话里：购物车要能跨冷启动恢复（见 store/cartPersist），
    * 备注若只存在购物车页的 data 里，页面一销毁就丢，恢复出来的车等于少了一半信息。
    */

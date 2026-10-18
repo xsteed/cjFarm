@@ -8,13 +8,14 @@
 // 未开通时提供与 H5 一致的降级路径：展示门店收款码 + 引导到前台结账，
 // 并轮询订单支付状态（商家在后台收款后顾客能立刻看到）。
 // 详见 docs/miniprogram.md 4.1 节。
-import { getOrderByNo, payJsapi, queryPay } from '../../api/client';
+import { getOrderByNo, getWallet, payJsapi, payOrderByWallet, queryPay } from '../../api/client';
 import type { PayJsapiResult } from '../../api/client';
 import { mediaUrl } from '../../config';
 import { applyOrder, readPersisted, sessionState } from '../../store/session';
 import { createPoller } from '../../store/poller';
 import type { Poller } from '../../store/poller';
 import { goToOrder } from '../../utils/nav';
+import { memberState } from '../../store/member';
 import { toast } from '../../utils/toast';
 import { money } from '@dining/shared/money';
 import { ORDER_STATUS } from '@dining/shared/dicts';
@@ -44,7 +45,12 @@ Page({
      * 后端是否已开通小程序内支付（JSAPI）：由公开配置的 `wxpay_jsapi_enabled` 决定。
      * 未开通时主按钮仍是「我已完成支付」（收款码 + 前台结账的降级路径）。
      */
-    canJsapi: false
+    canJsapi: false,
+    /** 储值余额支付：登录会员且余额足够时出现（与 JSAPI 按钮并存，顾客自己选）。 */
+    canWallet: false,
+    /** 登录会员有余额但不够付本单：显示一条「余额不足」提示（不可点，纯告知）。 */
+    walletShort: false,
+    walletBalanceText: '0.00'
   },
 
   poller: null as Poller | null,
@@ -154,6 +160,51 @@ Page({
       // 小程序内支付只有微信渠道有 JSAPI 通道；支付宝渠道仍走收款码
       canJsapi: tab === 'wx' && cfg.wxpay_jsapi_enabled === '1'
     });
+    // 储值余额支付:登录会员且余额足够时出现(未登录/余额不足则不显示,不打扰匿名顾客)。
+    void this.refreshWallet(Number(order.totalAmount) || 0);
+  },
+
+  /** 拉储值余额并判断是否够付当前订单。失败静默:按钮不出现,收款码路径照常可用。 */
+  async refreshWallet(total: number): Promise<void> {
+    // 未登录不发请求:储值余额接口需要会员令牌,匿名顾客拉了也只是 401 + 白白触发一次静默重登。
+    if (memberState().customerId === 0) {
+      this.setData({ canWallet: false, walletShort: false });
+      return;
+    }
+    try {
+      const w = await getWallet();
+      this.setData({
+        walletBalanceText: money(w.balance),
+        canWallet: w.balance >= total && total > 0,
+        // 有余额但不够付:提示「去充值」,比默默隐藏按钮更能让会员知道储值的存在。
+        walletShort: w.balance > 0 && w.balance < total && total > 0
+      });
+    } catch {
+      this.setData({ canWallet: false, walletShort: false });
+    }
+  },
+
+  /**
+   * 储值余额支付:后端在**同一个事务**里完成扣余额、落支付流水与订单入账
+   * (储值没有回调重试兜底,事务是唯一的原子性保障)。
+   * 成功后与 JSAPI 同一拍:以查单结果为准,再由订单页/出厨单接力。
+   */
+  async onPayWallet(): Promise<void> {
+    if (this.data.paid || this.querying) return;
+    const orderNo = this.data.orderNo;
+    if (!orderNo) return;
+    this.querying = true;
+    this.setData({ checking: true });
+    try {
+      await payOrderByWallet(orderNo);
+      this.querying = false;
+      const confirmed = await this.checkPaid(true);
+      if (!confirmed) toast.info('支付结果确认中，请稍等');
+    } catch (e) {
+      this.querying = false;
+      this.setData({ checking: false });
+      toast.error(String((e as Error)?.message || '余额支付失败'));
+    }
   },
 
   onSwitchTab(e: WechatMiniprogram.TouchEvent): void {

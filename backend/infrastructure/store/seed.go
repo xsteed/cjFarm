@@ -96,6 +96,10 @@ var settingDefaults = map[string]string{
 	//   「支付暂不可用」;宁可少一个入口,也不要出现点了调不起收银台的情况。
 	"wxpay_enabled":            "0",
 	"wxpay_jsapi_enabled":      "0",
+	// 储值自助充值:默认关(动钱的入口一律 fail-closed)。开启前须先配好微信支付(JSAPI),
+	// 否则顾客点了充值只会看到「支付暂不可用」。关闭不影响已有余额的消费与退款 ——
+	// 那是顾客的钱,进得来就出得去。
+	"wallet_recharge_enabled":  "0",
 	"alipay_enabled":           "0",
 	"wxpay_mchid":              "",
 	"wxpay_appid":              "",
@@ -140,6 +144,13 @@ var settingDefaults = map[string]string{
 	//   "1" 先付 —— 顾客下单需先完成支付,后厨在收款成功后才出单。
 	// 默认关是刻意的:先付模式下没收到钱的单不会出单,一旦误开会让后厨一单都收不到。
 	"pay_first_enabled": "0",
+	// 会员功能总闸(见 application/service.memberSwitchOn):
+	//   "1" 开放 —— 小程序底部「我的」入口与会员注册/登录照常;
+	//   "0"(默认)关闭 —— 顾客端整体隐藏会员入口,登录/静默重登一律拒绝。
+	// 它只由商家在管理端「营业设置 → 会员功能」控制,与 AppSecret 等登录能力
+	// 配置解耦。默认关与 wxpay_jsapi_enabled 同一思路:宁可少一个入口,也不要在
+	// 未配 AppSecret 的部署上出现「入口在、点注册必失败」的哑火状态。
+	"member_enabled": "0",
 }
 
 // SettingDefault 返回配置项出厂默认值(不存在时返回空串)。

@@ -66,7 +66,29 @@ func CustomerTable(c *gin.Context) {
 		"status":        table.Status,
 		"currentOrder":  co,
 		"servingOrders": servingOrders,
+		// 桌级共享的「入座人数」（茶位费门店）：同桌另一部手机已选过时非 0,
+		// 顾客端直接沿用、不再弹选人数面板；0 = 本桌还没人选（见 table_person.go）。
+		"pendingPersonCount": service.GetTablePendingPerson(table.TableID),
 	})
+}
+
+// CustomerSetTablePerson 顾客「入座选人数」上报（茶位费门店）：
+// 一位客人选好后同桌共享，其他人扫码进来不再重复选。
+//
+// 刻意不做「先写锁定」：共享值只是面板的预填默认值，权威值是下单请求里的
+// personCount（下单时固化进订单并清除共享值），所以后写覆盖先写不会产生
+// 账务不一致；真正的并发下单由「一桌一笔未结账单」约束串行化。
+func CustomerSetTablePerson(c *gin.Context) {
+	var p struct {
+		TableID     int `json:"tableId"`
+		PersonCount int `json:"personCount"`
+	}
+	if err := c.ShouldBindJSON(&p); err != nil {
+		fail(c, "参数错误")
+		return
+	}
+	service.SetTablePendingPerson(p.TableID, p.PersonCount)
+	ok(c, nil)
 }
 
 func CustomerMenu(c *gin.Context) {

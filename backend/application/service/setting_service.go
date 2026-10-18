@@ -42,7 +42,7 @@ var ManagedSettingKeys = []string{
 	"seat_fee_enabled", "seat_fee",
 	"promotion_enabled", "promotion_threshold", "promotion_discount",
 	"pay_qr_wx", "pay_qr_ali",
-	"wxpay_enabled", "wxpay_jsapi_enabled", "wxpay_mchid", "wxpay_appid", "wxpay_serial_no",
+	"wxpay_enabled", "wxpay_jsapi_enabled", "wallet_recharge_enabled", "wxpay_mchid", "wxpay_appid", "wxpay_serial_no",
 	"wxpay_private_key_path", "wxpay_platform_cert_path",
 	"wxpay_pubkey_id", "wxpay_pubkey_path", "wxpay_notify_url",
 	// 小程序桌牌码:AppID 复用 wxpay_appid,此处只需版本与 AppSecret
@@ -57,6 +57,8 @@ var ManagedSettingKeys = []string{
 	"stale_release_enabled", "stale_alert_enabled", "stale_alert_hours", "biz_date_cutoff_hour",
 	// 先付/后付模式(见 PayFirstEnabled)
 	"pay_first_enabled",
+	// 会员功能总闸(见 memberSwitchOn):管理端独立开关,控制小程序「我的」入口
+	"member_enabled",
 	// 敏感项(不回显,但同样参与指纹:它们变了,别的管理端就该刷新)
 	"wxpay_apiv3_key", "wx_app_secret", "feie_ukey", "agent_token",
 }
@@ -186,6 +188,7 @@ func ListSettings() dto.Settings {
 		PromotionDiscount:  dao.GetSetting("promotion_discount"),
 		WxpayEnabled:       SettingFlag("wxpay_enabled"),
 		WxpayJsapiEnabled:  SettingFlag("wxpay_jsapi_enabled"),
+		WalletRechargeEnabled: SettingFlag("wallet_recharge_enabled"),
 		AlipayEnabled:      SettingFlag("alipay_enabled"),
 		// 微信支付(敏感项:已配置回显占位符,前端原样带回表示不修改)
 		WxpayApiv3Key:         maskIfSet("wxpay_apiv3_key"),
@@ -231,6 +234,8 @@ func ListSettings() dto.Settings {
 		BizDateCutoffHour:   strconv.Itoa(BizDayCutoffHour()),
 		// 先付模式开关(默认关,只有明确 "1" 才先付)
 		PayFirstEnabled: SettingFlag("pay_first_enabled"),
+		// 会员功能总闸(默认关,只有明确 "1" 才开):显隐口径与渲染侧 memberSwitchOn 一致
+		MemberEnabled: SettingFlag("member_enabled"),
 		// 乐观锁指纹:保存时原样带回,后端比对发现不一致即拒绝(409)
 		Version: dao.SettingsFingerprint(ManagedSettingKeys),
 	}
@@ -273,6 +278,7 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		"promotion_discount":       NormalizeAmountValue(settings.PromotionDiscount),
 		"wxpay_enabled":            normFlagValue(settings.WxpayEnabled),
 		"wxpay_jsapi_enabled":      normFlagValue(settings.WxpayJsapiEnabled),
+		"wallet_recharge_enabled":  normFlagValue(settings.WalletRechargeEnabled),
 		"alipay_enabled":           normFlagValue(settings.AlipayEnabled),
 		"wxpay_mchid":              settings.WxpayMchid,
 		"wxpay_appid":              settings.WxpayAppid,
@@ -305,6 +311,8 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		"biz_date_cutoff_hour":  NormalizeBizDateCutoffHour(settings.BizDateCutoffHour),
 		// 先付/后付模式:开关归一化,落库永远是 "1"/"0"
 		"pay_first_enabled": normFlagValue(settings.PayFirstEnabled),
+		// 会员功能总闸:开关归一化,落库永远是 "1"/"0"
+		"member_enabled": normFlagValue(settings.MemberEnabled),
 	}
 	// 普通配置项:提交值直接覆盖保存(敏感项由 SetSetting 自动加密)。
 	// 旧值快照必须赶在 SetSetting 之前取——落库后 LoadSettings 读到的已是新值,

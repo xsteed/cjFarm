@@ -208,10 +208,21 @@
 }
 
 /* ---------- 底部 ---------- */
+/* 储值余额不足以支付本单时的提示:纯告知,不可点(点了也没有可做的动作) */
+.foot-wallet-tip {
+  flex-shrink: 0;
+  width: 100%;
+  padding: 0 24rpx 10rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: var(--ink-3);
+}
+
 .foot {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  flex-wrap: wrap;
   gap: 16rpx;
   padding: 18rpx 24rpx;
   /* 安全区写在自身 padding 里（不要与全局 .safe-bottom 组合，页面样式会覆盖掉它） */
