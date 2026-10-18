@@ -12,14 +12,34 @@
         <div class="sheet-title">
           已选菜品 <span v-if="totalCount">({{ totalCount }}件)</span>
         </div>
-        <button
-          v-if="cart.length"
-          class="clear-btn"
-          @click="emit('clear')"
-        >
-          清空
-        </button>
+        <div class="head-actions">
+          <button
+            v-if="cart.length"
+            class="clear-btn"
+            @click="emit('clear')"
+          >
+            清空
+          </button>
+        </div>
       </div>
+      <button
+        class="close-btn"
+        title="关闭"
+        aria-label="关闭"
+        @click="emit('update:visible', false)"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="16"
+          height="16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
 
       <div class="cart-list">
         <div
@@ -371,11 +391,8 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 
 <style scoped>
 /* ---------- 购物车抽屉 ---------- */
-/* TDesign 抽屉默认 24px 内边距与 .cart-sheet 自身的 padding 叠加,导致底部空白过多,这里去掉 */
-/* Teleport 未启用时 .t-drawer 根节点带本组件 scoped 属性,可用 :deep 命中其内部结构 */
-:deep(.t-drawer__body) {
-  padding: 0;
-}
+/* TDesign 抽屉 Teleport 到 body 外,scoped 的 :deep 选择器匹配不到其内部结构;
+   改用文件末尾的全局样式块覆盖 */
 
 /* 高度自适应后兜底:内容再多也不允许超过 86% 视口,超出部分由列表内部滚动 */
 :deep(.t-drawer__content-wrapper--bottom) {
@@ -383,7 +400,8 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 }
 
 .cart-sheet {
-  padding: 20px 18px calc(16px + env(safe-area-inset-bottom));
+  position: relative;
+  padding: 14px 18px calc(8px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
 }
@@ -392,6 +410,8 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   display: flex;
   justify-content: space-between;
   align-items: center;
+  /* 右侧预留关闭按钮的位置，避免清空按钮与其重叠 */
+  padding-right: 34px;
 }
 
 .sheet-title {
@@ -416,17 +436,44 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   padding: 4px;
 }
 
+.clear-btn:active {
+  color: var(--ink-2);
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.close-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  border: none;
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+}
+
+.close-btn:active {
+  color: var(--ink);
+}
+
 .cart-list {
   max-height: 240px;
   overflow-y: auto;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .cart-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 11px 0;
+  padding: 4px 0;
 }
 
 .ci-info {
@@ -478,6 +525,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   flex-shrink: 0;
 }
 
+/* 右侧:该行小计 = 单价 × 份数,随数量实时变化 */
 .ci-price {
   font-size: 14px;
   font-weight: 700;
@@ -523,7 +571,22 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 }
 
 .qty-num.big {
-  font-size: 16px;
+  font-size: 14.5px;
+}
+
+/* 人数行的步进器整体缩一号:只作用于用餐信息区,不影响菜品行的数量选择器 */
+.form-row .qty-ctl {
+  gap: 8px;
+}
+
+.form-row .qty-btn {
+  width: 21px;
+  height: 21px;
+}
+
+.form-row .qty-btn svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* 人数直接输入态:去掉数字步进箭头,下划线提示可编辑 */
@@ -558,7 +621,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 18px 0 14px;
+  margin: 8px 0 8px;
   color: var(--ink-3);
   font-size: 12px;
   white-space: nowrap;
@@ -575,7 +638,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 .dine-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
 }
 
 .form-row {
@@ -592,7 +655,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 }
 
 .fr-label {
-  font-size: 13.5px;
+  font-size: 12.5px;
   color: var(--ink-2);
   flex-shrink: 0;
 }
@@ -600,10 +663,10 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 .remark-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 14px;
+  padding: 7px 12px;
   border: 1.5px solid var(--line);
   border-radius: var(--r-md);
-  font-size: 13.5px;
+  font-size: 12.5px;
   color: var(--ink);
   outline: none;
   background: #fafafa;
@@ -615,19 +678,20 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 }
 
 .fee-lines {
-  margin-top: 16px;
-  padding: 12px 14px;
+  margin-top: 10px;
+  padding: 7px 10px;
   background: #fafafa;
   border-radius: var(--r-md);
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 4px;
 }
 
 .fee-line {
   display: flex;
   justify-content: space-between;
-  font-size: 12.5px;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--ink-3);
 }
 
@@ -664,7 +728,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 
 /* 先付模式提示:与加菜提示同款浅色底,位置紧贴提交按钮之上 */
 .pay-first-hint {
-  margin-top: 14px;
+  margin-top: 10px;
   padding: 10px 14px;
   border-radius: var(--r-md);
   background: var(--brand-soft);
@@ -747,5 +811,13 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   to {
     transform: rotate(360deg);
   }
+}
+</style>
+
+<!-- 非 scoped:TDesign 抽屉 Teleport 到 body 下,scoped 选择器够不到,
+     这里去掉其默认内边距,避免与 .cart-sheet 的 padding 叠加导致底部空白过多 -->
+<style>
+.t-drawer .t-drawer__body {
+  padding: 0;
 }
 </style>

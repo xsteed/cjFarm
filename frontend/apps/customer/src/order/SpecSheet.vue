@@ -71,52 +71,57 @@
         v-if="inCartQty"
         class="spec-hint"
       >
-        购物车已有 {{ inCartQty }} 份，点「确定」会再加 {{ qty }} 份
+        购物车已有 {{ inCartQty }} 份，点「确认添加」会再加 {{ qty }} 份
       </div>
 
       <div class="spec-foot">
-        <!-- 数量步进器:招牌菜 / 多规格菜都走弹层,下单位数在这里定(默认 1,最小 1,最大 99)。
+        <!-- 数量步进器单独一行:左「数量」标签,右步进器(默认 1,最小 1,最大 99)。
              加减号用 SVG 短棒而不是字体「− / +」：字形跟着基线走，不同机型上下偏心 ——
              与菜单页 op-stepper 同一画法同一尺寸，几何居中不依赖字体度量。 -->
-        <div class="ft-stepper">
-          <span
-            class="ft-minus"
-            :class="{ off: qty <= 1 }"
-            @click="setQty(qty - 1)"
-            ><svg
-              viewBox="0 0 24 24"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-            >
-              <path d="M5 12h14" /></svg
-          ></span>
-          <span class="ft-num">{{ qty }}</span>
-          <span
-            class="ft-plus"
-            @click="setQty(qty + 1)"
-            ><svg
-              viewBox="0 0 24 24"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-            >
-              <path d="M12 5v14M5 12h14" /></svg
-          ></span>
+        <div class="ft-qty-row">
+          <span class="ft-qty-label">数量</span>
+          <div class="ft-stepper">
+            <span
+              class="ft-minus"
+              :class="{ off: qty <= 1 }"
+              @click="setQty(qty - 1)"
+              ><svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              >
+                <path d="M5 12h14" /></svg
+            ></span>
+            <span class="ft-num">{{ qty }}</span>
+            <span
+              class="ft-plus"
+              @click="setQty(qty + 1)"
+              ><svg
+                viewBox="0 0 24 24"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              >
+                <path d="M12 5v14M5 12h14" /></svg
+            ></span>
+          </div>
         </div>
-        <div class="ft-price"><i>¥</i>{{ priceText }}</div>
-        <button
-          class="sp-btn"
-          @click="emit('confirm')"
-        >
-          确定
-        </button>
+        <div class="ft-bottom">
+          <div class="ft-price"><i>¥</i>{{ priceText }}</div>
+          <button
+            class="sp-btn"
+            @click="emit('confirm')"
+          >
+            确认添加
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -148,9 +153,9 @@ const emit = defineEmits<{
   confirm: [];
 }>();
 
-// 与小程序 syncPrice 同口径：跟着「当前选中的规格」走，切规格价格立刻变
+// 与小程序 syncPrice 同口径：单价 × 数量。改规格与改数量都要跟着变
 const cur = computed(() => props.specs.find(s => Number(s.specId) === props.selectedSpecId));
-const priceText = computed(() => money(cur.value?.price));
+const priceText = computed(() => money((Number(cur.value?.price) || 0) * props.qty));
 
 const QTY_MIN = 1;
 const QTY_MAX = 99;
@@ -296,9 +301,21 @@ function onCustomInput(e: Event): void {
 .spec-foot {
   flex-shrink: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 12px;
   margin-top: 16px;
+}
+
+/* 数量行:左「数量」标签,右步进器 */
+.ft-qty-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ft-qty-label {
+  font-size: 13px;
+  color: var(--ink-2);
 }
 
 /* 数量步进器:左栏固定,价格占剩余,「确定」靠右(与小程序 spec-sheet 底栏一致) */
@@ -351,8 +368,14 @@ function onCustomInput(e: Event): void {
   color: var(--ink);
 }
 
+/* 金额行:左下角总金额(单价 × 数量),右侧确定按钮 */
+.ft-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .ft-price {
-  flex: 1;
   color: var(--brand-deep);
   font-size: 20px;
   font-weight: 700;
