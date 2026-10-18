@@ -126,11 +126,14 @@ func TestMarkOrderViewedWritesFirstTimeOnly(t *testing.T) {
 }
 
 // 只看新单筛选:仅命中「已下单且从未操作过」的订单;已操作过的、非已下单状态的都不命中。
+// viewed_at=” 的脏行(列默认值/外部脚本造成)读侧视同未操作,筛选必须同样命中;
+// 对其执行 MarkOrderViewed 后应退出新单集合(空串守卫生效)。
 func TestListOrdersNewOnlyFilter(t *testing.T) {
 	orderDaoInitDB(t)
 	newID := orderDaoCreate(t, "D-NEWONLY-0001", 1)
 	viewedID := orderDaoCreateAt(t, "D-NEWONLY-0002", 2, "02")
 	doneID := orderDaoCreateAt(t, "D-NEWONLY-0003", 3, "03")
+	emptyID := orderDaoCreateAt(t, "D-NEWONLY-0004", 4, "04")
 
 	if err := MarkOrderViewed(viewedID); err != nil {
 		t.Fatalf("标记已操作失败: %v", err)
@@ -138,13 +141,28 @@ func TestListOrdersNewOnlyFilter(t *testing.T) {
 	if _, err := store.DB.Exec(`UPDATE tb_order SET order_status=4 WHERE order_id=?`, doneID); err != nil {
 		t.Fatalf("更新订单状态失败: %v", err)
 	}
+	if _, err := store.DB.Exec(`UPDATE tb_order SET viewed_at='' WHERE order_id=?`, emptyID); err != nil {
+		t.Fatalf("构造空串脏行失败: %v", err)
+	}
 
 	total, list, err := ListOrders(OrderQuery{NewOnly: true}, 1, 10)
 	if err != nil {
 		t.Fatalf("只看新单查询失败: %v", err)
 	}
+	if total != 2 || len(list) != 2 {
+		t.Fatalf("只看新单应命中未操作在途单 + 空串脏行: total=%d, 命中=%+v", total, list)
+	}
+
+	// 对空串脏行执行操作:守卫把空串视同未操作,时间正常写入并退出新单集合。
+	if err := MarkOrderViewed(emptyID); err != nil {
+		t.Fatalf("标记空串脏行失败: %v", err)
+	}
+	total, list, err = ListOrders(OrderQuery{NewOnly: true}, 1, 10)
+	if err != nil {
+		t.Fatalf("复查只看新单失败: %v", err)
+	}
 	if total != 1 || len(list) != 1 || list[0].OrderID != newID {
-		t.Fatalf("只看新单应仅命中未操作的在途单: total=%d, 命中=%+v", total, list)
+		t.Fatalf("操作后空串脏行应退出新单集合: total=%d, 命中=%+v", total, list)
 	}
 }
 

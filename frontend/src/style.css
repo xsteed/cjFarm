@@ -720,18 +720,6 @@ svg.ic-svg {
   padding: 0;
 }
 
-/* 「新」快捷开关:与筛选按钮同尺寸,激活时品牌色实心,一眼可知当前只看新单 */
-.m-new-btn {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.m-new-btn.on {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: #fff;
-}
-
 /* 底部弹层里的表单字段:标签在上、控件整行 */
 .ff-list {
   display: flex;
@@ -749,13 +737,6 @@ svg.ic-svg {
   font-size: 13px;
   color: var(--ink-2);
   font-weight: 500;
-}
-
-/* 开关型字段(如「只看新单」):标签与开关同行 */
-.ff-row {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
 }
 
 /* 分段药丸:横向滚动,一屏放不下可左右滑 */

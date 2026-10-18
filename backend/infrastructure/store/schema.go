@@ -1059,6 +1059,13 @@ func migrate(stmts []string) {
 		}
 	}
 
+	// viewed_at 脏值归一(幂等,每次启动执行):空串 / MySQL 历史零值在读侧都会被
+	// dao.TS 折叠成「未操作」,但 SQL 筛选(newOnly)按 IS NULL 判定 —— 不归一会出现
+	// 「角标显示新单、筛选取不到」的分裂。仅改写异常行,正常行零写入。
+	if _, err := DB.Exec(`UPDATE tb_order SET viewed_at=NULL WHERE viewed_at='' OR viewed_at LIKE '0000-00-00%'`); err != nil {
+		logger.Warnf("[db] 归一 viewed_at 脏值失败: %v", err)
+	}
+
 	// 建唯一索引前先清理 tb_role 的历史重复行:老版本 MySQL 下 idx_role_key 退化为
 	// 普通索引 + 启动引导依赖唯一约束,导致每次启动重复插入内置角色。若带着重复
 	// 数据直接建唯一索引会失败,老库升级会卡死在启动阶段。

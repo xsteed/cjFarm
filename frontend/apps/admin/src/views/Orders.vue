@@ -126,16 +126,6 @@
             </template>
           </t-input>
           <t-button
-            :theme="query.newOnly ? 'primary' : 'default'"
-            :variant="query.newOnly ? 'base' : 'outline'"
-            class="m-filter-btn m-new-btn"
-            :class="{ on: query.newOnly }"
-            aria-label="只看新单"
-            @click="toggleNewOnly"
-          >
-            新
-          </t-button>
-          <t-button
             theme="primary"
             variant="outline"
             class="m-filter-btn"
@@ -153,7 +143,7 @@
             :key="t.value"
             type="button"
             class="m-seg-item"
-            :class="{ on: query.orderStatus === t.value }"
+            :class="{ on: isTabActive(t.value) }"
             @click="onStatusTab(t.value)"
           >
             {{ t.label }}
@@ -526,11 +516,6 @@
               label="挂账已结"
             />
           </t-select>
-        </label>
-        <label class="ff ff-row">
-          <span class="ff-k">只看新单</span>
-          <!-- 与卡片「新」角标同口径:已下单且商家从未操作过 -->
-          <t-switch v-model="query.newOnly" />
         </label>
       </div>
       <template #footer>
@@ -962,11 +947,24 @@ function cardActions(row: OrderRow): CardAction[] {
 // 状态药丸:全部 + ORDER_STATUS 全部状态;点击即查,不再需要一个「查询」按钮。
 const statusTabs = computed(() => [
   { label: '全部', value: '' },
+  // 「新单」tab:与「新」角标同口径(已下单且商家从未操作过),放在「全部」右侧,方便只盯新单处理
+  { label: '新单', value: 'new' },
   ...Object.entries(ORDER_STATUS).map(([k, v]) => ({ label: v.label, value: String(k) }))
 ]);
 
+// tab 激活态:「新单」是独立开关(newOnly),其余 tab 对应订单状态筛选
+function isTabActive(value: string): boolean {
+  return value === 'new' ? query.newOnly : !query.newOnly && query.orderStatus === value;
+}
+
 function onStatusTab(value: string): void {
-  query.orderStatus = value;
+  if (value === 'new') {
+    query.newOnly = true;
+    query.orderStatus = '';
+  } else {
+    query.newOnly = false;
+    query.orderStatus = value;
+  }
   pagination.current = 1;
   load();
 }
@@ -977,13 +975,6 @@ const filterSheetVisible = ref(false);
 function applyFilters(): void {
   filterSheetVisible.value = false;
   onSearch();
-}
-
-// toggleNewOnly 移动端搜索栏的「新」快捷开关:开=只看新单,关=恢复全部。
-function toggleNewOnly(): void {
-  query.newOnly = !query.newOnly;
-  pagination.current = 1;
-  load();
 }
 
 function resetFilters(): void {

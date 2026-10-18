@@ -84,10 +84,11 @@ func GetOrderByID(orderID int) (po.Order, error) {
 }
 
 // MarkOrderViewed 记录商家「第一次」实际操作该订单的时间(仅查看不算,见 handler.OrderGet)。
-// 条件里带 viewed_at IS NULL:只写首次时间,后续操作不重复改写;
-// 也正因为带条件,重复调用是无副作用的幂等操作。
+// 条件把空串也视同「未操作」(个别库的列默认值/外部脚本会产生空串,读侧视同 NULL):
+// 否则这类行的守卫永远不命中,操作后「新」角标无法消解。
+// 只写首次时间,后续操作不重复改写;重复调用是无副作用的幂等操作。
 func MarkOrderViewed(orderID int) error {
-	_, err := store.DB.Exec(`UPDATE tb_order SET viewed_at=? WHERE order_id=? AND viewed_at IS NULL`,
+	_, err := store.DB.Exec(`UPDATE tb_order SET viewed_at=? WHERE order_id=? AND (viewed_at IS NULL OR viewed_at='')`,
 		store.Now(), orderID)
 	return err
 }
@@ -374,10 +375,12 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 		where = append(where, "COALESCE(settle_remark,'') LIKE ?")
 		args = append(args, "%"+q.SettleRemark+"%")
 	}
-	// 只看新单:「已下单且商家从未操作过」(viewed_at IS NULL,口径与列表 isNew 一致)。
-	// 新单必然 order_status=1,显式带上与「新」角标口径完全对齐,避免筛选结果与角标对不上。
+	// 只看新单:「已下单且商家从未操作过」。判定必须与读侧完全对齐 —— dao.TS 会把
+	// NULL/空串/MySQL 历史零值都折叠成「未操作」,这里若只判 IS NULL,就会出现
+	// 「角标显示新单、筛选取不到」的分裂(实际发生过)。
 	if q.NewOnly {
-		where = append(where, "order_status=1", "viewed_at IS NULL")
+		where = append(where, "order_status=1",
+			"(viewed_at IS NULL OR viewed_at='' OR viewed_at LIKE '0000-00-00%')")
 	}
 	cond := " WHERE " + strings.Join(where, " AND ")
 

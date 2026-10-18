@@ -306,17 +306,29 @@ describe('Orders 订单管理页 · 移动端订单卡片按钮矩阵', () => {
     wrapper.unmount();
   });
 
-  it('筛选:移动端点「新」快捷开关,列表请求带 newOnly=1 且回到第 1 页', async () => {
+  it('筛选:移动端「新单」tab 请求带 newOnly=1,切到状态 tab 自动取消', async () => {
     payFirstState.value = false;
-    listOrdersMock.mockResolvedValue({ total: 1, items: [order({ orderId: 1, isNew: true })] });
+    listOrdersMock.mockResolvedValue({ total: 0, items: [] });
     const wrapper = mountOrders();
     await flushPromises();
 
-    const newBtn = wrapper.find('.m-new-btn');
-    expect(newBtn.exists()).toBe(true);
-    await newBtn.trigger('click');
+    // tab 顺序:全部 / 新单 / 已下单 / 制作中 / ...
+    const tabs = wrapper.findAll('.m-seg .m-seg-item');
+    expect(tabs.length).toBeGreaterThanOrEqual(3);
+    expect(tabs[1].text()).toBe('新单');
+
+    await tabs[1].trigger('click');
     await flushPromises();
-    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ newOnly: '1', pageNum: 1 }));
+    expect(listOrdersMock).toHaveBeenLastCalledWith(expect.objectContaining({ newOnly: '1' }));
+    expect(tabs[1].classes()).toContain('on');
+
+    // 切到「已下单」状态 tab:取消只看新单,回到状态筛选
+    await tabs[2].trigger('click');
+    await flushPromises();
+    const last = listOrdersMock.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(last.newOnly).toBeUndefined();
+    expect(last.orderStatus).toBe('1');
+    expect(tabs[2].classes()).toContain('on');
     wrapper.unmount();
   });
 
