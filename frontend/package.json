@@ -18,6 +18,7 @@
     "mp:dev": "npm run dev -w @dining/app-miniprogram",
     "mp:test": "npm run test -w @dining/app-miniprogram",
     "mp:verify": "npm run verify -w @dining/app-miniprogram",
+    "mp:precheck": "npm run precheck -w @dining/app-miniprogram",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

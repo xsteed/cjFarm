@@ -21,6 +21,13 @@
   font-size: 26rpx;
 }
 
+/* 「返回」文案：与箭头同一行，字号/颜色跟随导航条（此前缺这条定义，
+ * WXSS 审计会报「class 未定义」而挡住 npm run mp:verify）。 */
+.pb-text {
+  font-size: 26rpx;
+  color: var(--ink-2);
+}
+
 /* 左向箭头：CSS 边框旋转 45°，与加减号同一套几何画法 */
 .pb-arrow {
   width: 13rpx;

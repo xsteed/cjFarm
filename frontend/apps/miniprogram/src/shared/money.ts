@@ -20,5 +20,11 @@ export const money = formatMoney;
  */
 export function round2(v: number): number {
   if (!Number.isFinite(v)) return 0;
-  return Math.round((v + Number.EPSILON) * 100) / 100;
+  // 修正量必须跟着符号走。无条件加 EPSILON 等于对**负数**反向推了一把：
+  // round2(-0.145) 会落到 -0.14 而不是对称的 -0.15。当前用到 round2 的地方
+  // （菜品合计、茶位费、满减、合计）都非负，所以现在看不出来；但只要哪天有负数
+  // 进场（退款、差额调整），两端就会各自给出差 1 分的结果 —— 正是这函数被造出来
+  // 要消灭的那类漂移。
+  const bias = v >= 0 ? Number.EPSILON : -Number.EPSILON;
+  return Math.round((v + bias) * 100) / 100;
 }

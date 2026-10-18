@@ -176,7 +176,18 @@ export function memberEnabled(): boolean {
  * 顾客真正的诉求（点餐）不依赖登录态，静默失败等下次进「我的」页再试即可。
  */
 export function memberSilentRelogin(): void {
-  if (!currentCustomerToken()) return;
+  // ⚠️ 判据必须是「本次会话是不是会员」，而不是「本地还有没有令牌」。
+  //
+  // api/http.ts 的 401 分支是**先 remove 令牌、再回调这里**（这样才能确保失败后
+  // 不会带着过期令牌继续发请求）。若这行写成 `if (!currentCustomerToken()) return;`，
+  // 走到这里时令牌恒为空 → 永远直接 return → 静默重登一次都不会发生。
+  // 后果：钱包余额、绑定手机号、充值、注销这些没走 memberedGet 包装的接口，
+  // 401 之后不会自动恢复（表现为储值余额拉不到、结账页的「余额支付」按钮凭空消失），
+  // 顾客要完全退出小程序重进才好。
+  //
+  // customerId 由 restoreMember / memberLogin 置为非 0，memberLogout 置回 0，
+  // 所以「匿名顾客（从未登录过）不会被自动注册成会员」这条边界依然成立。
+  if (memberState().customerId === 0) return;
   void memberLogin().catch(() => {
     /* 静默失败：下次需要会员数据时再走完整登录 */
   });

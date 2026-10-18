@@ -1,0 +1,70 @@
+<view class="page">
+  <view class="head">
+    <view class="head-icon">🛡️</view>
+    <view class="head-title">用户隐私保护提示</view>
+    <view class="head-sub">感谢你信任{{shopName}}的扫码点餐服务</view>
+  </view>
+
+  <scroll-view
+    class="body"
+    scroll-y
+    enhanced
+    show-scrollbar="{{false}}"
+  >
+    <view class="intro">
+      在你使用需要个人信息的服务前，请先花一分钟了解这些信息是怎么被对待的。我们只收集完成服务所必需的内容，用完为止。
+    </view>
+
+    <view class="sec">
+      <view class="sec-title">我们会获取这些信息</view>
+      <view
+        wx:for="{{collects}}"
+        wx:key="key"
+        class="item"
+      >
+        <view class="item-title">{{item.title}}</view>
+        <view class="item-desc">{{item.desc}}</view>
+      </view>
+    </view>
+
+    <view class="sec">
+      <view class="sec-title">你可以随时</view>
+      <view
+        wx:for="{{rights}}"
+        wx:key="key"
+        class="item"
+      >
+        <view class="item-title">{{item.title}}</view>
+        <view class="item-desc">{{item.desc}}</view>
+      </view>
+    </view>
+
+    <view class="foot-note">
+      你可以查看完整的《用户服务协议》和《隐私政策》。不同意不影响扫码点餐与支付。
+    </view>
+  </scroll-view>
+
+  <view class="foot">
+    <!-- button id 必须与 onAgree 里回填给基础的 buttonId 一致（见 index.ts 说明） -->
+    <button
+      id="agree-btn"
+      class="btn-primary foot-btn"
+      open-type="agreePrivacyAuthorization"
+      bindagreeprivacyauthorization="onAgree"
+    >
+      同意并继续
+    </button>
+    <button
+      class="btn-ghost foot-btn"
+      bindtap="onDisagree"
+    >
+      不同意
+    </button>
+    <view
+      class="foot-link"
+      bindtap="onOpenAgreement"
+    >
+      查看《用户服务协议》和《隐私政策》
+    </view>
+  </view>
+</view>

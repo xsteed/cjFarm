@@ -64,7 +64,7 @@ frontend/apps/miniprogram/
 ├── scripts/               # audit-wxml.mjs / audit-wxss.mjs / smoke.mjs
 └── src/
     ├── app.ts/json/wxss   # 入口与全局样式（token 对齐 Web 端 style.css）
-    ├── config.ts          # ⚠️ API_ORIGIN 等必改项集中在这里
+    ├── config.ts          # ⚠️ PROD_API_ORIGIN（唯一上线必改项）+ 按环境自动切换的 API_ORIGIN
     ├── types.ts           # 后端响应形态 + 跨页共享状态类型（唯一来源）
     ├── shared/            # keys（存储键）/ storage（wx.storage 安全封装）/ visitor / money / dicts / orderStatus / orderDisplay / ui
     ├── core/              # 纯函数口径：search（菜单搜索）/ spec（可点与售罄判定）/ person（人数边界）
@@ -161,24 +161,52 @@ npm run test -w @dining/app-miniprogram   # 只跑单测（用例数与覆盖见
 
 ### 3.1 上线前必改的代码
 
-`frontend/apps/miniprogram/src/config.ts`：
+`frontend/apps/miniprogram/src/config.ts` 里**只有一处**：把生产域名占位符换掉。
 
 ```ts
-/** 后端站点源（含协议与端口，不含路径）。 */
-export const API_ORIGIN = 'https://dining.example.com';
+/** 生产 / 体验环境后端地址。⚠️ 上线前必须换成真实域名。 */
+const PROD_API_ORIGIN = 'https://YOUR-DOMAIN.example.com';
 ```
+
+> `API_ORIGIN` 由 `PROD_API_ORIGIN` / `DEV_API_ORIGIN` + 环境档位自动派生，
+> 不再需要手工切换（见下方「本地联调 vs 上线」）。
+
+**占位符期间的行为**（备案域名还没下来的阶段）：
+
+| 场景 | 表现 |
+|---|---|
+| 开发者工具 / 开发版 | **完全正常**，走 `DEV_API_ORIGIN` 连本机，不受占位符影响 |
+| `mp:precheck` | 报错「还是占位符」—— 这是预期。域名到位前本来就不该提审 |
+| 体验版 / 正式版 | 请求全部失败，且启动时控制台会打印 `[config] PROD_API_ORIGIN 仍是占位符…` |
+
+> 所以占位符期间可以照常开发联调，**只是不能打体验版给门店试用**（体验版走 `PROD_API_ORIGIN`）。
+> 若确需在域名下来前做真机验收，可临时把 `PROD_API_ORIGIN` 指向一个可用的测试 HTTPS 域名
+> （仍需在公众平台加入合法域名白名单）。
 
 `project.config.json` 的 `appid` 已有正式值（换主体时同步替换）。
 
-#### 本地联调 vs 上线：这个值要来回切
+#### 本地联调 vs 上线：域名按环境自动切换（不需要手工改）
 
-| | `API_ORIGIN` | 开发者工具「不校验合法域名」(`setting.urlCheck`) |
+`API_ORIGIN` 由 `wx.getAccountInfoSync().miniProgram.envVersion` 自动选择：
+
+| 环境 | `envVersion` | 实际连的地址 |
 |---|---|---|
-| **本地联调** | 指向本机后端，如 `http://127.0.0.1:8080` | 必须**关掉校验**（勾上「详情 → 本地设置 → 不校验合法域名、web-view、TLS 版本以及 HTTPS 证书」），否则请求会被工具直接拒绝 |
-| **体验版/上线** | 已备案的 **HTTPS 域名** | 勾回校验（`true`），并把域名加进 request / downloadFile 合法域名 |
+| 开发者工具 / 真机调试 | `develop` | `DEV_API_ORIGIN`（`http://127.0.0.1:8080`） |
+| 体验版 / 正式版 | `trial` / `release` | `PROD_API_ORIGIN` |
 
-> ⚠️ 两处必须同时改：只改 `API_ORIGIN` 而没关校验，本地会全量请求失败；
-> 只关校验而忘了换回 HTTPS 域名，真机上（没有「不校验」这个选项）会直接连不上。
+**上线前唯一要改的**是 `PROD_API_ORIGIN`（把占位符换成已备案的 HTTPS 域名），
+改一次即可，此后不用再为联调来回切 —— 开发版自动连本机，体验版/正式版自动连生产。
+`npm run mp:precheck` 会检查它是否还是占位符 / 是否 http / 是否裸 IP。
+
+本地联调仍需要开发者工具配合：
+
+| | `setting.urlCheck` | 说明 |
+|---|---|---|
+| **本地联调** | 关掉（「详情 → 本地设置 → 不校验合法域名、web-view、TLS 版本以及 HTTPS 证书」） | 本机 http 地址不在白名单里，工具会直接拒绝请求 |
+| **体验版/上线** | 勾回校验（`true`） | 并把 `PROD_API_ORIGIN` 加进 request / downloadFile 合法域名 |
+
+> `urlCheck` 是**本机开发设置**，由开发者工具写进 `project.private.config.json`（不入库）；
+> `mp:precheck` 会在本机把它查出来提醒勾回，不会把本地的 `false` 带上生产。
 > 仓库里 `project.config.json` / `project.private.config.json` 的 `urlCheck` 由开发者工具管理，
 > 提交前留意别把本地的 `false` 带上生产。
 
@@ -207,7 +235,12 @@ export const DEV_TABLE_CODE = '8YG3Q335';
 ```
 
 `devTableCode()` 只在 `envVersion === 'develop'` 时返回它，体验版与正式版一律返回空串 ——
-所以线上不会出现「没扫码也默认进某张桌」。提测前把它置空即可。
+所以线上不会出现「没扫码也默认进某张桌」。**这个值可以一直留在仓库里，提测前不需要清空**
+（`mp:precheck` 只检查这个守卫还在不在，而不是强制它为空）。
+
+> 注意它与域名切换在「拿不到环境信息」时的行为不同：域名兜底到 develop（宁可连不上本机，
+> 也不在开发时误连生产），兜底桌台码兜底到「不生效」（宁可让顾客扫码，也不把他带进别人的桌）。
+> 两处失效方向相反是有意的，别合并成一个判断。
 首页的「继续点餐」**不消费这个兜底**：它必须先拉到桌台详情（确认桌台还在）才显示，
 没有数据时宁可不出入口，也不亮一个点了只会报错的卡片。
 
@@ -461,8 +494,8 @@ POST /api/customer/pay/jsapi
 ## 八、下一步建议顺序
 
 1. **先确认三、里的第 1–6 项能否落地**（域名备案、资质、AppID）。落地不了，后面的投入都白费。
-2. 配置 `src/config.ts` 的 `API_ORIGIN` + `project.config.json` 的 `appid`，用开发者工具跑通
-   「扫码进桌 → 下单 → 看进度 → 催菜」全链路（**此时后端一行都不用改**）。
+2. 配置 `src/config.ts` 的 `PROD_API_ORIGIN` + 检查 `project.config.json` 的 `appid`，用开发者工具跑通
+   「扫码进桌 → 下单 → 看进度 → 催菜」全链路（本地联调时域名会自动指向本机，后端一行都不用改）。
 3. 桌牌码试跑：先发一个含 `pages/index/index` 的版本（体验版即可），按 2.1 出**体验版**小程序码
    自测「扫码进桌」，确认体验后再发正式版、出正式版码。
 4. 视数据决定是否投入 4.1（JSAPI 支付）与 4.3（订阅消息）。

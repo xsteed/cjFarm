@@ -255,7 +255,10 @@ Page({
       return;
     }
     try {
-      const order = (await getOrderByNo(orderNo)) as OrderDetail;
+      // 带 tableId：后端据此校验订单归属。该接口无鉴权，订单号会出现在小票与照片里，
+      // 不带桌台参数等于任人凭单号遍历别人的订单（桌台、金额、菜品、备注）。
+      // tableId 为 0（会话还没拿到桌台详情）时后端自动退化为不限桌，与原先行为一致。
+      const order = (await getOrderByNo(orderNo, sessionState().tableId)) as OrderDetail;
       applyOrder(order);
       this.render(order);
       this.setData({ loading: false, canRetry: false, noOrder: false });
@@ -294,7 +297,9 @@ Page({
   async tick() {
     const orderNo = this.data.orderNo;
     if (!orderNo) return;
-    const order = (await getOrderByNo(orderNo)) as OrderDetail;
+    // 与 recover 同口径带上 tableId：轮询是同一个接口的另一条调用路径，
+    // 只在 recover 里传等于给高频请求留了一扇敞开的门。
+    const order = (await getOrderByNo(orderNo, sessionState().tableId)) as OrderDetail;
     applyOrder(order);
     this.render(order);
     // 已结束的订单不必继续轮询（状态先归一：字符串型状态会让这个判断永远不成立）

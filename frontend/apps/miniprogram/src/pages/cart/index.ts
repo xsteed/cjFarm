@@ -295,7 +295,8 @@ Page({
       // 兜底办法是把 orderNo 带进 query，订单页会自己再拉一次（见 pages/order 的 onLoad）。
       let recovered = false;
       try {
-        applyOrder((await getOrderByNo(orderNo)) as OrderDetail);
+        // 带 tableId 让后端校验归属（这单刚由本桌创建，必定匹配，不存在误伤）。
+        applyOrder((await getOrderByNo(orderNo, s.tableId)) as OrderDetail);
         recovered = true;
       } catch {
         /* 交给订单页按 orderNo 重拉 */

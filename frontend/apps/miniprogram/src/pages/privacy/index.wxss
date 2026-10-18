@@ -1,0 +1,124 @@
+/* 隐私授权页样式。
+ * 页面可使用 app.wxss 的 token 与工具类（.card/.btn-primary/.btn-ghost）；
+ * 这里只补「协议式」布局：顶部说明 + 可滚动正文 + 底部固定双按钮。
+ * 安全区在 .page 的 padding-bottom 里一次性处理（见 app.wxss 末尾注释）。 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+/* ---- 顶部 ---- */
+
+.head {
+  flex: none;
+  padding: 48rpx 40rpx 32rpx;
+  text-align: center;
+}
+
+.head-icon {
+  font-size: 72rpx;
+  line-height: 1;
+}
+
+.head-title {
+  margin-top: 20rpx;
+  font-size: 36rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.head-sub {
+  margin-top: 12rpx;
+  font-size: 26rpx;
+  color: var(--ink-3);
+}
+
+/* ---- 正文 ---- */
+
+/* flex: 1 + min-height: 0 —— 不给 min-height:0 时 scroll-view 会被内容撑开，
+   底部按钮被顶出屏幕外（小程序 scroll-view 的经典坑）。 */
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 40rpx;
+  box-sizing: border-box;
+}
+
+.intro {
+  padding: 28rpx 32rpx;
+  background: var(--brand-ghost);
+  border-radius: var(--r-md);
+  color: var(--ink-2);
+  font-size: 26rpx;
+  line-height: 1.7;
+}
+
+.sec {
+  margin-top: 32rpx;
+}
+
+.sec-title {
+  margin-bottom: 16rpx;
+  padding-left: 8rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.item {
+  margin-bottom: 16rpx;
+  padding: 24rpx 28rpx;
+  background: var(--card);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1);
+}
+
+.item-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.item-desc {
+  margin-top: 8rpx;
+  font-size: 25rpx;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.foot-note {
+  margin: 8rpx 0 32rpx;
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: var(--ink-4);
+}
+
+/* ---- 底部按钮区（固定，不随正文滚动） ---- */
+
+.foot {
+  flex: none;
+  padding: 24rpx 40rpx calc(24rpx + env(safe-area-inset-bottom));
+  background: var(--card);
+  box-shadow: 0 -4rpx 20rpx rgb(26 26 26 / 6%);
+}
+
+.foot-btn {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 「不同意」是顾客的合法选项，不该做成看不见的灰字，也不需要比同意更醒目 */
+.foot .btn-ghost {
+  margin-top: 16rpx;
+}
+
+.foot-link {
+  margin-top: 24rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--brand);
+}

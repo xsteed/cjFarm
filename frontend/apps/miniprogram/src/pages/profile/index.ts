@@ -112,6 +112,20 @@ Page({
     void this.onLogin();
   },
 
+  /**
+   * 打开《用户服务协议》/《隐私政策》。
+   *
+   * 两个入口从注册按钮下方的告知文案进来；《个人信息保护法》要求处理个人信息
+   * 前必须**提供可查阅的方式**，一行不可点的灰字不满足这个要求，所以做成可跳转。
+   */
+  onOpenTerms(): void {
+    wx.navigateTo({ url: '/pages/agreement/index?type=terms' });
+  },
+
+  onOpenPrivacy(): void {
+    wx.navigateTo({ url: '/pages/agreement/index?type=privacy' });
+  },
+
   /** 手机号一键绑定：getPhoneNumber 回调的 code 与 wx.login 的 code 不是一个东西。 */
   async onGetPhoneNumber(e: WechatMiniprogram.CustomEvent<{ code?: string; errMsg?: string }>): Promise<void> {
     const code = e.detail?.code || '';
@@ -170,6 +184,9 @@ Page({
 
   /**
    * 修改昵称：用 wx.showModal 的 editable 模式（基础库 2.17.1+），不必自建弹层。
+   *
+   * 触发入口在会员卡上的「改名」（见 index.wxml）—— 此前这里的方法没有任何 UI
+   * 引用，等于写了但顾客永远碰不到，昵称会一直停在后端的占位值「微信用户」。
    *
    * 后端在顾客未填昵称时返回占位「微信用户」，预填时要把它当成空 ——
    * 否则用户点一下确认就把占位文案存成了真昵称。

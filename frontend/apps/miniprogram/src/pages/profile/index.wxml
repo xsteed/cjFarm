@@ -30,7 +30,16 @@
       <block wx:if="{{loggedIn && member}}">
         <view class="card-avatar">{{avatarChar}}</view>
         <view class="card-main">
-          <view class="card-name">{{member.nickname}}</view>
+          <!-- 昵称与「改名」同一行：昵称可能很长，给它单独留能收缩的空间 -->
+          <view class="name-row">
+            <view class="card-name ellipsis">{{member.nickname}}</view>
+            <view
+              class="edit-name"
+              catchtap="onEditNickname"
+            >
+              改名
+            </view>
+          </view>
           <view class="card-sub">入会 {{member.memberSince}}</view>
         </view>
         <view class="card-stat">
@@ -59,6 +68,20 @@
     >
       {{pending ? '登录中…' : '微信一键注册成为会员'}}
     </button>
+    <!-- 注册前的告知：《个人信息保护法》要求处理个人信息前明示并取得同意。
+         两处协议必须是**可点击**的，只给一行灰字不算「提供查阅方式」。 -->
+    <view
+      wx:if="{{enabled && !loggedIn}}"
+      class="agree-line"
+    >
+      登录即表示已阅读并同意<text
+        class="agree-link"
+        bindtap="onOpenTerms"
+      >《用户服务协议》</text>与<text
+        class="agree-link"
+        bindtap="onOpenPrivacy"
+      >《隐私政策》</text>
+    </view>
     <view
       wx:if="{{loggedIn}}"
       class="actions-row"

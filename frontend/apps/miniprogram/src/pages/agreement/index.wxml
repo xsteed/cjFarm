@@ -1,0 +1,44 @@
+<view class="page">
+  <!-- tab：服务协议 / 隐私政策。两个入口各自从「我的」页带 type 进来 -->
+  <view class="tabs">
+    <view
+      class="tab {{active === 'terms' ? 'on' : ''}}"
+      data-type="terms"
+      bindtap="onSwitch"
+    >
+      用户服务协议
+    </view>
+    <view
+      class="tab {{active === 'privacy' ? 'on' : ''}}"
+      data-type="privacy"
+      bindtap="onSwitch"
+    >
+      隐私政策
+    </view>
+  </view>
+
+  <view class="head">
+    <view class="head-title">{{shopName}}</view>
+    <view class="head-sub">最近更新：{{updateAt}}</view>
+  </view>
+
+  <!-- 条款正文：内层 wx:for 会遮蔽外层的 item，这里内层 item 就是那一行文案字符串 -->
+  <view
+    wx:for="{{sections}}"
+    wx:key="key"
+    class="sec"
+  >
+    <view class="sec-title">{{item.title}}</view>
+    <view
+      wx:for="{{item.lines}}"
+      wx:key="*this"
+      class="sec-p"
+    >
+      {{item}}
+    </view>
+  </view>
+
+  <view class="foot-note">
+    如有疑问请通过门店现场工作人员联系{{shopName}}。本页条款的最终解释以实际经营主体公示为准。
+  </view>
+</view>

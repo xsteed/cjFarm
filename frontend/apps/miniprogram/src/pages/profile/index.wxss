@@ -101,6 +101,28 @@
   color: inherit;
 }
 
+/* 昵称行：昵称 + 「改名」同排，昵称长时由它收缩（.ellipsis），按钮不被挤出去 */
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.edit-name {
+  flex: none;
+  padding: 2rpx 16rpx;
+  border: 2rpx solid rgb(255 255 255 / 45%);
+  border-radius: var(--r-pill);
+  font-size: 20rpx;
+  color: inherit;
+}
+
 .card-sub {
   margin-top: 8rpx;
   font-size: 24rpx;
@@ -167,6 +189,19 @@
 .btn-primary {
   margin: 8rpx 0 32rpx;
   white-space: nowrap;
+}
+
+/* 注册前的协议告知：紧跟主按钮下方，不抢视觉权重，但要看得见、点得到 */
+.agree-line {
+  margin: 0 0 32rpx;
+  text-align: center;
+  font-size: 22rpx;
+  line-height: 1.8;
+  color: var(--ink-3);
+}
+
+.agree-link {
+  color: var(--brand);
 }
 
 /* 「修改昵称 / 退出登录」并排：两个都是低频次要操作，各占一半宽度更好点按。 */

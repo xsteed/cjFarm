@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "我的",
+  "__usePrivacyCheck__": true,
   "usingComponents": {
     "tab-bar": "/components/tab-bar/index"
   }

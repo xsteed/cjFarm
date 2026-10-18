@@ -111,7 +111,8 @@ Page({
       return;
     }
     try {
-      const order = (await getOrderByNo(orderNo)) as OrderDetail;
+      // 带 tableId 让后端校验归属（详见 pages/order 的同名注释）。
+      const order = (await getOrderByNo(orderNo, sessionState().tableId)) as OrderDetail;
       applyOrder(order);
       this.render(order);
       this.setData({ loading: false });
@@ -235,7 +236,7 @@ Page({
         // 与成功卡文案一致；7 字以内：带 success 图标的 toast 会被微信截断
         toast.success('支付成功');
         try {
-          applyOrder((await getOrderByNo(orderNo)) as OrderDetail);
+          applyOrder((await getOrderByNo(orderNo, sessionState().tableId)) as OrderDetail);
         } catch {
           /* 详情回拉失败：订单页会按 orderNo 自己再拉一次 */
         }

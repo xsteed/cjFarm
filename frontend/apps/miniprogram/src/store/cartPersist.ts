@@ -58,6 +58,19 @@ function removeKey(key: string): void {
   }
 }
 
+/**
+ * 上次落盘用的 key。
+ *
+ * key 里带了订单号，一旦「开了单」（`:new` → `:{orderNo}`）或「换桌」，旧 key 就再也
+ * 不会被任何一次 restoreCart 读到 —— 那条分支要求「同一桌 + 同一订单号」同时成立，
+ * 而同一个订单号不会第二次出现在同一张桌上。于是旧记录会在 10MB 的 storage 里一直
+ * 沉淀：每条几百字节到几 KB，一台手机扫过几十张桌之后累积可观。
+ *
+ * 只能在**写入侧**补救：saveCart 是所有写操作的唯一出口（见 file 头的调用点说明），
+ * 在这里感知 key 变化并显式删掉旧记录最可靠。
+ */
+let lastSavedKey = '';
+
 /** 复核所需的最小字段：落盘的购物车行与历史订单明细都满足这个形状。 */
 export interface RawCartLine {
   dishId?: number;
@@ -125,6 +138,11 @@ export function saveCart(): void {
   // 还没识别到桌台：不落盘。否则所有「未识别桌台」的会话会共用 `0` 这个 key 互相污染。
   if (!s.tableCode) return;
   const key = storageKey();
+  // key 变了（换了桌 / 刚开单）→ 旧 key 那份车已成孤儿，见 lastSavedKey 声明处的说明。
+  // 判断放在清空分支之前：购物车被清空时 key 同样会变（下单成功那一刻），
+  // 那一跳恰好是「:new → :{orderNo}」，正是最容易留下残留的一步。
+  if (lastSavedKey && lastSavedKey !== key) removeKey(lastSavedKey);
+  lastSavedKey = key;
   if (!app.cart.length) {
     removeKey(key);
     return;

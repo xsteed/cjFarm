@@ -1,0 +1,84 @@
+/* 协议 / 隐私政策页样式。
+ * 页面可使用 app.wxss 的 token 与工具类；这里只补 tab 切换与长文阅读的排版。
+ * 长文本的核心诉求是「读得下去」：行高放宽到 1.8、段间距大于行间距，
+ * 而不是把条款压成一坨。 */
+
+.page {
+  min-height: 100vh;
+  padding: 24rpx 32rpx calc(64rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+/* ---- tab 切换 ---- */
+
+.tabs {
+  display: flex;
+  gap: 16rpx;
+  margin-bottom: 8rpx;
+}
+
+.tab {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 72rpx;
+  border: 2rpx solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--ink-3);
+  font-size: 26rpx;
+  line-height: 68rpx;
+  text-align: center;
+}
+
+.tab.on {
+  border-color: transparent;
+  background: var(--grad-brand-soft);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ---- 抬头 ---- */
+
+.head {
+  padding: 32rpx 8rpx 8rpx;
+}
+
+.head-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.head-sub {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: var(--ink-4);
+}
+
+/* ---- 正文 ---- */
+
+.sec {
+  margin-top: 32rpx;
+}
+
+.sec-title {
+  margin-bottom: 16rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.sec-p {
+  margin-bottom: 16rpx;
+  font-size: 26rpx;
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+
+.foot-note {
+  margin-top: 48rpx;
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: var(--ink-4);
+}
