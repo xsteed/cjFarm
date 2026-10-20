@@ -179,8 +179,9 @@ func TestPreviewPrinterTicketGuestSettle(t *testing.T) {
 	}
 }
 
-// TestPreviewPrinterTicketSettleLargeFont 结账小票预览要如实反映「小票字体放大」:
-// 飞鹅机标记放大且整张都是放大行;直连机保持原版式(该开关只对飞鹅云落地)。
+// TestPreviewPrinterTicketSettleLargeFont 顾客小票预览要如实反映「小票字体放大」:
+// 飞鹅机的点菜单与结账小票都标记放大且整张都是放大行;
+// 直连机保持原版式(该开关只对飞鹅云落地)。
 func TestPreviewPrinterTicketSettleLargeFont(t *testing.T) {
 	setupTestDB(t)
 	setPrintSetting(t, "print_guest_large_font", "1")
@@ -197,6 +198,20 @@ func TestPreviewPrinterTicketSettleLargeFont(t *testing.T) {
 	for _, l := range res.Chunks[0] {
 		if _, big := bigTextOf(l); !big {
 			t.Fatalf("放大后的结账小票每行都应是放大行, got %q", l)
+		}
+	}
+
+	// 点菜单(trigger=order)同样受开关影响:同一个开关管两张顾客票。
+	res, err = PreviewPrinterTicket(feieID, po.PrintTriggerOrder)
+	if err != nil {
+		t.Fatalf("PreviewPrinterTicket 失败: %v", err)
+	}
+	if !res.LargeFont {
+		t.Fatal("飞鹅点菜单预览也应标记为放大")
+	}
+	for _, l := range res.Chunks[0] {
+		if _, big := bigTextOf(l); !big {
+			t.Fatalf("放大后的点菜单每行都应是放大行, got %q", l)
 		}
 	}
 

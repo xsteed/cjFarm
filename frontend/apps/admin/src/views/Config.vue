@@ -493,10 +493,11 @@
                 :custom-value="['1', '0']"
               />
               <span class="tip">
-                开启后结账小票整张放大一倍（飞鹅云通道，倍宽倍高），客人对账更清楚。
+                开启后顾客小票（点菜单）与结账小票都整张放大一倍（飞鹅云通道，倍宽倍高），
+                客人看菜名、对账更清楚。
                 排版会按半个纸宽重排、票面长度约翻倍，菜品多的大单更费纸；
                 58mm 纸放大后每行只剩 16 格，菜名与金额可能分成两行，建议 80mm 纸使用。
-                直连/代理打印机不受此开关影响。
+                厨房单与直连/代理打印机不受此开关影响。
               </span>
             </t-space>
           </t-form-item>
@@ -1372,7 +1373,7 @@ interface ConfigForm {
   print_kitchen_split_mode: string;
   print_guest_footer: string;
   print_guest_show_discount: string;
-  /** 结账小票整张放大一倍（仅飞鹅云通道） */
+  /** 顾客小票（点菜单 / 结账小票）整张放大一倍（仅飞鹅云通道） */
   print_guest_large_font: string;
   print_guest_on_append: string;
   print_guest_on_order: string;

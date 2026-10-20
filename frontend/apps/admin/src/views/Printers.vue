@@ -1047,10 +1047,10 @@ const previewTitle = computed(() =>
 // 厨房单打印粒度中文名(与 po.KitchenSplitModes 同一套取值)
 const SPLIT_LABEL: Record<string, string> = { whole: '整单一张', item: '一菜一单', portion: '按份数拆' };
 
-// 结账小票那一段的说明:把「为什么没放大」直接写在纸上方 ——
+// 顾客票(点菜单/结账小票)那一段的说明:把「为什么没放大」直接写在纸上方 ——
 // 放大只对飞鹅云落地,且要系统配置里开启;不说清商家只会以为功能坏了。
-function settleNote(d: TicketPreview): string {
-  const base = '结账时出纸 · 整单一张';
+// 两张票同一个开关,说明必须一致,否则商家会以为只有其中一张生效。
+function guestNote(d: TicketPreview, base: string): string {
   if (d.largeFont) return `${base} · 已整张放大一倍（倍宽倍高）`;
   if (d.largeFontSupported === false) return `${base} · 未放大：仅飞鹅云通道生效，当前为直连/代理打印机`;
   if (d.largeFontEnabled === false) return `${base} · 未放大：系统配置「小票字体放大」未开启`;
@@ -1068,7 +1068,8 @@ const previewSections = computed<TicketPreviewSection[]>(() => {
     const split = SPLIT_LABEL[order.splitMode || 'whole'] || order.splitMode || '整单一张';
     out.push({
       title: kitchen ? '厨房单' : '点菜单（下单）',
-      note: kitchen ? `下单时出纸 · ${split}` : '下单时出纸 · 整单一张',
+      // 厨房单不吃「小票字体放大」(只作用于顾客票),不给放大说明。
+      note: kitchen ? `下单时出纸 · ${split}` : guestNote(order, '下单时出纸 · 整单一张'),
       chunks: order.chunks,
       lineWidth: order.lineWidth,
       copies: row.copies
@@ -1078,7 +1079,7 @@ const previewSections = computed<TicketPreviewSection[]>(() => {
   if (settle) {
     out.push({
       title: '结账小票',
-      note: settleNote(settle),
+      note: guestNote(settle, '结账时出纸 · 整单一张'),
       chunks: settle.chunks,
       lineWidth: settle.lineWidth,
       copies: row.copies

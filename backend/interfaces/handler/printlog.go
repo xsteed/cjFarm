@@ -208,7 +208,7 @@ func PrintPreviewSample(c *gin.Context) {
 		PaperWidth       int     `json:"paperWidth"`       // 32(58mm)/48(80mm,默认)
 		Footer           *string `json:"footer"`           // 页脚文案覆盖
 		ShowDiscount     *bool   `json:"showDiscount"`     // 优惠行开关覆盖
-		LargeFont        *bool   `json:"largeFont"`        // 结账小票整张放大覆盖
+		LargeFont        *bool   `json:"largeFont"`        // 顾客小票整张放大覆盖
 		KitchenShowPrice *bool   `json:"kitchenShowPrice"` // 厨房单带金额覆盖
 		KitchenSplit     *string `json:"kitchenSplit"`     // 厨房单打印粒度覆盖(whole/item/portion)
 	}

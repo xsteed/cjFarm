@@ -27,7 +27,7 @@ backend/migrations/
 > |---|---|---|
 > | `20261019120000` | `tb_wallet_txn_recharge_agreement_gift.sql` | 储值本金 / 赠金分桶（`tb_wallet.balance_gift`、`tb_wallet_txn.gift_amount/gift_after`、`tb_recharge.gift_amount`）+ 新表 `tb_wallet_agreement`（《储值规则》同意留痕） |
 > | `20261019120100` | `tb_config_backfill_wallet_settings.sql` | 储值合规参数与出厂规则文案的种子（`INSERT IGNORE`，不覆盖门店已改过的值） |
-> | `20261019130000` | `tb_config_backfill_print_guest_large_font.sql` | 结账小票整张放大开关 `print_guest_large_font`（默认 `0`；纯数据项、无结构变更，与启动时 `EnsureSettingDefaults` 等效） |
+> | `20261019130000` | `tb_config_backfill_print_guest_large_font.sql` | 顾客小票（点菜单 / 结账小票）整张放大开关 `print_guest_large_font`（默认 `0`；纯数据项、无结构变更，与启动时 `EnsureSettingDefaults` 等效） |
 
 > 本 README 只记录**固定规范与约定**，不收录增量脚本逐条流水；
 > 脚本的作用见其头部注释，历史演进以 git 提交记录为准。

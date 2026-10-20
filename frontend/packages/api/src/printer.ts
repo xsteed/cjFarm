@@ -79,7 +79,7 @@ export interface SamplePreviewPayload {
   paperWidth?: number;
   footer?: string;
   showDiscount?: boolean;
-  /** 结账小票整张放大开关覆盖(未保存的表单值也能预览) */
+  /** 顾客小票整张放大开关覆盖(点菜单/结账小票,未保存的表单值也能预览) */
   largeFont?: boolean;
   /** 小票末尾二维码开关覆盖(未保存的表单值也能预览) */
   qr?: boolean;

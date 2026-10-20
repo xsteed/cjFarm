@@ -536,8 +536,9 @@ func lastTicketMark(w int) string {
 type guestTicketConfig struct {
 	footer       string // 页脚文案,空 = 不打印
 	showDiscount bool
-	// large 整张结账小票放大一倍(倍宽倍高)。铺开的是「整张票都是这个字号」,
-	// 因此行宽必须按半个纸宽重排,否则机器会把算好的两列对齐硬折行打散。
+	// large 整张顾客小票放大一倍(倍宽倍高):点菜单与结账小票都生效。
+	// 铺开的是「整张票都是这个字号」,因此行宽必须按半个纸宽重排,
+	// 否则机器会把算好的两列对齐硬折行打散。
 	// 只有飞鹅云通道消费它(打印路径按通道二次收窄,见 print.job.render);
 	// 直连/代理仍出原版式 —— 那两条通道的字库与纸宽假设不同,不做跨通道联动。
 	large bool
@@ -567,6 +568,9 @@ func RenderGuestTicket(o po.Order, items []po.OrderItem, paperWidth int) []strin
 //   - 优惠与结算块不打印:下单时钱还没收,支付方式/结账时间无从谈起;
 //     优惠行留给结账小票,两张票的金额区因此各有分工;
 //   - 页脚(「谢谢惠顾」送客收尾)不打印:客人还没走,只有结账小票带页脚。
+//
+// 整张放大(print_guest_large_font)对两张票一视同仁:开关打开且走飞鹅云时,
+// 点菜单同样是 2 倍字号、按半个纸宽重排(通道收窄见 print.job.render)。
 func RenderGuestOrderTicket(o po.Order, items []po.OrderItem, paperWidth int) []string {
 	return renderGuestTicketWith(o, items, paperWidth, currentGuestTicketConfig(), false)
 }
@@ -575,10 +579,10 @@ func RenderGuestOrderTicket(o po.Order, items []po.OrderItem, paperWidth int) []
 // settled 为真渲染结账形态,为假渲染点菜单形态(差异见 RenderGuestOrderTicket)。
 func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg guestTicketConfig, settled bool) []string {
 	w := LineWidth(paperWidth)
-	// 整张放大只作用于结账小票(见 guestTicketConfig.large):倍宽倍高后每行只剩
+	// 整张放大对两种顾客票都生效(见 guestTicketConfig.large):倍宽倍高后每行只剩
 	// 一半格数,故排版按半个纸宽算 —— 否则 pad/twoCol 算出的 48 格行会被机器硬折,
 	// 「菜名 —— 金额」的两列对齐全散。
-	large := cfg.large && settled
+	large := cfg.large
 	if large {
 		w /= 2
 	}
@@ -621,7 +625,11 @@ func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg
 		// 这里宁可少打,也不该让一张「点菜单」带出支付方式来。
 		// 页脚(送客收尾)也不打:下单时人刚坐下,「谢谢惠顾」只有客人离场
 		// 时才该出现,留给结账小票(见 appendGuestTicketTail)。
-		return trimTrailingHr(lines, w)
+		lines = trimTrailingHr(lines, w)
+		if large {
+			return enlargeGuestLines(lines, w)
+		}
+		return lines
 	}
 	// 免单 / 挂账:小票需明确标注结算方式,避免客人或收银对账时产生歧义。
 	switch o.SettleType {
@@ -650,7 +658,10 @@ func renderGuestTicketWith(o po.Order, items []po.OrderItem, paperWidth int, cfg
 	return lines
 }
 
-// enlargeGuestLines 把结账小票的每一行升级为「放大行」,并按半纸宽 w 兜底折行。
+// enlargeGuestLines 把顾客小票的每一行升级为「放大行」,并按半纸宽 w 兜底折行。
+//
+// 点菜单与结账小票共用:两张票的字号规则必须一致 —— 同一位顾客拿到的一叠纸里
+// 一半大一半小,看起来像是打印机出了故障。
 //
 // 整张票同一字号后,层级只能靠对齐表达:店名与单据名居中放大,正文(含合计/备注)
 // 左对齐放大 —— 与正常字号票的观感一一对应(正文在左,标题居中)。

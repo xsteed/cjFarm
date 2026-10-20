@@ -126,7 +126,7 @@ func guestFooter() string { return strings.TrimSpace(service.GetSetting("print_g
 // 点菜单不读它 —— 下单时的优惠是预估口径,优惠行只出现在结账小票上。
 func guestShowDiscount() bool { return service.GetSetting("print_guest_show_discount") != "0" }
 
-// guestLargeFont 结账小票是否整张放大一倍(默认关)。
+// guestLargeFont 顾客小票(点菜单 / 结账小票)是否整张放大一倍(默认关)。
 //
 // 只看配置,不管通道:真正出纸时由 job.render 再按通道收窄(仅飞鹅云)。
 // 放大后的行由飞鹅内容落地为 <B>(官方「放大一倍」),排版按半个纸宽重算;
@@ -403,16 +403,16 @@ func (j job) render() []string {
 		return j.lines
 	}
 	if j.docType == po.PrintDocGuest {
+		cfg := currentGuestTicketConfig()
+		// 整张放大只对飞鹅云落地:content 用 <B> 倍宽倍高,行宽按半个纸宽重排。
+		// 直连/代理通道(ESC/POS 字节流)保持原版式,见 guestLargeFont。
+		// 点菜单与结账小票同一套判定 —— 同一个开关必须决定叠在同一台机器上的
+		// 每一张顾客票,否则一叠纸里会一半大一半小。
+		cfg.large = cfg.large && j.p.IsFeie()
 		// 与 label 同一判定:结账触发出结账小票,其余触发(下单/补放下单)出点菜单。
 		// 快照补打走上面的 lines 直通,不受该判定影响。
-		if j.triggerBy == po.PrintTriggerSettle {
-			cfg := currentGuestTicketConfig()
-			// 整张放大只对飞鹅云落地:content 用 <B> 倍宽倍高,行宽按半个纸宽重排。
-			// 直连/代理通道(ESC/POS 字节流)保持原版式,见 guestLargeFont。
-			cfg.large = cfg.large && j.p.IsFeie()
-			return renderGuestTicketWith(j.o, toPOItems(j.items), j.p.PaperWidth, cfg, true)
-		}
-		return RenderGuestOrderTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
+		return renderGuestTicketWith(j.o, toPOItems(j.items), j.p.PaperWidth, cfg,
+			j.triggerBy == po.PrintTriggerSettle)
 	}
 	if j.docType == po.PrintDocGuestAppend {
 		return RenderGuestAppendTicket(j.o, toPOItems(j.items), j.p.PaperWidth)
@@ -1338,7 +1338,8 @@ func PreviewPrinterTicket(printerID int, triggerBy string) (PreviewPrinterTicket
 		TriggerBy: triggerBy,
 		SplitMode: split,
 		// 放大只在飞鹅云落地(见 job.render),预览如实报告,前端才能说明「为什么没放大」。
-		LargeFont:          docType == po.PrintDocGuest && triggerBy == po.PrintTriggerSettle && largeEnabled && p.IsFeie(),
+		// 点菜单与结账小票都受开关影响,故不再按 triggerBy 收窄。
+		LargeFont:          docType == po.PrintDocGuest && largeEnabled && p.IsFeie(),
 		LargeFontEnabled:   largeEnabled,
 		LargeFontSupported: p.IsFeie(),
 	}, nil
@@ -1349,8 +1350,8 @@ func PreviewPrinterTicket(printerID int, triggerBy string) (PreviewPrinterTicket
 type SampleOverrides struct {
 	Footer       *string
 	ShowDiscount *bool
-	// LargeFont 结账小票是否整张放大一倍;nil 表示读当前配置。
-	// 只有结账形态(guest_settle)消费它,其余票种忽略。
+	// LargeFont 顾客小票是否整张放大一倍;nil 表示读当前配置。
+	// 点菜单(guest)与结账小票(guest_settle)都消费它,其余票种忽略。
 	LargeFont *bool
 	// KitchenShowPrice 厨房单是否带单价与金额;nil 表示读当前配置。
 	KitchenShowPrice *bool

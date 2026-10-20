@@ -198,7 +198,7 @@ func TestPreviewReflectsTemplateConfig(t *testing.T) {
 }
 
 // ============================================================================
-// 结账小票整张放大(print_guest_large_font)
+// 顾客小票整张放大(print_guest_large_font)
 // ============================================================================
 
 // bigTextOf 返回一行是否放大行及其文本;居中放大与左对齐放大都算。
@@ -214,7 +214,7 @@ func bigTextOf(line string) (string, bool) {
 
 // TestGuestTicketLargeFont 整张放大后:每行都是放大行,且按半个纸宽排版
 // —— 倍宽倍高下每行只剩一半格数,再按 48 格排就会被机器硬折、两列散架。
-// 点菜单与加菜小票不放大:放大只回答「这张收银凭证看得清」,不是全票种改版。
+// 点菜单与结账小票同受开关控制:同一位顾客拿到的一叠纸不能一半大一半小。
 func TestGuestTicketLargeFont(t *testing.T) {
 	setupTestDB(t)
 	setPrintSetting(t, "print_guest_large_font", "1")
@@ -241,17 +241,28 @@ func TestGuestTicketLargeFont(t *testing.T) {
 		}
 	}
 
-	// 点菜单形态:即使开关打开也不放大(整张放大只作用于结账小票)。
-	// 正常版式只有店名一行是居中放大,不会出现左对齐放大的正文行。
+	// 点菜单(顾客小票)同样受这个开关影响:整张放大、按半纸宽 24 格重排。
 	orderLines := RenderGuestOrderTicket(o, items, 48)
 	for _, l := range orderLines {
-		if _, ok := SplitBigLeftLine(l); ok {
-			t.Fatalf("点菜单不应整张放大, got %q", l)
+		text, big := bigTextOf(l)
+		if !big {
+			t.Fatalf("点菜单整张放大后每一行都应是放大行, got %q", l)
+		}
+		if displayWidth(text) > 24 {
+			t.Fatalf("点菜单放大行应按半纸宽(24 格)排版(%d 格): %q", displayWidth(text), text)
 		}
 	}
-	// 点菜单的行宽仍是 48 格:放大没有渗进来。
-	if !strings.Contains(strings.Join(orderLines, "\n"), strings.Repeat("-", 48)) {
-		t.Fatalf("点菜单分隔线仍应是 48 格:\n%s", strings.Join(orderLines, "\n"))
+	orderJoined := strings.Join(orderLines, "\n")
+	for _, want := range []string{"【顾客小票】", "凉拌青瓜 (份) x2", "56.00", "当前合计", "84.00"} {
+		if !strings.Contains(orderJoined, want) {
+			t.Fatalf("放大后的点菜单缺少 %q:\n%s", want, orderJoined)
+		}
+	}
+	// 结账专属内容不能因为放大而渗进点菜单。
+	for _, bad := range []string{"支付方式", "结账时间", "优惠"} {
+		if strings.Contains(orderJoined, bad) {
+			t.Fatalf("点菜单不应包含 %q:\n%s", bad, orderJoined)
+		}
 	}
 }
 
@@ -304,6 +315,30 @@ func TestGuestTicketLargeFontOnlyOnFeie(t *testing.T) {
 	if !strings.Contains(strings.Join(tcpLines, "\n"), strings.Repeat("-", 48)) {
 		t.Fatalf("直连结账小票仍是 48 格版式:\n%s", strings.Join(tcpLines, "\n"))
 	}
+
+	// 点菜单(trigger=order)与结账小票同一套判定:飞鹅放大、直连保持原版式。
+	jobs = buildJobs(nil, nil, []po.Printer{feieP}, o, sampleRows(), po.PrintDocGuest, "", po.PrintTriggerOrder, "")
+	if len(jobs) != 1 {
+		t.Fatalf("应只给飞鹅小票机派一张点菜单, got %d", len(jobs))
+	}
+	for _, l := range jobs[0].render() {
+		if _, big := bigTextOf(l); !big {
+			t.Fatalf("飞鹅点菜单应整张放大, got %q", l)
+		}
+	}
+	jobs = buildJobs(nil, nil, []po.Printer{tcpP}, o, sampleRows(), po.PrintDocGuest, "", po.PrintTriggerOrder, "")
+	if len(jobs) != 1 {
+		t.Fatalf("应只给直连小票机派一张点菜单, got %d", len(jobs))
+	}
+	orderLines := jobs[0].render()
+	for _, l := range orderLines {
+		if _, ok := SplitBigLeftLine(l); ok {
+			t.Fatalf("直连点菜单不应整张放大, got %q", l)
+		}
+	}
+	if !strings.Contains(strings.Join(orderLines, "\n"), strings.Repeat("-", 48)) {
+		t.Fatalf("直连点菜单仍是 48 格版式:\n%s", strings.Join(orderLines, "\n"))
+	}
 }
 
 // TestPreviewTicketSampleLargeFont 示例预览要能显示「未保存的放大开关」:
@@ -318,6 +353,14 @@ func TestPreviewTicketSampleLargeFont(t *testing.T) {
 	for _, l := range chunks[0] {
 		if _, big := bigTextOf(l); !big {
 			t.Fatalf("示例预览应整张放大, got %q", l)
+		}
+	}
+
+	// 点菜单样例同样消费这个开关:两张顾客票的字号必须同步。
+	orderChunks, _ := PreviewTicketSample(po.PrintDocGuest, 48, SampleOverrides{LargeFont: &on})
+	for _, l := range orderChunks[0] {
+		if _, big := bigTextOf(l); !big {
+			t.Fatalf("点菜单示例预览也应整张放大, got %q", l)
 		}
 	}
 }
