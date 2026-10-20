@@ -305,9 +305,21 @@ git_dirty=$GIT_DIRTY
 dirty_files=${DIRTY_FILES:-0}
 EOF
 
-export COPYFILE_DISABLE=1   # macOS: 避免打包出 ._* 冗余文件
+# macOS 打包: COPYFILE_DISABLE=1 只挡 ._* (AppleDouble) 冗余文件, 挡不住扩展属性。
+# bsdtar 默认把 xattr 写进 pax 扩展头(LIBARCHIVE.xattr.com.apple.provenance 等),
+# Linux 端 GNU tar 解压时就会逐文件告警 "Ignoring unknown extended header keyword"。
+# 因此显式 --no-xattrs 让包内不带 xattr。个别 tar 不支持该选项时先探测, 不支持则回退并告警。
+export COPYFILE_DISABLE=1
+TAR_XATTR_OPT="--no-xattrs"
+_probe_dir="$(mktemp -d)"
+: > "$_probe_dir/x"
+if ! tar --no-xattrs -cf /dev/null -C "$_probe_dir" x 2>/dev/null; then
+  TAR_XATTR_OPT=""
+  warn "当前 tar 不支持 --no-xattrs, 包内可能残留 macOS xattr 扩展头(解压时的告警可忽略)"
+fi
+rm -rf "$_probe_dir"
 mkdir -p "$OUT_DIR"
-tar -C "$OUT_DIR" -czf "$OUT_DIR/$TARBALL" "$PKG_NAME"
+tar -C "$OUT_DIR" -czf "$OUT_DIR/$TARBALL" $TAR_XATTR_OPT "$PKG_NAME"
 # 包已打成: 允许保留未压缩目录(只有失败路径上的 trap 才会清它)。
 KEEP_PKG_DIR=1
 
