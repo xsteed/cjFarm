@@ -964,6 +964,10 @@ function onLogout() {
   flex: 1;
   padding: 22px;
   overflow: auto;
+
+  /* 顶部继续下拉时不要链到浏览器自带的下拉刷新(安卓 WebView 会整页重载,
+     看起来就像页面里的下拉刷新没生效);手势交给 usePullRefresh 处理 */
+  overscroll-behavior-y: contain;
 }
 
 /* ---------- 抽屉底部账号区(仅移动端渲染) ---------- */
