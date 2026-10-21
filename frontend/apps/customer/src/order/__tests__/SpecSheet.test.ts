@@ -88,7 +88,7 @@ describe('SpecSheet', () => {
     expect(w.emitted('confirm')).toBeUndefined();
   });
 
-  it('只有「确定」才 confirm', async () => {
+  it('只有「确认添加」才 confirm', async () => {
     const w = mountSheet();
     await w.find('.sp-btn').trigger('click');
     expect(w.emitted('confirm')).toHaveLength(1);
@@ -111,10 +111,10 @@ describe('SpecSheet', () => {
       expect(w.emitted('update:qty')?.[1]).toEqual([2]);
     });
 
-    it('份数提示随 qty 变化（确定 = 再加 N 份）', () => {
+    it('份数提示随 qty 变化（确认添加 = 再加 N 份）', () => {
       expect(mountSheet({ qty: 1 }).find('.spec-hint').exists()).toBe(false);
       expect(mountSheet({ inCartQty: 2, qty: 3 }).find('.spec-hint').text()).toBe(
-        '购物车已有 2 份，点「确定」会再加 3 份'
+        '购物车已有 2 份，点「确认添加」会再加 3 份'
       );
     });
   });

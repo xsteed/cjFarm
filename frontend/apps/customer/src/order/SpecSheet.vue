@@ -66,7 +66,7 @@
         </div>
       </div>
 
-      <!-- 已在购物车里的菜再点开：明确告知「确定」是加几份，改备注请去购物车 -->
+      <!-- 已在购物车里的菜再点开：明确告知「确认添加」是加几份，改备注请去购物车 -->
       <div
         v-if="inCartQty"
         class="spec-hint"
@@ -318,7 +318,7 @@ function onCustomInput(e: Event): void {
   color: var(--ink-2);
 }
 
-/* 数量步进器:左栏固定,价格占剩余,「确定」靠右(与小程序 spec-sheet 底栏一致) */
+/* 数量步进器:左栏固定,价格占剩余,「确认添加」靠右(与小程序 spec-sheet 底栏布局一致) */
 .ft-stepper {
   flex-shrink: 0;
   display: flex;
