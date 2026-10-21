@@ -14,8 +14,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"dining-system/application/service"
 	"dining-system/infrastructure/store"
@@ -85,7 +87,21 @@ func pmAlipaySign(t *testing.T, priv *rsa.PrivateKey, params map[string]string) 
 		sb.WriteString("=")
 		sb.WriteString(params[k])
 	}
-	return signRSASHA256(priv, sb.String())
+	sig, err := signRSASHA256(priv, sb.String())
+	if err != nil {
+		t.Fatalf("支付宝签名失败: %v", err)
+	}
+	return sig
+}
+
+// mustSign 是签名函数在测试里的便捷包装:签名失败直接中止用例。
+func mustSign(t *testing.T, priv *rsa.PrivateKey, msg string) string {
+	t.Helper()
+	sig, err := signRSASHA256(priv, msg)
+	if err != nil {
+		t.Fatalf("签名失败: %v", err)
+	}
+	return sig
 }
 
 // pmAESGCMEncrypt 用 AES-256-GCM 加密明文,返回密文(与微信回调 resource 一致)。
@@ -527,11 +543,12 @@ func TestPayWxpayVerifyNotify(t *testing.T) {
 		if err != nil {
 			t.Fatalf("构造回调体失败: %v", err)
 		}
-		ts := "1700000000"
+		// 时间戳必须是「当下」:VerifyNotify 会按 5 分钟窗口拒绝重放的旧通知。
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
 		nonceStr := "nonce123"
 		// 签名基于原始 body;bodyMutator 在签名后应用,用于模拟传输中篡改。
 		msg := ts + "\n" + nonceStr + "\n" + string(body) + "\n"
-		sig := signRSASHA256(signPriv, msg)
+		sig := mustSign(t, signPriv, msg)
 		if bodyMutator != nil {
 			body = bodyMutator(body)
 		}
@@ -601,4 +618,52 @@ func TestPayWxpayVerifyNotify(t *testing.T) {
 		}
 		pmSetSettings(t, map[string]string{"wxpay_apiv3_key": apiKey})
 	})
+
+	// 重放攻击:一条真实签发的旧通知,签名永远有效,只能靠时间戳窗口拒绝。
+	t.Run("时间戳过期(重放)", func(t *testing.T) {
+		plain := []byte(`{"mchid":"1900000001","appid":"wx1234567890","out_trade_no":"D123","transaction_id":"T456","trade_state":"SUCCESS","amount":{"total":1234}}`)
+		headers, body := buildNotify(t, plain, priv, nil)
+		// 用「当下时间戳」构造出合法 body 后,换成旧时间戳并按新串重新签名:
+		// 验签依然通过,必须由时效校验拦下 —— 这正是重放场景的真实形态。
+		oldTS := strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)
+		msg := oldTS + "\n" + headers["Wechatpay-Nonce"] + "\n" + string(body) + "\n"
+		headers["Wechatpay-Timestamp"] = oldTS
+		headers["Wechatpay-Signature"] = mustSign(t, priv, msg)
+		if _, err := p.VerifyNotify(context.Background(), headers, body); err == nil || !strings.Contains(err.Error(), "超出允许窗口") {
+			t.Errorf("过期时间戳应被拒绝, got %v", err)
+		}
+	})
+}
+
+// TestVerifyNotifyTimestamp 覆盖时间戳窗口的边界与非法输入。
+func TestVerifyNotifyTimestamp(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	cases := []struct {
+		name    string
+		raw     string
+		wantErr string // 空串表示期望通过
+	}{
+		{name: "当前时刻", raw: "1700000000"},
+		{name: "窗口内偏差(4分钟)", raw: "1699999760"},
+		{name: "窗口边界(恰好5分钟)", raw: "1699999700"},
+		{name: "窗口外旧通知(5分1秒)", raw: "1699999699", wantErr: "超出允许窗口"},
+		{name: "未来时间超窗", raw: "1700000301", wantErr: "超出允许窗口"},
+		{name: "空串", raw: "", wantErr: "缺少 Wechatpay-Timestamp"},
+		{name: "非数字", raw: "abc", wantErr: "时间戳非法"},
+		{name: "毫秒时间戳(误用)", raw: "1700000000000", wantErr: "超出允许窗口"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := verifyNotifyTimestamp(c.raw, now)
+			if c.wantErr == "" {
+				if err != nil {
+					t.Fatalf("应通过, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("应报 %q, got %v", c.wantErr, err)
+			}
+		})
+	}
 }

@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,7 +139,10 @@ func (p *Wxpay) paySign(appID, prepayID string) (JsapiParams, error) {
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	nonce := randNonce()
 	pkg := "prepay_id=" + prepayID
-	sig := signRSASHA256(priv, appID+"\n"+ts+"\n"+nonce+"\n"+pkg+"\n")
+	sig, err := signRSASHA256(priv, appID+"\n"+ts+"\n"+nonce+"\n"+pkg+"\n")
+	if err != nil {
+		return JsapiParams{}, err
+	}
 	return JsapiParams{
 		TimeStamp: ts,
 		NonceStr:  nonce,
@@ -280,8 +284,14 @@ func (p *Wxpay) VerifyNotify(ctx context.Context, headers map[string]string, bod
 	if !verifyRSASignature(pub, message, sig) {
 		return n, fmt.Errorf("微信回调验签失败")
 	}
+	// 2) 时间戳新鲜度:验签只能证明「这条通知确实由微信签发」,不能证明「它是刚发的」。
+	//    一条被录下来重放的旧通知签名依然有效,必须在验签后按微信建议的 5 分钟窗口拒绝。
+	//    放在验签之后:先确认来源可信,再对可信输入做时效判断。
+	if err := verifyNotifyTimestamp(ts, time.Now()); err != nil {
+		return n, err
+	}
 
-	// 2) 解密 resource(AES-256-GCM)
+	// 3) 解密 resource(AES-256-GCM)
 	var envelope struct {
 		Resource struct {
 			Ciphertext     string `json:"ciphertext"`
@@ -297,7 +307,7 @@ func (p *Wxpay) VerifyNotify(ctx context.Context, headers map[string]string, bod
 		return n, err
 	}
 
-	// 3) 解析支付结果。微信 APIv3 回调解密后的明文带有 mchid/appid,
+	// 4) 解析支付结果。微信 APIv3 回调解密后的明文带有 mchid/appid,
 	// 必须校验它们与本商户配置一致 —— 验签只能证明消息来自微信,不能证明属于本商户,
 	// 平台级部署(共享平台证书/微信支付公钥)下串单会直接错账。
 	var ev struct {
@@ -332,6 +342,32 @@ func (p *Wxpay) VerifyNotify(ctx context.Context, headers map[string]string, bod
 
 func (p *Wxpay) NotifySuccessBody() string { return `{"code":"SUCCESS","message":"成功"}` }
 
+// notifyMaxSkew 是微信回调时间戳允许的最大偏差。
+//
+// 取微信官方建议的 5 分钟:窗口内足以容纳正常网络重传与轻度时钟漂移,
+// 又短到让被截获的旧通知在重放时有意义地失效。生产机需保持 NTP 同步,
+// 否则偏差超过该窗口会导致回调全部被拒(渠道会持续重试,时钟纠正后自动恢复)。
+const notifyMaxSkew = 5 * time.Minute
+
+// verifyNotifyTimestamp 校验 Wechatpay-Timestamp 是否为合法 Unix 秒,且与 now 的偏差不超过 notifyMaxSkew。
+//
+// 单独抽成纯函数(时间由调用方注入)是为了能用固定时刻写测试,不依赖真实时钟。
+func verifyNotifyTimestamp(raw string, now time.Time) error {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return fmt.Errorf("微信回调缺少 Wechatpay-Timestamp 头")
+	}
+	sec, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("微信回调时间戳非法: %q", s)
+	}
+	skew := now.Sub(time.Unix(sec, 0))
+	if skew > notifyMaxSkew || skew < -notifyMaxSkew {
+		return fmt.Errorf("微信回调时间戳超出允许窗口(偏差 %s,上限 %s)", skew.Round(time.Second), notifyMaxSkew)
+	}
+	return nil
+}
+
 // ---- 内部工具 ----
 
 // do 发送带 WECHATPAY2-SHA256-RSA2048 签名的请求并返回响应体。
@@ -343,7 +379,10 @@ func (p *Wxpay) do(method, path string, body []byte) ([]byte, error) {
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	nonce := randNonce()
 	msg := method + "\n" + path + "\n" + ts + "\n" + nonce + "\n" + string(body) + "\n"
-	sig := signRSASHA256(priv, msg)
+	sig, err := signRSASHA256(priv, msg)
+	if err != nil {
+		return nil, err
+	}
 	auth := fmt.Sprintf(`WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",signature="%s",timestamp="%s",serial_no="%s"`,
 		cfg("wxpay_mchid"), nonce, sig, ts, cfg("wxpay_serial_no"))
 
@@ -522,10 +561,18 @@ func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
-func signRSASHA256(priv *rsa.PrivateKey, msg string) string {
+// signRSASHA256 用商户私钥对消息做 RSA-SHA256 签名,返回 base64 签名串。
+//
+// 错误必须上抛:此前这里丢弃了 rsa.SignPKCS1v15 的 error,签名失败会返回空串,
+// 表现为渠道侧「签名错误」而本地毫无线索 —— 而失败原因(私钥不完整、随机源不可用)
+// 恰恰只在本地可见。空签名继续往下走只会把问题推到更难排查的地方。
+func signRSASHA256(priv *rsa.PrivateKey, msg string) (string, error) {
 	hash := sha256.Sum256([]byte(msg))
-	sig, _ := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, hash[:])
-	return base64.StdEncoding.EncodeToString(sig)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, hash[:])
+	if err != nil {
+		return "", fmt.Errorf("RSA-SHA256 签名失败: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(sig), nil
 }
 
 func verifyRSASignature(pub *rsa.PublicKey, msg, sigB64 string) bool {

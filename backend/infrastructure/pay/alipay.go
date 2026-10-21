@@ -326,7 +326,10 @@ func (p *Alipay) call(params map[string]string) ([]byte, error) {
 		sb.WriteString("=")
 		sb.WriteString(params[k])
 	}
-	sig := signRSASHA256(priv, sb.String())
+	sig, err := signRSASHA256(priv, sb.String())
+	if err != nil {
+		return nil, err
+	}
 	params["sign"] = sig
 
 	form := url.Values{}

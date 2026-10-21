@@ -102,7 +102,7 @@ func TestPlatformCertDirRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("按新序列号取公钥失败: %v", err)
 	}
-	if !verifyRSASignature(pubNew, msg, signRSASHA256(privNew, msg)) {
+	if !verifyRSASignature(pubNew, msg, mustSign(t, privNew, msg)) {
 		t.Fatal("新证书验签失败")
 	}
 
@@ -110,7 +110,7 @@ func TestPlatformCertDirRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("按旧序列号取公钥失败: %v", err)
 	}
-	if !verifyRSASignature(pubOld, msg, signRSASHA256(privOld, msg)) {
+	if !verifyRSASignature(pubOld, msg, mustSign(t, privOld, msg)) {
 		t.Fatal("旧证书验签失败(灰度期新旧证书应并存)")
 	}
 
@@ -140,7 +140,7 @@ func TestPlatformCertSingleFile(t *testing.T) {
 		t.Fatalf("单文件模式取公钥失败: %v", err)
 	}
 	const msg = "m"
-	if !verifyRSASignature(pub, msg, signRSASHA256(priv, msg)) {
+	if !verifyRSASignature(pub, msg, mustSign(t, priv, msg)) {
 		t.Fatal("单文件模式验签失败")
 	}
 }
@@ -175,7 +175,7 @@ func TestVerifyPubKeyMode(t *testing.T) {
 		t.Fatalf("公钥模式取公钥失败: %v", err)
 	}
 	msg := "1700000000\nnonce123\n{\"id\":\"evt\"}\n"
-	if !verifyRSASignature(pub, msg, signRSASHA256(priv, msg)) {
+	if !verifyRSASignature(pub, msg, mustSign(t, priv, msg)) {
 		t.Fatal("公钥模式验签失败")
 	}
 

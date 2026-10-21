@@ -16,7 +16,7 @@ func TestRSA_SignAndVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := "POST\n/v3/pay/transactions/native\n1700000000\nabc123\n{\"a\":1}\n"
-	sig := signRSASHA256(priv, msg)
+	sig := mustSign(t, priv, msg)
 	if sig == "" {
 		t.Fatal("签名结果为空")
 	}
