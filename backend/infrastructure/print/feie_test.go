@@ -247,9 +247,9 @@ func TestRenderKitchenTicket(t *testing.T) {
 			t.Errorf("厨房单缺少 %q\n实际内容:\n%s", want, joined)
 		}
 	}
-	// 台名「大厅03桌」已含桌号,放大桌号行之外不再重复打一行。
-	if strings.Contains(joined, "大厅03桌") {
-		t.Errorf("台名与桌号重复时不应另起一行,实际内容:\n%s", joined)
+	// 台名与桌号并排同一放大行(80mm 倍宽行 24 格放得下):后厨认桌不只靠编号。
+	if !strings.Contains(joined, "桌号 03 · 大厅03桌") {
+		t.Errorf("厨房单应并排显示桌号与台名,实际内容:\n%s", joined)
 	}
 	// 人数与下单时间并排一行(后厨单省纸),不该各占一行。
 	merged := false

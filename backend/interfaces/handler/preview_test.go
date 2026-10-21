@@ -205,7 +205,7 @@ func TestToPreviewLinesControlRows(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("应产出 2 行, got %d", len(lines))
 	}
-	if !lines[0].Big || lines[0].Text != "桌号 03" {
+	if !lines[0].Big || lines[0].Text != "桌号 03 · 大厅03桌" {
 		t.Fatalf("放大行应带 big 标记且文本干净, got %+v", lines[0])
 	}
 	if strings.ContainsRune(lines[0].Text, '\x02') {

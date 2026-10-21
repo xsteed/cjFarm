@@ -235,7 +235,7 @@ func splitBigLines(text string, max int) []string {
 // 厨房单放大左对齐(后厨靠它一眼分清票种与拆单序号,见函数体内 kitchen 分支)。
 //
 // kitchen 为真时按「厨打单」惯例精简票头:
-//   - 桌号放大居中,且台名与桌号重复时不再另起一行(见 tableNoLines);
+//   - 桌号放大居中,台名与桌号并排(放不下时单独一行,见 tableNoLines);
 //   - 单号用可口头报读的短号,并与取餐号并排一行;
 //   - 人数与下单时间并排一行,时间省到分。
 //
@@ -385,13 +385,15 @@ func createTimeFor(createTime string, kitchen bool) string {
 
 // tableNoLines 桌号区渲染。
 //
-// 常规单据一行等宽文本「桌号: 08  大厅08桌」;厨房单(kitchen)把桌号单独放大居中
-// 打一行 —— 后厨出纸多、桌台靠翻纸找,桌号是唯一需要远远认出的字段,
-// 与成熟产品的「厨打单桌号加大」一致。
+// 常规单据一行等宽文本「桌号: 08  大厅08桌」;厨房单(kitchen)把桌号放大居中打一行
+// —— 后厨出纸多、桌台靠翻纸找,桌号是唯一需要远远认出的字段,与成熟产品的
+// 「厨打单桌号加大」一致。
 //
-// 为什么不连台名一起放大:58mm 纸双倍宽只剩 16 个半角位,「桌号: 08  大厅08桌」
-// 有 18 位,一并放大必然折行、反而看不全;故只放大「桌号 + 编号」这截短文本。
-// 台名里已含桌号(「大厅03桌」)时不再另起一行,避免同一个桌号在票上出现两次。
+// 台名与桌号以「·」相隔并成一行放大:「桌号 03 · 大厅03桌」放得下(80mm 倍宽行
+// 24 格)才并排 —— 后厨认桌不只靠编号,包间名、特殊位置(「牡丹厅」「前台打包」)
+// 只有台名能指明,信息不能因为「名字里含桌号」就被丢掉。放不下(58mm 倍宽行 16 格,
+// 这行有 18 格)时台名退回单独一行正常字号,桌号仍放大,谁也不折行。早年「台名含
+// 桌号就不另起一行」的省行做法,已按显示台名的需求废弃。
 func tableNoLines(o po.Order, width int, kitchen bool) []string {
 	no := strings.TrimSpace(o.TableNo)
 	name := strings.TrimSpace(o.TableName)
@@ -399,14 +401,14 @@ func tableNoLines(o po.Order, width int, kitchen bool) []string {
 	if !kitchen || no == "" {
 		return []string{pad("桌号: "+o.TableNo+"  "+o.TableName, width)}
 	}
-	out := []string{bigMarkLine("桌号 " + no)}
-	// 台名多数就是「区域 + 桌号」(大厅03桌):放大桌号行已经写明桌号,再补一行台名
-	// 等于同一个桌号出现两次,后厨看着乱、票面还长一行。只在台名不含桌号
-	// (包间名、特殊位置)时才补一行 —— 信息不丢,重复不显。
-	if name != "" && !strings.Contains(name, no) {
-		out = append(out, pad(name, width))
+	if name == "" {
+		return []string{bigMarkLine("桌号 " + no)}
 	}
-	return out
+	if merged := "桌号 " + no + " · " + name; displayWidth(merged) <= width/2 {
+		return []string{bigMarkLine(merged)}
+	}
+	// 长台名并排放不下:桌号单独放大一行,台名单独一行正常字号,均不折行。
+	return []string{bigMarkLine("桌号 " + no), pad(name, width)}
 }
 
 // KitchenTicketOptions 厨房单渲染选项。

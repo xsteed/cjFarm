@@ -261,10 +261,10 @@ func TestKitchenSplitItemOnePerDishWithSeq(t *testing.T) {
 	if !strings.Contains(first, "加辣") {
 		t.Fatalf("单菜备注应出现在该菜的小票上:\n%s", first)
 	}
-	// 每张都带桌号与整单备注(夹单场景核对用)。
+	// 每张都带桌号(含台名)与整单备注(夹单场景核对用)。
 	for i, j := range jobs {
 		line := strings.Join(j.render(), "\n")
-		if !hasBigLine(j.render(), "桌号 03") {
+		if !hasBigLine(j.render(), "桌号 03 · 大厅03桌") {
 			t.Fatalf("第 %d 张缺少放大桌号行:\n%s", i+1, line)
 		}
 		if !strings.Contains(line, "整单备注: 不要香菜") {
@@ -423,36 +423,40 @@ func TestKitchenSplitSecondTicketDishAlwaysBig(t *testing.T) {
 	}
 }
 
-// TestKitchenTableNoBigLine 桌号行按放大行输出;台名与桌号重复时不另起一行,
-// 台名不含桌号时仍打印(信息不丢)。放大行同时含票头店名(各票种统一)。
+// TestKitchenTableNoBigLine 桌号行按放大行输出,且台名必须显示:80mm 下与桌号
+// 并排同一放大行,58mm 放不下则单独一行。放大行同时含票头店名(各票种统一)。
 func TestKitchenTableNoBigLine(t *testing.T) {
 	setupTestDB(t)
 	o, items := sampleOrder()
 
 	lines := RenderKitchenTicket(o, items, 48, KitchenTicketOptions{Title: "【厨房单】"})
-	// 票头店名 + 桌号共两行放大,桌号必须是其中之一。
+	// 票头店名 + 桌号共两行放大,桌号行必须并上台名。
 	big := bigLinesOf(lines)
 	if len(big) != 2 {
 		t.Fatalf("整单厨房单应有两行放大(店名 + 桌号), got %v:\n%s", big, strings.Join(lines, "\n"))
 	}
 	hasTable := false
 	for _, b := range big {
-		if b == "桌号 03" {
+		if b == "桌号 03 · 大厅03桌" {
 			hasTable = true
 		}
 	}
 	if !hasTable {
-		t.Fatalf("厨房单桌号行应为放大行, got %v:\n%s", big, strings.Join(lines, "\n"))
+		t.Fatalf("厨房单桌号行应为放大行且并上台名, got %v:\n%s", big, strings.Join(lines, "\n"))
 	}
-	// 台名「大厅03桌」已含桌号,不再另起一行重复桌号。
-	if got := strings.Join(lines, "\n"); strings.Contains(got, "大厅03桌") {
-		t.Fatalf("台名与桌号重复时不应另起一行:\n%s", got)
-	}
-	// 台名不含桌号(包间名等)时仍要打印,信息不能丢。
+	// 台名不含桌号(包间名、特殊位置)时同样显示,信息不能丢。
 	packed := o
 	packed.TableName = "前台打包"
-	if got := strings.Join(RenderKitchenTicket(packed, items, 48, KitchenTicketOptions{Title: "【厨房单】"}), "\n"); !strings.Contains(got, "前台打包") {
-		t.Fatalf("台名不含桌号时应打印台名:\n%s", got)
+	if got := strings.Join(RenderKitchenTicket(packed, items, 48, KitchenTicketOptions{Title: "【厨房单】"}), "\n"); !strings.Contains(got, "桌号 03 · 前台打包") {
+		t.Fatalf("台名不含桌号时应与桌号并排显示:\n%s", got)
+	}
+	// 58mm(倍宽行 16 格)并排放不下:桌号单独放大,台名单独一行,均不折行。
+	narrow := RenderKitchenTicket(o, items, 32, KitchenTicketOptions{Title: "【厨房单】"})
+	if !hasBigLine(narrow, "桌号 03") {
+		t.Fatalf("58mm 桌号应单独放大:\n%s", strings.Join(narrow, "\n"))
+	}
+	if !containsLine(narrow, "大厅03桌") {
+		t.Fatalf("58mm 台名应单独一行显示:\n%s", strings.Join(narrow, "\n"))
 	}
 	// 顾客小票桌号保持原有等宽行、不放大(票头店名另行放大,不计入此断言)。
 	guestLines := RenderGuestTicket(o, items, 48)
