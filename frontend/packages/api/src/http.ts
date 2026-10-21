@@ -100,6 +100,27 @@ export function setUnauthorizedHandler(handler: () => void): void {
   onUnauthorized = handler;
 }
 
+// ---------------------------------------------------------------------------
+// 顾客端 401 的处置策略(与上面管理端那套**刻意分开**)
+//
+// 同一个浏览器里管理端与顾客端是两个身份(见 shared/authKeys.ts 的说明),
+// 但 401 曾经不分路径走同一套处置:顾客令牌 2h 到期属常态,一次过期的
+// /customer/* 请求会连带清掉 admin_token / admin_perms,并把顾客从点餐页
+// 甩到管理端 /login —— 同浏览器里正登录着的店员因此被踢下线,顾客也看到一个
+// 与自己无关的后台登录框。
+//
+// 顾客端的身份是「可选增强」:匿名点餐必须一直可用(见后端 CustomerAuthOptional)。
+// 因此默认只清顾客令牌并提示,不跳转、不动管理端任何键。
+// ---------------------------------------------------------------------------
+let onCustomerUnauthorized: () => void = () => {
+  ui.error('登录状态已过期，请重新进入会员中心');
+};
+
+/** 替换「顾客令牌失效」后的处置策略(如静默重登)。 */
+export function setCustomerUnauthorizedHandler(handler: () => void): void {
+  onCustomerUnauthorized = handler;
+}
+
 // friendlyMessage 把 axios 抛出的英文技术错误转换为中文可读文案。
 // 优先级:业务 msg > 超时 > 状态码映射 > 状态码兜底 > 网络失败。
 export function friendlyMessage(err: AxiosError<ApiErrorBody>): string {
@@ -141,6 +162,13 @@ const unwrapResponse = ((res: AxiosResponse) => {
 http.interceptors.response.use(unwrapResponse, err => {
   const error = err as FriendlyAxiosError;
   if (error.response?.status === 401) {
+    // 顾客端契约与后端一致:失败在 /customer/* 上只代表「会员身份失效」,
+    // 匿名浏览与点餐不受影响。绝不能按管理端那套清 admin_* 或跳 /login。
+    if (isCustomerPath(error.config?.url)) {
+      safeStorage.remove(LS_CUSTOMER_TOKEN);
+      onCustomerUnauthorized();
+      return Promise.reject(error);
+    }
     // 令牌失效:清掉全部登录态键(含权限/角色缓存)。
     // 只删令牌会留下过期的 admin_perms,下次进管理端菜单会先按旧权限渲染一下。
     for (const k of AUTH_KEYS) {
