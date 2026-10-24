@@ -247,6 +247,42 @@ func TestDishSort(t *testing.T) {
 	}
 }
 
+// TestDishSortAcrossCategory 拖拽把菜拖进别的分类:归属与目标分类顺序一起变。
+func TestDishSortAcrossCategory(t *testing.T) {
+	dishInitDB(t)
+	catID, err := dao.InsertCategory(po.Category{CategoryName: "跨分类目标", SortOrder: 98})
+	if err != nil {
+		t.Fatalf("创建目标分类失败: %v", err)
+	}
+	existing, err := dao.CreateDish(po.Dish{CategoryID: int(catID), DishName: "目标分类已有菜", Status: 1},
+		[]po.Spec{{SpecName: "份", Price: 2800}})
+	if err != nil {
+		t.Fatalf("插入目标分类菜品失败: %v", err)
+	}
+	moved := dishInsert(t, "被拖走的菜")
+
+	w := dishCall(t, DishSort, http.MethodPost, "/api/admin/dish/sort",
+		`{"dishId":`+strconv.Itoa(moved)+`,"categoryId":`+strconv.Itoa(int(catID))+`,"nextDishId":`+strconv.Itoa(int(existing))+`}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("跨分类拖拽应返回 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var categoryID int
+	if err := store.DB.QueryRow(`SELECT category_id FROM tb_dish WHERE dish_id=?`, moved).Scan(&categoryID); err != nil {
+		t.Fatalf("回读菜品分类失败: %v", err)
+	}
+	if categoryID != int(catID) {
+		t.Fatalf("菜品应被拖进目标分类, got categoryId=%d want=%d", categoryID, catID)
+	}
+	_, after, err := dao.ListDishes(dao.DishQuery{CategoryID: strconv.Itoa(int(catID))}, 1, 50)
+	if err != nil {
+		t.Fatalf("回读目标分类失败: %v", err)
+	}
+	if len(after) != 2 || int(after[0].DishID) != moved {
+		t.Fatalf("被拖菜品应排在目标分类首位, got %+v", after)
+	}
+}
+
 // TestDishSortMissingID 缺少 dishId 时返回参数错误。
 func TestDishSortMissingID(t *testing.T) {
 	dishInitDB(t)

@@ -223,16 +223,16 @@ type DishSortRow struct {
 	SortOrder int
 }
 
-// MoveDish 把一道菜品移动到同一分类内的指定位置,并重排该分类下所有菜品的 sort_order
+// MoveDish 把一道菜品移动到指定分类内的指定位置,并重排该分类下所有菜品的 sort_order
 // (按 10 递增留出空隙,便于后续手工插入)。返回该分类重排后的完整顺序,供前端回填。
 //
 // 落点语义:prevID>0 放到它之后;prevID=0 且 nextID>0 放到它之前;两者都为 0 放到分类末尾。
-// 跨分类的落点直接报错 —— 顾客端菜单按分类分组,把菜拖进别的分类属于「改分类」,
-// 不是排序,应由编辑弹窗显式改,避免一次误拖就把菜换到别的类目里。
+// categoryID 是落点所属分类:与菜品当前分类不同即为「拖进别的分类」,先改 category_id
+// 再在目标分类内重排(顾客端菜单按分类分组,改归属才算换到别的类目)。
 //
 // 只重排目标分类内的 sort_order:分类之间的交叠不影响顾客端呈现(那里按分类分组后,
 // 只比较同组内的相对顺序),因此无需全表重排。
-func MoveDish(dishID, prevID, nextID int) ([]DishSortRow, error) {
+func MoveDish(dishID, categoryID, prevID, nextID int) ([]DishSortRow, error) {
 	// 落点指向自己时等价于没给落点(拖回原位),不能当作「放在自己之后」。
 	if prevID == dishID {
 		prevID = 0
@@ -242,8 +242,8 @@ func MoveDish(dishID, prevID, nextID int) ([]DishSortRow, error) {
 	}
 	var out []DishSortRow
 	err := store.WithTx(func(tx *sql.Tx) error {
-		var categoryID int
-		err := tx.QueryRow(`SELECT category_id FROM tb_dish WHERE dish_id=? AND del_flag='0'`, dishID).Scan(&categoryID)
+		var currentCategory int
+		err := tx.QueryRow(`SELECT category_id FROM tb_dish WHERE dish_id=? AND del_flag='0'`, dishID).Scan(&currentCategory)
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("菜品不存在或已删除")
 		}
@@ -251,8 +251,24 @@ func MoveDish(dishID, prevID, nextID int) ([]DishSortRow, error) {
 			return err
 		}
 
-		// 同分类现有顺序,与顾客端同口径(sort_order, 再按 dish_id 兜底)。
-		rows, err := tx.Query(`SELECT dish_id FROM tb_dish WHERE category_id=? AND del_flag='0' ORDER BY sort_order, dish_id`, categoryID)
+		// 目标分类:与当前不同即为跨分类拖拽,先确认分类有效再改归属
+		targetCategory := currentCategory
+		if categoryID > 0 && categoryID != currentCategory {
+			var exists int
+			if err := tx.QueryRow(`SELECT COUNT(1) FROM tb_category WHERE category_id=? AND del_flag='0'`, categoryID).Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 0 {
+				return errors.New("目标分类不存在")
+			}
+			if _, err := tx.Exec(`UPDATE tb_dish SET category_id=? WHERE dish_id=?`, categoryID, dishID); err != nil {
+				return err
+			}
+			targetCategory = categoryID
+		}
+
+		// 目标分类现有顺序,与顾客端同口径(sort_order, 再按 dish_id 兜底)。
+		rows, err := tx.Query(`SELECT dish_id FROM tb_dish WHERE category_id=? AND del_flag='0' ORDER BY sort_order, dish_id`, targetCategory)
 		if err != nil {
 			return err
 		}
@@ -288,13 +304,13 @@ func MoveDish(dishID, prevID, nextID int) ([]DishSortRow, error) {
 		if prevID > 0 {
 			pos, ok := find(prevID, true)
 			if !ok {
-				return errors.New("只能在同一分类内调整顺序")
+				return errors.New("落点不在目标分类内")
 			}
 			insert = pos
 		} else if nextID > 0 {
 			pos, ok := find(nextID, false)
 			if !ok {
-				return errors.New("只能在同一分类内调整顺序")
+				return errors.New("落点不在目标分类内")
 			}
 			insert = pos
 		}

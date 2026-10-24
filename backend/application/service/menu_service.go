@@ -90,12 +90,12 @@ func UpdateDish(d dto.Dish) error {
 	return dao.UpdateDish(d.ToPO(), specs)
 }
 
-// MoveDish 拖拽调整菜品在该分类内的顺序,返回重排后的排序值供前端回填。
+// MoveDish 拖拽调整菜品顺序(可在分类内移动,也可拖进别的分类),返回重排后的排序值供前端回填。
 func MoveDish(m dto.DishMove) ([]dto.DishSort, error) {
 	if m.DishID <= 0 {
 		return nil, errors.New("参数错误")
 	}
-	rows, err := dao.MoveDish(m.DishID, m.PrevDishID, m.NextDishID)
+	rows, err := dao.MoveDish(m.DishID, m.CategoryID, m.PrevDishID, m.NextDishID)
 	if err != nil {
 		return nil, err
 	}

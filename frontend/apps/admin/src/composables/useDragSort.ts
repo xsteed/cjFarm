@@ -1,5 +1,6 @@
 import { onBeforeUnmount, ref } from 'vue';
 import type { Ref } from 'vue';
+import { setDragActive } from './dragSession';
 
 // ============================================================================
 // 列表拖拽排序(桌面端拖行 / 移动端拖卡片,同一套逻辑)
@@ -12,6 +13,8 @@ import type { Ref } from 'vue';
 //   - 触摸:点把手立即起拖(把手上 touch-action:none,不会被系统滚动抢走);
 //     不点把手则要长按,避免一碰卡片就把页面滚动吞掉
 //   - 起拖后被拖元素跟手平移,落点用插入指示线标出,松手回调 onDrop
+//   - 落点可以跨分组(如把菜拖进别的分类):归属由「手指离哪一项最近」决定
+//   - 整个手势期间置位 dragSession 的全局标记:下拉刷新等同向手势必须让路
 // ============================================================================
 
 /** 判定落位所需的矩形投影(只取四个字段,便于单测直接构造)。 */
@@ -22,53 +25,65 @@ export interface SlotRect {
   height: number;
 }
 
+/** 落位结果:slot 是插入下标,anchor 是「手指离哪一项最近」(用于决定落进哪个分组)。 */
+export interface DropSlot {
+  /** 插入下标 0..rects.length,表示「插入到第 slot 项之前」(=== length 即插到末尾) */
+  slot: number;
+  /** 距手指最近的项在 rects 里的下标 */
+  anchor: number;
+}
+
 /**
- * 计算插入槽位:返回 0..rects.length,表示「插入到第 slot 项之前」
- * (slot === rects.length 即插到末尾)。rects 必须是同一分组内、按展示顺序排列、
- * **且不含被拖项**的元素矩形。
+ * 计算插入槽位。rects 按展示顺序排列,且**不含被拖项**。
  *
- * 单列(表格行、移动端竖排卡片)按中线逐项判断;多列网格(桌面卡片墙)先找
- * 中心最近的一项,再按纵向越界/同行左右决定插在它前面还是后面。
+ * 单列(表格行、移动端竖排卡片)与多列网格(桌面卡片墙)统一按「中心最近的一项」
+ * 定锚,再决定插在它前面还是后面:
+ *   - 单列:手指在其中心上方 → 插到它前面,否则后面;
+ *   - 多列:纵向明显落在该行上/下以纵向为准,同行内按左右半区。
+ *
+ * anchor 与 slot 一起用才能表达「跨分组落点」:拖到两组交界时,插到哪一组由
+ * 手指离哪一组的卡片更近决定(anchor 所在的组)。
  */
-export function slotFromPoint(rects: SlotRect[], x: number, y: number): number {
-  if (!rects.length) return 0;
+export function slotFromPoint(rects: SlotRect[], x: number, y: number): DropSlot {
+  if (!rects.length) return { slot: 0, anchor: 0 };
   const first = rects[0];
   const singleColumn = rects.every(r => Math.abs(r.left - first.left) < Math.max(r.width, 1) * 0.5);
-  if (singleColumn) {
-    for (let i = 0; i < rects.length; i++) {
-      const r = rects[i];
-      if (y < r.top + r.height / 2) return i;
-    }
-    return rects.length;
-  }
   let best = 0;
   let bestDist = Number.POSITIVE_INFINITY;
   for (let i = 0; i < rects.length; i++) {
     const r = rects[i];
-    const dx = x - (r.left + r.width / 2);
-    const dy = y - (r.top + r.height / 2);
-    const dist = dx * dx + dy * dy;
+    let dist: number;
+    if (singleColumn) {
+      dist = Math.abs(y - (r.top + r.height / 2));
+    } else {
+      const dx = x - (r.left + r.width / 2);
+      const dy = y - (r.top + r.height / 2);
+      dist = dx * dx + dy * dy;
+    }
     if (dist < bestDist) {
       bestDist = dist;
       best = i;
     }
   }
   const r = rects[best];
+  if (singleColumn) {
+    return { slot: y < r.top + r.height / 2 ? best : best + 1, anchor: best };
+  }
   const cy = r.top + r.height / 2;
   // 纵向明显落在该行上/下 → 以纵向为准(换行到上一行/下一行)
-  if (y < cy - r.height * 0.3) return best;
-  if (y > cy + r.height * 0.3) return best + 1;
+  if (y < cy - r.height * 0.3) return { slot: best, anchor: best };
+  if (y > cy + r.height * 0.3) return { slot: best + 1, anchor: best };
   // 同一行内:左半插到它前面,右半插到它后面
-  return x < r.left + r.width / 2 ? best : best + 1;
+  return { slot: x < r.left + r.width / 2 ? best : best + 1, anchor: best };
 }
 
 export interface DragSortOptions {
   /** 当前渲染的可排序元素,顺序要与数据顺序一致 */
   items: () => HTMLElement[];
-  /** 元素所属分组(如分类 ID):只有同组元素之间才允许调整顺序 */
+  /** 元素所属分组(如分类 ID):落点会落在「手指离得最近的那一项」所在的组 */
   groupOf: (index: number) => string | number;
-  /** 松手落位回调:先删 from,再把该项插到 to(移动端/桌面端同一语义) */
-  onDrop: (from: number, to: number) => void;
+  /** 松手落位回调:先删 from,再把该项插到 to;targetGroup 是落点所属分组(可能是别的组) */
+  onDrop: (from: number, to: number, targetGroup: string | number) => void;
   /** 是否允许拖拽(如无编辑权限时关闭) */
   enabled?: () => boolean;
   /** 拖动把手选择器:指针落在把手内立即起拖,无需长按 */
@@ -79,8 +94,6 @@ export interface DragSortOptions {
 
 /** 起拖判定的最小位移(px):小于它视为点击,不拦截原生的点击/滚动。 */
 const MOVE_THRESHOLD = 4;
-/** 起拖期间挂在 body 上的类名:统一光标并禁止选中文本。 */
-const BODY_CLASS = 'drag-sorting';
 /** 自动滚动触发边距(px)与每帧滚动量(px)。 */
 const SCROLL_EDGE = 64;
 const SCROLL_STEP = 14;
@@ -108,18 +121,38 @@ export function useDragSort(opts: DragSortOptions) {
   const dragging = ref(false);
   /** 被拖项在当前数据里的下标,-1 表示没有拖拽 */
   const fromIndex = ref(-1);
-  /** 插入指示线:画在该下标元素的上方 */
-  const dropBefore = ref(-1);
-  /** 插入指示线:画在该下标元素的下方(落点是分组末尾时用) */
-  const dropAfter = ref(-1);
 
   let session: Session | null = null;
   /** 当前落位(移除 from 之后的插入下标),-1 表示还没算出来 */
   let slot = -1;
+  /** 落点所属分组:跨分组拖拽时是「手指离得最近的那一项」所在的组 */
+  let targetGroup: string | number = '';
   let rafId = 0;
   /** 拖拽结束后的那次 click 要吞掉(否则移动端松手就跳编辑弹窗) */
   let suppressClick = false;
   let suppressTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 插入指示线:单独挂一个 fixed 元素到 body 上画。
+   * 不用「给目标项加 class 画 inset 阴影」——被拖项 z-index 更高,会正好压住那条线,
+   * 而阴影又没法越过它;独立浮层才能稳在拖拽幽灵之上。
+   */
+  let lineEl: HTMLDivElement | null = null;
+
+  function showLine(top: number, left: number, width: number): void {
+    if (!lineEl) {
+      lineEl = document.createElement('div');
+      lineEl.className = 'drag-insert-line';
+      document.body.appendChild(lineEl);
+    }
+    lineEl.style.top = `${Math.round(top) - 1.5}px`;
+    lineEl.style.left = `${Math.round(left)}px`;
+    lineEl.style.width = `${Math.max(Math.round(width), 24)}px`;
+    lineEl.style.display = 'block';
+  }
+
+  function hideLine(): void {
+    if (lineEl) lineEl.style.display = 'none';
+  }
 
   function list(): HTMLElement[] {
     try {
@@ -172,7 +205,7 @@ export function useDragSort(opts: DragSortOptions) {
     el.style.zIndex = '30';
     el.style.pointerEvents = 'none';
     el.style.willChange = 'transform';
-    document.body.classList.add(BODY_CLASS);
+    setDragActive(true);
     tick();
   }
 
@@ -199,26 +232,31 @@ export function useDragSort(opts: DragSortOptions) {
     const els = list();
     const from = session.index;
     if (from < 0 || from >= els.length) return;
-    const group = String(opts.groupOf(from));
-    const inGroup: number[] = [];
+    // 候选是「除被拖项外的全部元素」:落点可以在任何分组里(拖进别的分类)。
+    // 分组归属由「手指离哪一项最近」决定,见 dropSlotAt 的 anchor。
+    const order: number[] = [];
+    const rects: SlotRect[] = [];
     for (let i = 0; i < els.length; i++) {
-      if (i !== from && String(opts.groupOf(i)) === group) inGroup.push(i);
+      if (i === from) continue;
+      order.push(i);
+      rects.push(els[i].getBoundingClientRect());
     }
-    if (!inGroup.length) {
+    if (!rects.length) {
       slot = 0;
-      dropBefore.value = -1;
-      dropAfter.value = -1;
+      targetGroup = opts.groupOf(from);
+      hideLine();
       return;
     }
-    const rects = inGroup.map(i => els[i].getBoundingClientRect());
-    const next = slotFromPoint(rects, x, y);
-    slot = next;
-    if (next < inGroup.length) {
-      dropBefore.value = inGroup[next];
-      dropAfter.value = -1;
+    const hit = slotFromPoint(rects, x, y);
+    slot = hit.slot;
+    targetGroup = opts.groupOf(order[hit.anchor]);
+    // 指示线贴在落位处:插到某项之前画它的上沿,落在分组末尾画最后一项的下沿
+    if (hit.slot < rects.length) {
+      const r = rects[hit.slot];
+      showLine(r.top, r.left, r.width);
     } else {
-      dropBefore.value = -1;
-      dropAfter.value = inGroup[inGroup.length - 1];
+      const r = rects[rects.length - 1];
+      showLine(r.top + r.height, r.left, r.width);
     }
   }
 
@@ -249,11 +287,11 @@ export function useDragSort(opts: DragSortOptions) {
     if (session?.timer) clearTimeout(session.timer);
     session = null;
     slot = -1;
+    targetGroup = '';
     dragging.value = false;
     fromIndex.value = -1;
-    dropBefore.value = -1;
-    dropAfter.value = -1;
-    document.body.classList.remove(BODY_CLASS);
+    hideLine();
+    setDragActive(false);
     if (rafId) {
       cancelAnimationFrame(rafId);
       rafId = 0;
@@ -273,6 +311,8 @@ export function useDragSort(opts: DragSortOptions) {
     const active = !!session?.active;
     const from = session?.index ?? -1;
     const to = slot;
+    // 落点分组要先取出来:clearState 会把进行中的状态全部清掉
+    const dropGroup = targetGroup;
     if (session?.el) {
       try {
         session.el.releasePointerCapture?.(session.pointerId);
@@ -289,7 +329,7 @@ export function useDragSort(opts: DragSortOptions) {
     suppressTimer = setTimeout(() => {
       suppressClick = false;
     }, 300);
-    if (commit && from >= 0 && to >= 0 && to !== from) opts.onDrop(from, to);
+    if (commit && from >= 0 && to >= 0 && to !== from) opts.onDrop(from, to, dropGroup);
   }
 
   function onTouchMove(e: TouchEvent): void {
@@ -380,6 +420,9 @@ export function useDragSort(opts: DragSortOptions) {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('blur', onWindowBlur);
+    // 按在把手上 = 拖拽意图明确:此刻就置位,别等 4px 阈值 ——
+    // 否则第一小段触摸位移会先被下拉刷新吃走(内容被拉下来一小截再缩回去)
+    if (inHandle) setDragActive(true);
     if (e.pointerType !== 'mouse' && !inHandle) {
       // 触摸端:长按才起拖,避免手指一碰卡片就吞掉页面滚动
       session.timer = setTimeout(() => {
@@ -398,13 +441,13 @@ export function useDragSort(opts: DragSortOptions) {
     clearState();
     window.removeEventListener('click', onClickCapture, true);
     if (suppressTimer) clearTimeout(suppressTimer);
+    lineEl?.remove();
+    lineEl = null;
   });
 
   return {
     dragging: dragging as Ref<boolean>,
     fromIndex: fromIndex as Ref<number>,
-    dropBefore: dropBefore as Ref<number>,
-    dropAfter: dropAfter as Ref<number>,
     onPointerDown
   };
 }

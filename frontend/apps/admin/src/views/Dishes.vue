@@ -334,9 +334,15 @@
         <!-- 分类名只在每组第一行出现:配合行分隔线,视觉上就是「按分类分组」,
              同组重复刷同一个分类名既占宽又吵闹 -->
         <template #categoryName="{ row, rowIndex }">
+          <!-- 组首用品牌色标签,同组续行用弱化文字:不留空白,又保留分组感 -->
           <span
             v-if="isGroupStart(rowIndex)"
             class="cat-tag"
+            >{{ row.categoryName || '未分类' }}</span
+          >
+          <span
+            v-else
+            class="cat-same"
             >{{ row.categoryName || '未分类' }}</span
           >
         </template>
@@ -830,6 +836,7 @@ function dragItems(): HTMLElement[] {
 
 const dragSort = useDragSort({
   items: dragItems,
+  // 落点分组 = 手指离得最近的那张卡/行所在的分类:拖过组界就把菜带进那个分类
   groupOf: index => Number(list.value[index]?.categoryId) || 0,
   onDrop: onDragDrop,
   enabled: () => canEdit.value,
@@ -837,13 +844,9 @@ const dragSort = useDragSort({
   handleSelector: '[data-drag-handle]'
 });
 
-/** 行/卡片的拖拽态样式:被拖项半透明,落位处画插入线。 */
+/** 行/卡片的拖拽态样式:被拖起的那一项浮起来(落位线由 useDragSort 在 body 上单独画)。 */
 function dragClass(index: number): Record<string, boolean> {
-  return {
-    'is-dragging': dragSort.dragging.value && dragSort.fromIndex.value === index,
-    'drop-before': dragSort.dropBefore.value === index,
-    'drop-after': dragSort.dropAfter.value === index
-  };
+  return { 'is-dragging': dragSort.dragging.value && dragSort.fromIndex.value === index };
 }
 
 /** 该行是否是所在分类组的第一行(分类列只在组首显示分类名)。 */
@@ -867,29 +870,48 @@ function rowClassName({ rowIndex }: { rowIndex: number }): string {
   return cls.join(' ');
 }
 
-/** 落位后先本地重排(拖完立刻顺眼),再把相对位置写到后端。 */
-function onDragDrop(from: number, to: number): void {
+/** 落位后先本地重排(拖完立刻顺眼),再把相对位置写到后端。落点在别的分类 = 连归属一起改。 */
+function onDragDrop(from: number, to: number, targetGroup: string | number): void {
   const moved = list.value[from];
   if (!moved) return;
+  const origin = { categoryId: Number(moved.categoryId) || 0, categoryName: moved.categoryName || '' };
+  const targetCategoryId = Number(targetGroup) || origin.categoryId;
   const snapshot = list.value.map(d => Number(d.dishId));
-  const next = list.value.slice();
-  next.splice(from, 1);
-  next.splice(to, 0, moved);
-  list.value = next;
-  void persistSort(moved, next, to, snapshot);
+  const arranged = list.value.slice();
+  arranged.splice(from, 1);
+  arranged.splice(to, 0, moved);
+  if (targetCategoryId !== origin.categoryId) {
+    // 跨分类:归属跟着落点走,分组渲染与分类名立刻对上
+    moved.categoryId = targetCategoryId;
+    moved.categoryName =
+      categories.value.find(c => Number(c.categoryId) === targetCategoryId)?.categoryName || origin.categoryName;
+  }
+  list.value = arranged;
+  void persistSort(moved, arranged, to, { snapshot, origin });
 }
 
-async function persistSort(moved: Dish, arranged: Dish[], to: number, snapshot: number[]): Promise<void> {
-  const sameCategory = (d?: Dish): boolean => !!d && Number(d.categoryId) === Number(moved.categoryId);
-  const prev = arranged[to - 1];
-  const following = arranged[to + 1];
-  // 只把「同分类的邻居」当作锚点:跨组的邻居属于别的分类,不能拿来定位
-  const prevId = sameCategory(prev) ? Number(prev?.dishId) : 0;
-  const nextId = sameCategory(following) ? Number(following?.dishId) : 0;
-  if (!prevId && !nextId) return;
+async function persistSort(
+  moved: Dish,
+  arranged: Dish[],
+  to: number,
+  ctx: { snapshot: number[]; origin: { categoryId: number; categoryName: string } }
+): Promise<void> {
+  const catId = Number(moved.categoryId) || 0;
+  const changedCategory = catId !== ctx.origin.categoryId;
+  const sameCategory = (d?: Dish): boolean => !!d && Number(d.categoryId) === catId;
+  // 锚点只取「目标分类里离落点最近的同分类邻居」:跨组落点时两侧可能是别的分类,
+  // 一路往外找到第一道同分类的菜才是有效锚点(都找不到就交给后端放到该分类末尾)。
+  let prev: Dish | undefined;
+  for (let i = to - 1; i >= 0 && !prev; i--) if (sameCategory(arranged[i])) prev = arranged[i];
+  let following: Dish | undefined;
+  for (let i = to + 1; i < arranged.length && !following; i++) if (sameCategory(arranged[i])) following = arranged[i];
+  const prevId = prev ? Number(prev.dishId) : 0;
+  const nextId = following ? Number(following.dishId) : 0;
+  if (!changedCategory && !prevId && !nextId) return;
   try {
     const res = await sortDish({
       dishId: moved.dishId,
+      categoryId: changedCategory ? catId : undefined,
       prevDishId: prevId || undefined,
       nextDishId: nextId || undefined
     });
@@ -901,9 +923,12 @@ async function persistSort(moved: Dish, arranged: Dish[], to: number, snapshot: 
       if (order !== undefined) d.sortOrder = order;
     }
   } catch {
-    // 写库失败(并发改动、权限变化等):回到拖拽前的顺序,别让界面与库长期不一致
-    const pos = new Map(snapshot.map((id, i) => [id, i]));
+    // 写库失败(断网、权限变化、并发改动等):回到拖拽前的顺序与归属,并明确告诉用户
+    const pos = new Map(ctx.snapshot.map((id, i) => [id, i]));
     list.value = list.value.slice().sort((a, b) => (pos.get(Number(a.dishId)) ?? 0) - (pos.get(Number(b.dishId)) ?? 0));
+    moved.categoryId = ctx.origin.categoryId;
+    moved.categoryName = ctx.origin.categoryName;
+    void MessagePlugin.error('保存排序失败，已恢复原顺序');
   }
 }
 
@@ -1780,80 +1805,76 @@ img.is-off {
   margin-top: 0;
 }
 
-/* 拖拽把手:两点宽的圆点矩阵,鼠标/手指按住即可拖动。
+/* 拖拽把手:两列圆点(⸬,列表排序的通用示意)。图形画在 ::before 上
+   (SVG mask 染 currentcolor),span 本身只当 24×30 的热区,视觉不变大。
    touch-action:none 是关键 —— 否则触屏上手势会被浏览器判成页面滚动,拖不动 */
+
 .drag-grip {
+  position: relative;
+
   /* 用 span 承载:表格单元格里是普通流,必须 inline-block 才有宽高 */
   display: inline-block;
   flex-shrink: 0;
-  width: 11px;
-  height: 27px;
+  width: 24px;
+  height: 30px;
   vertical-align: middle;
-  border-radius: 4px;
-  color: var(--ink-4);
+  color: var(--ink-3);
   cursor: grab;
   touch-action: none;
-  opacity: 0.75;
-  background-image: radial-gradient(currentColor 1.3px, transparent 1.4px);
-  background-size: 5px 5px;
-  background-position: 0 2px;
+}
+
+.drag-grip::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 10px;
+  height: 14px;
+  background-color: currentcolor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 14'%3E%3Ccircle cx='2.5' cy='2' r='1.7'/%3E%3Ccircle cx='7.5' cy='2' r='1.7'/%3E%3Ccircle cx='2.5' cy='7' r='1.7'/%3E%3Ccircle cx='7.5' cy='7' r='1.7'/%3E%3Ccircle cx='2.5' cy='12' r='1.7'/%3E%3Ccircle cx='7.5' cy='12' r='1.7'/%3E%3C/svg%3E")
+    no-repeat center / 100% 100%;
+  opacity: 0.9;
+  transition: color 0.15s ease;
 }
 
 .drag-grip:hover {
-  opacity: 1;
   color: var(--brand);
+}
+
+.drag-grip:hover::before {
+  opacity: 1;
 }
 
 /* 卡片视图的把手压在图片右下角(左上「招牌」、右上状态 flag 都已占用) */
 .card-grip {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  right: 4px;
+  bottom: 4px;
   z-index: 3;
-  width: 20px;
-  height: 26px;
-  padding: 0 4px;
-  background-color: rgb(255 255 255 / 90%);
+  width: 26px;
+  height: 30px;
+  border-radius: 8px;
+  background-color: rgb(255 255 255 / 88%);
   box-shadow: 0 1px 4px rgb(0 0 0 / 14%);
-  opacity: 1;
   color: var(--ink-3);
 }
 
-/* 被拖起的行/卡片:浮起来(位移由 JS 逐帧写 transform),原位置靠插入线表达落点 */
+/* 被拖起的行/卡片:浮起来(位移由 JS 逐帧写 transform),原位置靠插入线表达落点。
+   保持不透明 —— 半透明会让被它盖住的菜名透上来,糊成一片 */
 .m-row.is-dragging,
 .dish-card.is-dragging {
-  opacity: 0.92;
-  box-shadow: var(--shadow-2);
+  background: #fff;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 18%);
 }
 
 .table-scroll :deep(tr.is-dragging > td) {
   background: #fff;
-  opacity: 0.92;
-  box-shadow: 0 6px 16px rgb(0 0 0 / 12%);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 14%);
 }
 
 /* 行分组分隔线:每组第一行的上沿加一条浅线,表格里也能看出分类边界 */
 .table-scroll :deep(tr.group-start > td) {
   box-shadow: inset 0 1px 0 var(--line);
-}
-
-/* 落点提示:上沿亮线 = 插到这一行之前,下沿亮线 = 插到它之后(分组末尾) */
-.m-row.drop-before,
-.dish-card.drop-before {
-  box-shadow: inset 0 3px 0 var(--brand);
-}
-
-.m-row.drop-after,
-.dish-card.drop-after {
-  box-shadow: inset 0 -3px 0 var(--brand);
-}
-
-.table-scroll :deep(tr.drop-before > td) {
-  box-shadow: inset 0 3px 0 var(--brand);
-}
-
-.table-scroll :deep(tr.drop-after > td) {
-  box-shadow: inset 0 -3px 0 var(--brand);
 }
 
 /* 分类列:只在组首出现的品牌色小标签 */
@@ -1865,6 +1886,13 @@ img.is-off {
   color: var(--brand-deep);
   font-size: 12px;
   font-weight: 600;
+}
+
+/* 分类列的续行(同组第 2..n 行):品牌色标签只留组首,这里用灰字补上分类名,
+   避免「有的行分类是空的」被当成数据丢了 */
+.cat-same {
+  color: var(--ink-4);
+  font-size: 12.5px;
 }
 
 /* 工具栏提示:把手很小,「能拖」这件事得有一句话交代 */

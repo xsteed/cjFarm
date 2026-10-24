@@ -179,7 +179,8 @@ func TestDishCreateUpdateDeleteRoundTrip(t *testing.T) {
 
 // TestLoadSpecsForOrderJoin 批量加载规格时的「菜品 + 规格」联表投影
 // (原先 GetSpecForOrder 逐条查询承担的职责)。
-// TestMoveDishReordersWithinCategory 拖拽排序:同分类内移动生效、跨分类落点被拒绝。
+// TestMoveDishReordersWithinCategory 拖拽排序:分类内移动生效,跨分类拖拽改归属,
+// 锚点不属于目标分类时拒绝。
 func TestMoveDishReordersWithinCategory(t *testing.T) {
 	dishDaoInitDB(t)
 
@@ -192,9 +193,9 @@ func TestMoveDishReordersWithinCategory(t *testing.T) {
 	b, _ := dishDaoCreate(t, "排序B", cid, nil)
 	c, _ := dishDaoCreate(t, "排序C", cid, nil)
 
-	names := func() []string {
+	namesIn := func(queryCategory int) []string {
 		t.Helper()
-		_, list, err := ListDishes(DishQuery{CategoryID: strconv.Itoa(cid)}, 1, 50)
+		_, list, err := ListDishes(DishQuery{CategoryID: strconv.Itoa(queryCategory)}, 1, 50)
 		if err != nil {
 			t.Fatalf("查询分类菜品失败: %v", err)
 		}
@@ -204,9 +205,9 @@ func TestMoveDishReordersWithinCategory(t *testing.T) {
 		}
 		return out
 	}
-	equal := func(want ...string) {
+	equalIn := func(queryCategory int, want ...string) {
 		t.Helper()
-		got := names()
+		got := namesIn(queryCategory)
 		if len(got) != len(want) {
 			t.Fatalf("顺序长度不符: got=%v want=%v", got, want)
 		}
@@ -217,10 +218,10 @@ func TestMoveDishReordersWithinCategory(t *testing.T) {
 		}
 	}
 
-	equal("排序A", "排序B", "排序C")
+	equalIn(cid, "排序A", "排序B", "排序C")
 
 	// 把 C 拖到最前(放在 A 之前),返回值应是重排后的完整顺序。
-	out, err := MoveDish(int(c), 0, int(a))
+	out, err := MoveDish(int(c), 0, 0, int(a))
 	if err != nil {
 		t.Fatalf("移动到分类首位失败: %v", err)
 	}
@@ -230,35 +231,58 @@ func TestMoveDishReordersWithinCategory(t *testing.T) {
 	if out[0].DishID != int(c) || out[0].SortOrder >= out[1].SortOrder {
 		t.Fatalf("返回顺序应把 C 排在最前且递增, got %+v", out)
 	}
-	equal("排序C", "排序A", "排序B")
+	equalIn(cid, "排序C", "排序A", "排序B")
 
 	// 把 C 拖回 A 之后。
-	if _, err := MoveDish(int(c), int(a), 0); err != nil {
+	if _, err := MoveDish(int(c), 0, int(a), 0); err != nil {
 		t.Fatalf("移动到 A 之后失败: %v", err)
 	}
-	equal("排序A", "排序C", "排序B")
+	equalIn(cid, "排序A", "排序C", "排序B")
 
 	// 拖到分类末尾(prev/next 都不给)。
-	if _, err := MoveDish(int(c), 0, 0); err != nil {
+	if _, err := MoveDish(int(c), 0, 0, 0); err != nil {
 		t.Fatalf("移动到分类末尾失败: %v", err)
 	}
-	equal("排序A", "排序B", "排序C")
+	equalIn(cid, "排序A", "排序B", "排序C")
 
-	// 落点跨越分类:拒绝,且不改库。
+	// 锚点是别的分类的菜:拒绝且不改库。
 	other, _ := dishDaoCreate(t, "别的分类的菜", 1, nil)
-	if _, err := MoveDish(int(c), int(other), 0); err == nil {
-		t.Fatal("跨分类落点应报错")
+	if _, err := MoveDish(int(c), 0, int(other), 0); err == nil {
+		t.Fatal("锚点不在同一分类应报错")
 	}
-	equal("排序A", "排序B", "排序C")
+	equalIn(cid, "排序A", "排序B", "排序C")
+
+	// 跨分类拖拽:把 A 拖进另一个分类。不带锚点 → 落到该分类末尾。
+	targetCat, err := InsertCategory(po.Category{CategoryName: "排序目标分类", SortOrder: 98})
+	if err != nil {
+		t.Fatalf("创建目标分类失败: %v", err)
+	}
+	x, _ := dishDaoCreate(t, "目标分类已有菜", int(targetCat), nil)
+	if _, err := MoveDish(int(a), int(targetCat), 0, 0); err != nil {
+		t.Fatalf("跨分类移动(放到末尾)失败: %v", err)
+	}
+	equalIn(int(targetCat), "目标分类已有菜", "排序A")
+	equalIn(cid, "排序B", "排序C")
+
+	// 再用锚点精确落位:A 放到该分类已有菜之前。
+	if _, err := MoveDish(int(a), int(targetCat), 0, int(x)); err != nil {
+		t.Fatalf("跨分类移动(放到已有菜之前)失败: %v", err)
+	}
+	equalIn(int(targetCat), "排序A", "目标分类已有菜")
+
+	// 目标分类不存在:报错。
+	if _, err := MoveDish(int(b), 999999, 0, 0); err == nil {
+		t.Fatal("目标分类不存在应报错")
+	}
 
 	// 菜品不存在 / 已删除。
-	if _, err := MoveDish(999999, 0, 0); err == nil {
+	if _, err := MoveDish(999999, 0, 0, 0); err == nil {
 		t.Fatal("不存在的菜品应报错")
 	}
 	if err := DeleteDish(int(b)); err != nil {
 		t.Fatalf("删除菜品失败: %v", err)
 	}
-	if _, err := MoveDish(int(b), 0, 0); err == nil {
+	if _, err := MoveDish(int(b), 0, 0, 0); err == nil {
 		t.Fatal("已删除的菜品应报错")
 	}
 }

@@ -59,7 +59,7 @@ func DishUpdate(c *gin.Context) {
 	okMsg(c, "修改成功")
 }
 
-// DishSort 拖拽调整菜品顺序(仅限同一分类内)。
+// DishSort 拖拽调整菜品顺序(分类内调序,或拖进别的分类)。
 func DishSort(c *gin.Context) {
 	var m dto.DishMove
 	if err := c.ShouldBindJSON(&m); err != nil || m.DishID <= 0 {

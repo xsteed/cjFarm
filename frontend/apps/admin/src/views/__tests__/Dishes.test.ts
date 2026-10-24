@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
-import TDesign from 'tdesign-vue-next';
+import TDesign, { MessagePlugin } from 'tdesign-vue-next';
 import Dishes from '../Dishes.vue';
 import { listCategories, listDishes, sortDish } from '@dining/api';
 import { setAuth } from '@dining/auth';
@@ -74,6 +74,19 @@ function firePointer(el: Element, type: string, x: number, y: number, pointerTyp
   el.dispatchEvent(ev);
 }
 
+/**
+ * jsdom 没有布局:按元素身份给「摆放位置」(top),其余尺寸统一 600×60。
+ * 返回还原函数。注意必须在 Element.prototype 上整体打桩并按 this 区分 ——
+ * 逐元素 spyOn 会把桩挂到共享原型上,只有最后一个生效。
+ */
+function stubRects(tops: Map<Element, number>): () => void {
+  const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    const top = tops.get(this) ?? 0;
+    return { top, left: 0, width: 600, height: 60, bottom: top + 60, right: 600, x: 0, y: top } as DOMRect;
+  });
+  return () => spy.mockRestore();
+}
+
 // 必须挂到 document 上:拖拽的 move/up 监听在 window 上,
 // 游离的 DOM 树里事件冒泡到不了 window,手势会「起了但不跟手」。
 function mountDishes(): VueWrapper {
@@ -141,7 +154,7 @@ describe('菜品管理页', () => {
     expect(names()).toEqual(['拌木耳', '拍黄瓜', '红烧肉']);
   });
 
-  it('列表视图每行带拖拽定位属性,分类名只在组首出现', async () => {
+  it('列表视图每行带拖拽定位属性,分类列组首打标签、续行灰字补全', async () => {
     localStorage.setItem('admin_view_mode:u:dishes', 'table');
     const wrapper = mountDishes();
     mounted = wrapper;
@@ -151,8 +164,10 @@ describe('菜品管理页', () => {
     expect(rows.length).toBe(3);
     // 拖拽落位靠这个属性把 DOM 行映射回数据下标,丢了就整行拖不动
     expect(rows.map(r => r.attributes('data-row-index'))).toEqual(['0', '1', '2']);
-    expect(rows[0].text()).toContain('凉菜');
-    expect(rows[1].text()).not.toContain('凉菜');
+    // 组首是品牌色标签,同组续行也要有分类名(灰字),不能留空白
+    expect(rows[0].find('.cat-tag').text()).toBe('凉菜');
+    expect(rows[1].find('.cat-same').text()).toBe('凉菜');
+    expect(rows[2].find('.cat-tag').text()).toBe('热菜');
     expect(rows[0].find('[data-drag-handle]').exists()).toBe(true);
 
     firePointer(rows[0].element, 'pointerdown', 10, 10);
@@ -162,5 +177,60 @@ describe('菜品管理页', () => {
 
     expect(sortDishMock).toHaveBeenCalledTimes(1);
     expect(sortDishMock.mock.calls[0][0]).toMatchObject({ dishId: 1, prevDishId: 2, nextDishId: undefined });
+  });
+
+  it('把卡片拖进别的分类:请求带目标 categoryId,分组与分类名跟着变', async () => {
+    const wrapper = mountDishes();
+    mounted = wrapper;
+    await flushPromises();
+
+    // jsdom 没有布局,手工给三张卡摆一个竖排位置:拍黄瓜(凉菜) / 拌木耳(凉菜) / 红烧肉(热菜)
+    const cards = wrapper.findAll('.dish-card');
+    const restoreRect = stubRects(
+      new Map<Element, number>([
+        [cards[0].element, 0],
+        [cards[1].element, 60],
+        [cards[2].element, 120]
+      ])
+    );
+
+    // 把「拍黄瓜」拖到「红烧肉」的中心(热菜组内)→ 落点属于热菜
+    firePointer(cards[0].element, 'pointerdown', 10, 10);
+    firePointer(cards[0].element, 'pointermove', 10, 150);
+    firePointer(cards[0].element, 'pointerup', 10, 150);
+    await flushPromises();
+
+    expect(sortDishMock).toHaveBeenCalledTimes(1);
+    expect(sortDishMock.mock.calls[0][0]).toMatchObject({
+      dishId: 1,
+      categoryId: 2,
+      prevDishId: 3,
+      nextDishId: undefined
+    });
+    // 归属变了:凉菜只剩拌木耳,热菜变成红烧肉 + 拍黄瓜
+    const titles = wrapper.findAll('.grid-group-t').map(t => t.text());
+    expect(titles[0]).toContain('凉菜');
+    expect(titles[0]).toContain('1');
+    expect(titles[1]).toContain('热菜');
+    expect(titles[1]).toContain('2');
+    restoreRect();
+  });
+
+  it('保存排序失败:提示错误并回滚到拖拽前的顺序', async () => {
+    sortDishMock.mockRejectedValueOnce(new Error('network down'));
+    const wrapper = mountDishes();
+    mounted = wrapper;
+    await flushPromises();
+
+    const names = () => wrapper.findAll('.dish-card').map(c => c.find('.n').text());
+    const cards = wrapper.findAll('.dish-card');
+    firePointer(cards[0].element, 'pointerdown', 10, 10);
+    firePointer(cards[0].element, 'pointermove', 10, 80);
+    firePointer(cards[0].element, 'pointerup', 10, 80);
+    await flushPromises();
+
+    expect(MessagePlugin.error).toHaveBeenCalled();
+    // 本地顺序恢复原样,不留「界面一套、库里一套」的中间态
+    expect(names()).toEqual(['拍黄瓜', '拌木耳', '红烧肉']);
   });
 });

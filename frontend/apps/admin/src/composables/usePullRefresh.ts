@@ -1,5 +1,6 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { Ref } from 'vue';
+import { isDragActive } from './dragSession';
 
 interface PullRefreshOptions {
   /** 触发刷新的下拉距离阈值(px) */
@@ -101,6 +102,13 @@ export function usePullRefresh(
 
   function onStart(e: TouchEvent): void {
     if (refreshing.value) return;
+    // 手指按在拖拽把手上(或拖拽已在进行):这次手势归拖拽,下拉刷新整段让路。
+    // scroller 置空是为了让后续 touchmove 直接返回,不会拿上一次手势的 lastY 起算。
+    if (isDragActive()) {
+      reset();
+      scroller = null;
+      return;
+    }
     const el = resolveScroller();
     if (el && el !== boundEl) {
       unbind();
@@ -120,6 +128,12 @@ export function usePullRefresh(
 
   function onMove(e: TouchEvent): void {
     if (refreshing.value || !scroller) return;
+    // 拖拽排序期间手指同样在下移,但页面不能被拉下来(还会在松手时误触发刷新)。
+    // 每次都 reset:被拖拽打断后不能靠着 scrollTop 判定再把手势「捡回来」。
+    if (isDragActive()) {
+      reset();
+      return;
+    }
     const y = e.touches[0].clientY;
     const step = y - lastY;
     lastY = y;

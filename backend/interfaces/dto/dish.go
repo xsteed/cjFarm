@@ -46,10 +46,12 @@ func FromDish(p po.Dish, categoryName string, specs []Spec) Dish {
 	}
 }
 
-// DishMove 菜品拖拽排序入参:把 DishID 移动到 PrevDishID 之后(同一分类内)。
-// PrevDishID 为 0 时看 NextDishID(移动到它之前),两者都为 0 表示移动到分类末尾。
+// DishMove 菜品拖拽排序入参:把 DishID 移动到 PrevDishID 之后 / NextDishID 之前。
+// 两者都为 0 表示移动到分类末尾。CategoryID 是落点所属分类:与菜品当前分类不同
+// 即为「拖进别的分类」(同步改 category_id),缺省保持原分类。
 type DishMove struct {
 	DishID     int `json:"dishId"`
+	CategoryID int `json:"categoryId"`
 	PrevDishID int `json:"prevDishId"`
 	NextDishID int `json:"nextDishId"`
 }
