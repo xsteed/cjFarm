@@ -603,19 +603,23 @@ function refreshRefunds(): void {
   gap: 4px;
 }
 
-/* 时间值:等宽数字,「:」与秒位纵向对齐,扫读时长更快 */
+/* 时间值:等宽数字,「:」与秒位纵向对齐,扫读时长更快。
+   nowrap 保证「2026-10-16 05:05:30」作为整体换行,不在日期与时刻之间拆成两行 */
 .od-time {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.2px;
+  white-space: nowrap;
 }
 
-/* 时长:弱化处理,不与「结束时间」的值抢视觉重量 */
+/* 时长:弱化处理,不与「结束时间」的值抢视觉重量。
+   nowrap 防止中文在任意字符处拆断(如「…8 分/钟」分家) */
 .od-duration {
   margin-left: 8px;
   font-size: 12px;
   font-weight: 400;
   color: var(--ink-3);
+  white-space: nowrap;
 }
 
 .od-gap {
@@ -900,14 +904,21 @@ function refreshRefunds(): void {
   }
 
   /* 时间字段每个独立成行:桌面端「桌号/人数/下单/结束」混排时,长日期串会把
-     后续字段挤成半行孤字;移动端改为一条一行,标签定宽保证两行的值左缘对齐 */
+     后续字段挤成半行孤字;移动端改为一条一行,标签定宽保证两行的值左缘对齐。
+     pair 内允许换行:空间不够时「时长」整体折到下一行靠右,不再挤压时间值 */
   .od-pair-time {
     flex: 1 1 100%;
     margin-left: 0;
+    flex-wrap: wrap;
+    row-gap: 2px;
   }
 
   .od-pair-time .od-k {
     flex: 0 0 auto;
+  }
+
+  .od-pair-time .od-duration {
+    margin-left: auto;
   }
 
   /* 主操作组:排到内容末尾并常驻弹层底部,滚动查看明细时收款/结算/取消始终可点。
