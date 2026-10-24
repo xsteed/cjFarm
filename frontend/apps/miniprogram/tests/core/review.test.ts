@@ -26,7 +26,7 @@ describe('reviewTagsOf 星级联动', () => {
   });
 
   it('3 星两组都给;0 星与越界给空', () => {
-    expect(reviewTagsOf(3)).toHaveLength(12);
+    expect(reviewTagsOf(3)).toHaveLength(14);
     expect(reviewTagsOf(0)).toEqual([]);
     expect(reviewTagsOf(6)).toEqual([]);
     expect(reviewTagsOf(-1)).toEqual([]);

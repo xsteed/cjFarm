@@ -461,8 +461,8 @@ import OrderDetailDialog from '../components/OrderDetailDialog.vue';
 import type { Review, ReviewSummary } from '@dining/types';
 import type { PageInfo } from 'tdesign-vue-next';
 
-// 标签好坏分组与后端 ReviewSheet 的固定两组同源(前端云着色用,不做过滤依据)
-const BAD_TAG_SET = new Set(['味道一般', '上菜慢', '服务态度', '分量少', '环境吵', '不如预期']);
+// 标签好坏分组与两端评价弹层的固定两组同源(前端云着色用,不做过滤依据)
+const BAD_TAG_SET = new Set(['不合口味', '上菜慢', '分量少', '服务差', '环境差', '不够干净', '偏贵']);
 
 const list = ref<Review[]>([]);
 const loading = ref(false);

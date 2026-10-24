@@ -4,9 +4,11 @@
 // docs/miniprogram.md 第五节):改动任何一组文案/上限,两端同步。
 // 单测钉住:tests/core/review.test.ts。
 
-/** 快捷标签固定两组(v1 不做商户自定义):好评组 / 差评组。 */
-export const REVIEW_GOOD_TAGS = ['味道好', '上菜快', '服务好', '分量足', '性价比高', '环境舒适'];
-export const REVIEW_BAD_TAGS = ['味道一般', '上菜慢', '服务态度', '分量少', '环境吵', '不如预期'];
+/** 快捷标签固定两组(v1 不做商户自定义):好评组 / 差评组。
+ *  七个正交维度,好/差一一对称(标签云靠同维度好/差对比产生意义,不对称即失效);
+ *  差评侧用顾客口语且可行动。与 H5 ReviewSheet.vue 逐字一致,改动两端同步。 */
+export const REVIEW_GOOD_TAGS = ['味道好', '上菜快', '分量足', '服务热情', '环境舒适', '干净卫生', '实惠'];
+export const REVIEW_BAD_TAGS = ['不合口味', '上菜慢', '分量少', '服务差', '环境差', '不够干净', '偏贵'];
 
 /** 标签最多个数;单个标签最长字符数。 */
 export const REVIEW_TAGS_MAX = 6;

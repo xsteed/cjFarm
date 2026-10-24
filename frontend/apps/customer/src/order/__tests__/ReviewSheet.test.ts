@@ -50,7 +50,7 @@ describe('ReviewSheet', () => {
     const w = mountSheet();
     await w.findAll('.review-star')[2].trigger('click');
     const chips = w.findAll('.review-chip');
-    expect(chips.length).toBe(12);
+    expect(chips.length).toBe(14);
     for (const c of chips) await c.trigger('click');
     expect(w.findAll('.review-chip.active').length).toBe(6);
   });
