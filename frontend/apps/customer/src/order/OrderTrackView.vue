@@ -3,17 +3,185 @@
     class="track-body"
     :class="{ lifted: showTabbar }"
   >
-    <!-- 菜品明细卡:顾客最关心「点了什么、多少钱」,所以放第一张。
-         订单状态收进卡头,单号 / 人数 / 时间挪到卡后的「订单信息」卡,顶部不再堆概要。 -->
-    <div class="st-card st-card-first">
+    <!-- 状态卡:下单后顾客第一眼要回答的是「我的单到哪一步了」。
+         用一张带品牌色渐层的卡承载状态大字 + 已等时长 + 出餐三步进度,
+         菜品卡只负责「点了什么、多少钱」,两块信息各归各位。 -->
+    <div
+      class="st-hero"
+      :class="'st-hero--' + heroTheme"
+    >
+      <div class="sh-top">
+        <div class="sh-text">
+          <div class="sh-title">{{ headline }}</div>
+          <div class="sh-sub">{{ subline }}</div>
+        </div>
+        <div class="sh-illo">
+          <!-- 等出餐:餐碗 + 三缕错拍升腾的热气 -->
+          <svg
+            v-if="heroIcon === 'bowl'"
+            viewBox="0 0 48 48"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              class="steam s1"
+              d="M17.5 17.5c2-2.3-2-4 0-6.3"
+              stroke="currentColor"
+              stroke-width="2.3"
+              stroke-linecap="round"
+            />
+            <path
+              class="steam s2"
+              d="M24 15.5c2-2.3-2-4 0-6.3"
+              stroke="currentColor"
+              stroke-width="2.3"
+              stroke-linecap="round"
+            />
+            <path
+              class="steam s3"
+              d="M30.5 17.5c2-2.3-2-4 0-6.3"
+              stroke="currentColor"
+              stroke-width="2.3"
+              stroke-linecap="round"
+            />
+            <path
+              d="M8 24h32a16 16 0 0 1-32 0Z"
+              fill="currentColor"
+              fill-opacity="0.14"
+            />
+            <path
+              d="M8 24h32a16 16 0 0 1-32 0Z"
+              stroke="currentColor"
+              stroke-width="2.3"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M19 40h10"
+              stroke="currentColor"
+              stroke-width="2.3"
+              stroke-linecap="round"
+            />
+          </svg>
+
+          <!-- 已上齐 / 已完成:圆底对勾 -->
+          <svg
+            v-else-if="heroIcon === 'check'"
+            viewBox="0 0 48 48"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              cx="24"
+              cy="24"
+              r="15"
+              fill="currentColor"
+              fill-opacity="0.14"
+            />
+            <path
+              d="M16.5 24.4l5.2 5.2 10.2-10.6"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+
+          <!-- 已取消:圆底叉 -->
+          <svg
+            v-else-if="heroIcon === 'cross'"
+            viewBox="0 0 48 48"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              cx="24"
+              cy="24"
+              r="15"
+              fill="currentColor"
+              fill-opacity="0.14"
+            />
+            <path
+              d="M17.5 17.5l13 13M30.5 17.5l-13 13"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-linecap="round"
+            />
+          </svg>
+
+          <!-- 先付待付款:一张待刷的卡 -->
+          <svg
+            v-else
+            viewBox="0 0 48 48"
+            fill="none"
+            aria-hidden="true"
+          >
+            <rect
+              x="7"
+              y="15"
+              width="34"
+              height="21"
+              rx="4.5"
+              stroke="currentColor"
+              stroke-width="2.3"
+            />
+            <path
+              d="M7 22h34"
+              stroke="currentColor"
+              stroke-width="2.3"
+            />
+            <path
+              d="M13 30h7"
+              stroke="currentColor"
+              stroke-width="2.3"
+              stroke-linecap="round"
+            />
+          </svg>
+        </div>
+      </div>
+
+      <!-- 出餐三步:节点事实来自后端 order_status,不承诺时间、不做倒计时。
+           先付未付款时后厨还没收到单,整块不渲染(否则等于告诉顾客「已下单」) -->
+      <div
+        v-if="showSteps"
+        class="st-steps"
+      >
+        <div
+          v-for="(s, i) in steps"
+          :key="s.label"
+          class="step"
+          :class="{ on: s.on, now: s.now }"
+        >
+          <div class="step-track">
+            <span
+              class="step-bar l"
+              :class="{ on: i > 0 && s.on }"
+            ></span>
+            <span class="step-dot"></span>
+            <span
+              class="step-bar r"
+              :class="{ on: s.bar }"
+            ></span>
+          </div>
+          <span class="step-txt">{{ s.label }}</span>
+        </div>
+      </div>
+
+      <!-- 结束态说明:已完成 / 已取消 / 已结账,措辞与小程序逐字一致 -->
+      <div
+        v-if="tipText"
+        class="st-tip"
+        :class="{ 'st-tip--cancel': canceled }"
+      >
+        {{ tipText }}
+      </div>
+    </div>
+
+    <!-- 菜品明细卡:顾客最关心「点了什么、多少钱」。每行带缩略图,
+         名称/规格/备注在左,数量与金额右对齐 -->
+    <div class="st-card">
       <div class="st-card-head">
         <div class="tt">菜品明细</div>
-        <div
-          class="st-tag"
-          :class="'st-tag--' + statusTheme"
-        >
-          {{ statusLabel }}
-        </div>
+        <div class="st-count">共 {{ totalQty }} 件</div>
       </div>
 
       <div
@@ -182,27 +350,25 @@
       </div>
     </div>
 
-    <!-- 状态提示:已完成 / 已取消 / 已结账,与小程序 sec 卡一致(白色卡片 + 内嵌彩色提示块) -->
-    <div
-      v-if="done || canceled || settled"
-      class="st-card"
-    >
-      <div
-        class="st-tip"
-        :class="{ 'st-tip--cancel': canceled }"
-      >
-        <template v-if="canceled">{{ cancelTip }}</template>
-        <template v-else-if="done">🎉 这顿吃完啦，欢迎下次光临</template>
-        <template v-else-if="settled">已结账，后厨正在做啦～出餐进度会自动更新；想加的菜随时可以再点</template>
-      </div>
-    </div>
-
     <!-- 订单信息:单号 / 人数 / 时间 / 支付凭证,顾客核对单据时才看,放菜品之后不再挤在首屏 -->
     <div class="st-info">
-      <div class="st-info-no">单号 {{ currentOrder.shortNo || currentOrder.orderNo }}</div>
-      <div class="st-info-meta">
-        <span>{{ currentOrder.personCount }} 人用餐</span>
-        <span v-if="currentOrder.createTime">{{ currentOrder.createTime }}</span>
+      <div class="st-info-title">订单信息</div>
+      <div class="st-info-grid">
+        <div class="st-info-cell">
+          <span class="k">单号</span>
+          <span class="v">{{ currentOrder.shortNo || currentOrder.orderNo }}</span>
+        </div>
+        <div class="st-info-cell">
+          <span class="k">用餐人数</span>
+          <span class="v">{{ currentOrder.personCount }} 人</span>
+        </div>
+        <div
+          v-if="createdAtText"
+          class="st-info-cell"
+        >
+          <span class="k">下单时间</span>
+          <span class="v">{{ createdAtText }}</span>
+        </div>
       </div>
       <!-- 支付凭证行:结账后留一条可核对的记录(渠道 + 时间),不再只有一个「已结账」标签 -->
       <div
@@ -216,10 +382,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import type { OrderDetail, OrderItem } from '@dining/types';
 import type { ViewState } from '@dining/customer-core';
-import { payStatusText, payStatusTheme, batchLabels } from '@dining/shared/orderDisplay';
+import { payStatusText, payStatusTheme, batchLabels, durationText } from '@dining/shared/orderDisplay';
 
 const props = defineProps<{
   view: ViewState;
@@ -243,11 +409,9 @@ const emit = defineEmits<{
   review: [];
 }>();
 
-// 订单状态标签:短文案 + 主题,与小程序 ORDER_STATUS 字典一致(挂在菜品明细卡头右侧)
-const STATUS_LABEL: Record<number, string> = { 1: '已下单', 2: '制作中', 3: '已上齐', 4: '已完成', 5: '已取消' };
+// 状态主题:与小程序 ORDER_STATUS 字典一致,驱动状态卡的强调色(橙=等接单/琥珀=制作中/绿=上齐)
 const STATUS_THEME: Record<number, string> = { 1: 'primary', 2: 'warning', 3: 'success', 4: 'default', 5: 'danger' };
 const orderStatus = computed(() => Number(props.currentOrder.orderStatus) || 1);
-const statusLabel = computed(() => STATUS_LABEL[orderStatus.value] || '处理中');
 const statusTheme = computed(() => STATUS_THEME[orderStatus.value] || 'primary');
 
 // 催菜只对「后厨已经收到厨单」的订单有意义:先付模式下未支付时后厨还没收到单,
@@ -258,6 +422,11 @@ const canUrge = computed(() => !props.payFirst || Number(props.currentOrder.payS
 const done = computed(() => props.view === 'done');
 const canceled = computed(() => props.view === 'canceled');
 const settled = computed(() => props.view === 'settled');
+
+// 先付模式下「还没给钱」:后厨没收到单,顾客要做的第一件事是付款,状态卡也据此换口径
+const payFirstUnpaid = computed(
+  () => props.payFirst && Number(props.currentOrder.payStatus) === 0 && !canceled.value && !done.value
+);
 
 // 评价入口的显示条件:已付款 + 已上齐/已完成(3/4),不依赖视图 ——
 // 后付刚结账(settled)固然是主路径,但顾客从「本桌正在出餐」列表、刷新或换设备
@@ -286,6 +455,13 @@ const paidAtText = computed(() => {
   return t ? String(t).replace('T', ' ').slice(0, 16) : '';
 });
 
+// 下单时间:同在订单信息卡里按「月-日 时:分」展示 —— 秒数对顾客没有意义,
+// 年份在订单页也用不上,三列信息格里「10-25 03:20」正好一行放得下
+const createdAtText = computed(() => {
+  const t = props.currentOrder.createTime;
+  return t ? String(t).replace('T', ' ').slice(5, 16) : '';
+});
+
 // 取消提示:后端已对取消原因做可展示性收口(通用标签「商家取消」会置空),
 // 有真实原因就带上,没有就给标准说明。取消只可能发生在未支付订单上(后端强制 pay_status=0),
 // 所以能明确告诉顾客「不产生费用」,不必让顾客去猜钱到底扣没扣。
@@ -294,6 +470,83 @@ const cancelTip = computed(() =>
     ? `订单已取消：${props.currentOrder.cancelReason}`
     : '订单已取消，本单未支付、不会产生任何费用'
 );
+
+// ---- 状态卡文案 ----
+// 大字只说「此刻该知道的一件事」:等餐 → 走到哪一步;先付未付 → 去付款;结束态 → 结果。
+// 付款与否不改变后厨进度(见 spec:出餐是商家维度),所以 settled 仍按 order_status 说话。
+const headline = computed(() => {
+  if (canceled.value) return '订单已取消';
+  if (done.value) return '本单已完成';
+  if (payFirstUnpaid.value) return '等待付款';
+  switch (orderStatus.value) {
+    case 2:
+      return '后厨正在制作';
+    case 3:
+      return '餐品已上齐';
+    default:
+      return '已下单，等待接单';
+  }
+});
+
+// 图标与底色随状态走:等出餐=餐碗冒热气,上齐/完成=对勾,取消=叉,待付款=卡片
+const heroIcon = computed<'bowl' | 'check' | 'cross' | 'card'>(() => {
+  if (canceled.value) return 'cross';
+  if (done.value) return 'check';
+  if (payFirstUnpaid.value) return 'card';
+  if (orderStatus.value >= 3) return 'check';
+  return 'bowl';
+});
+
+const heroTheme = computed(() => {
+  if (canceled.value) return 'danger';
+  // 已完成也用成功色:整页进入"收尾"基调,灰色会把完成后的三步进度画得像失效
+  if (done.value) return 'success';
+  if (payFirstUnpaid.value) return 'warning';
+  return statusTheme.value;
+});
+
+// 已等时长:每分钟量一次(30s 一拍足够),数据全来自订单自身的 createTime,
+// 不承诺出餐时间、不做倒计时 —— 后厨改状态才是唯一事实来源。
+const nowTs = ref(Date.now());
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 后端时间串("YYYY-MM-DD HH:MM:SS" 或 ISO)转时间戳;iOS 不认带「-」的日期串,统一换「/」。 */
+function parseTime(t?: string | null): number {
+  if (!t) return 0;
+  const s = String(t).replace('T', ' ').slice(0, 19).replace(/-/g, '/');
+  const v = new Date(s).getTime();
+  return Number.isFinite(v) ? v : 0;
+}
+
+const subline = computed(() => {
+  if (canceled.value) return '本单不会再出餐';
+  if (payFirstUnpaid.value) return '付款后后厨即刻开工';
+  const start = parseTime(props.currentOrder.createTime);
+  if (!start) return '订单已提交';
+  const mins = Math.floor((nowTs.value - start) / 60000);
+  // 时钟漂移/跨日遗留单不做无意义的「已等 3000 分钟」
+  if (mins < 0 || mins > 60 * 24) return '订单已提交';
+  if (mins < 1) return '刚刚下单';
+  return `${done.value ? '用餐' : '已等'} ${durationText(mins)}`;
+});
+
+// 出餐三步:只映射后厨的三个真实节点(1已下单 → 2制作中 → 3已上齐),完成的单三步全亮。
+// 先付未付款时后厨压根没收到单,不画进度(进度条会让人以为已经在做)。
+const showSteps = computed(() => !canceled.value && !payFirstUnpaid.value && orderStatus.value <= 4);
+const stepIdx = computed(() => (done.value ? 3 : Math.min(Math.max(orderStatus.value - 1, 0), 2)));
+const steps = computed(() => [
+  { label: '已下单', on: true, bar: stepIdx.value >= 1, now: stepIdx.value === 0 },
+  { label: '制作中', on: stepIdx.value >= 1, bar: stepIdx.value >= 2, now: stepIdx.value === 1 },
+  { label: '已上齐', on: stepIdx.value >= 2, bar: false, now: stepIdx.value === 2 }
+]);
+
+// 结束态才出说明块:进行中的单没有额外话可说,进度条已经回答完了
+const tipText = computed(() => {
+  if (canceled.value) return cancelTip.value;
+  if (done.value) return '🎉 这顿吃完啦，欢迎下次光临';
+  if (settled.value) return '已结账，后厨正在做啦～出餐进度会自动更新；想加的菜随时可以再点';
+  return '';
+});
 
 // 菜品明细行:与小程序一致,给「加过菜」的批次打行内小标签(首单 / 加菜N);单批次不标。
 // 编号口径收敛在 @dining/shared 的 batchLabels(与管理端订单详情共用)。
@@ -304,10 +557,27 @@ const renderItems = computed<RenderItem[]>(() => {
   const labels = batchLabels(list);
   return list.map((it, i) => ({ ...it, batchLabel: labels[i] }));
 });
+
+// 明细行刻意不放菜品图:下单后顾客是来「核对点了什么」的,
+// 图片会让人重新对着照片评判菜品,反而削弱核对这件事本身。
+const totalQty = computed(() =>
+  (props.currentOrder.items || []).reduce((s, it) => s + (Number(it.quantity) || 0), 0)
+);
+
+onMounted(() => {
+  tickTimer = setInterval(() => {
+    nowTs.value = Date.now();
+  }, 30000);
+});
+
+onUnmounted(() => {
+  if (tickTimer) clearInterval(tickTimer);
+  tickTimer = null;
+});
 </script>
 
 <style scoped>
-/* 订单视图滚动区:整页是一张张白卡(菜品明细 → 状态提示 → 订单信息),
+/* 订单视图滚动区:整页是一张张白卡(状态 → 菜品明细 → 订单信息),
    与菜单页「白卡上移压住 hero」不同,这里首张卡与横幅之间留出边距 */
 .track-body {
   flex: 1;
@@ -322,6 +592,214 @@ const renderItems = computed<RenderItem[]>(() => {
   padding-bottom: 86px;
 }
 
+/* ---------- 状态卡 ---------- */
+.st-hero {
+  /* 主题色由 --accent 驱动:进度节点、图标、副文案高亮都跟着它,
+     底色是同一色系的极浅渐层,白卡上不会抢走菜品明细的注意力 */
+  --accent: var(--brand);
+  --accent-soft: var(--brand-soft);
+
+  position: relative;
+  margin-top: 6px;
+
+  /* 状态卡只是「一眼看进度」的横幅,不做第二个信息中心:
+     内边距、字号、图标都按紧凑档取值,给下面的菜品明细留出屏幕 */
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: linear-gradient(152deg, var(--accent-soft) 0%, #fff 72%);
+  box-shadow: var(--shadow-1);
+  animation: hero-in 0.28s ease-out;
+}
+
+.st-hero--warning {
+  --accent: #e8930c;
+  --accent-soft: var(--warning-soft);
+}
+
+.st-hero--success {
+  --accent: var(--success);
+  --accent-soft: var(--success-soft);
+}
+
+.st-hero--danger {
+  --accent: var(--danger);
+  --accent-soft: var(--danger-soft);
+}
+
+.st-hero--default {
+  --accent: var(--ink-3);
+  --accent-soft: #f4f4f4;
+}
+
+@keyframes hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sh-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sh-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 状态大字:整页最大的一行字,顾客抬眼就知道走到哪了 */
+.sh-title {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 0.2px;
+  color: var(--ink);
+}
+
+.sh-sub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+.sh-illo {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 10px rgb(26 26 26 / 8%);
+}
+
+.sh-illo svg {
+  display: block;
+  width: 26px;
+  height: 26px;
+}
+
+/* 热气:三缕错拍升腾,让「正在做」有活着的感觉 */
+.sh-illo .steam {
+  animation: sh-steam 2.2s ease-in-out infinite;
+}
+
+.sh-illo .steam.s2 {
+  animation-delay: 0.65s;
+}
+
+.sh-illo .steam.s3 {
+  animation-delay: 1.3s;
+}
+
+@keyframes sh-steam {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(1px);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* ---------- 出餐进度 ---------- */
+.st-steps {
+  display: flex;
+  margin-top: 9px;
+}
+
+.step {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.step-track {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+/* 连接线左右各半段:首节点左边、末节点右边隐藏,拼起来是一条连续细线 */
+.step-bar {
+  flex: 1;
+  height: 2px;
+  background: #ececec;
+  border-radius: 1px;
+}
+
+.step-bar.on {
+  background: var(--accent);
+}
+
+.step:first-child .step-bar.l,
+.step:last-child .step-bar.r {
+  visibility: hidden;
+}
+
+.step-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e0e0e0;
+}
+
+.step.on .step-dot {
+  background: var(--accent);
+}
+
+/* 当前节点:外圈呼吸,余光也能看出「停在这一步」。
+   光圈用主题自带的浅色(--accent-soft),避免依赖 color-mix 在旧 WebView 上的支持 */
+.step.now .step-dot {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  animation: step-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes step-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px var(--accent-soft);
+  }
+}
+
+.step-txt {
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.step.on .step-txt {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.step.now .step-txt {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 /* 订单信息卡:单号 / 人数 / 时间。放菜品之后,顾客核对单据时才看(桌台由 HeroHeader 展示)。
    内边距与 .st-card 一致,几张卡的留白口径统一 */
 .st-info {
@@ -332,18 +810,38 @@ const renderItems = computed<RenderItem[]>(() => {
   box-shadow: var(--shadow-1);
 }
 
-.st-info-no {
-  color: var(--ink-3);
-  font-size: 12px;
-  letter-spacing: 0.5px;
+.st-info-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 10px;
 }
 
-.st-info-meta {
+/* 三列信息格:标签在上、值在下,长单号自然折行不挤掉邻居 */
+.st-info-grid {
   display: flex;
-  gap: 16px;
-  margin-top: 6px;
-  color: var(--ink-3);
-  font-size: 12px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.st-info-cell {
+  flex: 1 1 30%;
+  min-width: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.st-info-cell .k {
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.st-info-cell .v {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  word-break: break-all;
 }
 
 /* 支付凭证:绿点 + 「已支付（微信）· 2026-10-09 12:03」,可核对可回看 */
@@ -351,7 +849,9 @@ const renderItems = computed<RenderItem[]>(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
   color: var(--success);
   font-size: 12px;
 }
@@ -399,24 +899,35 @@ const renderItems = computed<RenderItem[]>(() => {
   color: var(--ink-3);
 }
 
-/* 状态提示块:已完成 / 已取消 / 已结账,内嵌于白色 sec 卡,对齐小程序 */
+/* 状态说明块:已完成 / 已取消 / 已结账,内嵌于状态卡,对齐小程序。
+   白底 + 一圈发丝线:状态卡底色随主题变(橙/绿/红),说明块不能跟着染色,
+   否则绿卡上贴一块粉色会显得两个系统在打架 */
 .st-tip {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: var(--r-md);
-  background: var(--brand-ghost);
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgb(26 26 26 / 6%);
   color: var(--ink-2);
-  font-size: 12.5px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.st-hero > .st-tip {
+  margin-top: 10px;
 }
 
 .st-tip--cancel {
   background: var(--danger-soft);
+  box-shadow: none;
   color: var(--danger);
 }
 
-/* 先付模式提示:紧贴账单,给「去支付」按钮做铺垫 */
+/* 先付模式提示:紧贴账单,给「去支付」按钮做铺垫。
+   这张卡在白色菜品卡里,沿用品牌浅底才和「待办」的分量相称 */
 .st-payfirst-tip {
   margin-top: 12px;
+  background: var(--brand-ghost);
+  box-shadow: none;
 }
 
 .st-card {
@@ -427,13 +938,7 @@ const renderItems = computed<RenderItem[]>(() => {
   box-shadow: var(--shadow-1);
 }
 
-/* 首张卡(菜品明细):不再上移压住 hero,与横幅之间留出呼吸感。
-   8px(track-body 上内边距) + 6px = 14px,与左右 14px 的页边距对齐 */
-.st-card-first {
-  margin-top: 6px;
-}
-
-/* 卡头:标题 + 右侧状态标签(订单状态挂在最显眼的菜品卡上,不另开概要卡) */
+/* 卡头:标题 + 右侧件数 */
 .st-card-head {
   display: flex;
   align-items: center;
@@ -452,6 +957,12 @@ const renderItems = computed<RenderItem[]>(() => {
   margin-bottom: 0;
 }
 
+/* 件数:一眼能看到「这单有多少东西」,与状态卡的已等时长互补 */
+.st-count {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
 /* 加菜批次行内标签(首单 / 加菜N):与小程序 row-batch 一致 */
 .si-batch {
   display: inline-block;
@@ -465,8 +976,9 @@ const renderItems = computed<RenderItem[]>(() => {
   line-height: 1.7;
 }
 
-/* 菜品行:名称(含备注) | 数量 | 金额 三栏,与小程序一致(每行上边框,首行也有分隔线)。
-   字号对齐全站菜品口径(菜单 .op-name 14px / 购物车 14.5px),不再比按钮小一截 */
+/* 菜品行:名称(含备注) | 数量 | 金额 三栏(每行上边框,首行也有分隔线)。
+   纯文字核对单,不放菜品图 —— 下单后顾客是来对单的,不是来重新挑菜的。
+   字号对齐全站菜品口径(菜单 .op-name 14px / 购物车 14.5px) */
 .st-item {
   display: flex;
   align-items: center;
@@ -571,13 +1083,14 @@ const renderItems = computed<RenderItem[]>(() => {
   font-weight: 700;
 }
 
-/* 支付按钮:与卡内「加菜」同为 42px,去掉重投影 ——
+/* 支付按钮:与卡内「加菜」同高,去掉重投影 ——
    主次靠底色(实心品牌渐变 vs 描边)区分,不再靠体积压住菜品明细 */
 .st-paybtn {
   width: 100%;
-  height: 42px;
+  height: 44px;
   border-radius: var(--r-pill);
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  box-shadow: 0 6px 16px rgb(240 72 31 / 22%);
   color: #fff;
   font-size: 14.5px;
   font-weight: 600;
@@ -586,6 +1099,11 @@ const renderItems = computed<RenderItem[]>(() => {
   justify-content: center;
   margin-top: 12px;
   cursor: pointer;
+}
+
+.st-paybtn:active {
+  transform: translateY(1px);
+  box-shadow: 0 3px 10px rgb(240 72 31 / 22%);
 }
 
 /* 结束态按钮组:去评价 | 再点一单 并排,各占一半 */
@@ -698,5 +1216,25 @@ const renderItems = computed<RenderItem[]>(() => {
 .st-urge:active {
   color: var(--ink-2);
   text-decoration-color: var(--ink-2);
+}
+
+/* 无障碍:系统开了「减少动态效果」时,热气与节点呼吸都停掉 */
+@media (prefers-reduced-motion: reduce) {
+  .st-hero,
+  .sh-illo .steam,
+  .step.now .step-dot {
+    animation: none;
+  }
+}
+
+/* 超窄屏(320px):三列信息格改成两列,单号不被压成竖排 */
+@media (width <= 360px) {
+  .st-info-cell {
+    flex: 1 1 44%;
+  }
+
+  .sh-title {
+    font-size: 17px;
+  }
 }
 </style>

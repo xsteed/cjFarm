@@ -57,10 +57,58 @@ describe('OrderTrackView', () => {
       { orderStatus: 2, payStatus: 1, payType: '微信', payTime: '2026-10-09 12:03:07' },
       'settled'
     );
-    // 状态步骤条已下线,不再渲染
-    expect(wrapper.find('.op-steps').exists()).toBe(false);
     expect(wrapper.find('.st-tip').text()).toContain('已结账，后厨正在做啦');
     expect(wrapper.find('.st-info-paid').text()).toBe('已支付（微信） · 2026-10-09 12:03');
+  });
+
+  it('状态卡：大字说清走到哪一步，进度按后端状态点亮（不承诺时间）', () => {
+    // 已下单：第一步亮、第二步未亮
+    const placed = mountView({ orderStatus: 1, payStatus: 1 }, 'settled');
+    expect(placed.find('.sh-title').text()).toBe('已下单，等待接单');
+    const dots = placed.findAll('.step');
+    expect(dots).toHaveLength(3);
+    expect(dots.map(d => d.classes('on'))).toEqual([true, false, false]);
+    // 已等时长来自订单 createTime；fixture 没给时间就不编造
+    expect(placed.find('.sh-sub').text()).toBe('订单已提交');
+
+    // 制作中：两步亮，当前节点标 now
+    const cooking = mountView({ orderStatus: 2, payStatus: 1 }, 'settled');
+    expect(cooking.find('.sh-title').text()).toBe('后厨正在制作');
+    expect(cooking.findAll('.step').map(d => d.classes('on'))).toEqual([true, true, false]);
+    expect(cooking.findAll('.step')[1].classes('now')).toBe(true);
+
+    // 已完成：三步全亮，进度不再标 now（单子已经走完）
+    const finished = mountView({ orderStatus: 4, payStatus: 1 }, 'done');
+    expect(finished.find('.sh-title').text()).toBe('本单已完成');
+    expect(finished.findAll('.step').map(d => d.classes('on'))).toEqual([true, true, true]);
+    expect(finished.findAll('.step').some(d => d.classes('now'))).toBe(false);
+  });
+
+  it('状态卡：取消单不出进度（没有「到哪一步」可言）', () => {
+    const wrapper = mountView({ orderStatus: 5 }, 'canceled');
+    expect(wrapper.find('.st-steps').exists()).toBe(false);
+    expect(wrapper.find('.sh-title').text()).toBe('订单已取消');
+  });
+
+  it('状态卡：先付未付款时不说「已下单」，改成等付款且不画进度', () => {
+    // 后厨还没收到这颗单：画进度会让人以为菜已经在做
+    const wrapper = mountView({ orderStatus: 1, payStatus: 0 }, 'order', true);
+    expect(wrapper.find('.sh-title').text()).toBe('等待付款');
+    expect(wrapper.find('.sh-sub').text()).toBe('付款后后厨即刻开工');
+    expect(wrapper.find('.st-steps').exists()).toBe(false);
+
+    // 付完款：回到正常出餐进度
+    const paid = mountView({ orderStatus: 1, payStatus: 1 }, 'settled', true);
+    expect(paid.find('.sh-title').text()).toBe('已下单，等待接单');
+    expect(paid.find('.st-steps').exists()).toBe(true);
+  });
+
+  it('菜品明细：整单件数在卡头，明细行是纯文字（不放菜品图）', () => {
+    const wrapper = mountView();
+    expect(wrapper.find('.st-count').text()).toBe('共 1 件');
+    // 下单后是来「核对点了什么」的,不放图片,也就不该出现任何缩略图容器
+    expect(wrapper.find('.si-thumb').exists()).toBe(false);
+    expect(wrapper.find('.st-item img').exists()).toBe(false);
   });
 
   it('未支付：不出现支付凭证行', () => {

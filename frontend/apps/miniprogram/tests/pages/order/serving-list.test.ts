@@ -22,7 +22,12 @@ function servingOrder(overrides: Record<string, unknown> = {}): Record<string, u
     seatFee: 10,
     discountAmount: 0,
     totalAmount: 38,
-    items: [],
+    createTime: '2026-10-25 12:03:00',
+    items: [
+      { itemId: 1, dishId: 101, dishName: '剁椒鱼头', quantity: 1, amount: 28 },
+      { itemId: 2, dishId: 102, dishName: '小炒黄牛肉', quantity: 1, amount: 58 },
+      { itemId: 3, dishId: 103, dishName: '米饭', quantity: 4, amount: 8 }
+    ],
     ...overrides
   };
 }
@@ -52,10 +57,27 @@ describe('订单页 · 出餐中订单列表', () => {
   it('没有进行中订单但有出餐中的单：列出而不是报错', () => {
     expect(page?.data.showServingList).toBe(true);
     expect(page?.data.error).toBe('');
-    const rows = page?.data.servingRows as { orderNo: string; label: string }[];
+    const rows = page?.data.servingRows as {
+      orderNo: string;
+      label: string;
+      shortNo: string;
+      statusText: string;
+      statusClass: string;
+      dishes: string;
+      meta: string;
+      amountText: string;
+    }[];
     expect(rows).toHaveLength(1);
     expect(rows[0].orderNo).toBe('D009');
     expect(rows[0].label).toContain('009');
+    // 卡片自带摘要:取餐号 + 状态 + 菜品 + 时间人数 + 金额,
+    // 顾客在列表页就能认出「这是我的单、钱付过了」，不必逐条点进去核对
+    expect(rows[0].shortNo).toBe('009');
+    expect(rows[0].statusText).toBe('制作中');
+    expect(rows[0].statusClass).toBe('tag-warning');
+    expect(rows[0].dishes).toBe('剁椒鱼头、小炒黄牛肉 等 3 道');
+    expect(rows[0].meta).toBe('12:03 下单 · 5 人 · 共 6 件');
+    expect(rows[0].amountText).toBe('38.00');
   });
 
   it('点一条：按单号回拉详情并进入进度视图', async () => {

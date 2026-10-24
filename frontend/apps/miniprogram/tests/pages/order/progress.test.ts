@@ -98,4 +98,52 @@ describe('订单页 · 出餐进度与支付凭证', () => {
     page?.render(order({ payStatus: 1, payType: '微信', payTime: '2026-10-09 12:03:07' }));
     expect(page?.data.paidInfo).toBe('已支付（微信） · 2026-10-09 12:03');
   });
+
+  it('状态头：大字说清走到哪一步，主题色与结束态说明跟着状态走', () => {
+    page?.render(order({ orderStatus: 1 }));
+    expect(page?.data.heroTitle).toBe('已下单，等待接单');
+    expect(page?.data.heroClass).toBe('card sec hero hero--primary');
+    // fixture 没给 createTime 就不编造「已等 X 分钟」
+    expect(page?.data.heroSub).toBe('订单已提交');
+
+    page?.render(order({ orderStatus: 2 }));
+    expect(page?.data.heroTitle).toBe('后厨正在制作');
+    expect(page?.data.heroClass).toBe('card sec hero hero--warning');
+
+    page?.render(order({ orderStatus: 4 }));
+    expect(page?.data.heroTitle).toBe('本单已完成');
+    expect(page?.data.heroClass).toBe('card sec hero hero--success');
+    expect(page?.data.heroTip).toBe('🎉 这顿吃完啦，欢迎下次光临');
+
+    page?.render(order({ orderStatus: 5, cancelReason: '菜品售罄' }));
+    expect(page?.data.heroTitle).toBe('订单已取消');
+    expect(page?.data.heroClass).toBe('card sec hero hero--danger');
+    expect(page?.data.heroSub).toBe('本单不会再出餐');
+    expect(page?.data.heroTip).toBe('订单已取消：菜品售罄');
+  });
+
+  it('状态头：先付未付款说「等待付款」且不画进度（后厨还没收到单）', async () => {
+    const app = await bootApp();
+    app.session.config = { shop_name: '长健农场', pay_first_enabled: '1' };
+
+    page?.render(order({ payStatus: 0 }));
+    expect(page?.data.heroTitle).toBe('等待付款');
+    expect(page?.data.heroSub).toBe('付款后后厨即刻开工');
+    expect(page?.data.showProgress).toBe(false);
+
+    // 付完款回到正常出餐口径
+    page?.render(order({ orderStatus: 2, payStatus: 1 }));
+    expect(page?.data.heroTitle).toBe('后厨正在制作');
+    expect(page?.data.showProgress).toBe(true);
+  });
+
+  it('状态头：已等时长只来自订单自身 createTime，跨日遗留单不报无意义时长', () => {
+    // 远超 24h 的 createTime 归到「订单已提交」,不说「已等 3000 分钟」
+    page?.render(order({ createTime: '2020-01-01 12:00:00' }));
+    expect(page?.data.heroSub).toBe('订单已提交');
+
+    // 未来时间（时钟漂移）同样兜底
+    page?.render(order({ createTime: '2099-01-01 12:00:00' }));
+    expect(page?.data.heroSub).toBe('订单已提交');
+  });
 });

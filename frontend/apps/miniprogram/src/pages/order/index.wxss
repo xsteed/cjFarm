@@ -463,6 +463,12 @@
   font-size: 24rpx;
 }
 
+/* 整单件数:菜品卡头右侧,与状态头的已等时长互补(对应 H5 .st-count) */
+.sec-count {
+  color: var(--ink-3);
+  font-size: 23rpx;
+}
+
 /* ---------- 订单信息卡：桌台 / 单号 / 人数 / 时间（放菜品之后） ---------- */
 .info-table {
   font-size: 30rpx;
@@ -521,20 +527,67 @@
   font-weight: 700;
 }
 
-/* ---------- 完成 / 已取消 提示 ----------
-   步骤条去掉后，提示就是这张卡里唯一的内容，不再需要上边距。 */
-.done-tip,
-.cancel-tip {
-  padding: 18rpx 22rpx;
+/* ---------- 状态头卡（对齐 H5 OrderTrackView 的 .st-hero） ----------
+   主题色由 --accent 驱动:标题下方的进度节点、当前光晕都跟着它走;
+   底色是同一色系的极浅渐层。紧凑横幅,只回答「我的单到哪一步了」。 */
+.hero {
+  --accent: var(--brand);
+  --accent-soft: var(--brand-soft);
+  background: linear-gradient(152deg, var(--accent-soft) 0%, #fff 72%);
+}
+
+.hero--warning {
+  --accent: #e8930c;
+  --accent-soft: var(--warning-soft);
+}
+
+.hero--success {
+  --accent: var(--success);
+  --accent-soft: var(--success-soft);
+}
+
+.hero--danger {
+  --accent: var(--danger);
+  --accent-soft: var(--danger-soft);
+}
+
+.hero--default {
+  --accent: var(--ink-3);
+  --accent-soft: #f4f4f4;
+}
+
+.hero-title {
+  color: var(--ink);
+  font-size: 34rpx;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 0.4rpx;
+}
+
+.hero-sub {
+  margin-top: 4rpx;
+  color: var(--ink-3);
+  font-size: 23rpx;
+  line-height: 1.4;
+}
+
+/* 结束态说明（已完成 / 已取消 / 已结账）：白底 + 一圈发丝线。
+   状态卡底色随主题变（橙/绿/红），说明块不能跟着染色，
+   否则绿卡上贴一块粉色会显得两个系统在打架 */
+.hero-tip {
+  margin-top: 20rpx;
+  padding: 16rpx 20rpx;
   border-radius: var(--r-md);
-  background: var(--brand-ghost);
+  background: #fff;
+  box-shadow: inset 0 0 0 2rpx rgb(26 26 26 / 6%);
   color: var(--ink-2);
   font-size: 24rpx;
   line-height: 1.6;
 }
 
-.cancel-tip {
+.hero-tip.cancel {
   background: var(--danger-soft);
+  box-shadow: none;
   color: var(--danger);
 }
 
@@ -566,12 +619,13 @@
   line-height: 1.6;
 }
 
-/* ---------- 出餐进度（对应 H5 OrderProgress.vue） ----------
-   三步只映射后厨的真实节点，不承诺时间；当前节点用品牌光晕标出。 */
+/* ---------- 出餐进度（对应 H5 OrderTrackView 的 .st-steps） ----------
+   只画在状态头卡里,配色走主题变量 --accent:琥珀=制作中、绿=上齐/完成。
+   三步只映射后厨的真实节点，不承诺时间；当前节点用主题光晕标出。 */
 .steps {
   display: flex;
   align-items: flex-start;
-  padding: 4rpx 0 20rpx;
+  padding: 18rpx 0 0;
 }
 
 .step {
@@ -595,7 +649,7 @@
 }
 
 .step-bar.on {
-  background: var(--brand);
+  background: var(--accent);
 }
 
 .step-dot {
@@ -609,11 +663,11 @@
 }
 
 .step.on .step-dot {
-  background: var(--brand);
+  background: var(--accent);
 }
 
 .step.now .step-dot {
-  box-shadow: 0 0 0 8rpx var(--brand-soft);
+  box-shadow: 0 0 0 8rpx var(--accent-soft);
 }
 
 .step-txt {
@@ -623,8 +677,13 @@
 }
 
 .step.on .step-txt {
-  color: var(--brand-deep);
+  color: var(--ink-2);
   font-weight: 600;
+}
+
+.step.now .step-txt {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 /* ---------- 菜品行 ---------- */
@@ -805,27 +864,54 @@
   margin-top: 32rpx;
 }
 
-/* ---------- 「出餐中订单」列表：已付款出餐中的单在这里点开看进度 ---------- */
+/* ---------- 「出餐中订单」列表：已付款出餐中的单在这里点开看进度 ----------
+   卡片化(对齐 H5 OrderPage.vue 的 .serving-list):每卡自带
+   取餐号+状态 / 菜品摘要 / 时间人数 / 实付金额,列表页就能认出「这是我的单」。 */
 .serving-pick {
   display: flex;
   flex: 1;
   flex-direction: column;
-  padding: 48rpx 40rpx calc(48rpx + env(safe-area-inset-bottom));
+  padding: 32rpx 24rpx calc(32rpx + env(safe-area-inset-bottom));
   overflow-y: auto;
 }
 
+.sp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 0 4rpx;
+}
+
 .sp-title {
-  margin-bottom: 24rpx;
   color: var(--ink);
   font-size: 32rpx;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: 0.4rpx;
+}
+
+/* 笔数小胶囊:一眼看出本桌还有几单在出餐 */
+.sp-badge {
+  flex-shrink: 0;
+  padding: 4rpx 16rpx;
+  border-radius: var(--r-pill);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.sp-hint {
+  margin: 12rpx 4rpx 24rpx;
+  color: var(--ink-3);
+  font-size: 23rpx;
+  line-height: 1.5;
 }
 
 .sp-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16rpx;
+  gap: 24rpx;
   padding: 26rpx 28rpx;
   margin-bottom: 20rpx;
   border-radius: var(--r-lg);
@@ -833,22 +919,69 @@
   box-shadow: var(--shadow-1);
 }
 
-.sp-label {
-  color: var(--ink);
-  font-size: 28rpx;
-  font-weight: 600;
+/* 按下时轻微下沉:整卡可点,给一点物理反馈 */
+.sp-item:active {
+  transform: scale(0.985);
 }
 
+.sp-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.sp-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.sp-no {
+  flex-shrink: 0;
+  color: var(--ink);
+  font-size: 30rpx;
+  font-weight: 800;
+  letter-spacing: 0.8rpx;
+}
+
+/* 菜品摘要:单行省略,菜名再长也不把右侧金额挤出去 */
+.sp-dishes {
+  margin-top: 12rpx;
+  color: var(--ink-2);
+  font-size: 25rpx;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-meta {
+  margin-top: 8rpx;
+  color: var(--ink-3);
+  font-size: 23rpx;
+  line-height: 1.4;
+}
+
+.sp-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14rpx;
+}
+
+/* 金额:已付款的实付合计,顾客核对账目用 */
+.sp-amt {
+  color: var(--brand-deep);
+  font-size: 28rpx;
+  font-weight: 700;
+  letter-spacing: 0.4rpx;
+}
+
+/* 入口:箭头暗示「点得进去」,不用整卡加边框去强调 */
 .sp-go {
   flex-shrink: 0;
-  color: var(--brand-deep);
-  font-size: 24rpx;
-}
-
-.sp-hint {
-  margin-bottom: 32rpx;
   color: var(--ink-3);
-  font-size: 24rpx;
+  font-size: 23rpx;
 }
 
 /* 「去点菜」压到列表底部：想继续点的人一眼能看到入口 */

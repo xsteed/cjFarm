@@ -130,6 +130,11 @@ export interface OrderSummary extends Extensible {
   needFinish?: boolean;
   /** 加菜批次数(明细 distinct batch_no):>1 表示本单加过菜。 */
   batchCount?: number;
+  /**
+   * 菜品明细:桌台接口的 servingOrders 会带上(订单页列表摘要「点了什么」用),
+   * 其余列表接口不填,用前按空数组兜底。
+   */
+  items?: OrderItem[];
 }
 
 export interface OrderDetail extends OrderSummary {

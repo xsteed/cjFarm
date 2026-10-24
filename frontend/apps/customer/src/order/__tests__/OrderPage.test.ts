@@ -951,7 +951,23 @@ describe('入座选人数（茶位费门店）', () => {
   it('订单 Tab 列出出餐中的订单，点一条可看进度（不再是空态）', async () => {
     getTableMock.mockResolvedValue({
       ...tableNoOrder,
-      servingOrders: [{ orderId: 9, orderNo: 'NO009', shortNo: '009', personCount: 5, orderStatus: 2, payStatus: 1 }]
+      servingOrders: [
+        {
+          orderId: 9,
+          orderNo: 'NO009',
+          shortNo: '009',
+          personCount: 5,
+          orderStatus: 2,
+          payStatus: 1,
+          totalAmount: 92,
+          createTime: '2026-10-25 12:03:00',
+          items: [
+            { itemId: 1, dishId: 101, dishName: '宫保鸡丁', quantity: 1, amount: 38 },
+            { itemId: 2, dishId: 102, dishName: '干煸四季豆', quantity: 2, amount: 44 },
+            { itemId: 3, dishId: 103, dishName: '米饭', quantity: 2, amount: 14 }
+          ]
+        }
+      ]
     });
     getOrderByNoMock.mockResolvedValue(
       makeOrder({ orderNo: 'NO009', shortNo: '009', orderStatus: 2, payStatus: 1 })
@@ -965,6 +981,15 @@ describe('入座选人数（茶位费门店）', () => {
     expect(wrapper.find('.serving-list').exists()).toBe(true);
     expect(wrapper.find('.order-empty').exists()).toBe(false);
     expect(wrapper.text()).toContain('本桌正在出餐');
+
+    // 卡片自带摘要:取餐号 + 状态 + 菜品 + 时间人数 + 金额,
+    // 顾客在列表页就能认出「这是我的单、钱付过了」,不必逐条点进去核对
+    const card = wrapper.find('.sl-item');
+    expect(card.find('.sl-no').text()).toBe('#009');
+    expect(card.find('.sl-tag').text()).toBe('制作中');
+    expect(card.find('.sl-dishes').text()).toBe('宫保鸡丁、干煸四季豆 等 3 道');
+    expect(card.find('.sl-meta').text()).toBe('12:03 下单 · 5 人 · 共 5 件');
+    expect(card.find('.sl-amt').text()).toBe('¥92.00');
 
     // 点一条：回拉详情后进入进度视图
     await wrapper.find('.sl-item').trigger('click');

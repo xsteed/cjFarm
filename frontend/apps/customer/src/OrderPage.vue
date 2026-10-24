@@ -113,13 +113,17 @@
         >
           <span class="serving-label">本桌还有 {{ servingOrders.length }} 笔订单正在出餐</span>
           <div class="serving-scroll">
-            <span
-              v-for="o in servingOrders"
-              :key="o.orderId"
-              class="serving-chip"
-            >
-              #{{ o.shortNo || o.orderNo }} · {{ ORDER_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}
-            </span>
+            <div class="serving-chips-inner">
+              <button
+                v-for="o in servingOrders"
+                :key="o.orderId"
+                class="serving-chip"
+                @click="openServing(o)"
+              >
+                <span>#{{ o.shortNo || o.orderNo }} · {{ ORDER_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}</span>
+                <span class="serving-chip-go">›</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -406,23 +410,63 @@
       />
 
       <!-- 本桌「已付款出餐中」的订单列表:currentOrder 只含未结账单,
-           出餐中的单在这里列出,点一条即可看进度(与菜单页顶部提示条同一数据源) -->
+           出餐中的单在这里列出,点一条即可看进度(与菜单页顶部提示条同一数据源)。
+           每张卡自带三件事:取餐号 + 出餐状态、点了什么(摘要)、多少钱 ——
+           顾客在列表页就能确认「这是我的单、钱付过了」,不必逐条点进去核对 -->
       <div
         v-else-if="view === 'order' && servingOrders.length"
         class="serving-list"
       >
-        <div class="sl-title">本桌正在出餐</div>
+        <div class="sl-head">
+          <div class="sl-title">本桌正在出餐</div>
+          <span class="sl-badge">{{ servingOrders.length }} 笔</span>
+        </div>
+        <p class="sl-hint">已付款的订单无需再次支付，点开可查看出餐进度</p>
+
         <button
           v-for="o in servingOrders"
           :key="o.orderId"
           class="sl-item"
           @click="openServing(o)"
         >
-          <span class="sl-no">#{{ o.shortNo || o.orderNo }}</span>
-          <span class="sl-status">{{ ORDER_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}</span>
-          <span class="sl-go">查看订单 ›</span>
+          <div class="sl-main">
+            <div class="sl-row">
+              <span class="sl-no">#{{ o.shortNo || o.orderNo }}</span>
+              <span
+                class="sl-tag"
+                :class="'sl-tag--' + (SERVING_STATUS_THEME[Number(o.orderStatus)] || 'primary')"
+              >
+                {{ SERVING_STATUS_TEXT[Number(o.orderStatus)] || '处理中' }}
+              </span>
+            </div>
+            <div class="sl-dishes">{{ servingDishes(o) }}</div>
+            <div
+              v-if="servingMeta(o)"
+              class="sl-meta"
+            >
+              {{ servingMeta(o) }}
+            </div>
+          </div>
+          <div class="sl-side">
+            <span class="sl-amt">¥{{ Number(o.totalAmount || 0).toFixed(2) }}</span>
+            <span class="sl-go">
+              查看进度
+              <svg
+                viewBox="0 0 24 24"
+                width="12"
+                height="12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            </span>
+          </div>
         </button>
-        <p class="sl-hint">出餐中的订单已付款，无需再次支付</p>
       </div>
 
       <!-- 还没下单:订单视图给空态而不是一片空白(导航常驻后进得来) -->
@@ -925,6 +969,34 @@ const ORDER_STATUS_TEXT: Record<number, string> = {
   4: '订单已完成',
   5: '订单已取消'
 };
+
+// ---- 「本桌正在出餐」列表 ----
+// 出餐中的单只可能停在 1/2/3;标签用短词 + 语义色,和订单详情页的状态卡同一套口径。
+const SERVING_STATUS_TEXT: Record<number, string> = { 1: '已下单', 2: '制作中', 3: '已上齐' };
+const SERVING_STATUS_THEME: Record<number, string> = { 1: 'primary', 2: 'warning', 3: 'success' };
+
+/** 菜品摘要:前两道菜名 + 「等 N 道」,让顾客一眼认出这是自己点的那单。 */
+function servingDishes(o: OrderSummary): string {
+  const items = o.items || [];
+  const names = items.map(i => String(i.dishName || '').trim()).filter(Boolean);
+  if (!names.length) return '菜品明细稍后显示';
+  const head = names.slice(0, 2).join('、');
+  return names.length > 2 ? `${head} 等 ${names.length} 道` : head;
+}
+
+/** 次行:下单时刻 · 人数 · 件数(缺什么就跳过什么,不留空分隔符)。 */
+function servingMeta(o: OrderSummary): string {
+  const t = String(o.createTime || '').replace('T', ' ');
+  const time = t.length >= 16 ? t.slice(11, 16) : '';
+  const qty = (o.items || []).reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+  return [
+    time ? `${time} 下单` : '',
+    o.personCount ? `${o.personCount} 人` : '',
+    qty > 0 ? `共 ${qty} 件` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
 
 const {
   cart,
@@ -2030,55 +2102,161 @@ onUnmounted(() => {
 }
 
 /* 订单 Tab 的「出餐中订单」列表:currentOrder 只含未结账单,
-   已付款出餐中的单在这里列出,点一条看进度 */
+   已付款出餐中的单在这里列出,点一条看进度。
+   每张卡一行摘要(取餐号 + 状态)、一行菜品、一行时间人数,右侧金额与入口 ——
+   先扫得出「这单是什么」,再决定点不点进去 */
 .serving-list {
   flex: 1;
-  padding: 24px 20px 80px;
+  padding: 16px 14px 86px;
   overflow-y: auto;
 }
 
+.sl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
 .sl-title {
-  margin-bottom: 14px;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
   color: var(--ink-1);
+}
+
+/* 笔数小胶囊:一眼看出本桌还有几单在出餐 */
+.sl-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.sl-hint {
+  margin: 6px 2px 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
 }
 
 .sl-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  padding: 14px 16px;
-  margin-bottom: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-card, 12px);
+  padding: 13px 14px;
+  margin-bottom: 10px;
+  border: none;
+  border-radius: var(--r-lg);
   background: #fff;
+  box-shadow: var(--shadow-1);
   text-align: left;
   cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* 按下时轻微下沉:整卡可点,给一点物理反馈 */
+.sl-item:active {
+  transform: scale(0.985);
+  box-shadow: var(--shadow-2);
+}
+
+.sl-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.sl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sl-no {
-  font-size: 14px;
-  font-weight: 700;
+  flex-shrink: 0;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
   color: var(--ink-1);
 }
 
-.sl-status {
-  flex: 1;
-  font-size: 12px;
+/* 状态标签:与订单详情页 .st-tag 同一套配色与尺寸 */
+.sl-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+.sl-tag--primary {
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+.sl-tag--warning {
+  background: var(--warning-soft);
+  color: #b7791f;
+}
+
+.sl-tag--success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+/* 菜品摘要:单行省略,菜名再长也不把右侧金额挤出去 */
+.sl-dishes {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-meta {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
   color: var(--ink-3);
 }
 
+.sl-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* 金额:已付款的实付合计,顾客核对账目用 */
+.sl-amt {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--brand-deep);
+  letter-spacing: 0.2px;
+}
+
+/* 入口:箭头暗示「点得进去」,不用整卡加边框去强调 */
 .sl-go {
-  font-size: 12px;
-  color: var(--brand-deep, #f0481f);
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-size: 11.5px;
+  color: var(--ink-3);
 }
 
-.sl-hint {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--ink-3);
+.sl-item:active .sl-go {
+  color: var(--brand-deep);
 }
 
 /* 订单空态:还没下单时进「订单」页看到的是它(底部导航常驻后进得来)。
@@ -2230,13 +2408,14 @@ onUnmounted(() => {
 }
 
 /* 本桌「已付款但出餐未完成」订单提示条:置顶于白色卡片内。
-   文字与订单标签同一行:标签区横向滚动,再多订单也不撑高菜单区 */
+   文字与订单标签同一行:标签区横向滚动,再多订单也不撑高菜单区。
+   样式与小程序端 pages/index 的出餐提示条对齐(rpx ≈ 0.5px 换算) */
 .serving-banner {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
-  padding: 10px 16px;
+  padding: 8px 12px 8px 16px;
   background: var(--brand-ghost);
   color: var(--ink-2);
   font-size: 12px;
@@ -2247,29 +2426,53 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* 标签横向滚动区:滚动条隐藏,边缘露一点暗示可滑 */
+/* 标签横向滚动区:滚动条隐藏;overflow 裁纵向溢出,靠内层的上下留白给阴影让位 */
 .serving-scroll {
   flex: 1;
   min-width: 0;
-  display: flex;
-  gap: 6px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  white-space: nowrap;
 }
 
 .serving-scroll::-webkit-scrollbar {
   display: none;
 }
 
+/* 内层包一层:上下留白防止胶囊阴影被滚动区裁掉,右侧留出滑到底的呼吸空间 */
+.serving-chips-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 0;
+  vertical-align: middle;
+}
+
 .serving-chip {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
-  padding: 1px 8px;
+  padding: 4px 9px;
+  border: 1px solid var(--td-brand-color-2, #ffe3d4);
   border-radius: var(--r-pill);
   background: #fff;
   color: var(--brand-deep);
+  font-family: inherit;
   font-size: 11px;
+  line-height: 1;
+  font-weight: 500;
   white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgb(240 72 31 / 12%);
+}
+
+/* 胶囊尾部的「可点进详情」箭头:与单号留隙、用品牌色弱化存在感 */
+.serving-chip-go {
+  margin-left: 3px;
+  color: var(--brand);
+  font-size: 12px;
+  line-height: 1;
 }
 
 /* 「不是本人的单」浏览模式提示条:文案 + 返回按钮两端对齐 */

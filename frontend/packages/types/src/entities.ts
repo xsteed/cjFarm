@@ -162,6 +162,11 @@ export interface OrderSummary extends Extensible {
   needFinish?: boolean;
   /** 加菜批次数(明细 distinct batch_no):>1 表示本单加过菜,列表据此打「加菜×N」角标。列表接口填充 */
   batchCount?: number;
+  /**
+   * 菜品明细:桌台接口的 servingOrders 会带上(顾客端列表摘要「点了什么」用),
+   * 管理端分页列表等接口不填,用前按空数组兜底。
+   */
+  items?: OrderItem[];
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -730,6 +735,8 @@ export interface DishPayload extends ApiPayload {
 /** 拖拽排序入参:把 dishId 移到同分类的 prevDishId 之后 / nextDishId 之前。 */
 export interface DishMovePayload extends ApiPayload {
   dishId?: number;
+  /** 落点所属分类;与菜品当前分类不同即为拖进别的分类(后端同步改归属) */
+  categoryId?: number;
   prevDishId?: number;
   nextDishId?: number;
 }

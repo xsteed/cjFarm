@@ -64,5 +64,21 @@ export function batchLabels<T extends BatchNoItem>(items: readonly T[] | null | 
   });
 }
 
-// durationText(用餐时长文案)只在管理端用,小程序没有对应场景,此前是从管理端
-// 整段拷过来的死代码,已删除。
+// ============================================================================
+// 用餐 / 等餐时长文案
+//
+// 订单页状态头的「已等 X 分钟」与管理端桌台列表的「已用餐 X」同一套口径:
+// 按分钟取整,跨小时说到小时,跨日说到天。入参只收分钟数,时间解析留给调用方。
+// ============================================================================
+
+/** 把分钟数说成人话:0 分钟、64 分钟、25 小时各说各的,不出现「90 分钟」。 */
+export function durationText(minutes?: number | null): string {
+  const m = Math.max(0, Number(minutes) || 0);
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  const restMin = m % 60;
+  if (h < 24) return restMin ? `${h} 小时 ${restMin} 分` : `${h} 小时`;
+  const days = Math.floor(h / 24);
+  const restHour = h % 24;
+  return restHour ? `${days} 天 ${restHour} 小时` : `${days} 天`;
+}

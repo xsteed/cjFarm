@@ -19,12 +19,18 @@
   </view>
 
   <!-- 本桌有「已付款出餐中」的订单（session.currentOrder 不含它们）：
-       先列出让顾客点一条看进度，而不是甩一句「没有找到进行中的订单」 -->
+       先列出让顾客点一条看进度，而不是甩一句「没有找到进行中的订单」。
+       每张卡自带三件事:取餐号 + 出餐状态、点了什么(摘要)、多少钱 ——
+       顾客在列表页就能确认「这是我的单、钱付过了」，不必逐条点进去核对 -->
   <view
     wx:elif="{{showServingList}}"
     class="serving-pick"
   >
-    <view class="sp-title">本桌正在出餐</view>
+    <view class="sp-head">
+      <view class="sp-title">本桌正在出餐</view>
+      <view class="sp-badge">{{servingRows.length}} 笔</view>
+    </view>
+    <view class="sp-hint">已付款的订单无需再次支付，点开可查看出餐进度</view>
     <view
       wx:for="{{servingRows}}"
       wx:key="key"
@@ -32,10 +38,22 @@
       data-no="{{item.orderNo}}"
       bindtap="onOpenServing"
     >
-      <text class="sp-label">{{item.label}}</text>
-      <text class="sp-go">查看订单 ›</text>
+      <view class="sp-main">
+        <view class="sp-row">
+          <text class="sp-no">#{{item.shortNo}}</text>
+          <text class="tag {{item.statusClass}}">{{item.statusText}}</text>
+        </view>
+        <view class="sp-dishes">{{item.dishes}}</view>
+        <view
+          wx:if="{{item.meta}}"
+          class="sp-meta"
+        >{{item.meta}}</view>
+      </view>
+      <view class="sp-side">
+        <text class="sp-amt">¥{{item.amountText}}</text>
+        <text class="sp-go">查看进度 ›</text>
+      </view>
     </view>
-    <view class="sp-hint">出餐中的订单已付款，无需再次支付</view>
     <view
       class="btn-ghost sp-menu"
       bindtap="onGoMenu"
@@ -119,18 +137,14 @@
       enhanced
       show-scrollbar="{{false}}"
     >
-      <!-- 菜品明细：顾客最关心「点了什么、多少钱」，放第一张。
-           订单状态与刷新收进卡头，桌台/单号/人数/时间统一挪到最后的「订单信息」卡。 -->
-      <view class="card sec">
-        <view class="sec-head">
-          <view class="sec-title">菜品明细</view>
-          <view class="sec-head-right">
-            <view class="tag {{statusClass}}">{{statusText}}</view>
-            <view class="sec-refresh" bindtap="onRefresh">刷新</view>
-          </view>
-        </view>
+      <!-- 状态头卡（对齐 H5 OrderTrackView 的 .st-hero）：状态大字 + 已等时长 +
+           出餐三步 + 结束态说明。紧凑横幅，只回答「我的单到哪一步了」，
+           菜品卡只负责「点了什么、多少钱」，两块信息各归各位。 -->
+      <view class="{{heroClass}}">
+        <view class="hero-title">{{heroTitle}}</view>
+        <view class="hero-sub">{{heroSub}}</view>
 
-        <!-- 出餐进度：等餐的顾客最想知道「到哪一步了」。取消单没有进度可言，整块不渲染 -->
+        <!-- 出餐进度：等餐的顾客最想知道「到哪一步了」。取消单/先付未付款没有进度可言，整块不渲染 -->
         <view
           wx:if="{{showProgress}}"
           class="steps"
@@ -149,6 +163,26 @@
             <view class="step-txt">{{item.label}}</view>
           </view>
         </view>
+
+        <!-- 结束态说明：已完成 / 已取消 / 已结账（与小程序旧文案、H5 逐字一致）。
+             修饰类写成单词 'cancel'：审计会拦截 {{}} 里带连字符的字符串字面量 -->
+        <view
+          wx:if="{{heroTip}}"
+          class="hero-tip {{canceled ? 'cancel' : ''}}"
+        >{{heroTip}}</view>
+      </view>
+
+      <!-- 菜品明细：顾客最关心「点了什么、多少钱」。
+           卡头右侧给「共 N 件」，桌台/单号/人数/时间统一挪到最后的「订单信息」卡。 -->
+      <view class="card sec">
+        <view class="sec-head">
+          <view class="sec-title">菜品明细</view>
+          <view class="sec-head-right">
+            <view class="sec-count">共 {{totalQty}} 件</view>
+            <view class="sec-refresh" bindtap="onRefresh">刷新</view>
+          </view>
+        </view>
+
         <view
           wx:for="{{rows}}"
           wx:key="key"
@@ -211,20 +245,7 @@
         </view>
       </view>
 
-      <!-- 状态提示：只有「已取消 / 已完成 / 已结账」才出这张卡。
-           进行中的单没有额外提示可说（进度在上面的菜品卡里），整卡不渲染 -->
-      <view
-        wx:if="{{canceled || done || settled}}"
-        class="card sec"
-      >
-        <block wx:if="{{canceled}}">
-          <view class="cancel-tip">{{cancelTip}}</view>
-        </block>
-        <block wx:else>
-          <view wx:if="{{done}}" class="done-tip">🎉 这顿吃完啦，欢迎下次光临</view>
-          <view wx:elif="{{settled}}" class="done-tip">已结账，后厨正在做啦～出餐进度会自动更新</view>
-        </block>
-      </view>
+      <!-- 结束态说明已并入最上面的状态头卡（hero-tip），这里不再重复出一张卡 -->
 
       <!-- 订单信息：桌台 / 单号 / 人数 / 时间。顾客核对单据时才看，不再挤在首屏 -->
       <view class="card sec">

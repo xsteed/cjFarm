@@ -26,23 +26,88 @@ import { toast } from '../../utils/toast';
 import { money } from '../../shared/money';
 import { ORDER_STATUS } from '../../shared/dicts';
 import { ORDER_STATUS_CODE, isActiveStatus } from '../../shared/orderStatus';
-import { batchLabels, payStatusText, payStatusTheme } from '../../shared/orderDisplay';
-import type { CustomerReviewStatus, OrderDetail, TableInfo } from '../../types';
+import { batchLabels, durationText, payStatusText, payStatusTheme } from '../../shared/orderDisplay';
+import type { CustomerReviewStatus, OrderDetail, OrderSummary, TableInfo } from '../../types';
 
-/** 「出餐中订单」列表行：WXML 不支持函数调用，标签文案在这里算好。 */
+/** 「出餐中订单」列表行：WXML 不支持函数调用，卡片内容在这里算好。 */
 interface ServingRow {
   key: string;
   orderNo: string;
+  /** 旧读法保留:「#短号 · 状态」一行文案 */
   label: string;
+  shortNo: string;
+  statusText: string;
+  /** 完整标签类（tag-warning 等）：WXML 审计不识别 class 里的连字符拼接，整串在 TS 算好 */
+  statusClass: string;
+  /** 菜品摘要:前两道菜名 + 「等 N 道」 */
+  dishes: string;
+  /** 次行:下单时刻 · 人数 · 件数(缺什么跳什么) */
+  meta: string;
+  amountText: string;
 }
 
-/** 桌台详情里的「已付款但出餐未完成」订单 → 列表行（#短号 · 状态）。 */
+/** 菜品摘要:让顾客在列表页就能认出「这是自己点的那单」。 */
+function servingDishes(o: OrderSummary): string {
+  const names = (o.items || []).map(it => String(it.dishName || '').trim()).filter(Boolean);
+  if (!names.length) return '菜品明细稍后显示';
+  const head = names.slice(0, 2).join('、');
+  return names.length > 2 ? `${head} 等 ${names.length} 道` : head;
+}
+
+/** 次行元信息:缺字段的片段直接跳过,不留空分隔符。 */
+function servingMeta(o: OrderSummary): string {
+  const t = String(o.createTime || '').replace('T', ' ');
+  const time = t.length >= 16 ? t.slice(11, 16) : '';
+  const qty = (o.items || []).reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+  return [
+    time ? `${time} 下单` : '',
+    o.personCount ? `${o.personCount} 人` : '',
+    qty > 0 ? `共 ${qty} 件` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** 桌台详情里的「已付款但出餐未完成」订单 → 列表卡片。 */
 function servingRowsOf(table: TableInfo | null): ServingRow[] {
-  return (table?.servingOrders || []).map((o, i) => ({
-    key: String(o.orderNo || `s${i}`),
-    orderNo: String(o.orderNo || ''),
-    label: `#${String(o.shortNo || o.orderNo || '')} · ${ORDER_STATUS[Number(o.orderStatus)]?.label || '处理中'}`
-  }));
+  return (table?.servingOrders || []).map((o, i) => {
+    const st = Number(o.orderStatus) || 0;
+    const dict = ORDER_STATUS[st];
+    const shortNo = String(o.shortNo || o.orderNo || '');
+    return {
+      key: String(o.orderNo || `s${i}`),
+      orderNo: String(o.orderNo || ''),
+      label: `#${shortNo} · ${dict?.label || '处理中'}`,
+      shortNo,
+      statusText: dict?.label || '处理中',
+      statusClass: `tag-${dict?.theme || 'primary'}`,
+      dishes: servingDishes(o),
+      meta: servingMeta(o),
+      amountText: Number(o.totalAmount || 0).toFixed(2)
+    };
+  });
+}
+
+/**
+ * 状态头副行:等餐说「已等多久」,先付未付说「付款后开工」,取消说「不会再出餐」。
+ * 时长只来自订单自身的 createTime,不承诺出餐时间、不做倒计时;
+ * 轮询每 3s 重渲染一次,天然按拍刷新,无需额外计时器。
+ */
+function waitSubText(order: OrderSummary, canceled: boolean, payFirstUnpaid: boolean): string {
+  if (canceled) return '本单不会再出餐';
+  if (payFirstUnpaid) return '付款后后厨即刻开工';
+  const raw = String(order.createTime || '')
+    .replace('T', ' ')
+    .slice(0, 19)
+    .replace(/-/g, '/');
+  const start = raw ? new Date(raw).getTime() : NaN;
+  if (!Number.isFinite(start)) return '订单已提交';
+  const mins = Math.floor((Date.now() - start) / 60000);
+  // 时钟漂移/跨日遗留单不做无意义的「已等 3000 分钟」
+  if (mins < 0 || mins > 60 * 24) return '订单已提交';
+  if (mins < 1) return '刚刚下单';
+  const done = Number(order.orderStatus) === 4;
+  return `${done ? '用餐' : '已等'} ${durationText(mins)}`;
 }
 
 interface OrderRow {
@@ -73,6 +138,13 @@ Page({
   data: {
     loading: true,
     error: '',
+    // 状态头卡（对齐 H5 OrderTrackView 的 .st-hero）：大字 + 副行 + 主题 + 结束态说明
+    heroTitle: '',
+    heroSub: '',
+    heroClass: '',
+    heroTip: '',
+    /** 整单件数：菜品卡头右侧「共 N 件」 */
+    totalQty: 0,
     // 「我的」tab 是否显示：跟随后端开关（进入本页时配置通常已由菜单页拉到）
     showProfile: true,
     /** 这个错误值不值得原地重试：网络类 true，「没有找到订单」这类再点也没用，false */
@@ -386,6 +458,36 @@ Page({
     // 先付模式下后厨还没收到这颗单，付款才是关键动作，给按钮加个火苗催一下；
     // 后付模式只是结账，不加这个紧迫感（与 H5 OrderTrackView 的 st-paybtn 文案同口径）
     const payBtnText = payFirst && active && payStatus === 0 ? '🔥 去支付' : '去支付';
+    const payFirstUnpaid = payFirst && active && payStatus === 0;
+
+    // ---- 状态头（对齐 H5 OrderTrackView 的 .st-hero）----
+    // 大字只说「此刻该知道的一件事」:等餐 → 走到哪一步;先付未付 → 去付款;结束态 → 结果。
+    // 付款与否不改变后厨进度(出餐是商家维度),所以已结账仍按 order_status 说话。
+    const heroTitle = canceled
+      ? '订单已取消'
+      : done
+        ? '本单已完成'
+        : payFirstUnpaid
+          ? '等待付款'
+          : status === 2
+            ? '后厨正在制作'
+            : status === 3
+              ? '餐品已上齐'
+              : '已下单，等待接单';
+    const heroTheme = canceled
+      ? 'danger'
+      : done
+        ? 'success'
+        : payFirstUnpaid
+          ? 'warning'
+          : ORDER_STATUS[status]?.theme || 'primary';
+    // 完整卡类整串在 TS 算好：WXML 审计不识别 class 里的连字符拼接（hero--{{theme}}）
+    const heroClass = `card sec hero hero--${heroTheme}`;
+    const heroSub = waitSubText(order, canceled, payFirstUnpaid);
+    // 结束态才出说明块:进行中的单没有额外话可说,进度条已经回答完了
+    const heroTip = canceled ? cancelTip : done ? '🎉 这顿吃完啦，欢迎下次光临' : settled ? '已结账，后厨正在做啦～出餐进度会自动更新；想加的菜随时可以再点' : '';
+    // 先付未付时后厨压根没收到单,不画进度(进度条会让人以为已经在做)
+    const showProgress = !canceled && !payFirstUnpaid;
 
     const table = sessionState().table;
     // 人数回写会话：同桌其他设备改人数后，菜单页/购物车页的茶位费估算要跟着变 ——
@@ -398,7 +500,13 @@ Page({
     const personCount = setPersonCount(Number(order.personCount) || 1);
     this.setData({
       steps,
-      showProgress: !canceled,
+      showProgress,
+      heroTitle,
+      heroSub,
+      heroClass,
+      heroTip,
+      // 整单件数:菜品卡头展示,与状态卡的已等时长互补
+      totalQty: (order.items || []).reduce((s, it) => s + (Number(it.quantity) || 0), 0),
       paidInfo,
       orderNo: String(order.orderNo || ''),
       shortNo: String(order.shortNo || order.orderNo || ''),
