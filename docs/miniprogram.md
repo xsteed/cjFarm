@@ -1,7 +1,8 @@
 # 微信小程序顾客端
 
-原生小程序（TS + WXML + WXSS）+ esbuild 构建，独立工程目录 `frontend/apps/miniprogram/`，
-**复用** Web 端的接口层与类型契约，**不复用** UI（TDesign Vue 组件在小程序不可用）。
+原生小程序（TS + WXML + WXSS）+ esbuild 构建，独立工程目录 `frontend/apps/miniprogram/`。
+类型、接口层与工具**不引用**工作区包（自包含，语义与 Web 端对齐，详见第五节），
+**不复用** UI（TDesign Vue 组件在小程序不可用）。
 
 - 状态：**第一版可用**（点餐主链路已实现），但**不能直接上线** —— 见「三、上线硬前置」。
 - 设计原则：后端接口零改动，全部走现成的公开接口 `/api/customer/*`。

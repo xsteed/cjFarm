@@ -42,8 +42,8 @@ dining-system/
 │   │   ├── customer/       # 顾客点餐端（H5）：OrderPage + order/* + 打印票据页
 │   │   │   └── src/routes.ts             # /order/:tableId、/printTicket（公开）
 │   │   └── miniprogram/    # 微信小程序顾客端（独立工程：原生小程序 + esbuild，见 docs/miniprogram.md）
-│   │       └── src/        #   pages/ components/ api/ store/；复用 packages，不复用 UI
-│   └── packages/           # 跨端可复用层（不依赖 TDesign，H5 与小程序共用）
+│   │       └── src/        #   pages/ components/ api/ store/；自包含不引用工作区包（与 H5 平行实现）
+│   └── packages/           # 跨端可复用层（不依赖 TDesign，管理端与顾客 H5 共用；小程序自包含不引用）
 │       ├── types/          #   后端接口契约（实体 + 分页/响应包装类型）
 │       ├── shared/         #   存储键/安全存储/金额/字典/状态码 + UI 通知适配器
 │       ├── api/            #   全部接口封装 + axios 拦截器（含登录态注入）
@@ -168,8 +168,9 @@ npm run build     # 产物输出到 frontend/dist/static（assetsDir 已对齐�
 
 ### 4. 微信小程序顾客端（独立工程）
 
-代码在 `frontend/apps/miniprogram/`，用 esbuild 把 TS 打成小程序产物，**复用** `packages/*`
-（接口层 `@dining/api` 一行未改，靠一个 axios 的 `wx.request` 适配器接上），**不复用** UI。
+代码在 `frontend/apps/miniprogram/`，用 esbuild 把 TS 打成小程序产物。**不引用**工作区包
+（`@dining/*`）：类型、接口层与工具全部自包含，语义与 H5 平行实现对齐（复用边界与
+取舍见 `docs/miniprogram.md` 第五节），**不复用** UI。
 
 ```bash
 cd frontend

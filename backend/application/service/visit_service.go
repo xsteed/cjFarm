@@ -684,7 +684,10 @@ var visitChannelLabels = map[string]string{
 //   - 「今日/昨日」来自台账;查询前 ensureRollup 会把当天重算一遍
 //     (绝对重算幂等),因此台账永远最新。
 func VisitStatsOf(startStr, endStr, daysStr string) VisitStats {
-	start, end := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays)
+	// 访客统计固定按自然日:落库的 visit_date 就是写入时刻的自然日期(now[:10]),
+	// 若按营业日 cutoff 折算区间,会与台账里的日期键对不上(凌晨的访客记在当天,
+	// 却查的是前一天的区间)。
+	start, end := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays, 0)
 	startDay, endDay := start.Format("2006-01-02"), end.Format("2006-01-02")
 	// 查询前保证台账连续(当天 + 停机缺口)。失败不阻断:退回读旧台账。
 	ensureRollup()

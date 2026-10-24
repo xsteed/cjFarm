@@ -386,6 +386,14 @@ export interface ReportSummary extends Extensible {
   yesterdayGuestCount?: number;
   lastMonthSamePeriodAmount?: number;
   lastMonthSamePeriodOrderCount?: number;
+  /**
+   * 本月与「上月同期」等长区间的营业额（环比分子）。
+   *
+   * 月末天数不对称时（如 3/31 对上 28 天的 2 月），拿 monthAmount 比
+   * lastMonthSamePeriodAmount 会恒为负增长；环比请用本字段。
+   */
+  monthSameSpanAmount?: number;
+  monthSameSpanOrderCount?: number;
   todayFreeAmount?: number;
   todayGiftAmount?: number;
   /** 今日营业额中用储值余额核销的部分（以前收过的钱，当天没有现金流入）。 */

@@ -1117,12 +1117,30 @@ func withAssociatedBundleIdentifiers(tpl, bundleID string) string {
 	return tpl[:at] + block + tpl[at:]
 }
 
-// renderSystemdUnit 替换 ExecStart 行。其余行(含 EnvironmentFile 的可选读取)保持原样。
+// renderSystemdUnit 替换与「安装目录」相关的三行:ExecStart / WorkingDirectory / EnvironmentFile。
+//
+// 模板里的这三行是给默认目录 /opt/dining-print-agent 写的。此前只替换 ExecStart,
+// 从任意目录安装时 EnvironmentFile 仍指向 /opt/... 且带 '-' 前缀(文件不存在静默
+// 继续)→ 服务起来读不到 SERVER/TOKEN,报「缺少 --server」后 Restart=always 无限
+// 重启,而日志里看不出是路径问题。WorkingDirectory 同理:它决定相对路径的状态文件
+// 落在哪(ProtectSystem=full 下写不进去会让去重静默失效)。
 func renderSystemdUnit(tpl, exe string) string {
+	dir := dataDirFor(exe)
+	envFile := filepath.Join(dir, "agent.env")
 	lines := strings.Split(tpl, "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(line, "ExecStart=") {
+		switch {
+		case strings.HasPrefix(line, "ExecStart="):
 			lines[i] = "ExecStart=" + exe
+		case strings.HasPrefix(line, "WorkingDirectory="):
+			lines[i] = "WorkingDirectory=" + dir
+		case strings.HasPrefix(line, "EnvironmentFile="):
+			// 保留原有的可选前缀('-')语义:agent.env 不存在时不报错。
+			prefix := "EnvironmentFile="
+			if strings.HasPrefix(line, "EnvironmentFile=-") {
+				prefix = "EnvironmentFile=-"
+			}
+			lines[i] = prefix + envFile
 		}
 	}
 	return strings.Join(lines, "\n")

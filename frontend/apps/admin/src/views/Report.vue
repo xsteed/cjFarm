@@ -215,7 +215,12 @@ const deltas = computed<Deltas>(() => ({
   todayOrder: pct(summary.value.todayOrderCount, summary.value.yesterdayOrderCount),
   todayGuest: pct(summary.value.todayGuestCount, summary.value.yesterdayGuestCount),
   // 本月至今对比「上月同期」，而不是上月整月 —— 后者在月中必然显示负增长，没有参考价值
-  monthAmount: pct(summary.value.monthAmount, summary.value.lastMonthSamePeriodAmount)
+  // 环比分子用 monthSameSpanAmount(与上月同期等长的一段):月末 31 天对上月
+  // 28 天时,用 monthAmount 会恒显示负增长。旧后端不返回该字段时回退 monthAmount。
+  monthAmount: pct(
+    summary.value.monthSameSpanAmount ?? summary.value.monthAmount,
+    summary.value.lastMonthSamePeriodAmount
+  )
 }));
 
 const turnover = computed<string>(() => {

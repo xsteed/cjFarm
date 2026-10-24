@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -157,6 +158,27 @@ func main() {
 	}
 	configurePrintChannel(cfg)
 	logf("打印通道: %s%s", cfg.printVia, printChannelNote(cfg))
+
+	// 单实例互斥:同一数据目录只允许一个常驻实例。
+	//
+	// 两个实例同时跑不会立刻出问题(后端取单有 60 秒租约),但一旦某个任务打印耗时
+	// 超过租约,A 还没回执的任务会被 B 重新取走 —— 同一张小票打两遍;两个实例的
+	// print-agent.state 也可能互不可见,本地去重一并失效。
+	//
+	// 竞争失败按「正常结束」退出(退出码 0):systemd Restart=always 看到成功退出
+	// 不会无限重启,避免「重复启动 → 重启风暴」二次事故。
+	lockPath := filepath.Join(dataDir(), "print-agent.lock")
+	lockFile, locked, lockErr := acquireInstanceLock(lockPath)
+	switch {
+	case lockErr != nil:
+		// 锁文件都建不出来(目录只读等)不该阻断打印,退回「由运维保证不重复启动」。
+		logf("[警告] 无法创建单实例锁(%v),继续运行;请勿重复启动本程序", lockErr)
+	case !locked:
+		logf("已有另一个打印代理实例在运行(锁文件 %s),本进程退出", lockPath)
+		return
+	default:
+		defer func() { _ = lockFile.Close() }()
+	}
 
 	client := newHTTPClient(cfg.insecure)
 	base := strings.TrimSuffix(cfg.server, "/")

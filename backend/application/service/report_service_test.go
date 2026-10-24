@@ -42,39 +42,58 @@ func reportSvcUpdateOrder(t *testing.T, id int, sets ...string) {
 	}
 }
 
+// TestReportSvcBizDayBoundaries 钉住营业日口径:cutoff=4 时凌晨 2 点属于前一营业日,
+// 报表区间必须以「04:00」为边界;cutoff=0 时退化为自然日,与历史口径一致。
+func TestReportSvcBizDayBoundaries(t *testing.T) {
+	loc := time.Local
+	early := time.Date(2026, 10, 14, 2, 0, 0, 0, loc) // 凌晨 2 点
+
+	if got, want := currentBizDayStart(early, 4), time.Date(2026, 10, 13, 4, 0, 0, 0, loc); !got.Equal(want) {
+		t.Fatalf("cutoff=4 时 02:00 应归前一营业日, got %v want %v", got, want)
+	}
+	if got, want := currentBizDayStart(early, 0), time.Date(2026, 10, 14, 0, 0, 0, 0, loc); !got.Equal(want) {
+		t.Fatalf("cutoff=0 应退化为自然日零点, got %v want %v", got, want)
+	}
+	// 自定义区间同样按营业日起点解释。
+	s, e := resolveRange("2026-10-13", "2026-10-14", "", 7, 366, 4)
+	if !s.Equal(time.Date(2026, 10, 13, 4, 0, 0, 0, loc)) || !e.Equal(time.Date(2026, 10, 14, 4, 0, 0, 0, loc)) {
+		t.Fatalf("自定义区间边界应为 04:00, got [%v, %v]", s, e)
+	}
+}
+
 func TestReportSvcResolveRange(t *testing.T) {
 	today := dayStart(time.Now())
 
 	t.Run("默认近N天", func(t *testing.T) {
-		start, end := resolveRange("", "", "", 7, 366)
+		start, end := resolveRange("", "", "", 7, 366, 0)
 		if !end.Equal(today) || !start.Equal(today.AddDate(0, 0, -6)) {
 			t.Fatalf("默认区间应为 [today-6, today], got [%v, %v]", start, end)
 		}
 	})
 
 	t.Run("days参数", func(t *testing.T) {
-		start, end := resolveRange("", "", "3", 7, 366)
+		start, end := resolveRange("", "", "3", 7, 366, 0)
 		if !end.Equal(today) || !start.Equal(today.AddDate(0, 0, -2)) {
 			t.Fatalf("days=3 应为 [today-2, today], got [%v, %v]", start, end)
 		}
 	})
 
 	t.Run("自定义区间优先", func(t *testing.T) {
-		start, end := resolveRange("2024-01-01", "2024-01-05", "3", 7, 366)
+		start, end := resolveRange("2024-01-01", "2024-01-05", "3", 7, 366, 0)
 		if start.Format(dayLayout) != "2024-01-01" || end.Format(dayLayout) != "2024-01-05" {
 			t.Fatalf("自定义区间应优先, got [%v, %v]", start, end)
 		}
 	})
 
 	t.Run("起止颠倒自动交换", func(t *testing.T) {
-		start, end := resolveRange("2024-01-10", "2024-01-01", "", 7, 366)
+		start, end := resolveRange("2024-01-10", "2024-01-01", "", 7, 366, 0)
 		if start.Format(dayLayout) != "2024-01-01" || end.Format(dayLayout) != "2024-01-10" {
 			t.Fatalf("起止颠倒应交换, got [%v, %v]", start, end)
 		}
 	})
 
 	t.Run("超出最大天数截断", func(t *testing.T) {
-		start, end := resolveRange("2022-01-01", "2024-01-01", "", 7, 366)
+		start, end := resolveRange("2022-01-01", "2024-01-01", "", 7, 366, 0)
 		if end.Format(dayLayout) != "2024-01-01" {
 			t.Fatalf("结束日应保留, got %v", end)
 		}
@@ -84,7 +103,7 @@ func TestReportSvcResolveRange(t *testing.T) {
 	})
 
 	t.Run("非法日期回退默认", func(t *testing.T) {
-		start, end := resolveRange("bad", "bad", "abc", 7, 366)
+		start, end := resolveRange("bad", "bad", "abc", 7, 366, 0)
 		if !end.Equal(today) || !start.Equal(today.AddDate(0, 0, -6)) {
 			t.Fatalf("非法日期应回退默认, got [%v, %v]", start, end)
 		}

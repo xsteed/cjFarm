@@ -288,6 +288,14 @@ Page({
     });
     if (!confirmed) return;
 
+    await this.doPayMixed(orderNo, useWallet, total, false);
+  },
+
+  /**
+   * 执行一次混合支付。retried 用于防止「取消并重试」无限递归：
+   * 重试后若仍被在途守卫拦下，只报错、不再弹取消确认。
+   */
+  async doPayMixed(orderNo: string, useWallet: number, total: number, retried: boolean): Promise<void> {
     this.querying = true;
     this.setData({ checking: true });
     try {
@@ -313,7 +321,33 @@ Page({
     } catch (e) {
       this.querying = false;
       this.setData({ checking: false });
-      const msg = String((e as { errMsg?: string } | null)?.errMsg || '');
+      const msg = String(
+        (e as { errMsg?: string } | null)?.errMsg || (e as Error)?.message || ''
+      );
+      // 后端「在途支付」守卫：上一笔（如中途退出收银台）还扣着余额没释放。
+      // 此时直接重发会被拒，顾客只能干等 15 分钟超时巡检 —— 引导他取消上一笔后立即重试。
+      if (!retried && /已发起过混合支付/.test(msg)) {
+        const again = await new Promise<boolean>(resolve => {
+          wx.showModal({
+            title: '上一笔支付未完成',
+            content: '检测到上一笔支付还没有结果。是否取消上一笔（余额立即退回）并重新发起？',
+            confirmText: '取消并重试',
+            success: r => resolve(!!r.confirm),
+            fail: () => resolve(false)
+          });
+        });
+        if (again) {
+          try {
+            await cancelMixedByWallet(orderNo);
+            await this.doPayMixed(orderNo, useWallet, total, true);
+            return;
+          } catch {
+            toast.error('取消上一笔支付失败，请稍后再试');
+          }
+        }
+        await this.refreshWallet(total);
+        return;
+      }
       if (/cancel/i.test(msg)) {
         try {
           await cancelMixedByWallet(orderNo);

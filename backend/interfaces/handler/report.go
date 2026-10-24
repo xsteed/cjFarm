@@ -43,6 +43,10 @@ func ReportSummary(c *gin.Context) {
 		"yesterdayGuestCount":           s.YesterdayGuestCount,
 		"lastMonthSamePeriodAmount":     s.LastMonthSamePeriodAmount,
 		"lastMonthSamePeriodOrderCount": s.LastMonthSamePeriodOrderCount,
+		// 本月与上月同期**等长**的一段:环比(涨跌幅)必须用它做分子。
+		// 月末 31 天对上月 28 天时,用 monthAmount 会恒显示负增长。
+		"monthSameSpanAmount":     s.MonthSameSpanAmount,
+		"monthSameSpanOrderCount": s.MonthSameSpanOrderCount,
 		// 营业额拆解:储值核销部分 + 实际到账(= 营业额 - 储值核销)。
 		// service 已算好这两项,此前漏在这里下发,导致前端 KPI 的
 		// 「其中储值核销 / 实际到账」永远不渲染(合规展示缺失)。

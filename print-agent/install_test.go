@@ -71,6 +71,17 @@ func TestRenderSystemdUnit(t *testing.T) {
 	if strings.Contains(got, "ExecStart=/opt/dining-print-agent/print-agent") {
 		t.Fatalf("渲染后的 unit 不应保留旧 ExecStart:\n%s", got)
 	}
+	// EnvironmentFile / WorkingDirectory 也必须跟着安装目录走:只换 ExecStart 会让
+	// 服务读不到 agent.env(报「缺少 --server」无限重启),或把状态文件写到只读目录。
+	if strings.Contains(got, "EnvironmentFile=-/opt/dining-print-agent/agent.env") {
+		t.Fatalf("渲染后的 unit 不应保留旧 EnvironmentFile:\n%s", got)
+	}
+	if !strings.Contains(got, "EnvironmentFile=-"+dataDirFor(exe)+"/agent.env") {
+		t.Fatalf("EnvironmentFile 应指向安装目录下的 agent.env:\n%s", got)
+	}
+	if !strings.Contains(got, "WorkingDirectory="+dataDirFor(exe)) {
+		t.Fatalf("WorkingDirectory 应指向安装目录:\n%s", got)
+	}
 }
 
 func TestRenderWindowsTask(t *testing.T) {

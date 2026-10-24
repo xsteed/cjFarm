@@ -143,3 +143,50 @@ func TestHourlyStatsMoneyFlow(t *testing.T) {
 		t.Fatalf("10 点订单数/客流期望 2/5, got %d/%d", byHour["10"].Count, byHour["10"].Guests)
 	}
 }
+
+// TestDailyTrendStatsBizDateCutoff 日分桶按营业日 cutoff 折算:
+// cutoff=4 时,10-14 02:00 的收款属于 10-13 这一场营业,必须与 10-13 10:00 落进同一个桶,
+// 而 10-14 10:00 的收款属于 10-14。cutoff=0 时则按自然日各归各的。
+func TestDailyTrendStatsBizDateCutoff(t *testing.T) {
+	store.Init(filepath.Join(t.TempDir(), "report-cutoff.db"))
+	defer func() { _ = store.DB.Close() }()
+
+	mustExec := func(q string, args ...interface{}) {
+		t.Helper()
+		if _, err := store.DB.Exec(q, args...); err != nil {
+			t.Fatalf("执行失败: %v\n%s", err, q)
+		}
+	}
+	insertPaid := func(no, payTime string, cents int64) {
+		mustExec(`INSERT INTO tb_order(order_no, table_id, table_no, table_name, order_status, total_amount,
+			pay_status, pay_time, settle_type, paid_amount, create_time, update_time)
+			VALUES(?,1,'T1','桌1',4,?,1,?,'normal',?,?,?)`,
+			no, cents, payTime, cents, payTime, payTime)
+	}
+	insertPaid("BD1", "2026-10-14 02:00:00", 10000) // 凌晨:旧营业日
+	insertPaid("BD2", "2026-10-14 10:00:00", 20000) // 白天:新营业日
+
+	// cutoff=4:区间 [10-13 04:00, 10-15 04:00)
+	stats, err := DailyTrendStats("2026-10-13 04:00:00", "2026-10-15 04:00:00", 4)
+	if err != nil {
+		t.Fatalf("统计失败: %v", err)
+	}
+	if got := stats["2026-10-13"].AmtCents; got != 10000 {
+		t.Fatalf("凌晨 2 点的收款应归 10-13, got %d", got)
+	}
+	if got := stats["2026-10-14"].AmtCents; got != 20000 {
+		t.Fatalf("10 点的收款应归 10-14, got %d", got)
+	}
+
+	// cutoff=0:两笔都按自然日落在 10-14
+	natural, err := DailyTrendStats("2026-10-14 00:00:00", "2026-10-15 00:00:00", 0)
+	if err != nil {
+		t.Fatalf("统计失败: %v", err)
+	}
+	if got := natural["2026-10-14"].AmtCents; got != 30000 {
+		t.Fatalf("自然日口径两笔都应归 10-14, got %d", got)
+	}
+	if _, ok := natural["2026-10-13"]; ok {
+		t.Fatal("自然日口径不应出现 10-13 桶")
+	}
+}

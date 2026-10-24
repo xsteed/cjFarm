@@ -76,14 +76,17 @@ func parseDay(s string) (time.Time, bool) {
 // 作为左闭右开区间边界,end 再加一天即为区间右端。
 //
 // 非法值一律回退默认,越界则夹到 maxDays,保证任何 query 都构造不出「全表扫描」。
-func resolveRange(startStr, endStr, daysStr string, defaultDays, maxDays int) (start, end time.Time) {
+//
+// cutoffHour 由调用方显式传入(而不是函数内读配置):本函数是纯计算,
+// 不该为了一个边界折算去碰数据库 —— 否则纯函数单测必须先建库。
+func resolveRange(startStr, endStr, daysStr string, defaultDays, maxDays, cutoffHour int) (start, end time.Time) {
 	if defaultDays < 1 {
 		defaultDays = 1
 	}
 	if maxDays < 1 {
 		maxDays = 1
 	}
-	cutoff := BizDayCutoffHour()
+	cutoff := cutoffHour
 	today := currentBizDayStart(time.Now(), cutoff)
 	start, end, custom := today.AddDate(0, 0, -(defaultDays-1)), today, false
 	startOK, endOK := false, false
@@ -159,8 +162,8 @@ type Summary struct {
 	// 天数(3/1~3/28),与 LastMonthSamePeriodAmount 构成可比的一对。
 	MonthSameSpanAmount     float64
 	MonthSameSpanOrderCount int
-	TodayFreeAmount               float64
-	TodayGiftAmount               float64
+	TodayFreeAmount         float64
+	TodayGiftAmount         float64
 	// TodayWalletAmount 今日营业额中用储值余额核销的部分。
 	//
 	// 储值是「先收钱、后消费」:充值当天不计收入(那是负债),消费当天才确认收入,
@@ -183,19 +186,25 @@ type Summary struct {
 // DB 抖动时「今日营业额 0.00」会被店主当成真没开张,比报错更难排查。
 func ReportSummary() (Summary, error) {
 	nowT := time.Now()
-	today := dayStart(nowT)
+	// 区间边界统一按「营业日」折算:cutoff=4 时,凌晨 0~4 点的流水属于前一营业日,
+	// 与订单 biz_date、跨日清台、日趋势分桶保持同一口径。cutoff=0 时退化为自然日。
+	cutoff := BizDayCutoffHour()
+	today := currentBizDayStart(nowT, cutoff)
 	tomorrow := today.AddDate(0, 0, 1)
 	yesterday := today.AddDate(0, 0, -1)
-	monthStart := time.Date(nowT.Year(), nowT.Month(), 1, 0, 0, 0, 0, nowT.Location())
+	// 本营业月起点:以「营业日」所在月份为准 —— 月初凌晨仍属上一天(乃至上个月)。
+	monthStart := bizDayStartOf(time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location()), cutoff)
 	nextMonth := monthStart.AddDate(0, 1, 0)
-	// 上月同期:上月 1 号 ~ 本月「同一天」。
-	// 拿「本月至今」去比「上月整月」永远显示负增长,没有参考价值,所以取同期口径;
-	// 上月天数不足时(如 3/31 对上 2 月)截到本月 1 号,避免溢出到本月。
+	// 同期跨度:本月已过的天数与上月实际天数取小,避免 3/31 溢出到本月。
 	lastMonthStart := monthStart.AddDate(0, -1, 0)
-	lastMonthSameEnd := lastMonthStart.AddDate(0, 0, nowT.Day())
-	if lastMonthSameEnd.After(monthStart) {
-		lastMonthSameEnd = monthStart
+	spanDays := today.Day()
+	if lastMonthDays := monthStart.AddDate(0, 0, -1).Day(); spanDays > lastMonthDays {
+		spanDays = lastMonthDays
 	}
+	// 上月同期:上月 1 号起、与本月等长的 spanDays 天。
+	lastMonthSameEnd := lastMonthStart.AddDate(0, 0, spanDays)
+	// 本月同期:本月 1 号起同样 spanDays 天(用于与上月同期做公平环比)。
+	monthSameSpanEnd := monthStart.AddDate(0, 0, spanDays)
 
 	f := func(t time.Time) string { return t.Format(conf.TimeLayout) }
 	todayStart, tomorrowStart := f(today), f(tomorrow)
@@ -246,6 +255,15 @@ func ReportSummary() (Summary, error) {
 		return Summary{}, err
 	}
 	lastMonthOrderCount, err := dao.RangeOrderCount(f(lastMonthStart), f(lastMonthSameEnd))
+	if err != nil {
+		return Summary{}, err
+	}
+	// 本月同期:与上月同期**等长**的一段(月末会短于本月至今),专供环比使用。
+	monthSameSpanAmountCents, err := dao.RangeAmount(f(monthStart), f(monthSameSpanEnd))
+	if err != nil {
+		return Summary{}, err
+	}
+	monthSameSpanOrderCount, err := dao.RangeOrderCount(f(monthStart), f(monthSameSpanEnd))
 	if err != nil {
 		return Summary{}, err
 	}
@@ -338,6 +356,8 @@ func ReportSummary() (Summary, error) {
 		YesterdayGuestCount:           yesterdayGuestCount,
 		LastMonthSamePeriodAmount:     po.Round2(po.ToYuan(lastMonthAmountCents)),
 		LastMonthSamePeriodOrderCount: lastMonthOrderCount,
+		MonthSameSpanAmount:           po.Round2(po.ToYuan(monthSameSpanAmountCents)),
+		MonthSameSpanOrderCount:       monthSameSpanOrderCount,
 		TodayFreeAmount:               po.Round2(po.ToYuan(todayFreeCents)),
 		TodayGiftAmount:               po.Round2(po.ToYuan(todayGiftCents)),
 		TodayWalletAmount:             po.Round2(po.ToYuan(todayWalletCents)),
@@ -364,13 +384,15 @@ type DailyTrendItem struct {
 // RangeAmount / RangeOrderCount / RangeGuestCount,最长 366 天会发起 366×3 次查询;
 // 现在固定 2 条 GROUP BY 查询完成聚合,缺失日期由下面的循环补零。
 func DailyTrend(startStr, endStr, daysStr string) []DailyTrendItem {
-	start, end := resolveRange(startStr, endStr, daysStr, 7, maxRangeDays)
+	start, end := resolveRange(startStr, endStr, daysStr, 7, maxRangeDays, BizDayCutoffHour())
 	// 跨年区间用完整日期当标签,否则两个「01-02」在 x 轴上无法区分。
 	crossYear := start.Year() != end.Year()
 
 	// DailyTrendStats 的区间是左闭右开 [start, end);resolveRange 返回的是闭区间
 	// [start, end],故 end 需 +1 天把「最后一天」也纳入统计。
-	stats, err := dao.DailyTrendStats(start.Format(conf.TimeLayout), end.AddDate(0, 0, 1).Format(conf.TimeLayout))
+	// 分桶键必须与区间边界使用同一个 cutoff:通宵门店凌晨的流水要落回前一个营业日。
+	stats, err := dao.DailyTrendStats(start.Format(conf.TimeLayout), end.AddDate(0, 0, 1).Format(conf.TimeLayout),
+		BizDayCutoffHour())
 	if err != nil {
 		// 统计失败返回空序列,由前端按无数据展示,不再伪造一条全 0 曲线。
 		return nil
@@ -403,8 +425,10 @@ type MonthlyTrendItem struct {
 
 // MonthlyTrend 返回最近 12 个月(含本月)逐月营业额/订单/客流。
 func MonthlyTrend() ([]MonthlyTrendItem, error) {
-	nowT := time.Now()
-	thisMonth := time.Date(nowT.Year(), nowT.Month(), 1, 0, 0, 0, 0, nowT.Location())
+	// 月边界同样按营业日起点:cutoff=4 时,11-01 凌晨 2 点仍属 10 月,不能记进 11 月。
+	cutoff := BizDayCutoffHour()
+	today := currentBizDayStart(time.Now(), cutoff)
+	thisMonth := bizDayStartOf(time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location()), cutoff)
 	out := []MonthlyTrendItem{}
 	for i := 11; i >= 0; i-- {
 		m := thisMonth.AddDate(0, -i, 0)
@@ -473,7 +497,7 @@ type HourlyItem struct {
 
 // Hourly 区间内「按时段」的经营分布,固定输出 0~23 点、缺失时段补零。
 func Hourly(startStr, endStr, daysStr string) ([]HourlyItem, error) {
-	start, end := resolveRange(startStr, endStr, daysStr, 7, 90)
+	start, end := resolveRange(startStr, endStr, daysStr, 7, 90, BizDayCutoffHour())
 	byHour, err := dao.HourlyStats(start.Format(conf.TimeLayout), end.AddDate(0, 0, 1).Format(conf.TimeLayout))
 	if err != nil {
 		return nil, err
@@ -507,7 +531,7 @@ type SettleMixItem struct {
 // 金额口径为订单应收金额(total_amount)而不是实收 —— 否则免单组恒为 0,
 // 就看不到「让利了多少」。同时附上每组实收(paidAmount)供对照。
 func SettleMix(startStr, endStr, daysStr string) ([]SettleMixItem, error) {
-	start, end := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays)
+	start, end := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays, BizDayCutoffHour())
 	rows, err := dao.SettleMixStats(start.Format(conf.TimeLayout), end.AddDate(0, 0, 1).Format(conf.TimeLayout))
 	if err != nil {
 		return nil, err
@@ -585,7 +609,7 @@ type DiningDurationStats struct {
 
 // DiningDuration 区间内「用户用餐时长」分析。区间口径与其他报表一致(start/end/days)。
 func DiningDuration(startStr, endStr, daysStr string) (DiningDurationStats, error) {
-	start, end := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays)
+	start, end := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays, BizDayCutoffHour())
 	rows, err := dao.DiningDurationRows(start.Format(conf.TimeLayout), end.AddDate(0, 0, 1).Format(conf.TimeLayout))
 	if err != nil {
 		return DiningDurationStats{}, err
