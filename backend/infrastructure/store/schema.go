@@ -872,7 +872,7 @@ type indexDef struct {
 	Where string
 }
 
-// indexDefs 全部索引(共 47 个)。
+// indexDefs 全部索引(共 50 个)。
 // 唯一索引保证 order_no / refund_no / 渠道交易号不重复;
 // 其余索引用于订单查询、看板与报表加速。
 var indexDefs = []indexDef{
