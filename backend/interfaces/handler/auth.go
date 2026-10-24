@@ -179,7 +179,7 @@ func AdminLogin(c *gin.Context) {
 	out := buildLoginResult(res.Auth)
 	// 「记住我」:签发不透明令牌存库,前端凭它静默换发新登录态(免登录 7/30 天)。
 	if p.Remember {
-		tok, err := service.CreateRememberToken(res.Auth.UserID, p.Days, c.GetHeader("User-Agent"))
+		tok, err := service.CreateRememberToken(res.Auth.UserID, p.Days, c.GetHeader("User-Agent"), ip)
 		if err != nil {
 			// 签发失败不阻断登录:主令牌已可用,只是少了免登录。但静默会让
 			// 「勾了记住我却每次都要登录」变成无头案,故留 Warn。
@@ -252,6 +252,7 @@ func RememberSessions(c *gin.Context) {
 			TokenID:      s.TokenID,
 			TokenPrefix:  s.TokenPrefix,
 			UA:           s.UA,
+			IP:           s.IP,
 			CreateTime:   s.CreateTime,
 			LastUsedTime: s.LastUsedTime,
 			ExpireTime:   s.ExpireTime,

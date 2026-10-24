@@ -598,7 +598,8 @@ const rememberPermanentDays = 36500
 
 // CreateRememberToken 为账号生成一条「记住我」令牌(7/30 天或永久),返回令牌串。
 // days 为 30 按 30 天处理;为 rememberPermanentDays 按「永久」处理;其余按 7 天处理。
-func CreateRememberToken(userID, days int, ua string) (string, error) {
+// ip 为签发时的客户端 IP,记录到设备管理页展示。
+func CreateRememberToken(userID, days int, ua, ip string) (string, error) {
 	d := 7
 	switch days {
 	case 30:
@@ -606,12 +607,12 @@ func CreateRememberToken(userID, days int, ua string) (string, error) {
 	case rememberPermanentDays:
 		d = rememberPermanentDays
 	}
-	return dao.CreateRememberToken(userID, d, FingerprintUA(ua))
+	return dao.CreateRememberToken(userID, d, FingerprintUA(ua), ip)
 }
 
-// ConsumeRememberToken 用「记住我」令牌换取账号信息,成功后刷新登录时间。
+// ConsumeRememberToken 用「记住我」令牌换取账号信息,成功后刷新登录时间与来源 IP。
 func ConsumeRememberToken(token, ua, ip string) (*dao.AuthInfo, error) {
-	auth, err := dao.ConsumeRememberToken(token, FingerprintUA(ua))
+	auth, err := dao.ConsumeRememberToken(token, FingerprintUA(ua), ip)
 	if err != nil {
 		return nil, err
 	}

@@ -592,6 +592,8 @@ var schemaTemplate = []string{
 	// 令牌为后端生成的随机串,存本地后仅用于向后端换取新登录态;
 	// 是否过期由 expire_time 决定(后端查库裁决,前端无法篡改),与后端访问令牌(默认 24h)解耦。
 	// token 列存 SHA-256 哈希(库内不落明文),token_prefix 存原令牌前 8 位供设备管理页识别。
+	// ip 为签发/最近一次免登录使用的客户端 IP(设备管理页展示,便于识别陌生设备);
+	// 取 ClientIP()(受 TRUSTED_PROXIES 约束),空串表示未取到。
 	// 改密/停用/删除账号时删掉对应行,该账号全部「记住我」会话立即失效。
 	`CREATE TABLE IF NOT EXISTS tb_remember_token (
 		token_id       {{PK}},
@@ -601,6 +603,7 @@ var schemaTemplate = []string{
 		expire_time VARCHAR(32) DEFAULT NULL,
 		last_used_time VARCHAR(32) DEFAULT NULL,
 		ua             VARCHAR(255) DEFAULT '',
+		ip             VARCHAR(64)  DEFAULT '',
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
@@ -1051,6 +1054,8 @@ var alterCols = []alterCol{
 	{Table: "tb_order_urge", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_customer", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_remember_token", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	// 登录设备页展示的来源 IP(签发时写入,每次免登录使用刷新为最近 IP)。
+	{Table: "tb_remember_token", Name: "ip", Def: "VARCHAR(64) DEFAULT ''"},
 	{Table: "tb_image", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	// ---- 储值:本金/赠金分桶与合规留痕(2026-10-18) ----
 	// 老库补列后,存量余额**全部落在本金桶**、历史流水的 gift_amount 为 0:

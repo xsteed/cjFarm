@@ -425,6 +425,7 @@ CREATE TABLE IF NOT EXISTS tb_remember_token (
         expire_time VARCHAR(32) DEFAULT NULL,
         last_used_time VARCHAR(32) DEFAULT NULL,
         ua             VARCHAR(255) DEFAULT '',
+        ip             VARCHAR(64)  DEFAULT '',
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
         update_time VARCHAR(32) DEFAULT NULL
     );

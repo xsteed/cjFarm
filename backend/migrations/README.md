@@ -16,18 +16,19 @@ backend/migrations/
 │   └── mysql/
 │       ├── schema.sql                                     #   同上（InnoDB / utf8mb4 / AUTO_INCREMENT）
 │       └── seed.sql
-└── incr/                                                  # 增量脚本（正本）：老库按文件名时间前缀的字典序升级；到期（90 天）同步进 full 后清理
+└── incr/                                                  # 增量脚本（唯一落点）：老库按文件名时间前缀的字典序升级；到期（90 天）清理
     ├── sqlite/                                            #   当前：2026-10-19 储值合规改造（见第三节）
     └── mysql/                                             #   同名脚本，方言差异仅体现在 ALTER/索引语法
 ```
 
-> **当前在册的增量脚本**（`incr/` 与 `full/` 各一份同名副本）：
+> **当前在册的增量脚本**（只落 `incr/`，`full/` 不放副本）：
 >
 > | 时间戳 | 文件 | 内容 |
 > |---|---|---|
 > | `20261019120000` | `tb_wallet_txn_recharge_agreement_gift.sql` | 储值本金 / 赠金分桶（`tb_wallet.balance_gift`、`tb_wallet_txn.gift_amount/gift_after`、`tb_recharge.gift_amount`）+ 新表 `tb_wallet_agreement`（《储值规则》同意留痕） |
 > | `20261019120100` | `tb_config_backfill_wallet_settings.sql` | 储值合规参数与出厂规则文案的种子（`INSERT IGNORE`，不覆盖门店已改过的值） |
 > | `20261019130000` | `tb_config_backfill_print_guest_large_font.sql` | 顾客小票（点菜单 / 结账小票）整张放大开关 `print_guest_large_font`（默认 `0`；纯数据项、无结构变更，与启动时 `EnsureSettingDefaults` 等效） |
+> | `20261024150000` | `tb_remember_token_add_ip_column.sql` | 登录设备页来源 IP（`tb_remember_token.ip`：签发时写入、每次免登录使用刷新为最近 IP；与启动时 `store.alterCols` 补列等效） |
 
 > 本 README 只记录**固定规范与约定**，不收录增量脚本逐条流水；
 > 脚本的作用见其头部注释，历史演进以 git 提交记录为准。
@@ -53,9 +54,9 @@ backend/migrations/
    已落盘文件的时间戳与文件名**不得再改**（外部环境可能已按旧名执行过）。
 4. 两库文件名保持一致，仅方言专属脚本例外（如仅 SQLite 需要的触发器脚本，
    MySQL 由建表语句原生 `ON UPDATE` 承担），例外必须在目录树注释中说明。
-5. **同步副本**：`incr/` 为正本，`full/{sqlite,mysql}/` 下各留一份同名副本
-   （部署 / 分发时全量 + 增量一个目录拿全）；新增脚本先落 `incr/`，再复制到 `full/` 对应目录，
-   两处必须保持一致。
+5. **只在 `incr/` 落盘**：`full/{sqlite,mysql}/` 下只有生成产物（`schema.sql` / `seed.sql`），
+   **不放单独的变更脚本** —— 结构变更一律由 `go run ./cmd/gensql` 内联进 `full/schema.sql`
+   （种子类变更进 `seed.sql`），同一处变更不在两处各留一份，避免日后漂移。
 
 - **第一层按数据库产品分目录**（`sqlite/`、`mysql/`），便于对照排查；切换数据库时执行对应目录下的脚本即可。
 - 常用动作词：`create`（建表/建索引）、`add_xxx_columns`（加列）、`drop_xxx`（删列/删表）、
@@ -72,8 +73,8 @@ backend/migrations/
    （等价变更已由启动时 `store.alterCols` 幂等补列兜底的，可提前清理）。
 2. **同步核验**：`go run ./cmd/gensql -check` 通过 —— 即 `full/{sqlite,mysql}/schema.sql`
    已包含全部等效变更（建表 / 索引 / 种子），视为「已同步进 full」。
-3. **清理动作**：同时删除 `incr/{sqlite,mysql}/` 与 `full/{sqlite,mysql}/` 下的同名文件
-   （两处一起删，保持副本规则成立）；历史记录以 git 提交为准，本 README 不补录流水。
+3. **清理动作**：删除 `incr/{sqlite,mysql}/` 下的同名文件（`full/` 本就不放副本）；
+   历史记录以 git 提交为准，本 README 不补录流水。
 4. 全部清理后 `incr/` 目录本身保留（必要时以 `.gitkeep` 占位），
    命名规范对后续新脚本继续生效。
 
@@ -177,6 +178,8 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | 8 | `tb_order` | 订单主表 | 运行时产生 |
 | 9 | `tb_order_item` | 订单明细 | 运行时产生 |
 | 10 | `tb_order_urge` | 催菜/加菜记录 | 运行时产生 |
+| 11 | `tb_review` | 订单评价（仅商家可见的内部反馈；桌台/人数/会员昵称与手机号提交时快照，IP 只存胡椒哈希） | 运行时产生 |
+| 12 | `tb_review_image` | 评价图片（顾客上传的用户内容，独立于商家资产表 tb_image；BLOB 入库，孤儿 24h 清理） | 运行时产生 |
 | 11 | `tb_payment` | 支付流水（在线支付） | 运行时产生 |
 | 12 | `tb_refund` | 退款流水 | 运行时产生 |
 | 13 | `tb_print_log` | 打印日志（成功/失败留痕、票据标识与票面快照、支持补打与预览回放） | 运行时产生 |
@@ -220,6 +223,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_order_create_time` | tb_order | 普通 | 报表按时间 |
 | `idx_order_pay_time` | tb_order | 普通 | 报表按收款到账时间 |
 | `idx_order_credit_settle_time` | tb_order | 普通 | 报表按挂账核销时间 |
+| `idx_order_finish_time` | tb_order | 普通（2 列） | 已完成订单数与用餐时长按结束时间归属 |
 | `idx_order_customer` | tb_order | 普通（2 列） | 会员「我的订单」按时间倒序分页 |
 | `idx_identity_provider_external` | tb_customer_identity | UNIQUE（2 列） | 会员登录查档主路径；同时兜底「并发首登建档」的幂等性（`idx_customer_openid` 已随增量演进删除） |
 | `idx_identity_customer` | tb_customer_identity | 普通 | 查「这个人绑了哪几种登录方式」（解绑 / 多端合并） |
@@ -234,6 +238,12 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_refund_update_time` | tb_refund | 普通 | 报表按退款到账时间 |
 | `idx_urge_status` | tb_order_urge | 普通（2 列） | 看板待处理催菜 |
 | `idx_urge_order` | tb_order_urge | 普通 | 催菜按订单 |
+| `idx_review_order` | tb_review | UNIQUE | 一单一评（order_no 唯一，并发双击兜底） |
+| `idx_review_time` | tb_review | 普通 | 评价列表按时间翻页 |
+| `idx_review_rating` | tb_review | 普通（2 列） | 按评分档位筛选 |
+| `idx_review_image_name` | tb_review_image | UNIQUE | 图片文件名唯一（展示/绑定凭据） |
+| `idx_review_image_review` | tb_review_image | 普通 | 按评价取图/级联删除 |
+| `idx_review_image_time` | tb_review_image | 普通 | 扫描未绑定孤儿 |
 | `idx_print_log_order` | tb_print_log | 普通 | 打印日志按订单倒查 |
 | `idx_print_log_time` | tb_print_log | 普通 | 打印日志按时间翻页 |
 | `idx_print_log_status` | tb_print_log | 普通（2 列） | 按结果筛失败记录 |
@@ -296,7 +306,8 @@ go run ./cmd/gensql
 go test ./...
 ```
 
-> 新增增量脚本落在 `incr/{sqlite,mysql}/`（正本），并同步复制到 `full/{sqlite,mysql}/`（副本）；
+> 新增增量脚本只落在 `incr/{sqlite,mysql}/`；**不要**复制到 `full/{sqlite,mysql}/` ——
+> 结构变更由 `go run ./cmd/gensql` 内联进 `full/schema.sql`（见第一节命名规则第 5 条）。
 > 老库的结构升级也可依赖后端启动时的 `store.alterCols` 自动补列/建表（幂等，与 full 脚本等价）。
 
 `go run ./cmd/gensql -check` 可用于 CI：只校验磁盘脚本是否与 Go 定义一致，不写盘。

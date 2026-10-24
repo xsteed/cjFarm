@@ -153,7 +153,7 @@ func TestRememberLoginBranches(t *testing.T) {
 	seedLoginUser(t, "rememberuser", "pw123456")
 	uid := authMoreUserID(t, "rememberuser")
 	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0 Safari/537.36"
-	tok, err := service.CreateRememberToken(uid, 7, ua)
+	tok, err := service.CreateRememberToken(uid, 7, ua, "10.0.0.1")
 	if err != nil {
 		t.Fatalf("创建记住我令牌失败: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestRememberSessionsAndRevoke(t *testing.T) {
 	initAuthTestDB(t)
 	seedLoginUser(t, "sessionuser", "pw123456")
 	uid := authMoreUserID(t, "sessionuser")
-	tok, err := service.CreateRememberToken(uid, 7, "Chrome·macOS")
+	tok, err := service.CreateRememberToken(uid, 7, "Chrome·macOS", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("创建记住我令牌失败: %v", err)
 	}

@@ -306,7 +306,7 @@ func TestAuthRememberTokenLifecycle(t *testing.T) {
 	// 因此这里必须传「原始 UA」,传已指纹化字符串会被打成「其他浏览器·未知系统」。
 	chromeUA := "Chrome/120.0 Macintosh; Intel Mac OS X 10_15"
 	safariUA := "Safari/605.1 iPhone"
-	tok, err := CreateRememberToken(uid, 7, chromeUA)
+	tok, err := CreateRememberToken(uid, 7, chromeUA, "10.0.0.1")
 	if err != nil || tok == "" {
 		t.Fatalf("创建记住我令牌失败: %v (tok=%q)", err, tok)
 	}
@@ -322,7 +322,7 @@ func TestAuthRememberTokenLifecycle(t *testing.T) {
 	}
 
 	// 重新签发并正常消费。
-	tok2, err := CreateRememberToken(uid, 30, chromeUA)
+	tok2, err := CreateRememberToken(uid, 30, chromeUA, "10.0.0.2")
 	if err != nil {
 		t.Fatalf("创建令牌失败: %v", err)
 	}

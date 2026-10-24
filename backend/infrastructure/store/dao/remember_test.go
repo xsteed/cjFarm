@@ -31,7 +31,7 @@ func TestRememberCreateAndConsume(t *testing.T) {
 	rememberDaoInitDB(t)
 	uid := rememberDaoAdminID(t)
 
-	token, err := CreateRememberToken(uid, 7, "Chrome·macOS")
+	token, err := CreateRememberToken(uid, 7, "Chrome·macOS", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("创建记住令牌失败: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestRememberCreateAndConsume(t *testing.T) {
 		t.Fatalf("令牌应为 64 位 hex, got %q", token)
 	}
 
-	auth, err := ConsumeRememberToken(token, "Chrome·macOS")
+	auth, err := ConsumeRememberToken(token, "Chrome·macOS", "10.0.0.9")
 	if err != nil {
 		t.Fatalf("消费令牌失败: %v", err)
 	}
@@ -47,8 +47,17 @@ func TestRememberCreateAndConsume(t *testing.T) {
 		t.Fatalf("令牌应换回账号 %d, got %d", uid, auth.UserID)
 	}
 
+	// 消费后来源 IP 应刷新为最近一次使用的 IP(设备管理页展示用)。
+	sessions, err := ListRememberSessions(uid)
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("查询会话失败: %v (n=%d)", err, len(sessions))
+	}
+	if sessions[0].IP != "10.0.0.9" {
+		t.Fatalf("消费后应刷新为最近使用的 IP, got %q", sessions[0].IP)
+	}
+
 	// 再次消费同一令牌仍成功(不是一次性令牌)。
-	if _, err := ConsumeRememberToken(token, "Chrome·macOS"); err != nil {
+	if _, err := ConsumeRememberToken(token, "Chrome·macOS", "10.0.0.10"); err != nil {
 		t.Fatalf("重复消费令牌失败: %v", err)
 	}
 }
@@ -58,37 +67,37 @@ func TestRememberConsumeErrors(t *testing.T) {
 	uid := rememberDaoAdminID(t)
 
 	// 无效令牌。
-	if _, err := ConsumeRememberToken("no-such-token", "Chrome·macOS"); err == nil || !strings.Contains(err.Error(), "无效") {
+	if _, err := ConsumeRememberToken("no-such-token", "Chrome·macOS", "10.0.0.1"); err == nil || !strings.Contains(err.Error(), "无效") {
 		t.Fatalf("无效令牌应报「无效」, got %v", err)
 	}
 
 	// 过期令牌。
-	expired, err := CreateRememberToken(uid, -1, "Chrome·macOS")
+	expired, err := CreateRememberToken(uid, -1, "Chrome·macOS", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("创建过期令牌失败: %v", err)
 	}
-	if _, err := ConsumeRememberToken(expired, "Chrome·macOS"); err == nil || !strings.Contains(err.Error(), "过期") {
+	if _, err := ConsumeRememberToken(expired, "Chrome·macOS", "10.0.0.1"); err == nil || !strings.Contains(err.Error(), "过期") {
 		t.Fatalf("过期令牌应报「过期」, got %v", err)
 	}
 
 	// 环境不一致。
-	token, err := CreateRememberToken(uid, 7, "Chrome·macOS")
+	token, err := CreateRememberToken(uid, 7, "Chrome·macOS", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("创建令牌失败: %v", err)
 	}
-	if _, err := ConsumeRememberToken(token, "Safari·iOS"); err == nil || !strings.Contains(err.Error(), "环境") {
+	if _, err := ConsumeRememberToken(token, "Safari·iOS", "10.0.0.1"); err == nil || !strings.Contains(err.Error(), "环境") {
 		t.Fatalf("环境不一致应报「环境」, got %v", err)
 	}
 
 	// 账号停用。
-	token, err = CreateRememberToken(uid, 7, "Chrome·macOS")
+	token, err = CreateRememberToken(uid, 7, "Chrome·macOS", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("创建令牌失败: %v", err)
 	}
 	if _, err := store.DB.Exec(`UPDATE tb_user SET status=? WHERE user_id=?`, po.UserStatusDisabled, uid); err != nil {
 		t.Fatalf("停用账号失败: %v", err)
 	}
-	if _, err := ConsumeRememberToken(token, "Chrome·macOS"); err == nil || !strings.Contains(err.Error(), "账号状态") {
+	if _, err := ConsumeRememberToken(token, "Chrome·macOS", "10.0.0.1"); err == nil || !strings.Contains(err.Error(), "账号状态") {
 		t.Fatalf("停用账号应报「账号状态」, got %v", err)
 	}
 }
@@ -104,7 +113,7 @@ func TestRememberConsumeLegacyUaBackfill(t *testing.T) {
 		t.Fatalf("直插存量令牌失败: %v", err)
 	}
 
-	auth, err := ConsumeRememberToken(token, "Firefox·Win")
+	auth, err := ConsumeRememberToken(token, "Firefox·Win", "10.0.0.7")
 	if err != nil {
 		t.Fatalf("消费存量令牌失败: %v", err)
 	}
@@ -112,7 +121,7 @@ func TestRememberConsumeLegacyUaBackfill(t *testing.T) {
 		t.Fatalf("应换回账号 %d, got %d", uid, auth.UserID)
 	}
 
-	// 首次使用应补写环境指纹。
+	// 首次使用应补写环境指纹与来源 IP。
 	sessions, err := ListRememberSessions(uid)
 	if err != nil {
 		t.Fatalf("查询会话失败: %v", err)
@@ -123,6 +132,9 @@ func TestRememberConsumeLegacyUaBackfill(t *testing.T) {
 			found = true
 			if s.UA != "Firefox·Win" {
 				t.Fatalf("存量会话应补写指纹, got %q", s.UA)
+			}
+			if s.IP != "10.0.0.7" {
+				t.Fatalf("存量会话应补写来源 IP, got %q", s.IP)
 			}
 		}
 	}
@@ -135,13 +147,13 @@ func TestListRememberSessions(t *testing.T) {
 	rememberDaoInitDB(t)
 	uid := rememberDaoAdminID(t)
 
-	if _, err := CreateRememberToken(uid, 7, "Chrome·macOS"); err != nil {
+	if _, err := CreateRememberToken(uid, 7, "Chrome·macOS", "192.168.1.10"); err != nil {
 		t.Fatalf("创建令牌失败: %v", err)
 	}
-	if _, err := CreateRememberToken(uid, 30, "Safari·iOS"); err != nil {
+	if _, err := CreateRememberToken(uid, 30, "Safari·iOS", "2001:db8::1"); err != nil {
 		t.Fatalf("创建令牌失败: %v", err)
 	}
-	if _, err := CreateRememberToken(uid, -1, "Firefox·Win"); err != nil {
+	if _, err := CreateRememberToken(uid, -1, "Firefox·Win", "10.0.0.3"); err != nil {
 		t.Fatalf("创建过期令牌失败: %v", err)
 	}
 
@@ -160,6 +172,9 @@ func TestListRememberSessions(t *testing.T) {
 		if len(s.TokenPrefix) != 8 {
 			t.Fatalf("TokenPrefix 应为 8 位, got %q", s.TokenPrefix)
 		}
+		if s.IP == "" {
+			t.Fatalf("会话应带签发 IP: %+v", s)
+		}
 	}
 }
 
@@ -167,7 +182,7 @@ func TestRevokeAndDeleteRemember(t *testing.T) {
 	rememberDaoInitDB(t)
 	uid := rememberDaoAdminID(t)
 
-	if _, err := CreateRememberToken(uid, 7, "Chrome·macOS"); err != nil {
+	if _, err := CreateRememberToken(uid, 7, "Chrome·macOS", "10.0.0.1"); err != nil {
 		t.Fatalf("创建令牌失败: %v", err)
 	}
 	sessions, _ := ListRememberSessions(uid)
@@ -195,12 +210,12 @@ func TestRevokeAndDeleteRemember(t *testing.T) {
 	}
 
 	// DeleteRememberToken 与批量删除。
-	token2, _ := CreateRememberToken(uid, 7, "Chrome·macOS")
+	token2, _ := CreateRememberToken(uid, 7, "Chrome·macOS", "10.0.0.1")
 	if err := DeleteRememberToken(token2); err != nil {
 		t.Fatalf("删除令牌失败: %v", err)
 	}
-	_, _ = CreateRememberToken(uid, 7, "Chrome·macOS")
-	_, _ = CreateRememberToken(uid, 7, "Safari·iOS")
+	_, _ = CreateRememberToken(uid, 7, "Chrome·macOS", "10.0.0.1")
+	_, _ = CreateRememberToken(uid, 7, "Safari·iOS", "10.0.0.2")
 	if err := DeleteRememberTokensByUser(uid); err != nil {
 		t.Fatalf("批量删除令牌失败: %v", err)
 	}

@@ -590,6 +590,8 @@ export interface RememberSession extends Extensible {
   tokenId: number;
   tokenPrefix?: string;
   ua?: string;
+  /** 签发 / 最近免登录使用的客户端 IP(设备管理页展示) */
+  ip?: string;
   createTime?: string;
   lastUsedTime?: string;
   expireTime?: string;

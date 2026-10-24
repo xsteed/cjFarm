@@ -51,17 +51,18 @@ func rememberPrefix(token string) string {
 
 // CreateRememberToken 为账号生成一条「记住我」令牌,有效期 days 天,返回令牌串。
 // ua 为签发时的环境指纹(如 "Chrome·macOS",见 handler.uaFingerprint),用于环境绑定。
+// ip 为签发时的客户端 IP,写入 ip 列供设备管理页展示(取不到时传空串)。
 //
 // 库内只存 SHA-256 哈希(token 列)与令牌前 8 位(token_prefix 列,设备管理页识别用);
 // 明文令牌仅随返回值给客户端展示一次,此后服务端不再持有明文。
-func CreateRememberToken(userID, days int, ua string) (string, error) {
+func CreateRememberToken(userID, days int, ua, ip string) (string, error) {
 	tok, err := randToken()
 	if err != nil {
 		return "", err
 	}
 	exp := time.Now().Add(time.Duration(days) * 24 * time.Hour)
-	_, err = store.DB.Exec(`INSERT INTO tb_remember_token (user_id, token, token_prefix, expire_time, create_time, ua)
-		VALUES (?,?,?,?,?,?)`, userID, hashRememberToken(tok), rememberPrefix(tok), exp.Format(conf.TimeLayout), store.Now(), ua)
+	_, err = store.DB.Exec(`INSERT INTO tb_remember_token (user_id, token, token_prefix, expire_time, create_time, ua, ip)
+		VALUES (?,?,?,?,?,?,?)`, userID, hashRememberToken(tok), rememberPrefix(tok), exp.Format(conf.TimeLayout), store.Now(), ua, ip)
 	if err != nil {
 		return "", err
 	}
@@ -70,7 +71,7 @@ func CreateRememberToken(userID, days int, ua string) (string, error) {
 
 // ConsumeRememberToken 用「记住我」令牌换取账号信息:令牌存在、未过期、环境一致且账号仍可用
 // 才返回,否则返回错误(过期/失效的行顺手删除,避免脏数据累积)。账号状态由 GetAuthByID 校验
-// 启用/角色。
+// 启用/角色。ip 为本次请求的来源 IP,用于把设备的「最近使用 IP」刷新到最新(取不到传空串)。
 //
 // 环境绑定(uaFP 为本次请求的环境指纹):签发时记录的指纹与本次不一致,视为令牌被复制到
 // 其它环境使用 —— 立即作废该令牌(防止继续被用)并拒绝。老库升级前的存量行 ua 为空,
@@ -84,7 +85,7 @@ func CreateRememberToken(userID, days int, ua string) (string, error) {
 // 迁移说明:明文回退与升级逻辑只为兼容存量明文令牌。待这些令牌全部自然过期、
 // 或全量轮换(改密/停用/删除账号会按 user_id 批量删除全部会话)后,即可移除
 // 明文回退查询与 upgradeRememberTokenToHash,消费路径只保留按哈希查询。
-func ConsumeRememberToken(token, uaFP string) (*AuthInfo, error) {
+func ConsumeRememberToken(token, uaFP, ip string) (*AuthInfo, error) {
 	hashed := hashRememberToken(token)
 
 	var userID int
@@ -138,7 +139,10 @@ func ConsumeRememberToken(token, uaFP string) (*AuthInfo, error) {
 		ua = uaFP
 	}
 	// 升级后 token 列已是哈希,此处也按哈希定位,避免再走明文路径。
-	store.DB.Exec(`UPDATE tb_remember_token SET last_used_time=?, ua=?, update_time=? WHERE token=?`, store.Now(), ua, store.Now(), hashed)
+	// ip 只在本次取到时覆盖(空串保留原值),避免某次请求拿不到来源 IP 就把设备页的
+	// 历史记录抹成空。
+	store.DB.Exec(`UPDATE tb_remember_token SET last_used_time=?, ua=?, ip=COALESCE(NULLIF(?,''), ip), update_time=? WHERE token=?`,
+		store.Now(), ua, ip, store.Now(), hashed)
 	return auth, nil
 }
 
@@ -156,6 +160,7 @@ type RememberSessionRow struct {
 	TokenID      int
 	TokenPrefix  string // 令牌前 8 位,仅供前端识别「当前设备」;完整令牌不回传
 	UA           string // 签发环境指纹,如 "Chrome·macOS"
+	IP           string // 签发/最近免登录使用的客户端 IP
 	CreateTime   string
 	LastUsedTime string
 	ExpireTime   string
@@ -169,7 +174,7 @@ func ListRememberSessions(userID int) ([]RememberSessionRow, error) {
 	// 哈希存储后 token 列是 SHA-256 摘要,SUBSTR(token,1,8) 已不是原令牌前缀;
 	// 新行用 token_prefix 列返回原令牌前 8 位,存量明文行(token_prefix 为空)仍回退
 	// 到 SUBSTR(token,1,8),保证设备管理页在老库升级前后都能识别设备。
-	rows, err := store.DB.Query(`SELECT token_id, COALESCE(NULLIF(token_prefix,''), SUBSTR(token,1,8)), COALESCE(ua,''), COALESCE(create_time,''), COALESCE(last_used_time,''), expire_time
+	rows, err := store.DB.Query(`SELECT token_id, COALESCE(NULLIF(token_prefix,''), SUBSTR(token,1,8)), COALESCE(ua,''), COALESCE(ip,''), COALESCE(create_time,''), COALESCE(last_used_time,''), expire_time
 		FROM tb_remember_token WHERE user_id=? AND expire_time>? ORDER BY token_id DESC`, userID, store.Now())
 	if err != nil {
 		return nil, err
@@ -178,7 +183,7 @@ func ListRememberSessions(userID int) ([]RememberSessionRow, error) {
 	out := []RememberSessionRow{}
 	for rows.Next() {
 		var s RememberSessionRow
-		if err := rows.Scan(&s.TokenID, &s.TokenPrefix, &s.UA, TS(&s.CreateTime), TS(&s.LastUsedTime), TS(&s.ExpireTime)); err != nil {
+		if err := rows.Scan(&s.TokenID, &s.TokenPrefix, &s.UA, &s.IP, TS(&s.CreateTime), TS(&s.LastUsedTime), TS(&s.ExpireTime)); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

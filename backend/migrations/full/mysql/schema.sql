@@ -440,6 +440,7 @@ CREATE TABLE IF NOT EXISTS tb_remember_token (
         expire_time VARCHAR(32) DEFAULT NULL COMMENT '过期时间(7/30天免登录)',
         last_used_time VARCHAR(32) DEFAULT NULL COMMENT '最近使用时间',
         ua             VARCHAR(255) DEFAULT '' COMMENT '环境指纹(User-Agent)',
+        ip             VARCHAR(64)  DEFAULT '' COMMENT '签发/最近使用的客户端IP',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间(数据库自动填)',
         update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='记住登录令牌';

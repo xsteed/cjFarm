@@ -87,6 +87,9 @@
             本机
           </t-tag>
         </template>
+        <template #ip="{ row }">
+          {{ row.ip || '-' }}
+        </template>
         <template #createTime="{ row }">
           {{ row.createTime || '-' }}
         </template>
@@ -128,6 +131,7 @@
           <div class="mcard-hd">
             <div style="min-width: 0">
               <span class="mcard-no">{{ row.ua || '未知环境' }}</span>
+              <div class="mcard-sub">IP {{ row.ip || '未知' }}</div>
               <div class="mcard-sub">
                 签发 {{ row.createTime || '-' }} · {{ planText(row) }} 剩余 {{ remainingText(row) }}
               </div>
@@ -208,6 +212,7 @@ const myPrefix = computed(() => (getRemember() || '').slice(0, 8));
 
 const cols = [
   { colKey: 'device', title: '设备', width: 190 },
+  { colKey: 'ip', title: 'IP', width: 130 },
   { colKey: 'createTime', title: '签发时间', width: 170 },
   { colKey: 'lastUsedTime', title: '最后使用', width: 170 },
   { colKey: 'valid', title: '有效期', width: 150 },

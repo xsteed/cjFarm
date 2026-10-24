@@ -399,6 +399,7 @@ var columnComments = map[string]string{
 	"tb_remember_token.expire_time":    "过期时间(7/30天免登录)",
 	"tb_remember_token.last_used_time": "最近使用时间",
 	"tb_remember_token.ua":             "环境指纹(User-Agent)",
+	"tb_remember_token.ip":             "签发/最近使用的客户端IP",
 
 	// ---- tb_image 图片内容 ----
 	"tb_image.img_id":       "图片ID(自增主键)",
