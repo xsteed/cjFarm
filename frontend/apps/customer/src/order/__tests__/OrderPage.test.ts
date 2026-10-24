@@ -521,7 +521,8 @@ describe('OrderPage', () => {
       await vi.advanceTimersByTimeAsync(3000);
       await drainMicrotasks();
       expect(getOrderByNoMock).toHaveBeenCalledWith('NO001', 1);
-      expect(wrapper.text()).toContain('已上齐');
+      // 状态 3 的顾客端文案已模糊化:不再断言「已上齐」,说「陆续上桌」
+      expect(wrapper.text()).toContain('陆续上桌');
 
       wrapper.unmount();
     } finally {

@@ -166,6 +166,14 @@
         </div>
       </div>
 
+      <!-- 进度免责小字:状态是商家手动点的,可能与实际上菜有先后,提前把预期说软 -->
+      <div
+        v-if="showSteps"
+        class="st-steps-hint"
+      >
+        出餐进度由商家更新，可能与实际上菜略有先后
+      </div>
+
       <!-- 结束态说明:已完成 / 已取消 / 已结账,措辞与小程序逐字一致 -->
       <div
         v-if="tipText"
@@ -409,7 +417,7 @@ const emit = defineEmits<{
   review: [];
 }>();
 
-// 状态主题:与小程序 ORDER_STATUS 字典一致,驱动状态卡的强调色(橙=等接单/琥珀=制作中/绿=上齐)
+// 状态主题:与小程序 ORDER_STATUS 字典一致,驱动状态卡的强调色(橙=等接单/琥珀=制作中/绿=用餐中)
 const STATUS_THEME: Record<number, string> = { 1: 'primary', 2: 'warning', 3: 'success', 4: 'default', 5: 'danger' };
 const orderStatus = computed(() => Number(props.currentOrder.orderStatus) || 1);
 const statusTheme = computed(() => STATUS_THEME[orderStatus.value] || 'primary');
@@ -482,18 +490,19 @@ const headline = computed(() => {
     case 2:
       return '后厨正在制作';
     case 3:
-      return '餐品已上齐';
+      // 不写「已上齐」:状态由商家手动维护、可能滞后于实际上菜,只说过程不打包票
+      return '餐品陆续上桌，请慢用';
     default:
       return '已下单，等待接单';
   }
 });
 
-// 图标与底色随状态走:等出餐=餐碗冒热气,上齐/完成=对勾,取消=叉,待付款=卡片
+// 图标与底色随状态走:等出餐/用餐中=餐碗冒热气,完成=对勾,取消=叉,待付款=卡片。
+// 「用餐中」(3)不用对勾:那是「全部上齐」的强断言,商家可能还没点完状态,对勾只留给已完成
 const heroIcon = computed<'bowl' | 'check' | 'cross' | 'card'>(() => {
   if (canceled.value) return 'cross';
   if (done.value) return 'check';
   if (payFirstUnpaid.value) return 'card';
-  if (orderStatus.value >= 3) return 'check';
   return 'bowl';
 });
 
@@ -530,14 +539,15 @@ const subline = computed(() => {
   return `${done.value ? '用餐' : '已等'} ${durationText(mins)}`;
 });
 
-// 出餐三步:只映射后厨的三个真实节点(1已下单 → 2制作中 → 3已上齐),完成的单三步全亮。
+// 出餐三步:只映射后厨的三个真实节点(1已下单 → 2制作中 → 3用餐中),完成的单三步全亮。
+// 第三步不写「已上齐」:商家未必准时维护状态,「用餐中」是软性阶段词,滞后也不算说错。
 // 先付未付款时后厨压根没收到单,不画进度(进度条会让人以为已经在做)。
 const showSteps = computed(() => !canceled.value && !payFirstUnpaid.value && orderStatus.value <= 4);
 const stepIdx = computed(() => (done.value ? 3 : Math.min(Math.max(orderStatus.value - 1, 0), 2)));
 const steps = computed(() => [
   { label: '已下单', on: true, bar: stepIdx.value >= 1, now: stepIdx.value === 0 },
   { label: '制作中', on: stepIdx.value >= 1, bar: stepIdx.value >= 2, now: stepIdx.value === 1 },
-  { label: '已上齐', on: stepIdx.value >= 2, bar: false, now: stepIdx.value === 2 }
+  { label: '用餐中', on: stepIdx.value >= 2, bar: false, now: stepIdx.value === 2 }
 ]);
 
 // 结束态才出说明块:进行中的单没有额外话可说,进度条已经回答完了
@@ -719,6 +729,15 @@ onUnmounted(() => {
 .st-steps {
   display: flex;
   margin-top: 9px;
+}
+
+/* 进度免责小字:弱化到第三层级,说清「进度是商家更新的」又不抢主信息 */
+.st-steps-hint {
+  margin-top: 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ink-4);
 }
 
 .step {

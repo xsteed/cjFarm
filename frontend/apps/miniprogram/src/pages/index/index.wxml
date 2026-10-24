@@ -110,15 +110,18 @@
           enhanced
           show-scrollbar="{{false}}"
         >
-          <text
-            wx:for="{{servingRows}}"
-            wx:key="key"
-            class="serving-chip"
-            data-no="{{item.orderNo}}"
-            bindtap="onTapServing"
-          >
-            {{item.label}} ›
-          </text>
+          <view class="serving-chips-inner">
+            <view
+              wx:for="{{servingRows}}"
+              wx:key="key"
+              class="serving-chip"
+              data-no="{{item.orderNo}}"
+              bindtap="onTapServing"
+            >
+              <text>{{item.label}}</text>
+              <text class="serving-chip-go">›</text>
+            </view>
+          </view>
         </scroll-view>
       </view>
 

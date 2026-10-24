@@ -467,6 +467,19 @@
             </span>
           </div>
         </button>
+
+        <!-- 「去加菜」压到列表底部:本桌已有出餐中的单,回菜单继续点就是加菜
+             (购物车保留、与底部 tab「点餐」同效果)。列表短时贴底、长时跟在流末 -->
+        <button
+          class="sl-add-more"
+          @click="switchView('menu')"
+        >
+          <span
+            class="sl-add-ic"
+            aria-hidden="true"
+          >＋</span>
+          去加菜
+        </button>
       </div>
 
       <!-- 还没下单:订单视图给空态而不是一片空白(导航常驻后进得来) -->
@@ -965,14 +978,15 @@ watch(searchOpen, v => {
 const ORDER_STATUS_TEXT: Record<number, string> = {
   1: '已下单，后厨正在接单',
   2: '正在制作中，请稍候',
-  3: '餐品已上齐，请慢用',
+  3: '餐品陆续上桌，请慢用',
   4: '订单已完成',
   5: '订单已取消'
 };
 
 // ---- 「本桌正在出餐」列表 ----
 // 出餐中的单只可能停在 1/2/3;标签用短词 + 语义色,和订单详情页的状态卡同一套口径。
-const SERVING_STATUS_TEXT: Record<number, string> = { 1: '已下单', 2: '制作中', 3: '已上齐' };
+// 3 不写「已上齐」:商家未必逐单维护状态,顾客端只说「用餐中」这种不精确的阶段词。
+const SERVING_STATUS_TEXT: Record<number, string> = { 1: '已下单', 2: '制作中', 3: '用餐中' };
 const SERVING_STATUS_THEME: Record<number, string> = { 1: 'primary', 2: 'warning', 3: 'success' };
 
 /** 菜品摘要:前两道菜名 + 「等 N 道」,让顾客一眼认出这是自己点的那单。 */
@@ -2106,6 +2120,8 @@ onUnmounted(() => {
    每张卡一行摘要(取餐号 + 状态)、一行菜品、一行时间人数,右侧金额与入口 ——
    先扫得出「这单是什么」,再决定点不点进去 */
 .serving-list {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   padding: 16px 14px 86px;
   overflow-y: auto;
@@ -2257,6 +2273,39 @@ onUnmounted(() => {
 
 .sl-item:active .sl-go {
   color: var(--brand-deep);
+}
+
+/* 列表底部「去加菜」:ghost 描边款压底(与小程序 .sp-menu 同布局),
+   比通用灰描边多一层品牌浅橙描边 + 深品牌字,和页内状态标签同一色系 */
+.sl-add-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 44px;
+  margin-top: auto;
+  padding: 0 20px;
+  border: 1px solid var(--td-brand-color-2, #ffe3d4);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--brand-deep);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* 按下轻微下沉,与出餐卡片(.sl-item)同一套物理反馈 */
+.sl-add-more:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgb(240 72 31 / 15%);
+}
+
+.sl-add-ic {
+  font-size: 16px;
+  line-height: 1;
 }
 
 /* 订单空态:还没下单时进「订单」页看到的是它(底部导航常驻后进得来)。

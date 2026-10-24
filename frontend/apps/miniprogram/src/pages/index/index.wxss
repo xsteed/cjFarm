@@ -306,9 +306,9 @@
 .serving {
   display: flex;
   align-items: center;
-  gap: 12rpx;
+  gap: 16rpx;
   flex-shrink: 0;
-  padding: 20rpx 32rpx;
+  padding: 16rpx 24rpx 16rpx 32rpx;
   border-bottom: 2rpx solid var(--line);
   background: var(--brand-ghost);
   color: var(--ink-2);
@@ -319,22 +319,43 @@
   flex-shrink: 0;
 }
 
-/* scroll-view 横向滚动：白底胶囊不换行，超出部分右滑查看 */
+/* scroll-view 横向滚动：width:0 让它在 flex 里真正收缩，超出部分右滑查看 */
 .serving-chips {
   flex: 1;
-  min-width: 0;
+  width: 0;
   white-space: nowrap;
 }
 
+/* 内层包一层：上下留白防止胶囊阴影被滚动区裁掉，右侧留出滑到底的呼吸空间 */
+.serving-chips-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 6rpx 16rpx 6rpx 0;
+  vertical-align: middle;
+}
+
 .serving-chip {
-  display: inline-block;
-  margin-right: 12rpx;
-  padding: 6rpx 18rpx;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 8rpx 18rpx;
+  border: 1rpx solid #ffe3d4;
   border-radius: var(--r-pill);
   background: #fff;
   color: var(--brand-deep);
   font-size: 22rpx;
+  line-height: 1;
+  font-weight: 500;
   box-shadow: 0 2rpx 8rpx rgb(240 72 31 / 12%);
+}
+
+/* 胶囊尾部的「可点进详情」箭头：与单号留隙、用品牌色弱化存在感 */
+.serving-chip-go {
+  margin-left: 6rpx;
+  color: var(--brand);
+  font-size: 24rpx;
+  line-height: 1;
 }
 
 /* ---------- 本店招牌：置顶分组下的横滑卡片条（与首页橱窗同款） ----------

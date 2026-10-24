@@ -191,9 +191,11 @@ Page({
     reviewSheetVisible: false,
     /** 取消提示整句：有真实原因带上，没有就给标准说明（后端已对原因做可展示性收口） */
     cancelTip: '',
-    /** 出餐进度：1已下单 → 2制作中 → 3已上齐（取消单不渲染） */
+    /** 出餐进度：1已下单 → 2制作中 → 3用餐中（取消单不渲染） */
     steps: [] as StepRow[],
     showProgress: false,
+    /** 进度条下的免责小字：进度由商家手动更新，可能与实际上菜略有先后 */
+    progressHint: '',
     /** 支付凭证行：已支付时给出「已支付（微信）· 结账时间」，可核对可回看 */
     paidInfo: '',
     /**
@@ -426,13 +428,14 @@ Page({
       };
     });
 
-    // 出餐进度：只映射后厨的三个真实节点（1已下单 → 2制作中 → 3已上齐），
+    // 出餐进度：只映射后厨的三个真实节点（1已下单 → 2制作中 → 3用餐中），
     // 已完成的单三步全亮；不承诺时间、不做倒计时 —— 后厨改状态才是唯一事实来源。
+    // 第三步不写「已上齐」：商家未必准时维护状态，「用餐中」滞后也不算说错。
     const stepIdx = done ? 3 : Math.min(Math.max(status - 1, 0), 2);
     const steps: StepRow[] = [
       { label: '已下单', on: true, barOn: stepIdx >= 1, now: stepIdx === 0 },
       { label: '制作中', on: stepIdx >= 1, barOn: stepIdx >= 2, now: stepIdx === 1 },
-      { label: '已上齐', on: stepIdx >= 2, barOn: false, now: stepIdx === 2 }
+      { label: '用餐中', on: stepIdx >= 2, barOn: false, now: stepIdx === 2 }
     ];
 
     // 取消提示：有真实原因（后端已把「商家取消」这类无信息标签抹平）就带上，
@@ -472,7 +475,7 @@ Page({
           : status === 2
             ? '后厨正在制作'
             : status === 3
-              ? '餐品已上齐'
+              ? '餐品陆续上桌，请慢用'
               : '已下单，等待接单';
     const heroTheme = canceled
       ? 'danger'
@@ -488,6 +491,8 @@ Page({
     const heroTip = canceled ? cancelTip : done ? '🎉 这顿吃完啦，欢迎下次光临' : settled ? '已结账，后厨正在做啦～出餐进度会自动更新；想加的菜随时可以再点' : '';
     // 先付未付时后厨压根没收到单,不画进度(进度条会让人以为已经在做)
     const showProgress = !canceled && !payFirstUnpaid;
+    // 进度免责小字:状态是商家手动点的,可能与实际上菜有先后,提前把预期说软(与 H5 同文案)
+    const progressHint = showProgress ? '出餐进度由商家更新，可能与实际上菜略有先后' : '';
 
     const table = sessionState().table;
     // 人数回写会话：同桌其他设备改人数后，菜单页/购物车页的茶位费估算要跟着变 ——
@@ -501,6 +506,7 @@ Page({
     this.setData({
       steps,
       showProgress,
+      progressHint,
       heroTitle,
       heroSub,
       heroClass,

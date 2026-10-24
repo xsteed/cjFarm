@@ -628,6 +628,15 @@
   padding: 18rpx 0 0;
 }
 
+/* 进度免责小字:弱化到第三层级,说清「进度是商家更新的」又不抢主信息(与 H5 同款) */
+.steps-hint {
+  margin-top: 14rpx;
+  color: var(--ink-4);
+  font-size: 21rpx;
+  line-height: 1.4;
+  text-align: center;
+}
+
 .step {
   position: relative;
   flex: 1;
@@ -987,5 +996,16 @@
 /* 「去点菜」压到列表底部：想继续点的人一眼能看到入口 */
 .sp-menu {
   margin-top: auto;
+  /* 在通用 btn-ghost 上做品牌化强调:浅橙描边 + 深品牌字(与 H5 .sl-add-more 对齐),
+     本桌已有出餐中的单,回菜单继续点就是「加菜」而非「点菜」 */
+  border-color: #ffd5c4;
+  color: var(--brand-deep);
+  font-weight: 600;
+}
+
+/* 按压反馈:view 不会触发 :active,走 hover-class */
+.sp-menu-hover {
+  transform: translateY(2rpx);
+  opacity: 0.92;
 }
 

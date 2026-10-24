@@ -145,6 +145,8 @@ const emit = defineEmits<{
   width: 100%;
   box-sizing: border-box;
   margin-top: 14px;
+  /* 与下方内容(在线支付按钮/收款码)留出间距,提示条不贴图 */
+  margin-bottom: 14px;
   padding: 10px 14px;
   border-radius: var(--r-md);
   background: var(--brand-soft);
@@ -198,6 +200,9 @@ const emit = defineEmits<{
 .pay-qr img {
   width: 100%;
   height: 100%;
+  /* 内缩一圈:码图不贴描边,留出扫码需要的安静区 */
+  box-sizing: border-box;
+  padding: 8px;
   object-fit: contain;
   display: block;
 }
@@ -246,7 +251,8 @@ const emit = defineEmits<{
 }
 
 .pay-divider {
-  margin-top: 18px;
+  /* 上下都留距:分隔线上离在线码说明、下离线下码图,不再贴住任何一侧 */
+  margin: 18px 0 14px;
   font-size: 11px;
   color: var(--ink-4);
 }

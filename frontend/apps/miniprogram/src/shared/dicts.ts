@@ -13,7 +13,8 @@ export type DictOption = {
 export const ORDER_STATUS: Record<number, DictOption> = {
   1: { label: '已下单', theme: 'primary' },
   2: { label: '制作中', theme: 'warning' },
-  3: { label: '已上齐', theme: 'success' },
+  // 不写「已上齐」:状态由商家手动维护、可能滞后于实际上菜,「用餐中」是不打包票的阶段词
+  3: { label: '用餐中', theme: 'success' },
   4: { label: '已完成', theme: 'success' },
   5: { label: '已取消', theme: 'danger' }
 };

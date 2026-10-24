@@ -56,9 +56,11 @@
     </view>
     <view
       class="btn-ghost sp-menu"
+      hover-class="sp-menu-hover"
+      hover-stay-time="60"
       bindtap="onGoMenu"
     >
-      去点菜
+      去加菜
     </view>
   </view>
 
@@ -163,6 +165,12 @@
             <view class="step-txt">{{item.label}}</view>
           </view>
         </view>
+
+        <!-- 进度免责小字：状态是商家手动点的，可能与实际上菜有先后，提前把预期说软 -->
+        <view
+          wx:if="{{progressHint}}"
+          class="steps-hint"
+        >{{progressHint}}</view>
 
         <!-- 结束态说明：已完成 / 已取消 / 已结账（与小程序旧文案、H5 逐字一致）。
              修饰类写成单词 'cancel'：审计会拦截 {{}} 里带连字符的字符串字面量 -->
