@@ -1233,6 +1233,12 @@ function backFromOrder(): void {
   if (servingOrders.value.length && Number(currentOrder.value?.payStatus) === 1) {
     currentOrder.value = null;
     stopPolling();
+    clearUrgeTimer();
+    // 必须连 view 一起拉回 'order'：轮询一拍（3s）就会把已付款的单推到 settled，
+    // 出餐完成/取消还会推到 done / canceled。只清 currentOrder 的话，OrderTrackView
+    // 要求 currentOrder、列表与空态要求 view === 'order'，四个分支全不成立 ——
+    // 页面只剩一个橙色头部（顾客看到的就是「点了返回，内容没了」）。
+    view.value = 'order';
     return;
   }
   view.value = 'menu';
@@ -1504,68 +1510,107 @@ const resumeCount = computed(() =>
 );
 const resumeAmount = computed(() => Number(currentOrder.value?.totalAmount || 0).toFixed(2));
 
+/** Promise 成败收敛成值:提前发出、稍后才 await 的请求不会先触发未捕获拒绝。 */
+type Settled<T> = { ok: true; v: T } | { ok: false; e: unknown };
+const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
+  p.then(
+    v => ({ ok: true as const, v }),
+    e => ({ ok: false as const, e })
+  );
+
+// 菜单/备注缺失只影响点餐:订单视图已经画出来了,就别把顾客正在看的那张卡顶成错误页。
+function failMenuLoad(e: unknown): void {
+  if (view.value !== 'loading') return;
+  view.value = 'error';
+  loadError.value = friendlyLoadError(e);
+}
+
 async function load(): Promise<void> {
   view.value = 'loading';
   loadError.value = '';
+  // 菜单 / 备注是两份大包,但订单卡用不到它们:先并行发出、稍后再 await。
+  // 若像以前那样 Promise.all 一起等,订单卡(菜品明细)必须等整份菜单回来才画得出,
+  // 顾客点进「订单」就会空等一个菜单往返 —— 桌台详情 + 基础配置本来早就到了。
+  const menuTask = settle(getMenu());
+  const remarkTask = settle(getRemarks());
+
+  let tb: TableInfo;
   try {
-    const [cfg, tb, m, r] = await Promise.all([getPublicConfig(), getTable(tableRef), getMenu(), getRemarks()]);
+    const [cfg, t] = await Promise.all([getPublicConfig(), getTable(tableRef)]);
     config.value = cfg;
     // 顶部展示「店铺名称 · 标语」(标语为系统配置的独立字段,留空则只显示名称)
     shopName.value = [cfg.shop_name, cfg.shop_slogan].filter(Boolean).join(' · ') || '扫码点餐';
     setCustomerTitle(cfg.shop_name);
+    tb = t;
     table.value = tb;
     tableId.value = tb.tableId ?? 0;
     servingOrders.value = tb.servingOrders || [];
-    menu.value = m;
-    remarks.value = r;
-    // 默认选中每道菜的「当前可用规格」(与 currentSpec 的回退口径一致)。
-    // 不能直接取 specs[0]:若第一个规格恰已售罄,选它会让 dishQty 按售罄规格的 key 计数,
-    // 而 changeQty 实际加到 currentSpec 回退出的有货规格上 —— 卡片步进器恒显示 0、与购物车不一致。
-    m.forEach(c =>
-      c.dishes?.forEach(d => {
-        if (d.specs && d.specs.length) selectedSpec[d.dishId as number] = currentSpec(d).specId as number;
-      })
-    );
-    if (categories.value.length) activeCat.value = categories.value[0].categoryId ?? null;
-    // 桌台已有未结账订单 → 先确认归属再进订单页;已付款但出餐未完成则进已结账视图。
-    // 没有本桌订单时,被停用/预约的桌台进「锁定」页,不进菜单。
-    if (tb && tb.currentOrder) {
-      currentOrder.value = tb.currentOrder;
-      const paid = Number(tb.currentOrder.payStatus) === 1;
-      // 已付款的单只看出餐进度,不涉及归属;同一会话内认领过(1)的不再重复问,
-      // 明确说过不是自己单的(no)直接停在「等服务员清台」。
-      const mine = safeSession.get(ownKey()) || '';
-      if (paid) view.value = 'settled';
-      // 两位都落订单明细页：顾客先核对菜品与金额，再由页面上的「待付款」引导去支付。
-      // 只有认领过(mine==='1')才直达订单页；没认领的先走归属确认，
-      // 避免把上一桌的账单摊给下一桌。
-      else if (mine === '1') view.value = 'order';
-      else {
-        view.value = 'resume';
-        foreign.value = mine === 'no';
-      }
-      // 待确认期间不轮询:后厨一改状态就把确认页顶掉的话,顾客还没选就被跳走了。
-      if (view.value !== 'resume') startPolling();
-    } else if (lockStatus.value) {
-      view.value = 'locked';
-    } else {
-      // 菜单照常进：就算要选人数，顾客也应该先看到菜单（蒙层形式）
-      const remembered = rememberedPerson();
-      if (remembered) personCount.value = remembered;
-      // 桌级共享：别的手机选过（pendingPersonCount）则沿用；本机记忆优先。
-      // 本桌还有已付款出餐中的订单时，人数沿最近一笔（茶位费已收过，不重复问）。
-      const adopted = !remembered && (adoptPendingPerson(tb) || adoptServingPerson(tb));
-      view.value = 'menu';
-      personGate.value = seatFeeOn(cfg) && !remembered && !adopted;
-      if (personGate.value) personDraft.value = 0;
-    }
-    // 购物车要等订单归属定下来再恢复:它的 key 与恢复口径都依赖 currentOrder。
-    // 浏览模式同样恢复 —— 顾客挑好的菜在刷新后不丢,清台后能直接提交
-    restoreCart(m);
   } catch (e) {
     view.value = 'error';
     loadError.value = friendlyLoadError(e);
+    return;
   }
+
+  // 桌台详情一到就先定「订单相关」视图:已结账 / 订单明细 / 归属确认 / 锁定桌台
+  // 都只依赖 table + config,不必为菜单陪跑。
+  if (tb.currentOrder) {
+    currentOrder.value = tb.currentOrder;
+    const paid = Number(tb.currentOrder.payStatus) === 1;
+    // 已付款的单只看出餐进度,不涉及归属;同一会话内认领过(1)的不再重复问,
+    // 明确说过不是自己单的(no)直接停在「等服务员清台」。
+    const mine = safeSession.get(ownKey()) || '';
+    if (paid) view.value = 'settled';
+    // 两位都落订单明细页：顾客先核对菜品与金额，再由页面上的「待付款」引导去支付。
+    // 只有认领过(mine==='1')才直达订单页；没认领的先走归属确认，
+    // 避免把上一桌的账单摊给下一桌。
+    else if (mine === '1') view.value = 'order';
+    else {
+      view.value = 'resume';
+      foreign.value = mine === 'no';
+    }
+    // 待确认期间不轮询:后厨一改状态就把确认页顶掉的话,顾客还没选就被跳走了。
+    if (view.value !== 'resume') startPolling();
+  } else if (lockStatus.value) {
+    view.value = 'locked';
+  }
+
+  const menuRes = await menuTask;
+  const remarkRes = await remarkTask;
+  if (!menuRes.ok) {
+    failMenuLoad(menuRes.e);
+    return;
+  }
+  if (!remarkRes.ok) {
+    failMenuLoad(remarkRes.e);
+    return;
+  }
+  const m = menuRes.v;
+  menu.value = m;
+  remarks.value = remarkRes.v;
+  // 默认选中每道菜的「当前可用规格」(与 currentSpec 的回退口径一致)。
+  // 不能直接取 specs[0]:若第一个规格恰已售罄,选它会让 dishQty 按售罄规格的 key 计数,
+  // 而 changeQty 实际加到 currentSpec 回退出的有货规格上 —— 卡片步进器恒显示 0、与购物车不一致。
+  m.forEach(c =>
+    c.dishes?.forEach(d => {
+      if (d.specs && d.specs.length) selectedSpec[d.dishId as number] = currentSpec(d).specId as number;
+    })
+  );
+  if (categories.value.length) activeCat.value = categories.value[0].categoryId ?? null;
+  // 没有本桌订单、桌台也没锁定 = 正常进菜单(等菜单到齐再切,避免空菜单闪一下)
+  if (view.value === 'loading') {
+    // 菜单照常进：就算要选人数，顾客也应该先看到菜单（蒙层形式）
+    const remembered = rememberedPerson();
+    if (remembered) personCount.value = remembered;
+    // 桌级共享：别的手机选过（pendingPersonCount）则沿用；本机记忆优先。
+    // 本桌还有已付款出餐中的订单时，人数沿最近一笔（茶位费已收过，不重复问）。
+    const adopted = !remembered && (adoptPendingPerson(tb) || adoptServingPerson(tb));
+    view.value = 'menu';
+    personGate.value = seatFeeOn(config.value) && !remembered && !adopted;
+    if (personGate.value) personDraft.value = 0;
+  }
+  // 购物车要等订单归属定下来再恢复:它的 key 与恢复口径都依赖 currentOrder。
+  // 浏览模式同样恢复 —— 顾客挑好的菜在刷新后不丢,清台后能直接提交
+  restoreCart(m);
 }
 
 // 把加载失败转成顾客能看懂、且知道下一步该做什么的中文提示。

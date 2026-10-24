@@ -103,17 +103,15 @@
         💳 本店为先付模式：点击下方「去支付」完成付款，后厨即刻开工～
       </div>
 
-      <!-- 进行中的订单:可加菜、可催菜。
-           settled 视图也要显示:先付模式付款后轮询会把视图切到 settled,此时菜往往
-           还在做(状态 1/2)——那正是顾客最需要催菜的阶段,若只在 order 视图显示,
-           付款后按钮会消失(后付结账后同理)。settled 时已付款,加菜按钮因 canAppend
-           要求未支付而自然隐藏,这里只剩催菜 -->
+      <!-- 进行中的订单:按钮区只留「加菜」(门店欢迎的动作)。
+           settled 视图也要判断:先付模式付款后轮询会切到 settled,此时菜往往还在做;
+           settled 时已付款,加菜因 canAppend 要求未支付而自然隐藏,按钮区整块不渲染。
+           催菜不再进按钮区 —— 见账单下方那行小字 -->
       <div
-        v-if="(view === 'order' || view === 'settled') && isActive && (canAppend || canUrge)"
+        v-if="(view === 'order' || view === 'settled') && isActive && canAppend"
         class="st-actions"
       >
         <div
-          v-if="canAppend"
           class="st-append"
           @click="emit('append')"
         >
@@ -129,31 +127,6 @@
             <path d="M12 5v14M5 12h14" />
           </svg>
           加菜
-        </div>
-        <div
-          v-if="canUrge"
-          class="st-urge"
-          :class="{ disabled: urgeCooldown > 0 || urging }"
-          @click="emit('urge')"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <circle
-              cx="12"
-              cy="12"
-              r="9"
-            />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          {{ urgeCooldown > 0 ? urgeCooldown + 's 后可再催' : urging ? '催菜中…' : '催菜' }}
         </div>
       </div>
 
@@ -185,8 +158,27 @@
           class="st-btn st-neworder"
           @click="emit('newOrder')"
         >
-          {{ canceled ? '重新点菜' : '再点一单' }}
+          {{ newOrderText }}
         </div>
+      </div>
+
+      <!-- 催菜:整张卡最后一行小字,放在按钮下方 ——
+           它是「等太久」才用一次的兜底动作,做成按钮、或压在按钮上面,都会跟
+           「加菜 / 去支付」抢视线(等于变相请顾客催单)。催过之后整句换成安抚文案、
+           链接自动收起,刻意不留倒计时:秒数会让人盯着数,冷却一过再来催一次 -->
+      <div
+        v-if="(view === 'order' || view === 'settled') && isActive && canUrge"
+        class="st-urge-line"
+      >
+        <template v-if="urging">正在通知后厨…</template>
+        <template v-else-if="urgeCooldown > 0">已通知后厨加急，马上就来～</template>
+        <template v-else
+          >菜等好久还没来？<span
+            class="st-urge"
+            @click="emit('urge')"
+            >催一下后厨</span
+          ></template
+        >
       </div>
     </div>
 
@@ -201,7 +193,7 @@
       >
         <template v-if="canceled">{{ cancelTip }}</template>
         <template v-else-if="done">🎉 这顿吃完啦，欢迎下次光临</template>
-        <template v-else-if="settled">已结账，后厨正在做啦～出餐进度会自动更新</template>
+        <template v-else-if="settled">已结账，后厨正在做啦～出餐进度会自动更新；想加的菜随时可以再点</template>
       </div>
     </div>
 
@@ -273,6 +265,16 @@ const settled = computed(() => props.view === 'settled');
 const canReview = computed(
   () => Number(props.currentOrder.payStatus) === 1 && [3, 4].includes(Number(props.currentOrder.orderStatus))
 );
+
+// 「再点一单」按钮文案按状态区分(行为都是开新单,见 spec「一桌多单」):
+// 已结账但还在吃(settled)→「再加点菜」——先付模式付款后想加菜,正规路径就是
+// 开一单新的继续点(spec 附录 A:不做已支付差额补付,账务不变式不动);
+// 完成→「再点一单」;取消→「重新点菜」。
+const newOrderText = computed(() => {
+  if (props.view === 'canceled') return '重新点菜';
+  if (props.view === 'settled') return '再加点菜';
+  return '再点一单';
+});
 
 // 支付状态文案/主题:复用共享实现,与小程序同源
 const payText = computed(() => payStatusText(props.currentOrder));
@@ -569,7 +571,7 @@ const renderItems = computed<RenderItem[]>(() => {
   font-weight: 700;
 }
 
-/* 支付按钮:与卡内「加菜 / 催菜」同为 42px,去掉重投影 ——
+/* 支付按钮:与卡内「加菜」同为 42px,去掉重投影 ——
    主次靠底色(实心品牌渐变 vs 描边)区分,不再靠体积压住菜品明细 */
 .st-paybtn {
   width: 100%;
@@ -646,18 +648,20 @@ const renderItems = computed<RenderItem[]>(() => {
   line-height: 1.6;
 }
 
-/* 订单卡片操作区:加菜 / 催菜并排 */
+/* 订单卡片操作区:只剩「加菜」这一个按钮(催菜已收进下面那行小字) */
 .st-actions {
   display: flex;
   gap: 10px;
   margin-top: 12px;
 }
 
-.st-append,
-.st-urge {
+.st-append {
   flex: 1;
   height: 42px;
+  border: 1.5px solid #ffd5c4;
   border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--brand-deep);
   font-size: 14px;
   font-weight: 600;
   display: flex;
@@ -667,34 +671,32 @@ const renderItems = computed<RenderItem[]>(() => {
   cursor: pointer;
 }
 
-.st-append {
-  border: 1.5px solid #ffd5c4;
-  background: #fff;
-  color: var(--brand-deep);
-}
-
 .st-append:active {
   background: var(--brand-soft);
 }
 
+/* 催菜:整张卡最后一行小字,排在按钮下方,不是按钮 —— 顾客等久了往下看时会读到,
+   不需要用色块把它推到眼前(那等于替门店催单)。与小程序 .urge-line 同口径 */
+.st-urge-line {
+  margin-top: 12px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 只有「催一下后厨」这几个字可点:同色同字号,靠一条细下划线示意可点,
+   点下去的反馈交给整句文案(换成「已通知后厨加急」) */
 .st-urge {
-  border: 1.5px solid #ffd5c4;
-  background: var(--brand-soft);
-  color: var(--brand-deep);
+  color: var(--ink-3);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--ink-4);
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 .st-urge:active {
-  background: #ffe3d4;
-}
-
-.st-urge.disabled {
-  border-color: var(--line);
-  background: #f5f5f5;
-  color: var(--ink-4);
-  cursor: not-allowed;
-}
-
-.st-urge.disabled:active {
-  background: #f5f5f5;
+  color: var(--ink-2);
+  text-decoration-color: var(--ink-2);
 }
 </style>

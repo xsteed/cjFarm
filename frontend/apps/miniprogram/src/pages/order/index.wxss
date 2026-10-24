@@ -538,6 +538,22 @@
   color: var(--danger);
 }
 
+/* 催菜：底部按钮下方的一句小字，不是按钮（对应 H5 .st-urge-line）。
+   它是「等太久」才用一次的兜底动作，做成按钮、或压在按钮上面，都会跟
+   「加菜 / 去支付」抢视线；只有「催一下后厨」可点，靠一条细下划线示意 */
+.urge-line {
+  margin-top: 12rpx;
+  color: var(--ink-3);
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.urge-link {
+  color: var(--ink-3);
+  font-weight: 500;
+  text-decoration: underline;
+}
+
 /* 先付模式提示（对应 H5 OrderTrackView 的 st-payfirst-tip）：
    紧贴账单末行，给底部「去支付」按钮做铺垫 */
 .pay-first-tip {
@@ -743,15 +759,21 @@
 /* ---------- 底部动作栏 ---------- */
 .foot {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   flex-shrink: 0;
-  gap: 16rpx;
   padding: 18rpx 24rpx;
   /* 不用再让安全区：底部安全区与导航的高度已由 .page 的 padding-bottom 统一让出，
      这里再加一次会多出一条空白。 */
   padding-bottom: 18rpx;
   border-top: 2rpx solid var(--line);
   background: #fff;
+}
+
+/* 按钮行：动作并排一行，催菜那行小字排在它下面（不进这一行） */
+.foot-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
 }
 
 .foot-minor {

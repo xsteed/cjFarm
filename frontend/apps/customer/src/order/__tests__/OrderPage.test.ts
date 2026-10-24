@@ -574,7 +574,7 @@ describe('OrderPage', () => {
     }
   });
 
-  it('催菜成功后进入冷却倒计时,倒计时结束后恢复可点', async () => {
+  it('催菜成功后收起链接只留安抚文案,冷却结束后链接自动恢复', async () => {
     vi.useFakeTimers();
     try {
       const order = makeOrder({ orderStatus: 2, payStatus: 0 });
@@ -588,13 +588,14 @@ describe('OrderPage', () => {
       await wrapper.find('.st-urge').trigger('click');
       await drainMicrotasks();
       expect(urgeOrderMock).toHaveBeenCalledWith('NO001', 1, { silent: true });
-      expect(wrapper.find('.st-urge').text()).toContain('s 后可再催');
-      expect(wrapper.find('.st-urge').classes()).toContain('disabled');
+      // 冷却中链接收起,只留一句安抚文案:不给倒计时,免得顾客盯着秒数等下一次催
+      expect(wrapper.find('.st-urge').exists()).toBe(false);
+      expect(wrapper.find('.st-urge-line').text()).toContain('已通知后厨加急');
 
       await vi.advanceTimersByTimeAsync(3000);
       await drainMicrotasks();
-      expect(wrapper.find('.st-urge').text()).toContain('催菜');
-      expect(wrapper.find('.st-urge').classes()).not.toContain('disabled');
+      // 冷却结束后链接自己回来,文案回到「催一下后厨」
+      expect(wrapper.find('.st-urge').text()).toBe('催一下后厨');
 
       wrapper.unmount();
     } finally {
@@ -620,6 +621,31 @@ describe('OrderPage', () => {
 
     expect(createPayMock).toHaveBeenCalledWith({ orderNo: 'NO001', channel: 'wxpay' });
     expect(wrapper.find('.pay-qr img').attributes('src')).toBe('data:image/png;base64,mock');
+    wrapper.unmount();
+  });
+
+  it('菜单请求还没回来时，订单卡已经先渲染出来', async () => {
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: makeOrder() });
+    getOrderByNoMock.mockResolvedValue(makeOrder());
+    // 菜单(最大的那份包)挂住不返回:订单卡不该陪它一起等
+    let releaseMenu: (v: MenuCategory[]) => void = () => {};
+    getMenuMock.mockReturnValue(
+      new Promise<MenuCategory[]>(resolve => {
+        releaseMenu = resolve;
+      })
+    );
+
+    const wrapper = mountPage();
+    await drainMicrotasks();
+
+    expect(wrapper.find('.sk-wrap').exists()).toBe(false);
+    expect(wrapper.find('.st-card').exists()).toBe(true);
+    expect(wrapper.text()).toContain('菜品明细');
+
+    // 菜单补齐后正常进数据,不把已渲染的卡顶掉
+    releaseMenu(menuFixture);
+    await drainMicrotasks();
+    expect(wrapper.find('.st-card').exists()).toBe(true);
     wrapper.unmount();
   });
 });
@@ -942,4 +968,38 @@ describe('入座选人数（茶位费门店）', () => {
     expect(own.find('.st-card').exists()).toBe(false);
     own.unmount();
   });
+
+  it('返回按钮：轮询把餐中订单推到「已结账」后再返回，仍回出餐中列表而不是空白页', async () => {
+    vi.useFakeTimers();
+    try {
+      getTableMock.mockResolvedValue({
+        ...tableNoOrder,
+        servingOrders: [{ orderId: 9, orderNo: 'NO009', shortNo: '009', personCount: 5, orderStatus: 2, payStatus: 1 }]
+      });
+      getOrderByNoMock.mockResolvedValue(makeOrder({ orderNo: 'NO009', shortNo: '009', orderStatus: 2, payStatus: 1 }));
+      const wrapper = mountPage();
+      await drainMicrotasks();
+
+      // 订单 Tab → 列表 → 点一条进详情
+      await wrapper.findAll('.tb-item')[1].trigger('click');
+      await wrapper.find('.sl-item').trigger('click');
+      await drainMicrotasks();
+      expect(wrapper.find('.op-backbtn').exists()).toBe(true);
+
+      // 一拍轮询：已付款且仍在出餐 → 视图被推到 settled(3s 内必然发生)
+      await vi.advanceTimersByTimeAsync(3000);
+      await drainMicrotasks();
+      expect(wrapper.text()).toContain('已结账');
+
+      await wrapper.find('.op-backbtn').trigger('click');
+      await nextTick();
+
+      // 关键：不能只剩一个头部。列表里这条单还在出餐,应当回到列表
+      expect(wrapper.find('.serving-list').exists()).toBe(true);
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
 });

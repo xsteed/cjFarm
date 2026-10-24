@@ -252,43 +252,51 @@
       <view class="bottom-pad"></view>
     </scroll-view>
 
-    <!-- 底部动作栏（刷新收在菜品明细卡头，避免窄屏下四个按钮挤成一行放不下） -->
+    <!-- 底部动作栏（刷新收在菜品明细卡头，避免窄屏下四个按钮挤成一行放不下）
+         催菜不进这一行，而是排在按钮下方的一行小字里（见 .urge-line） -->
     <view class="foot">
+      <view class="foot-row">
+        <view
+          wx:if="{{canAppend}}"
+          class="btn-ghost foot-minor"
+          bindtap="onAppend"
+        >
+          加菜
+        </view>
+        <view
+          wx:if="{{canPay}}"
+          class="btn-primary foot-main"
+          bindtap="onPay"
+        >
+          {{payBtnText}}
+        </view>
+        <!-- 去评价与再点一单并排(H5 同款);已评变灰只读。两个按钮独立条件并存 -->
+        <view
+          wx:if="{{canReview}}"
+          class="btn-ghost foot-minor {{reviewDone ? 'dim' : ''}}"
+          bindtap="onOpenReview"
+        >
+          {{reviewDone ? '已评价 ✓' : '去评价'}}
+        </view>
+        <view
+          wx:if="{{settled || done || canceled}}"
+          class="btn-primary foot-main"
+          bindtap="onNewOrder"
+        >
+          {{canceled ? '重新点菜' : (settled ? '再加点菜' : '再点一单')}}
+        </view>
+      </view>
+
+      <!-- 催菜：按钮下方的一行小字，只有「催一下后厨」可点（与 H5 .st-urge-line 同口径）。
+           它是「等太久」才用一次的兜底动作，做成按钮就会跟「加菜 / 去支付」抢视线；
+           催完换成安抚文案、链接收起，刻意不留倒计时 —— 秒数会让人盯着数，冷却一过再来催一次 -->
       <view
         wx:if="{{canUrge}}"
-        class="btn-ghost foot-minor {{urgeCooldown > 0 ? 'dim' : ''}}"
-        bindtap="onUrge"
+        class="urge-line"
       >
-        {{urgeCooldown > 0 ? urgeCooldown + 's 后可再催' : (urging ? '催菜中…' : '催菜')}}
-      </view>
-      <view
-        wx:if="{{canAppend}}"
-        class="btn-ghost foot-minor"
-        bindtap="onAppend"
-      >
-        加菜
-      </view>
-      <view
-        wx:if="{{canPay}}"
-        class="btn-primary foot-main"
-        bindtap="onPay"
-      >
-        {{payBtnText}}
-      </view>
-      <!-- 去评价与再点一单并排(H5 同款);已评变灰只读。两个按钮独立条件并存 -->
-      <view
-        wx:if="{{canReview}}"
-        class="btn-ghost foot-minor {{reviewDone ? 'dim' : ''}}"
-        bindtap="onOpenReview"
-      >
-        {{reviewDone ? '已评价 ✓' : '去评价'}}
-      </view>
-      <view
-        wx:if="{{settled || done || canceled}}"
-        class="btn-primary foot-main"
-        bindtap="onNewOrder"
-      >
-        再点一单
+        <block wx:if="{{urging}}">正在通知后厨…</block>
+        <block wx:elif="{{urgeCooldown > 0}}">已通知后厨加急，马上就来～</block>
+        <block wx:else>菜等好久还没来？<text class="urge-link" bindtap="onUrge">催一下后厨</text></block>
       </view>
     </view>
   </block>

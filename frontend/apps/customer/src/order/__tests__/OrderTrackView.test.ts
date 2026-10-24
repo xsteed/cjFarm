@@ -112,4 +112,38 @@ describe('OrderTrackView', () => {
     // 先付 + 已支付：后厨已经收到单，催菜回来
     expect(mountView({ orderStatus: 2, payStatus: 1 }, 'order', true).find('.st-urge').exists()).toBe(true);
   });
+
+  it('催菜不是按钮：常态是账单下一行小字，催过之后整句换成安抚文案', () => {
+    const idle = mountView();
+    expect(idle.find('.st-urge-line').text()).toBe('菜等好久还没来？催一下后厨');
+    // 「加菜」按钮区里不再有催菜，两者不并排
+    expect(idle.find('.st-actions').exists()).toBe(false);
+
+    const props = {
+      view: 'order' as ViewState,
+      currentOrder: order(),
+      isActive: true,
+      canAppend: false,
+      showTabbar: true,
+      payFirst: false
+    };
+    // 请求中：链接收起，避免连点
+    const urging = mount(OrderTrackView, { props: { ...props, urging: true, urgeCooldown: 0 } });
+    expect(urging.find('.st-urge').exists()).toBe(false);
+    expect(urging.find('.st-urge-line').text()).toBe('正在通知后厨…');
+
+    // 冷却中：只给一句安抚文案，不给倒计时（倒计时会让人盯着数等下一次催）
+    const cooling = mount(OrderTrackView, { props: { ...props, urging: false, urgeCooldown: 120 } });
+    expect(cooling.find('.st-urge').exists()).toBe(false);
+    expect(cooling.find('.st-urge-line').text()).toBe('已通知后厨加急，马上就来～');
+  });
+
+  it('催菜那行小字排在按钮下方，不压在「加菜 / 去支付」上面', () => {
+    const wrapper = mountView({ payStatus: 0 }, 'order', false, true);
+    const html = wrapper.html();
+    expect(html).toContain('st-urge-line');
+    // DOM 顺序：加菜 → 去支付 → 催菜小字
+    expect(html.indexOf('st-append')).toBeLessThan(html.indexOf('st-paybtn'));
+    expect(html.indexOf('st-paybtn')).toBeLessThan(html.indexOf('st-urge-line'));
+  });
 });
