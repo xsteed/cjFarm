@@ -15,7 +15,8 @@
 --
 -- 幂等与重复执行：
 --   - CREATE TABLE 带 IF NOT EXISTS，可安全重复执行；
---   - DROP INDEX IF EXISTS / 重复建索引报 Duplicate key name 均属正常、可忽略；
+--   - MySQL 不支持 DROP INDEX IF EXISTS（那是 MariaDB 语法），删旧索引用
+--     information_schema.STATISTICS 判断存在后经 PREPARE/EXECUTE 执行，可安全重复；
 --   - MySQL 不支持 CREATE INDEX IF NOT EXISTS，重复执行报 Duplicate key name
 --     属正常现象、可忽略（见 migrations/README.md 第二节）；
 --   - 本脚本与「后端启动时按 schema.go/indexDefs 自动建表建索引」等效，
@@ -56,8 +57,20 @@ CREATE TABLE IF NOT EXISTS tb_review_image (
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='订单评价图片(顾客上传的用户内容,独立于商家资产表 tb_image,便于区分与迁对象存储)';
 
 -- 老库修正：早期草稿用过 UNIQUE(order_no)（一单一评），改为一单一评×一人一次。
--- 全新库不会存在旧索引（跳过报错即可）；本地/测试库若已建旧索引，本段负责清理。
-DROP INDEX IF EXISTS idx_review_order ON tb_review;
+-- 全新库不会存在旧索引（查无则跳过）；本地/测试库若已建旧索引，本段负责清理。
+-- MySQL 无 DROP INDEX IF EXISTS：用动态 SQL 在索引存在时才执行删除。
+SET @drop_old_idx := (
+    SELECT IF(COUNT(*) > 0,
+              'ALTER TABLE tb_review DROP INDEX idx_review_order',
+              'SELECT 1')
+    FROM information_schema.STATISTICS
+    WHERE table_schema = DATABASE()
+      AND table_name   = 'tb_review'
+      AND index_name   = 'idx_review_order'
+);
+PREPARE drop_old_idx_stmt FROM @drop_old_idx;
+EXECUTE drop_old_idx_stmt;
+DEALLOCATE PREPARE drop_old_idx_stmt;
 CREATE UNIQUE INDEX idx_review_order_reviewer ON tb_review(order_no, reviewer_key);
 CREATE INDEX idx_review_time ON tb_review(create_time);
 CREATE INDEX idx_review_rating ON tb_review(rating, create_time);
