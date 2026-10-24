@@ -10,6 +10,7 @@ import {
   getOrderByNo,
   getPublicConfig,
   getRemarks,
+  getReviewStatus,
   getTable,
   reportVisit,
   setTablePerson,
@@ -57,6 +58,7 @@ vi.mock('@dining/api', () => ({
   createPay: vi.fn(),
   queryPay: vi.fn(),
   setTablePerson: vi.fn(),
+  getReviewStatus: vi.fn(() => Promise.resolve({ reviewed: false })),
   // 站点访问统计打点(挂载即上报一次,失败静默)
   reportVisit: vi.fn(() => Promise.resolve())
 }));
@@ -71,6 +73,7 @@ const urgeOrderMock = vi.mocked(urgeOrder);
 const createPayMock = vi.mocked(createPay);
 const reportVisitMock = vi.mocked(reportVisit);
 const setTablePersonMock = vi.mocked(setTablePerson);
+const getReviewStatusMock = vi.mocked(getReviewStatus);
 
 // CartDrawer 只依赖 t-drawer 一个 TDesign 组件,用同名全局组件按 visible 渲染默认插槽即可稳定驱动内部交互。
 const TDrawerStub = defineComponent({
@@ -621,6 +624,51 @@ describe('OrderPage', () => {
 
     expect(createPayMock).toHaveBeenCalledWith({ orderNo: 'NO001', channel: 'wxpay' });
     expect(wrapper.find('.pay-qr img').attributes('src')).toBe('data:image/png;base64,mock');
+    wrapper.unmount();
+  });
+
+  it('从出餐中列表点进已付款订单：直接进「已结账」，评价状态当场就问，不等这一拍轮询', async () => {
+    vi.useFakeTimers();
+    try {
+      getTableMock.mockResolvedValue({
+        ...tableNoOrder,
+        servingOrders: [{ orderId: 9, orderNo: 'NO009', shortNo: '009', personCount: 5, orderStatus: 2, payStatus: 1 }]
+      });
+      getOrderByNoMock.mockResolvedValue(makeOrder({ orderNo: 'NO009', shortNo: '009', orderStatus: 2, payStatus: 1 }));
+
+      const wrapper = mountPage();
+      await drainMicrotasks();
+      await wrapper.findAll('.tb-item')[1].trigger('click');
+      await wrapper.find('.sl-item').trigger('click');
+      await drainMicrotasks();
+
+      // 一点定时器都不推:视图已是「已结账」,评价状态也已经查过
+      expect(wrapper.text()).toContain('已结账');
+      const reviewCall = getReviewStatusMock.mock.calls[0] ?? [];
+      expect(reviewCall[0]).toBe('NO009');
+      expect(reviewCall[1]).toBe(1);
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('切回订单 Tab 时立刻补一拍，不等 3s 的第一次轮询', async () => {
+    const order = makeOrder({ orderStatus: 2, payStatus: 0 });
+    getTableMock.mockResolvedValue({ ...tableNoOrder, currentOrder: order });
+    getOrderByNoMock.mockResolvedValue(order);
+
+    const wrapper = mountPage();
+    await flushPromises();
+    getOrderByNoMock.mockClear();
+
+    // 点餐 → 订单：手上的订单可能是几分钟前的快照,切回来必须马上刷一次
+    await wrapper.findAll('.tb-item')[0].trigger('click');
+    await nextTick();
+    await wrapper.findAll('.tb-item')[1].trigger('click');
+    await drainMicrotasks();
+
+    expect(getOrderByNoMock).toHaveBeenCalledTimes(1);
     wrapper.unmount();
   });
 

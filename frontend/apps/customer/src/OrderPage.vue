@@ -819,7 +819,6 @@ import {
   reportVisit,
   setTablePerson
 } from '@dining/api';
-import QRCode from 'qrcode';
 import type {
   CustomerReviewStatus,
   MenuCategory,
@@ -1254,7 +1253,10 @@ async function openServing(o: OrderSummary): Promise<void> {
   } catch {
     return;
   }
-  view.value = 'order';
+  // 视图按刚拉到的那份数据直接定:出餐中的单都是已付款的,本来就应该进「已结账」态。
+  // 如果硬写 'order' 等 3s 后的轮询来纠正,顾客会先看到一版少了「已结账」提示的订单卡,
+  // 而且评价状态(只在 settled/done 里查)也跟着被拖到 3s 之后。
+  view.value = Number(currentOrder.value?.payStatus) === 1 ? 'settled' : 'order';
   startPolling();
 }
 
@@ -1270,8 +1272,10 @@ function switchView(v: 'menu' | 'order'): void {
   searchOpen.value = false;
   if (v === 'order') {
     view.value = 'order';
-    // 没单时展示空态即可,起轮询只会白拉接口(与小程序一致:订单页常驻可进)
-    if (hasOrder.value) startPolling();
+    // 没单时展示空态即可,起轮询只会白拉接口(与小程序一致:订单页常驻可进)。
+    // 立即补一拍:手上的订单可能是几分钟前的快照,不补就先给顾客看 3s 旧状态,
+    // 状态若已翻成「已结账 / 已完成」,评价入口(挂在 settled/done 上)也要多等 3s 才出。
+    if (hasOrder.value) startPolling({ immediate: true });
     else stopPolling();
   } else {
     view.value = 'menu';
@@ -1379,7 +1383,9 @@ async function startOnlinePay(): Promise<void> {
   try {
     const channel = payTab.value === 'wx' ? 'wxpay' : 'alipay';
     const res = await createPay({ orderNo: currentOrder.value.orderNo, channel });
+    // qrcode 约 24kB,只有走到「在线支付」才会用:按需加载,别让扫码点菜的首屏陪它。
     // 用 qrcode 库把支付串渲染为二维码图片(360px/M级容错)
+    const { default: QRCode } = await import('qrcode');
     onlineQr.value = await QRCode.toDataURL(res.codeUrl, { width: 360, margin: 2, errorCorrectionLevel: 'M' });
     startPolling(); // 轮询支付结果
   } catch {

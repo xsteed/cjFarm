@@ -113,13 +113,20 @@ export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer, 
     }
   }
 
-  function startPolling(): void {
+  /**
+   * @param immediate 启动后立刻补一拍。
+   *   页面刚拿到数据时不必传(那份就是刚拉的);从「菜单」切回「订单」Tab 这类
+   *   入口要传 —— 手上的订单可能是几分钟前的快照,不补一拍就要先给顾客看 3s 旧状态,
+   *   而且「已结账 → 评价状态」这类派生请求也会一起被拖到 3s 之后。
+   */
+  function startPolling(options: { immediate?: boolean } = {}): void {
     stopPolling();
     pollTimer = setInterval(() => {
       void pollOnce();
     }, POLL_INTERVAL_MS);
     // 可见性订阅走适配器(Web 端 = visibilitychange;小程序端可换成 onAppShow/onAppHide)。
     unsubscribeVisibility = subscribeVisibility(onVisibilityChange);
+    if (options.immediate) void pollOnce();
   }
 
   function stopPolling(): void {
