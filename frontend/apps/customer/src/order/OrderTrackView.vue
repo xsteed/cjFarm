@@ -103,9 +103,13 @@
         💳 本店为先付模式：点击下方「去支付」完成付款，后厨即刻开工～
       </div>
 
-      <!-- 进行中的订单:可加菜、可催菜 -->
+      <!-- 进行中的订单:可加菜、可催菜。
+           settled 视图也要显示:先付模式付款后轮询会把视图切到 settled,此时菜往往
+           还在做(状态 1/2)——那正是顾客最需要催菜的阶段,若只在 order 视图显示,
+           付款后按钮会消失(后付结账后同理)。settled 时已付款,加菜按钮因 canAppend
+           要求未支付而自然隐藏,这里只剩催菜 -->
       <div
-        v-if="view === 'order' && isActive && (canAppend || canUrge)"
+        v-if="(view === 'order' || view === 'settled') && isActive && (canAppend || canUrge)"
         class="st-actions"
       >
         <div
