@@ -92,6 +92,12 @@ export interface DishSpec extends Extensible {
   stock?: number;
 }
 
+/** 拖拽排序后回填的一行:菜品 ID 与重排后的排序值。 */
+export interface DishSortRow extends Extensible {
+  dishId?: number;
+  sortOrder?: number;
+}
+
 export interface RemarkOption extends Extensible {
   remarkId?: number;
   optionName?: string;
@@ -719,6 +725,13 @@ export interface DishPayload extends ApiPayload {
   signature?: number;
   sortOrder?: number;
   specs?: DishSpec[];
+}
+
+/** 拖拽排序入参:把 dishId 移到同分类的 prevDishId 之后 / nextDishId 之前。 */
+export interface DishMovePayload extends ApiPayload {
+  dishId?: number;
+  prevDishId?: number;
+  nextDishId?: number;
 }
 
 export interface RemarkPayload extends ApiPayload {

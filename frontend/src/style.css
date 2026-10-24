@@ -414,6 +414,17 @@ svg.ic-svg {
   margin-top: 14px;
 }
 
+/* 拖拽排序进行中(见 apps/admin/src/composables/useDragSort):
+   全页禁止选中文本并统一成「抓取中」光标,否则拖动时会把表格文字一起选中。
+   只在拖拽期间挂在 body 上,松开即摘除,不影响正常交互。 */
+body.drag-sorting {
+  user-select: none;
+}
+
+body.drag-sorting * {
+  cursor: grabbing !important;
+}
+
 /* 分页器在 366px 里放不下"共 N 项 + 7 个页码",允许折行而不是把总数压扁。
    注意 TDesign 给 .t-pagination__total 设的是 flex:1(flex-basis:0%),
    只写 flex-shrink:0 没用 —— basis 是 0 时没有可收缩的余地,必须写 flex:0 0 auto。 */

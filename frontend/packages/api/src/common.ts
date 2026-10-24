@@ -6,7 +6,9 @@ import type {
   ConfigData,
   ConfigPayload,
   Dish,
+  DishMovePayload,
   DishPayload,
+  DishSortRow,
   Id,
   MenuCategory,
   OperLog,
@@ -60,6 +62,9 @@ export const updateDish = (data: DishPayload): Promise<ApiResponse<unknown>> =>
   http.post<unknown, ApiResponse<unknown>>('/admin/dish/update', data);
 export const deleteDish = (id: Id): Promise<ApiResponse<unknown>> =>
   http.delete<unknown, ApiResponse<unknown>>(`/admin/dish/${id}`);
+// 拖拽排序:只动同分类内的相对顺序,后端返回该分类重排后的 dishId/sortOrder 供回填
+export const sortDish = (data: DishMovePayload): Promise<{ items: DishSortRow[] }> =>
+  http.post<unknown, { items: DishSortRow[] }>('/admin/dish/sort', data);
 
 // 备注
 export const listRemarkOptions = (): Promise<PageResult<RemarkOption>> =>

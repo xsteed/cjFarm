@@ -55,8 +55,13 @@ func ListDishes(q DishQuery, pageNum, pageSize int) (total int, list []DishRow, 
 		return 0, nil, err
 	}
 
+	// 排序与管理端页面的呈现目标一致:先按分类顺序(与顾客端左栏同一口径),再按菜品 sort_order。
+	// 管理端一屏就能看出「哪些菜在同一个分类、组内谁在前」,与顾客端看到的顺序对齐;
+	// 分类缺失(脏数据)的菜排到最后,不抢占正常分类的位置。
 	rows, err := store.DB.Query(`SELECT `+DishCols+`
-		FROM tb_dish d LEFT JOIN tb_category c ON d.category_id=c.category_id`+cond+` ORDER BY d.sort_order, d.dish_id LIMIT ? OFFSET ?`,
+		FROM tb_dish d LEFT JOIN tb_category c ON d.category_id=c.category_id`+cond+`
+		ORDER BY (c.category_id IS NULL), COALESCE(c.sort_order,0), COALESCE(c.category_id,0), d.sort_order, d.dish_id
+		LIMIT ? OFFSET ?`,
 		append(args, pageSize, (pageNum-1)*pageSize)...)
 	if err != nil {
 		return total, nil, err
@@ -210,6 +215,109 @@ func UpdateDish(d po.Dish, specs []po.Spec) error {
 func DeleteDish(id int) error {
 	_, err := store.DB.Exec(`UPDATE tb_dish SET del_flag='1', update_time=? WHERE dish_id=?`, store.Now(), id)
 	return err
+}
+
+// DishSortRow 拖拽排序后回填给前端的「菜品 ID + 新排序值」。
+type DishSortRow struct {
+	DishID    int
+	SortOrder int
+}
+
+// MoveDish 把一道菜品移动到同一分类内的指定位置,并重排该分类下所有菜品的 sort_order
+// (按 10 递增留出空隙,便于后续手工插入)。返回该分类重排后的完整顺序,供前端回填。
+//
+// 落点语义:prevID>0 放到它之后;prevID=0 且 nextID>0 放到它之前;两者都为 0 放到分类末尾。
+// 跨分类的落点直接报错 —— 顾客端菜单按分类分组,把菜拖进别的分类属于「改分类」,
+// 不是排序,应由编辑弹窗显式改,避免一次误拖就把菜换到别的类目里。
+//
+// 只重排目标分类内的 sort_order:分类之间的交叠不影响顾客端呈现(那里按分类分组后,
+// 只比较同组内的相对顺序),因此无需全表重排。
+func MoveDish(dishID, prevID, nextID int) ([]DishSortRow, error) {
+	// 落点指向自己时等价于没给落点(拖回原位),不能当作「放在自己之后」。
+	if prevID == dishID {
+		prevID = 0
+	}
+	if nextID == dishID {
+		nextID = 0
+	}
+	var out []DishSortRow
+	err := store.WithTx(func(tx *sql.Tx) error {
+		var categoryID int
+		err := tx.QueryRow(`SELECT category_id FROM tb_dish WHERE dish_id=? AND del_flag='0'`, dishID).Scan(&categoryID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("菜品不存在或已删除")
+		}
+		if err != nil {
+			return err
+		}
+
+		// 同分类现有顺序,与顾客端同口径(sort_order, 再按 dish_id 兜底)。
+		rows, err := tx.Query(`SELECT dish_id FROM tb_dish WHERE category_id=? AND del_flag='0' ORDER BY sort_order, dish_id`, categoryID)
+		if err != nil {
+			return err
+		}
+		ids := make([]int, 0, 16)
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			if id != dishID {
+				ids = append(ids, id)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		insert := len(ids)
+		find := func(target int, after bool) (int, bool) {
+			for i, id := range ids {
+				if id == target {
+					if after {
+						return i + 1, true
+					}
+					return i, true
+				}
+			}
+			return 0, false
+		}
+		if prevID > 0 {
+			pos, ok := find(prevID, true)
+			if !ok {
+				return errors.New("只能在同一分类内调整顺序")
+			}
+			insert = pos
+		} else if nextID > 0 {
+			pos, ok := find(nextID, false)
+			if !ok {
+				return errors.New("只能在同一分类内调整顺序")
+			}
+			insert = pos
+		}
+
+		ordered := make([]int, 0, len(ids)+1)
+		ordered = append(ordered, ids[:insert]...)
+		ordered = append(ordered, dishID)
+		ordered = append(ordered, ids[insert:]...)
+
+		out = make([]DishSortRow, 0, len(ordered))
+		for i, id := range ordered {
+			order := (i + 1) * 10
+			out = append(out, DishSortRow{DishID: id, SortOrder: order})
+			if _, err := tx.Exec(`UPDATE tb_dish SET sort_order=? WHERE dish_id=?`, order, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // SpecOrderInfo 订单明细校验所需的菜品与规格信息。

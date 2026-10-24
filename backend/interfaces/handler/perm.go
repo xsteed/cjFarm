@@ -86,7 +86,9 @@ var routePerms = map[string]string{
 	"GET /api/admin/dish/:id":     "dish:view",
 	"POST /api/admin/dish/save":   "dish:edit",
 	"POST /api/admin/dish/update": "dish:edit",
-	"DELETE /api/admin/dish/:id":  "dish:edit",
+	// 拖拽排序改的是菜品展示顺序,与编辑同权限
+	"POST /api/admin/dish/sort":  "dish:edit",
+	"DELETE /api/admin/dish/:id": "dish:edit",
 
 	// ---- 备注 ----
 	"GET /api/admin/remark/list":    "remark:view",

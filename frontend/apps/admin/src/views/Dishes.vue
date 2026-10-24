@@ -41,6 +41,12 @@
         </t-button>
       </div>
       <t-space>
+        <!-- 拖拽排序的可见性提示:把手很显眼,但「能拖」这件事得先说清楚 -->
+        <span
+          v-if="canEdit"
+          class="sort-hint"
+          >拖动行/卡片可调整顺序</span
+        >
         <div class="view-mode-switch">
           <t-radio-group v-model="viewMode">
             <t-radio-button value="table"> 列表 </t-radio-button>
@@ -118,107 +124,127 @@
 
     <!-- 移动端:图片列表卡(横向),编辑/删除直接铺在卡片右侧,一键直达 -->
     <template v-if="isMobile">
-      <div class="m-list">
+      <div
+        ref="mobileWrap"
+        class="m-list"
+        @pointerdown="dragSort.onPointerDown"
+      >
         <div
           v-if="!loading && !list.length"
           class="m-empty"
         >
           暂无菜品
         </div>
-        <div
-          v-for="d in list"
-          :key="d.dishId"
-          class="m-row"
-          :class="{ 'm-row-tap': canEdit }"
-          :role="canEdit ? 'button' : undefined"
-          :tabindex="canEdit ? 0 : undefined"
-          @click="canEdit && openEdit(d)"
-          @keydown.enter="canEdit && openEdit(d)"
-          @keydown.space.prevent="canEdit && openEdit(d)"
+        <!-- 按分类分组:与顾客端同一口径(分类顺序定组序,组内按菜品排序),拖动只在组内生效 -->
+        <template
+          v-for="g in groups"
+          :key="g.key"
         >
-          <div class="m-row-pic">
-            <img
-              v-if="d.dishImage"
-              class="m-row-img"
-              :class="{ 'is-off': d.status !== 1 }"
-              :src="d.dishImage"
-              :alt="d.dishName"
-            />
-            <div
-              v-else
-              class="m-row-ph"
-            >
-              无图
-            </div>
-            <!-- 招牌角标:图片左上角,与顾客端同视觉,店长一眼确认哪些菜设了招牌 -->
-            <span
-              v-if="d.signature === 1"
-              class="sig-tag"
-              >招牌</span
-            >
-            <!-- 蒙版:下架优先于售罄(顾客端完全看不到 vs 临时沽清),同一套视觉 -->
-            <span
-              v-if="d.status !== 1"
-              class="m-row-out is-off"
-              >已下架</span
-            >
-            <span
-              v-else-if="d.soldOut === 1"
-              class="m-row-out"
-              >售罄</span
-            >
+          <div class="m-group-t">
+            <span class="grp-bar"></span>{{ g.categoryName }}
+            <em>{{ g.dishes.length }}</em>
           </div>
-          <div class="m-row-main">
-            <div class="m-row-head">
-              <div class="m-row-name">{{ d.dishName }}</div>
-              <label
-                v-if="canEdit"
-                class="m-row-shelf"
-                @click.stop
-              >
-                <t-switch
-                  :value="Number(d.status)"
-                  :custom-value="[1, 0]"
-                  size="small"
-                  :disabled="statusBusyIds.has(Number(d.dishId))"
-                  @change="(val: string | number | boolean) => toggleStatus(d, val)"
-                />
-                <span
-                  class="m-row-shelf-txt"
-                  :class="d.status === 1 ? 'is-on' : 'is-off'"
-                  >{{ d.status === 1 ? '上架中' : '已下架' }}</span
-                >
-              </label>
-            </div>
-            <div class="m-row-sub">
-              {{ d.categoryName || '未分类' }} ·
-              {{ d.soldOut === 1 ? '售罄' : d.status === 1 ? '上架中' : '已下架' }}
-            </div>
-            <div class="m-row-foot">
-              <div class="m-row-price">¥{{ minPrice(d) }}<small v-if="d.specs && d.specs.length > 1"> 起</small></div>
+          <div
+            v-for="(d, i) in g.dishes"
+            :key="d.dishId"
+            class="m-row"
+            :class="[{ 'm-row-tap': canEdit }, dragClass(g.start + i)]"
+            :role="canEdit ? 'button' : undefined"
+            :tabindex="canEdit ? 0 : undefined"
+            @click="canEdit && openEdit(d)"
+            @keydown.enter="canEdit && openEdit(d)"
+            @keydown.space.prevent="canEdit && openEdit(d)"
+          >
+            <!-- 拖拽把手:触摸设备点它立即起拖(touch-action:none,不会被页面滚动抢走) -->
+            <span
+              v-if="canEdit"
+              class="drag-grip m-grip"
+              data-drag-handle
+              aria-hidden="true"
+            ></span>
+            <div class="m-row-pic">
+              <img
+                v-if="d.dishImage"
+                class="m-row-img"
+                :class="{ 'is-off': d.status !== 1 }"
+                :src="d.dishImage"
+                :alt="d.dishName"
+              />
               <div
-                v-if="canEdit"
-                class="m-row-ops"
-                @click.stop
+                v-else
+                class="m-row-ph"
               >
-                <t-button
-                  theme="primary"
-                  variant="text"
-                  size="small"
-                  @click="openEdit(d)"
-                  >编辑</t-button
+                无图
+              </div>
+              <!-- 招牌角标:图片左上角,与顾客端同视觉,店长一眼确认哪些菜设了招牌 -->
+              <span
+                v-if="d.signature === 1"
+                class="sig-tag"
+                >招牌</span
+              >
+              <!-- 蒙版:下架优先于售罄(顾客端完全看不到 vs 临时沽清),同一套视觉 -->
+              <span
+                v-if="d.status !== 1"
+                class="m-row-out is-off"
+                >已下架</span
+              >
+              <span
+                v-else-if="d.soldOut === 1"
+                class="m-row-out"
+                >售罄</span
+              >
+            </div>
+            <div class="m-row-main">
+              <div class="m-row-head">
+                <div class="m-row-name">{{ d.dishName }}</div>
+                <label
+                  v-if="canEdit"
+                  class="m-row-shelf"
+                  @click.stop
                 >
-                <t-button
-                  theme="danger"
-                  variant="text"
-                  size="small"
-                  @click="onDelete(d)"
-                  >删除</t-button
+                  <t-switch
+                    :value="Number(d.status)"
+                    :custom-value="[1, 0]"
+                    size="small"
+                    :disabled="statusBusyIds.has(Number(d.dishId))"
+                    @change="(val: string | number | boolean) => toggleStatus(d, val)"
+                  />
+                  <span
+                    class="m-row-shelf-txt"
+                    :class="d.status === 1 ? 'is-on' : 'is-off'"
+                    >{{ d.status === 1 ? '上架中' : '已下架' }}</span
+                  >
+                </label>
+              </div>
+              <div class="m-row-sub">
+                {{ d.soldOut === 1 ? '售罄' : d.status === 1 ? '上架中' : '已下架' }}
+              </div>
+              <div class="m-row-foot">
+                <div class="m-row-price">¥{{ minPrice(d) }}<small v-if="d.specs && d.specs.length > 1"> 起</small></div>
+                <div
+                  v-if="canEdit"
+                  class="m-row-ops"
+                  @click.stop
                 >
+                  <t-button
+                    theme="primary"
+                    variant="text"
+                    size="small"
+                    @click="openEdit(d)"
+                    >编辑</t-button
+                  >
+                  <t-button
+                    theme="danger"
+                    variant="text"
+                    size="small"
+                    @click="onDelete(d)"
+                    >删除</t-button
+                  >
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </template>
 
         <div
           v-if="pagination.total > pagination.pageSize"
@@ -237,7 +263,9 @@
     <!-- 桌面端列表视图 -->
     <div
       v-else-if="!showCard"
+      ref="tableWrap"
       class="table-scroll"
+      @pointerdown="dragSort.onPointerDown"
     >
       <t-table
         :data="list"
@@ -246,9 +274,19 @@
         :loading="loading"
         :pagination="tablePagination"
         empty="暂无菜品"
+        :row-attributes="rowAttributes"
+        :row-class-name="rowClassName"
         @page-change="onTablePageChange"
         @page-size-change="onPageSizeChange"
       >
+        <!-- 拖拽把手列:鼠标可直接按住整行拖,touch-action:none 让它在触屏上也不被滚动抢走 -->
+        <template #drag>
+          <span
+            class="drag-grip"
+            data-drag-handle
+            aria-hidden="true"
+          ></span>
+        </template>
         <template #dishImage="{ row }">
           <div class="thumb-box">
             <img
@@ -293,8 +331,14 @@
             {{ row.description }}
           </div>
         </template>
-        <template #categoryName="{ row }">
-          {{ row.categoryName || '未分类' }}
+        <!-- 分类名只在每组第一行出现:配合行分隔线,视觉上就是「按分类分组」,
+             同组重复刷同一个分类名既占宽又吵闹 -->
+        <template #categoryName="{ row, rowIndex }">
+          <span
+            v-if="isGroupStart(rowIndex)"
+            class="cat-tag"
+            >{{ row.categoryName || '未分类' }}</span
+          >
         </template>
         <template #specs="{ row }">
           <div
@@ -358,82 +402,101 @@
     <template v-else>
       <div
         v-if="!loading && list.length"
-        class="dish-grid"
+        ref="gridWrap"
+        class="dish-grid-wrap"
+        @pointerdown="dragSort.onPointerDown"
       >
-        <div
-          v-for="d in list"
-          :key="d.dishId"
-          class="dish-card"
+        <!-- 同样按分类分组:组标题 + 组内卡片墙,与顾客端的分节呈现对齐 -->
+        <template
+          v-for="g in groups"
+          :key="g.key"
         >
-          <div class="pic">
-            <img
-              v-if="d.dishImage"
-              :class="{ 'is-off': d.status !== 1 }"
-              :src="d.dishImage"
-              :alt="d.dishName"
-            />
+          <div class="grid-group-t">
+            <span class="grp-bar"></span>{{ g.categoryName }}
+            <em>{{ g.dishes.length }}</em>
+          </div>
+          <div class="dish-grid">
             <div
-              v-else
-              class="pic-ph"
+              v-for="(d, i) in g.dishes"
+              :key="d.dishId"
+              class="dish-card"
+              :class="dragClass(g.start + i)"
             >
-              无图
-            </div>
-            <!-- 招牌角标:图片左上角(右上角已被状态 flag 占用),与顾客端同视觉 -->
-            <div
-              v-if="d.signature === 1"
-              class="sig-tag"
-            >
-              招牌
-            </div>
-            <!-- 蒙版:下架优先于售罄,与移动端行卡同一套视觉 -->
-            <div
-              v-if="d.status !== 1"
-              class="pic-mask is-off"
-            >
-              <span>已下架</span>
-            </div>
-            <div
-              v-else-if="d.soldOut === 1"
-              class="pic-mask"
-            >
-              <span>售罄</span>
-            </div>
-            <div
-              class="flag"
-              :class="d.soldOut === 1 ? 'soldout' : d.status !== 1 ? 'off' : ''"
-            >
-              {{ d.soldOut === 1 ? '售罄' : d.status === 1 ? '上架中' : '已下架' }}
+              <div class="pic">
+                <img
+                  v-if="d.dishImage"
+                  :class="{ 'is-off': d.status !== 1 }"
+                  :src="d.dishImage"
+                  :alt="d.dishName"
+                />
+                <div
+                  v-else
+                  class="pic-ph"
+                >
+                  无图
+                </div>
+                <!-- 招牌角标:图片左上角(右上角已被状态 flag 占用),与顾客端同视觉 -->
+                <div
+                  v-if="d.signature === 1"
+                  class="sig-tag"
+                >
+                  招牌
+                </div>
+                <!-- 蒙版:下架优先于售罄,与移动端行卡同一套视觉 -->
+                <div
+                  v-if="d.status !== 1"
+                  class="pic-mask is-off"
+                >
+                  <span>已下架</span>
+                </div>
+                <div
+                  v-else-if="d.soldOut === 1"
+                  class="pic-mask"
+                >
+                  <span>售罄</span>
+                </div>
+                <div
+                  class="flag"
+                  :class="d.soldOut === 1 ? 'soldout' : d.status !== 1 ? 'off' : ''"
+                >
+                  {{ d.soldOut === 1 ? '售罄' : d.status === 1 ? '上架中' : '已下架' }}
+                </div>
+                <!-- 拖拽把手:压在图片右下角(左上招牌/右上状态已占用),触屏也能直接按住拖 -->
+                <span
+                  v-if="canEdit"
+                  class="drag-grip card-grip"
+                  data-drag-handle
+                  aria-hidden="true"
+                ></span>
+              </div>
+              <div class="info">
+                <div class="n">
+                  {{ d.dishName }}
+                </div>
+                <div class="p"><i>¥</i>{{ minPrice(d) }}<small v-if="d.specs && d.specs.length > 1"> 起</small></div>
+                <div
+                  v-if="canEdit"
+                  class="ops"
+                >
+                  <t-button
+                    theme="primary"
+                    variant="text"
+                    size="small"
+                    @click="openEdit(d)"
+                    >编辑</t-button
+                  >
+                  <t-button
+                    theme="danger"
+                    variant="text"
+                    size="small"
+                    @click="onDelete(d)"
+                    >删除</t-button
+                  >
+                </div>
+              </div>
             </div>
           </div>
-          <div class="info">
-            <div class="n">
-              {{ d.dishName }}
-            </div>
-            <div class="p"><i>¥</i>{{ minPrice(d) }}<small v-if="d.specs && d.specs.length > 1"> 起</small></div>
-            <div class="meta">
-              {{ d.categoryName || '未分类' }}
-            </div>
-            <div
-              v-if="canEdit"
-              class="ops"
-            >
-              <t-button
-                theme="primary"
-                variant="text"
-                size="small"
-                @click="openEdit(d)"
-                >编辑</t-button
-              >
-              <t-button
-                theme="danger"
-                variant="text"
-                size="small"
-                @click="onDelete(d)"
-                >删除</t-button
-              >
-            </div>
-          </div>
-        </div>
+        </template>
       </div>
       <div
         v-else-if="!loading && !list.length"
@@ -609,10 +672,13 @@
           label="排序"
           name="sortOrder"
         >
-          <t-input-number
-            v-model="form.sortOrder"
-            :min="0"
-          />
+          <div class="sort-order-row">
+            <t-input-number
+              v-model="form.sortOrder"
+              :min="0"
+            />
+            <span class="sort-order-hint">数值小的排在前面；日常调序直接拖列表里的行/卡片更快</span>
+          </div>
         </t-form-item>
       </t-form>
     </t-dialog>
@@ -622,11 +688,21 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
-import { listDishes, saveDish, updateDish, deleteDish, listCategories, saveCategory, uploadFile } from '@dining/api';
+import {
+  listDishes,
+  saveDish,
+  updateDish,
+  deleteDish,
+  listCategories,
+  saveCategory,
+  uploadFile,
+  sortDish
+} from '@dining/api';
 import { hasPerm } from '@dining/auth';
 import { useViewMode } from '../composables/useViewMode';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
+import { useDragSort } from '../composables/useDragSort';
 import PullRefresh from '../components/PullRefresh.vue';
 import MobileFab from '../components/MobileFab.vue';
 import type { UploadFile, PageInfo } from 'tdesign-vue-next';
@@ -696,6 +772,141 @@ const form = reactive<DishForm>({
 // 无 dish:edit 时隐藏「新增菜品」入口与卡片上的编辑/删除(只读浏览)。后端接口同样 403。
 const canEdit = computed(() => hasPerm('dish:edit'));
 
+// ============================================================================
+// 分类分组 + 拖拽排序
+//
+// 集合顺序与服务端保持一致(分类 sort_order → 菜品 sort_order),页面按分类切成
+// 连续的组来渲染,顾客端看到的就是这个顺序。拖拽只在同一分类内生效 —— 把菜拖进
+// 别的分类属于「改分类」,该走编辑弹窗,一次误拖就换类目代价太大。
+// ============================================================================
+
+interface DishGroup {
+  key: string;
+  categoryId: number;
+  categoryName: string;
+  /** 该组第一道菜在 list 里的下标(给 dragClass 定位用) */
+  start: number;
+  dishes: Dish[];
+}
+
+const groups = computed<DishGroup[]>(() => {
+  const out: DishGroup[] = [];
+  list.value.forEach((d, i) => {
+    const cid = Number(d.categoryId) || 0;
+    const last = out[out.length - 1];
+    if (last && last.categoryId === cid) {
+      last.dishes.push(d);
+      return;
+    }
+    out.push({
+      key: `${cid}-${i}`,
+      categoryId: cid,
+      categoryName: d.categoryName || '未分类',
+      start: i,
+      dishes: [d]
+    });
+  });
+  return out;
+});
+
+// 三种视图各自的 DOM 容器:dragSort 需要按顺序拿到当前渲染的行/卡片
+const tableWrap = ref<HTMLElement | null>(null);
+const mobileWrap = ref<HTMLElement | null>(null);
+const gridWrap = ref<HTMLElement | null>(null);
+
+function dragItems(): HTMLElement[] {
+  if (!isMobile.value && !showCard.value) {
+    const box = tableWrap.value;
+    if (!box) return [];
+    // 行下标由 rowAttributes 写在 tr 上,不依赖 tbody 里的空数据行/分页行
+    return Array.from(box.querySelectorAll<HTMLElement>('tbody tr[data-row-index]')).sort(
+      (a, b) => Number(a.dataset.rowIndex) - Number(b.dataset.rowIndex)
+    );
+  }
+  const box = isMobile.value ? mobileWrap.value : gridWrap.value;
+  if (!box) return [];
+  return Array.from(box.querySelectorAll<HTMLElement>(isMobile.value ? '.m-row' : '.dish-card'));
+}
+
+const dragSort = useDragSort({
+  items: dragItems,
+  groupOf: index => Number(list.value[index]?.categoryId) || 0,
+  onDrop: onDragDrop,
+  enabled: () => canEdit.value,
+  // 触摸端点把手直接起拖;没点把手要长按,免得手指一碰卡片就把页面滚动吞掉
+  handleSelector: '[data-drag-handle]'
+});
+
+/** 行/卡片的拖拽态样式:被拖项半透明,落位处画插入线。 */
+function dragClass(index: number): Record<string, boolean> {
+  return {
+    'is-dragging': dragSort.dragging.value && dragSort.fromIndex.value === index,
+    'drop-before': dragSort.dropBefore.value === index,
+    'drop-after': dragSort.dropAfter.value === index
+  };
+}
+
+/** 该行是否是所在分类组的第一行(分类列只在组首显示分类名)。 */
+function isGroupStart(index: number): boolean {
+  if (index <= 0) return true;
+  return Number(list.value[index - 1]?.categoryId) !== Number(list.value[index]?.categoryId);
+}
+
+// t-table 不支持分组行,借 rowAttributes/rowClassName 给每行打上「序号 + 组首 + 拖拽态」,
+// 样式与拖拽落位都据此渲染。
+function rowAttributes({ rowIndex }: { rowIndex: number }): Record<string, string> {
+  return { 'data-row-index': String(rowIndex) };
+}
+
+function rowClassName({ rowIndex }: { rowIndex: number }): string {
+  const cls = ['dish-row'];
+  // 首行不加分隔线:表头下方再来一条线只是噪音
+  if (rowIndex > 0 && isGroupStart(rowIndex)) cls.push('group-start');
+  const state = dragClass(rowIndex);
+  for (const key of Object.keys(state)) if (state[key]) cls.push(key);
+  return cls.join(' ');
+}
+
+/** 落位后先本地重排(拖完立刻顺眼),再把相对位置写到后端。 */
+function onDragDrop(from: number, to: number): void {
+  const moved = list.value[from];
+  if (!moved) return;
+  const snapshot = list.value.map(d => Number(d.dishId));
+  const next = list.value.slice();
+  next.splice(from, 1);
+  next.splice(to, 0, moved);
+  list.value = next;
+  void persistSort(moved, next, to, snapshot);
+}
+
+async function persistSort(moved: Dish, arranged: Dish[], to: number, snapshot: number[]): Promise<void> {
+  const sameCategory = (d?: Dish): boolean => !!d && Number(d.categoryId) === Number(moved.categoryId);
+  const prev = arranged[to - 1];
+  const following = arranged[to + 1];
+  // 只把「同分类的邻居」当作锚点:跨组的邻居属于别的分类,不能拿来定位
+  const prevId = sameCategory(prev) ? Number(prev?.dishId) : 0;
+  const nextId = sameCategory(following) ? Number(following?.dishId) : 0;
+  if (!prevId && !nextId) return;
+  try {
+    const res = await sortDish({
+      dishId: moved.dishId,
+      prevDishId: prevId || undefined,
+      nextDishId: nextId || undefined
+    });
+    // 回填该分类重排后的排序值,免得「排序」列还显示旧数字
+    const orders = new Map<number, number>();
+    for (const it of res.items || []) orders.set(Number(it.dishId), Number(it.sortOrder));
+    for (const d of list.value) {
+      const order = orders.get(Number(d.dishId));
+      if (order !== undefined) d.sortOrder = order;
+    }
+  } catch {
+    // 写库失败(并发改动、权限变化等):回到拖拽前的顺序,别让界面与库长期不一致
+    const pos = new Map(snapshot.map((id, i) => [id, i]));
+    list.value = list.value.slice().sort((a, b) => (pos.get(Number(a.dishId)) ?? 0) - (pos.get(Number(b.dishId)) ?? 0));
+  }
+}
+
 function minPrice(d: Dish): string {
   if (!d.specs || !d.specs.length) return '0';
   return Math.min(...d.specs.map(s => Number(s.price) || 0)).toFixed(2);
@@ -704,14 +915,16 @@ function minPrice(d: Dish): string {
 // 列表视图列:图片给了缩略图、规格列直接铺开每个规格的价格与余量,
 // 不用像卡片那样只能看到「最低价 起」。只读角色(无 dish:edit)不渲染操作列。
 const columns = computed(() => {
-  const cols = [
+  // 拖拽把手列只在有编辑权限时出现(只读角色没有可拖的东西)
+  const cols = canEdit.value ? [{ colKey: 'drag', title: '', width: 44 }] : [];
+  cols.push(
     { colKey: 'dishImage', title: '图片', width: 80 },
     { colKey: 'dishName', title: '菜品名称', width: 200 },
     { colKey: 'categoryName', title: '分类', width: 120 },
     { colKey: 'specs', title: '规格 / 价格', width: 260 },
     { colKey: 'status', title: '状态', width: 100 },
     { colKey: 'sortOrder', title: '排序', width: 80 }
-  ];
+  );
   if (canEdit.value) cols.push({ colKey: 'op', title: '操作', width: 130 });
   return cols;
 });
@@ -1522,5 +1735,156 @@ onMounted(() => {
 img.is-off {
   filter: grayscale(1);
   opacity: 0.9;
+}
+
+/* ============================================================================
+   分类分组标题 + 拖拽排序
+   分组标题的品牌色竖条与顾客端(.op-group-t)同款,让店主在后台也能对上顾客看到的
+   分节结构;拖拽的落位用「插入线」表达,被拖项半透明,避免整块内容跳动。
+   ============================================================================ */
+
+.m-group-t,
+.grid-group-t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 8px;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.m-group-t:first-child,
+.grid-group-t:first-child {
+  margin-top: 0;
+}
+
+.grp-bar {
+  flex-shrink: 0;
+  width: 4px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--grad-brand-soft);
+}
+
+.m-group-t em,
+.grid-group-t em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-4);
+}
+
+/* 分组内的行/卡片之间不再额外拉开距离:分组标题已经把层级说清楚了 */
+.m-list .m-row {
+  margin-top: 0;
+}
+
+/* 拖拽把手:两点宽的圆点矩阵,鼠标/手指按住即可拖动。
+   touch-action:none 是关键 —— 否则触屏上手势会被浏览器判成页面滚动,拖不动 */
+.drag-grip {
+  /* 用 span 承载:表格单元格里是普通流,必须 inline-block 才有宽高 */
+  display: inline-block;
+  flex-shrink: 0;
+  width: 11px;
+  height: 27px;
+  vertical-align: middle;
+  border-radius: 4px;
+  color: var(--ink-4);
+  cursor: grab;
+  touch-action: none;
+  opacity: 0.75;
+  background-image: radial-gradient(currentColor 1.3px, transparent 1.4px);
+  background-size: 5px 5px;
+  background-position: 0 2px;
+}
+
+.drag-grip:hover {
+  opacity: 1;
+  color: var(--brand);
+}
+
+/* 卡片视图的把手压在图片右下角(左上「招牌」、右上状态 flag 都已占用) */
+.card-grip {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 3;
+  width: 20px;
+  height: 26px;
+  padding: 0 4px;
+  background-color: rgb(255 255 255 / 90%);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 14%);
+  opacity: 1;
+  color: var(--ink-3);
+}
+
+/* 被拖起的行/卡片:浮起来(位移由 JS 逐帧写 transform),原位置靠插入线表达落点 */
+.m-row.is-dragging,
+.dish-card.is-dragging {
+  opacity: 0.92;
+  box-shadow: var(--shadow-2);
+}
+
+.table-scroll :deep(tr.is-dragging > td) {
+  background: #fff;
+  opacity: 0.92;
+  box-shadow: 0 6px 16px rgb(0 0 0 / 12%);
+}
+
+/* 行分组分隔线:每组第一行的上沿加一条浅线,表格里也能看出分类边界 */
+.table-scroll :deep(tr.group-start > td) {
+  box-shadow: inset 0 1px 0 var(--line);
+}
+
+/* 落点提示:上沿亮线 = 插到这一行之前,下沿亮线 = 插到它之后(分组末尾) */
+.m-row.drop-before,
+.dish-card.drop-before {
+  box-shadow: inset 0 3px 0 var(--brand);
+}
+
+.m-row.drop-after,
+.dish-card.drop-after {
+  box-shadow: inset 0 -3px 0 var(--brand);
+}
+
+.table-scroll :deep(tr.drop-before > td) {
+  box-shadow: inset 0 3px 0 var(--brand);
+}
+
+.table-scroll :deep(tr.drop-after > td) {
+  box-shadow: inset 0 -3px 0 var(--brand);
+}
+
+/* 分类列:只在组首出现的品牌色小标签 */
+.cat-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 工具栏提示:把手很小,「能拖」这件事得有一句话交代 */
+.sort-hint {
+  color: var(--ink-4);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 排序输入 + 说明:与图片上传位同为「控件 + 说明」的横排,窄屏自动换行 */
+.sort-order-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sort-order-hint {
+  color: var(--ink-4);
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

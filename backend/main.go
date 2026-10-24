@@ -186,6 +186,8 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/dish/:id", handler.DishGet)
 			admin.POST("/dish/save", handler.DishSave)
 			admin.POST("/dish/update", handler.DishUpdate)
+			// 拖拽调整菜品在分类内的顺序(不接 :id,避免与 GET /dish/:id 的路由语义混淆)
+			admin.POST("/dish/sort", handler.DishSort)
 			admin.DELETE("/dish/:id", handler.DishDelete)
 
 			admin.GET("/remark/list", handler.RemarkList)

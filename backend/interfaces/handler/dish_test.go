@@ -218,6 +218,48 @@ func TestDishUpdateMissingID(t *testing.T) {
 	}
 }
 
+// TestDishSort 拖拽排序成功路径:返回重排后的排序值。
+func TestDishSort(t *testing.T) {
+	dishInitDB(t)
+	total, list, err := dao.ListDishes(dao.DishQuery{CategoryID: "1"}, 1, 50)
+	if err != nil || total < 2 {
+		t.Fatalf("分类 1 下应至少有两道菜, total=%d err=%v", total, err)
+	}
+	head, tail := int(list[0].DishID), int(list[len(list)-1].DishID)
+
+	w := dishCall(t, DishSort, http.MethodPost, "/api/admin/dish/sort",
+		`{"dishId":`+strconv.Itoa(tail)+`,"nextDishId":`+strconv.Itoa(head)+`}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("拖拽排序应返回 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	data := dishData(t, dishJSON(t, w))
+	items, ok := data["items"].([]interface{})
+	if !ok || len(items) != total {
+		t.Fatalf("应返回该分类全部菜品的新排序值, got %v", data["items"])
+	}
+	// 回读顺序:tail 已被拖到最前。
+	_, after, err := dao.ListDishes(dao.DishQuery{CategoryID: "1"}, 1, 50)
+	if err != nil {
+		t.Fatalf("回读分类菜品失败: %v", err)
+	}
+	if int(after[0].DishID) != tail {
+		t.Fatalf("拖到首位后应排在第一条, got dishId=%d want=%d", after[0].DishID, tail)
+	}
+}
+
+// TestDishSortMissingID 缺少 dishId 时返回参数错误。
+func TestDishSortMissingID(t *testing.T) {
+	dishInitDB(t)
+
+	w := dishCall(t, DishSort, http.MethodPost, "/api/admin/dish/sort", `{"prevDishId":1}`, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("缺少 dishId 应返回 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	if resp := dishJSON(t, w); resp["msg"] != "参数错误" {
+		t.Fatalf("缺少 dishId 应返回参数错误, got %v", resp)
+	}
+}
+
 // TestDishDelete 删除菜品成功路径。
 func TestDishDelete(t *testing.T) {
 	dishInitDB(t)

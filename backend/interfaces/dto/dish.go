@@ -46,6 +46,20 @@ func FromDish(p po.Dish, categoryName string, specs []Spec) Dish {
 	}
 }
 
+// DishMove 菜品拖拽排序入参:把 DishID 移动到 PrevDishID 之后(同一分类内)。
+// PrevDishID 为 0 时看 NextDishID(移动到它之前),两者都为 0 表示移动到分类末尾。
+type DishMove struct {
+	DishID     int `json:"dishId"`
+	PrevDishID int `json:"prevDishId"`
+	NextDishID int `json:"nextDishId"`
+}
+
+// DishSort 拖拽排序结果:菜品 ID 与本轮重排后的排序值。
+type DishSort struct {
+	DishID    int `json:"dishId"`
+	SortOrder int `json:"sortOrder"`
+}
+
 // ToPO 将 API 出参转回持久化对象,CategoryName/Specs 不入库。
 func (d Dish) ToPO() po.Dish {
 	return po.Dish{

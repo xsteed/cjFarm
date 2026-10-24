@@ -86,10 +86,12 @@ var routeAudit = map[string]auditMeta{
 	"DELETE /api/admin/category/:id":  {Module: "分类管理", Action: "删除分类", Type: po.OperTypeDelete, Target: "category", IDKey: "id"},
 	"POST /api/admin/dish/save":       {Module: "菜品管理", Action: "新增菜品", Type: po.OperTypeInsert, Target: "dish"},
 	"POST /api/admin/dish/update":     {Module: "菜品管理", Action: "修改菜品", Type: po.OperTypeUpdate, Target: "dish", IDKey: "dishId"},
-	"DELETE /api/admin/dish/:id":      {Module: "菜品管理", Action: "删除菜品", Type: po.OperTypeDelete, Target: "dish", IDKey: "id"},
-	"POST /api/admin/remark/save":     {Module: "备注管理", Action: "新增备注", Type: po.OperTypeInsert, Target: "remark"},
-	"POST /api/admin/remark/update":   {Module: "备注管理", Action: "修改备注", Type: po.OperTypeUpdate, Target: "remark", IDKey: "remarkId"},
-	"DELETE /api/admin/remark/:id":    {Module: "备注管理", Action: "删除备注", Type: po.OperTypeDelete, Target: "remark", IDKey: "id"},
+	// 拖拽排序改的是顾客端看到的出菜顺序,属于对外可见的修改,同样留痕
+	"POST /api/admin/dish/sort":     {Module: "菜品管理", Action: "调整菜品排序", Type: po.OperTypeUpdate, Target: "dish", IDKey: "dishId"},
+	"DELETE /api/admin/dish/:id":    {Module: "菜品管理", Action: "删除菜品", Type: po.OperTypeDelete, Target: "dish", IDKey: "id"},
+	"POST /api/admin/remark/save":   {Module: "备注管理", Action: "新增备注", Type: po.OperTypeInsert, Target: "remark"},
+	"POST /api/admin/remark/update": {Module: "备注管理", Action: "修改备注", Type: po.OperTypeUpdate, Target: "remark", IDKey: "remarkId"},
+	"DELETE /api/admin/remark/:id":  {Module: "备注管理", Action: "删除备注", Type: po.OperTypeDelete, Target: "remark", IDKey: "id"},
 
 	// ---- 打印机(注意 test/probe/bind/clear 会改动打印机或出纸,同样留痕) ----
 	"POST /api/admin/printer/save":      {Module: "打印机管理", Action: "新增打印机", Type: po.OperTypeInsert, Target: "printer"},

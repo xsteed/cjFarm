@@ -59,6 +59,21 @@ func DishUpdate(c *gin.Context) {
 	okMsg(c, "修改成功")
 }
 
+// DishSort 拖拽调整菜品顺序(仅限同一分类内)。
+func DishSort(c *gin.Context) {
+	var m dto.DishMove
+	if err := c.ShouldBindJSON(&m); err != nil || m.DishID <= 0 {
+		fail(c, "参数错误")
+		return
+	}
+	items, err := service.MoveDish(m)
+	if err != nil {
+		fail(c, err.Error())
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
 func DishDelete(c *gin.Context) {
 	id, okid := idParam(c)
 	if !okid {
