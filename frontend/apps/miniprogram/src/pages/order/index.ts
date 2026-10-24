@@ -6,6 +6,7 @@
 // 轮询：3s 一拍（与 H5 一致），页面 onShow 启动 / onHide 停止 —— 小程序的页面生命周期
 // 已经覆盖「切后台」和「跳去支付页」，所以不需要再监听 onAppHide（见 store/poller.ts）。
 import { createReview, getOrderByNo, getReviewStatus, updateOrderPerson, urgeOrder } from '../../api/client';
+import { visitorId } from '../../shared/visitor';
 import { ORDER_POLL_INTERVAL_MS, URGE_COOLDOWN_FALLBACK_S } from '../../config';
 import { cartClear } from '../../store/cart';
 import {
@@ -442,7 +443,7 @@ Page({
     const tableId = sessionState().tableId;
     if (!no || !tableId || this.data.reviewDone) return;
     try {
-      const st = (await getReviewStatus(no, tableId, { silent: true })) as CustomerReviewStatus;
+      const st = (await getReviewStatus(no, tableId, visitorId(), { silent: true })) as CustomerReviewStatus;
       if (st.reviewed) this.setData({ reviewDone: true });
     } catch {
       /* 状态查询失败不打扰:入口仍显示「去评价」,提交时后端兜底 */
@@ -463,7 +464,7 @@ Page({
     const no = this.data.orderNo;
     if (!no) return;
     try {
-      await createReview({ tableId: sessionState().tableId, orderNo: no, ...payload });
+      await createReview({ tableId: sessionState().tableId, orderNo: no, reviewerKey: visitorId(), ...payload });
       this.setData({ reviewSheetVisible: false, reviewDone: true });
       toast.success('评价已提交，感谢你的反馈');
     } catch {

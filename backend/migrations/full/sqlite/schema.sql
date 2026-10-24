@@ -298,6 +298,7 @@ CREATE TABLE IF NOT EXISTS tb_review (
         rating       INTEGER      DEFAULT 0,
         tags         VARCHAR(255) DEFAULT '',
         content      VARCHAR(500) DEFAULT '',
+        reviewer_key VARCHAR(64)  DEFAULT '',
         ip_hash      VARCHAR(64)  DEFAULT '',
         ua_hash      VARCHAR(64)  DEFAULT '',
         create_time  VARCHAR(32) DEFAULT (datetime('now','localtime')),
@@ -707,7 +708,7 @@ CREATE INDEX IF NOT EXISTS idx_refund_order ON tb_refund(order_id);
 CREATE INDEX IF NOT EXISTS idx_refund_update_time ON tb_refund(update_time);
 CREATE INDEX IF NOT EXISTS idx_urge_status ON tb_order_urge(status, create_time);
 CREATE INDEX IF NOT EXISTS idx_urge_order ON tb_order_urge(order_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_review_order ON tb_review(order_no);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_order_reviewer ON tb_review(order_no, reviewer_key);
 CREATE INDEX IF NOT EXISTS idx_review_time ON tb_review(create_time);
 CREATE INDEX IF NOT EXISTS idx_review_rating ON tb_review(rating, create_time);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_review_image_name ON tb_review_image(img_name);

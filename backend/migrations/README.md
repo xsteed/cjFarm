@@ -238,7 +238,7 @@ for f in migrations/incr/mysql/*.sql; do mysql -u dining -p dining < "$f"; done
 | `idx_refund_update_time` | tb_refund | 普通 | 报表按退款到账时间 |
 | `idx_urge_status` | tb_order_urge | 普通（2 列） | 看板待处理催菜 |
 | `idx_urge_order` | tb_order_urge | 普通 | 催菜按订单 |
-| `idx_review_order` | tb_review | UNIQUE | 一单一评（order_no 唯一，并发双击兜底） |
+| `idx_review_order_reviewer` | tb_review | UNIQUE（2 列） | 一人一评（order_no+reviewer_key 唯一，同桌各评一次、并发双击兜底） |
 | `idx_review_time` | tb_review | 普通 | 评价列表按时间翻页 |
 | `idx_review_rating` | tb_review | 普通（2 列） | 按评分档位筛选 |
 | `idx_review_image_name` | tb_review_image | UNIQUE | 图片文件名唯一（展示/绑定凭据） |

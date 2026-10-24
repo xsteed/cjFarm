@@ -1,3 +1,4 @@
+import { safeStorage } from './storage';
 // ============================================================================
 // 访客 ID(站点访问统计的匿名去重键)
 //
@@ -32,3 +33,16 @@ export function generateVisitorId(): string {
 
 // 取值入口在小程序端自己的 utils/visitor.ts(mpVisitorId):它直接用 wx.getStorageSync,
 // 而这里注入的 safeStorage 后端并不覆盖这套用法。此处曾有一份等价的 visitorId(),无调用方,已删。
+
+/**
+ * 取本机访客 ID(小程序端):没有则现场生成并落盘,之后同一设备恒定。
+ * 与 H5 的 @dining/shared visitorId 同名同语义(平行实现);评价「我是否已评」
+ * 按它判定,同桌他人评过不影响本机。
+ */
+export function visitorId(): string {
+  const existing = safeStorage.get(LS_VISITOR_ID);
+  if (existing) return existing;
+  const id = generateVisitorId();
+  safeStorage.set(LS_VISITOR_ID, id);
+  return id;
+}

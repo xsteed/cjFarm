@@ -2,7 +2,9 @@
 --
 -- 新增两张表（结构变更唯一落点在本目录；与后端启动时的自动建表等价，执行其一即可）：
 --   tb_review        订单评价（1-5 星 + 快捷标签 + 文字；桌台/人数/会员昵称与手机号
---                    提交时一次性快照，IP/UA 只存胡椒哈希 sha256(auth.key|值)，明文不落库）
+--                    提交时一次性快照，IP/UA 只存胡椒哈希 sha256(auth.key|值)，明文不落库；
+--                    (order_no, reviewer_key) 唯一 = 一人一评——同单多位顾客各自评价，
+--                    会员按身份派生键、匿名按设备随机键，同一人重复提交由唯一索引兜住）
 --   tb_review_image  评价图片（顾客上传的用户内容，刻意独立于商家资产表 tb_image：
 --                    生命周期不同——级联删除/孤儿清理，且迁对象存储(COS)时可整表筛选搬迁；
 --                    review_id=0 表示「已上传未绑定评价」，后台任务 24h 后清理）
@@ -13,6 +15,7 @@
 --
 -- 幂等与重复执行：
 --   - CREATE TABLE 带 IF NOT EXISTS，可安全重复执行；
+--   - DROP INDEX IF EXISTS / 重复建索引报 Duplicate key name 均属正常、可忽略；
 --   - MySQL 不支持 CREATE INDEX IF NOT EXISTS，重复执行报 Duplicate key name
 --     属正常现象、可忽略（见 migrations/README.md 第二节）；
 --   - 本脚本与「后端启动时按 schema.go/indexDefs 自动建表建索引」等效，
@@ -34,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tb_review (
         rating       INTEGER      DEFAULT 0 COMMENT '总分 1..5 星',
         tags         VARCHAR(255) DEFAULT '' COMMENT '快捷标签 逗号分隔 最多6个',
         content      VARCHAR(500) DEFAULT '' COMMENT '文字评价(最多200字)',
+        reviewer_key VARCHAR(64)  DEFAULT '' COMMENT '评价者键 会员=m:{id} 匿名=设备随机串(唯一索引一人一评)',
         ip_hash      VARCHAR(64)  DEFAULT '' COMMENT 'IP 胡椒哈希(sha256(auth.key|IP) 明文不落库)',
         ua_hash      VARCHAR(64)  DEFAULT '' COMMENT 'User-Agent 胡椒哈希(同 ip_hash)',
         create_time  DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '提交时间',
@@ -51,7 +55,10 @@ CREATE TABLE IF NOT EXISTS tb_review_image (
         update_time  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='订单评价图片(顾客上传的用户内容,独立于商家资产表 tb_image,便于区分与迁对象存储)';
 
-CREATE UNIQUE INDEX idx_review_order ON tb_review(order_no);
+-- 老库修正：早期草稿用过 UNIQUE(order_no)（一单一评），改为一单一评×一人一次。
+-- 全新库不会存在旧索引（跳过报错即可）；本地/测试库若已建旧索引，本段负责清理。
+DROP INDEX IF EXISTS idx_review_order ON tb_review;
+CREATE UNIQUE INDEX idx_review_order_reviewer ON tb_review(order_no, reviewer_key);
 CREATE INDEX idx_review_time ON tb_review(create_time);
 CREATE INDEX idx_review_rating ON tb_review(rating, create_time);
 CREATE UNIQUE INDEX idx_review_image_name ON tb_review_image(img_name);

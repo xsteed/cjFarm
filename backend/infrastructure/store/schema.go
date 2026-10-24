@@ -396,6 +396,7 @@ var schemaTemplate = []string{
 		rating       INTEGER      DEFAULT 0,
 		tags         VARCHAR(255) DEFAULT '',
 		content      VARCHAR(500) DEFAULT '',
+		reviewer_key VARCHAR(64)  DEFAULT '',
 		ip_hash      VARCHAR(64)  DEFAULT '',
 		ua_hash      VARCHAR(64)  DEFAULT '',
 		create_time  {{TSTYPE}} DEFAULT {{NOWDEF}},
@@ -917,9 +918,10 @@ var indexDefs = []indexDef{
 	{Name: "idx_refund_update_time", Table: "tb_refund", Columns: "update_time"},
 	{Name: "idx_urge_status", Table: "tb_order_urge", Columns: "status, create_time"},
 	{Name: "idx_urge_order", Table: "tb_order_urge", Columns: "order_id"},
-	// 订单评价:order_no 唯一 = 一单一评的数据库兜底(service 层的查重在事务外,
-	// 并发双击由这里兜住);时间索引用于列表翻页,评分复合索引用于按档位筛选。
-	{Name: "idx_review_order", Table: "tb_review", Columns: "order_no", Unique: true},
+	// 订单评价:(order_no, reviewer_key) 唯一 = 一人一评的数据库兜底 —— 同一桌的
+	// 多位顾客各自评价(会员按身份派生键、匿名按设备持久化随机键),同一人重复
+	// 提交(双击/刷新重试)由这里兜住。时间索引用于列表翻页,评分复合索引用于按档位筛选。
+	{Name: "idx_review_order_reviewer", Table: "tb_review", Columns: "order_no, reviewer_key", Unique: true},
 	{Name: "idx_review_time", Table: "tb_review", Columns: "create_time"},
 	{Name: "idx_review_rating", Table: "tb_review", Columns: "rating, create_time"},
 	// 评价图片:文件名唯一(展示/绑定凭据);按评价取图(管理端详情/级联删除);按时间扫孤儿。
@@ -1108,6 +1110,9 @@ var alterCols = []alterCol{
 	{Table: "tb_order_item", Name: "create_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_order_item", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_order_urge", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
+	// 评价者键:一单一评×一人一次的唯一索引(idx_review_order_reviewer)依赖此列,
+	// 必须在补列清单里 —— 老库先补列、后建索引,否则启动建索引因列不存在而失败。
+	{Table: "tb_review", Name: "reviewer_key", Def: "VARCHAR(64) DEFAULT ''"},
 	{Table: "tb_customer", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	{Table: "tb_remember_token", Name: "update_time", Def: "VARCHAR(32) DEFAULT NULL"},
 	// 登录设备页展示的来源 IP(签发时写入,每次免登录使用刷新为最近 IP)。

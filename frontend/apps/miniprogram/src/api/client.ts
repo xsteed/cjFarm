@@ -155,9 +155,10 @@ export const cancelMixedByWallet = (orderNo: string): Promise<void> =>
 // ---------------------------------------------------------------------------
 // 订单评价(仅商家可见的内部反馈):匿名与会员同入口,会员令牌自动带上身份。
 // 读写都挂后端 IP 限流;「已评价」重复提交是幂等错误(HTTP 400 + reviewed:true)。
-export const getReviewStatus = (orderNo: Id, tableId: number, config?: { silent?: boolean }): Promise<CustomerReviewStatus> =>
+// reviewerKey=匿名设备键(visitorId):「我是否已评」按设备判定;会员不带键。
+export const getReviewStatus = (orderNo: Id, tableId: number, reviewerKey?: string, config?: { silent?: boolean }): Promise<CustomerReviewStatus> =>
   httpGet<CustomerReviewStatus>(
-    `/customer/review?orderNo=${encodeURIComponent(String(orderNo))}&tableId=${tableId}`,
+    `/customer/review?orderNo=${encodeURIComponent(String(orderNo))}&tableId=${tableId}${reviewerKey ? `&reviewerKey=${encodeURIComponent(reviewerKey)}` : ''}`,
     config
   );
 export const createReview = (data: ReviewCreatePayload, config?: { silent?: boolean }): Promise<CustomerReviewStatus> =>

@@ -16,12 +16,13 @@ import (
 // 匿名与会员同一入口:挂 CustomerAuthOptional,会员身份只认令牌解析。
 // 路由层另挂 IP 限流(匿名可评 = 无鉴权写接口,限流是垃圾内容的第一道闸)。
 
-// CustomerReviewStatus GET /customer/review?orderNo=&tableId=
-// 顾客端查「本单是否已评价」,驱动订单页入口按钮的两种形态(去评价 / 已评价)。
+// CustomerReviewStatus GET /customer/review?orderNo=&tableId=&reviewerKey=
+// 顾客端查「本单本人是否已评价」,驱动订单页入口按钮的两种形态(去评价 / 已评价)。
+// 会员身份走令牌(服务端派生评价者键);匿名为设备持久化的随机键。
 func CustomerReviewStatus(c *gin.Context) {
 	orderNo := c.Query("orderNo")
 	tableID, _ := strconv.Atoi(c.Query("tableId"))
-	st, err := service.CustomerReviewStatus(tableID, orderNo)
+	st, err := service.CustomerReviewStatus(customerIDFrom(c), tableID, orderNo, c.Query("reviewerKey"))
 	if err != nil {
 		fail(c, err.Error())
 		return
@@ -40,6 +41,9 @@ func CustomerReviewCreate(c *gin.Context) {
 		// Images 「先传后评」:先经 /customer/review/upload 拿到的图片名,
 		// 提交时在事务内绑定到评价(最多 po.ReviewImagesMax 张,超限截断)。
 		Images []string `json:"images"`
+		// ReviewerKey 匿名顾客的设备评价键(会员会被服务端按身份覆盖):
+		// 一单一评×一人一次,同桌其他顾客不受影响。
+		ReviewerKey string `json:"reviewerKey"`
 	}
 	if err := c.ShouldBindJSON(&p); err != nil {
 		fail(c, "参数错误")
@@ -49,7 +53,7 @@ func CustomerReviewCreate(c *gin.Context) {
 		p.Images = p.Images[:po.ReviewImagesMax]
 	}
 	st, err := service.CreateCustomerReview(customerIDFrom(c), p.TableID, p.OrderNo,
-		p.Rating, p.Tags, p.Content, p.Images, c.ClientIP(), c.Request.UserAgent())
+		p.Rating, p.Tags, p.Content, p.Images, p.ReviewerKey, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		// 已评价按幂等友好处理:入口按钮本会切到「已评价」,双击/重试落到这里
 		// 不该是一句冷冰冰的报错。

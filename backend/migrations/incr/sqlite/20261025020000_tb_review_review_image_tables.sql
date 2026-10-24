@@ -2,7 +2,8 @@
 --
 -- 新增两张表（结构变更唯一落点在本目录；与后端启动时的自动建表等价，执行其一即可）：
 --   tb_review        订单评价（1-5 星 + 快捷标签 + 文字；桌台/人数/会员昵称与手机号
---                    提交时一次性快照，IP/UA 只存胡椒哈希 sha256(auth.key|值)，明文不落库）
+--                    提交时一次性快照，IP/UA 只存胡椒哈希 sha256(auth.key|值)，明文不落库；
+--                    (order_no, reviewer_key) 唯一 = 一人一评——同单多位顾客各自评价）
 --   tb_review_image  评价图片（顾客上传的用户内容，刻意独立于商家资产表 tb_image：
 --                    生命周期不同——级联删除/孤儿清理，且迁对象存储(COS)时可整表筛选搬迁；
 --                    review_id=0 表示「已上传未绑定评价」，后台任务 24h 后清理）
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tb_review (
         rating       INTEGER      DEFAULT 0,
         tags         VARCHAR(255) DEFAULT '',
         content      VARCHAR(500) DEFAULT '',
+        reviewer_key VARCHAR(64)  DEFAULT '',
         ip_hash      VARCHAR(64)  DEFAULT '',
         ua_hash      VARCHAR(64)  DEFAULT '',
         create_time  VARCHAR(32) DEFAULT (datetime('now','localtime')),
@@ -49,7 +51,9 @@ CREATE TABLE IF NOT EXISTS tb_review_image (
         update_time  VARCHAR(32) DEFAULT NULL
     );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_review_order ON tb_review(order_no);
+-- 老库修正：早期草稿的 UNIQUE(order_no)（一单一评）改为一单一评×一人一次。
+DROP INDEX IF EXISTS idx_review_order;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_order_reviewer ON tb_review(order_no, reviewer_key);
 CREATE INDEX IF NOT EXISTS idx_review_time ON tb_review(create_time);
 CREATE INDEX IF NOT EXISTS idx_review_rating ON tb_review(rating, create_time);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_review_image_name ON tb_review_image(img_name);

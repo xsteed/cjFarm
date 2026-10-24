@@ -187,8 +187,10 @@ export const bindMemberPhone = (code: string): Promise<{ phone: string }> =>
 // 订单评价(仅商家可见的内部反馈):匿名与会员同一入口,会员令牌自动带上身份。
 // 读写都挂后端 IP 限流;「已评价」重复提交是幂等错误(HTTP 400 + reviewed:true),
 // 提交入口在点击后即锁定,正常交互不会触发。
-export const getReviewStatus = (orderNo: Id, tableId: number): Promise<CustomerReviewStatus> =>
-  http.get<unknown, CustomerReviewStatus>(`/customer/review?orderNo=${encodeURIComponent(String(orderNo))}&tableId=${tableId}`);
+// reviewerKey=匿名设备键(visitorId,持久化):「我是否已评」按设备判定,同桌他人
+// 评过不影响;会员不带键,后端按令牌身份派生。
+export const getReviewStatus = (orderNo: Id, tableId: number, reviewerKey?: string): Promise<CustomerReviewStatus> =>
+  http.get<unknown, CustomerReviewStatus>(`/customer/review?orderNo=${encodeURIComponent(String(orderNo))}&tableId=${tableId}${reviewerKey ? `&reviewerKey=${encodeURIComponent(reviewerKey)}` : ''}`);
 export const createReview = (data: ReviewCreatePayload): Promise<CustomerReviewStatus> =>
   http.post<unknown, CustomerReviewStatus>('/customer/review', data);
 

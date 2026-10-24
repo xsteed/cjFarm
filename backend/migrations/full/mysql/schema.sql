@@ -313,6 +313,7 @@ CREATE TABLE IF NOT EXISTS tb_review (
         rating       INTEGER      DEFAULT 0 COMMENT '总分 1..5 星',
         tags         VARCHAR(255) DEFAULT '' COMMENT '快捷标签 逗号分隔 最多6个',
         content      VARCHAR(500) DEFAULT '' COMMENT '文字评价(最多200字)',
+        reviewer_key VARCHAR(64)  DEFAULT '' COMMENT '评价者键 会员=m:{id} 匿名=设备随机串(唯一索引一单一评一人一次)',
         ip_hash      VARCHAR(64)  DEFAULT '' COMMENT 'IP 胡椒哈希(sha256(auth.key|IP) 明文不落库)',
         ua_hash      VARCHAR(64)  DEFAULT '' COMMENT 'User-Agent 胡椒哈希(同 ip_hash)',
         create_time  DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '提交时间',
@@ -548,7 +549,7 @@ CREATE INDEX idx_refund_order ON tb_refund(order_id);
 CREATE INDEX idx_refund_update_time ON tb_refund(update_time);
 CREATE INDEX idx_urge_status ON tb_order_urge(status, create_time);
 CREATE INDEX idx_urge_order ON tb_order_urge(order_id);
-CREATE UNIQUE INDEX idx_review_order ON tb_review(order_no);
+CREATE UNIQUE INDEX idx_review_order_reviewer ON tb_review(order_no, reviewer_key);
 CREATE INDEX idx_review_time ON tb_review(create_time);
 CREATE INDEX idx_review_rating ON tb_review(rating, create_time);
 CREATE UNIQUE INDEX idx_review_image_name ON tb_review_image(img_name);

@@ -35,6 +35,10 @@ type Review struct {
 	Rating      int    // 1..5
 	Tags        string // 逗号分隔,≤ ReviewTagsMax 个
 	Content     string // 文字评价(≤ ReviewContentMaxLen 字符)
+	// ReviewerKey 评价者键(唯一索引 order_no+reviewer_key = 一人一评):
+	// 会员由服务端派生「m:{customerID}」(不信前端,防顶替);匿名用设备端
+	// 持久化的随机串(同设备恒定,跨设备无法识别——匿名本无稳定身份)。
+	ReviewerKey string
 	IpHash      string // sha256(auth.key|IP) 胡椒哈希,明文 IP 永不落库
 	UaHash      string // 同上,User-Agent 哈希
 	CreateTime  string

@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,14 +40,14 @@ func TestReviewCreateAnonymous(t *testing.T) {
 	orderNo, tableID, _ := reviewOrder(t)
 
 	st, err := CreateCustomerReview(0, tableID, orderNo, 2,
-		[]string{"上菜慢", "味道一般"}, "等了半小时才上菜", nil, "203.0.113.7", "TestUA/1.0")
+		[]string{"上菜慢", "味道一般"}, "等了半小时才上菜", nil, "dev-key", "203.0.113.7", "TestUA/1.0")
 	if err != nil {
 		t.Fatalf("匿名评价提交失败: %v", err)
 	}
 	if !st.Reviewed || st.Rating != 2 {
 		t.Fatalf("返回状态不符: %+v", st)
 	}
-	r, err := dao.GetReviewByOrderNo(orderNo)
+	r, err := dao.GetReviewByKey(orderNo, "dev-key")
 	if err != nil || r.ReviewID == 0 {
 		t.Fatalf("评价未落库: %v", err)
 	}
@@ -78,10 +79,11 @@ func TestReviewCreateMemberSnapshot(t *testing.T) {
 		t.Fatalf("设昵称失败: %v", err)
 	}
 
-	if _, err := CreateCustomerReview(id, tableID, orderNo, 5, []string{"味道好"}, "", nil, "192.0.2.1", "UA"); err != nil {
+	if _, err := CreateCustomerReview(id, tableID, orderNo, 5, []string{"味道好"}, "", nil, "ignored-key", "192.0.2.1", "UA"); err != nil {
 		t.Fatalf("会员评价提交失败: %v", err)
 	}
-	r, err := dao.GetReviewByOrderNo(orderNo)
+	// 会员键由服务端派生 m:{id}(入参被忽略——防冒充他人占位)。
+	r, err := dao.GetReviewByKey(orderNo, fmt.Sprintf("m:%d", id))
 	if err != nil {
 		t.Fatalf("查评价失败: %v", err)
 	}
@@ -100,14 +102,14 @@ func TestReviewValidationChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("下单失败: %v", err)
 	}
-	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 5, nil, "", nil, "", ""); err == nil || !strings.Contains(err.Error(), "支付") {
+	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 5, nil, "", nil, "dev-key", "", ""); err == nil || !strings.Contains(err.Error(), "支付") {
 		t.Fatalf("未付款订单应被拒绝, got %v", err)
 	}
 	// 已付款但未上齐。
 	if _, err := PayOrder(int(res.OrderID), "cash", "test"); err != nil {
 		t.Fatalf("收款失败: %v", err)
 	}
-	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 5, nil, "", nil, "", ""); err == nil {
+	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 5, nil, "", nil, "dev-key", "", ""); err == nil {
 		t.Fatal("未上齐订单应被拒绝")
 	}
 	if err := ChangeOrderStatus(int(res.OrderID), OrderStatusCooking, "", "test"); err != nil {
@@ -117,20 +119,20 @@ func TestReviewValidationChain(t *testing.T) {
 		t.Fatalf("置已上齐失败: %v", err)
 	}
 	// 桌台归属不符(单号可猜测,归属校验是防遍历的关键)。
-	if _, err := CreateCustomerReview(0, 999, res.OrderNo, 5, nil, "", nil, "", ""); err == nil || !strings.Contains(err.Error(), "不属于") {
+	if _, err := CreateCustomerReview(0, 999, res.OrderNo, 5, nil, "", nil, "dev-key", "", ""); err == nil || !strings.Contains(err.Error(), "不属于") {
 		t.Fatalf("归属不符应被拒绝, got %v", err)
 	}
 	// 星级越界。
-	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 0, nil, "", nil, "", ""); err == nil {
+	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 0, nil, "", nil, "dev-key", "", ""); err == nil {
 		t.Fatal("rating=0 应被拒绝")
 	}
-	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 6, nil, "", nil, "", ""); err == nil {
+	if _, err := CreateCustomerReview(0, 1, res.OrderNo, 6, nil, "", nil, "dev-key", "", ""); err == nil {
 		t.Fatal("rating=6 应被拒绝")
 	}
 	// 文字超长截断 + 标签清洗(逗号替换/去重/限量)。
 	long := strings.Repeat("好", 300)
 	tags := []string{"味道好", "味道好", "a,b", strings.Repeat("长", 20), "份量足", "上菜快", "环境好", "性价比高", "第九个"}
-	st, err := CreateCustomerReview(0, 1, res.OrderNo, 5, tags, long, nil, "", "")
+	st, err := CreateCustomerReview(0, 1, res.OrderNo, 5, tags, long, nil, "dev-key", "", "")
 	if err != nil {
 		t.Fatalf("合法提交失败: %v", err)
 	}
@@ -149,14 +151,14 @@ func TestReviewValidationChain(t *testing.T) {
 // 并发双击撞唯一索引后也转成同一语义(模拟:清掉预检查不到的路径直接再插)。
 func TestReviewOncePerOrder(t *testing.T) {
 	orderNo, tableID, _ := reviewOrder(t)
-	if _, err := CreateCustomerReview(0, tableID, orderNo, 4, nil, "", nil, "", ""); err != nil {
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 4, nil, "", nil, "dev-key", "", ""); err != nil {
 		t.Fatalf("首次提交失败: %v", err)
 	}
-	if _, err := CreateCustomerReview(0, tableID, orderNo, 5, nil, "", nil, "", ""); !errors.Is(err, ErrReviewAlready) {
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 5, nil, "", nil, "dev-key", "", ""); !errors.Is(err, ErrReviewAlready) {
 		t.Fatalf("重复提交应返回 ErrReviewAlready, got %v", err)
 	}
 	// 查询状态接口同样返回已评。
-	st, err := CustomerReviewStatus(tableID, orderNo)
+	st, err := CustomerReviewStatus(0, tableID, orderNo, "dev-key")
 	if err != nil || !st.Reviewed || st.Rating != 4 {
 		t.Fatalf("状态查询不符: %+v err=%v", st, err)
 	}
@@ -165,10 +167,10 @@ func TestReviewOncePerOrder(t *testing.T) {
 // TestReviewStatusOrderMissing 查询/提交对不存在订单与归属不符单的拒绝。
 func TestReviewStatusOrderMissing(t *testing.T) {
 	orderNo, tableID, _ := reviewOrder(t)
-	if _, err := CustomerReviewStatus(tableID, "no-such-order"); err == nil {
+	if _, err := CustomerReviewStatus(0, tableID, "no-such-order", "dev-key"); err == nil {
 		t.Fatal("不存在订单应报错")
 	}
-	if _, err := CustomerReviewStatus(999, orderNo); err == nil {
+	if _, err := CustomerReviewStatus(0, 999, orderNo, "dev-key"); err == nil {
 		t.Fatal("归属不符应报错")
 	}
 }
@@ -177,7 +179,7 @@ func TestReviewStatusOrderMissing(t *testing.T) {
 func TestAdminReviewListSummary(t *testing.T) {
 	orderNo, tableID, _ := reviewOrder(t)
 	id := customerLoginByOpenidForTest(t, "review-admin").Customer.CustomerID
-	if _, err := CreateCustomerReview(id, tableID, orderNo, 1, []string{"上菜慢"}, "太慢了", nil, "192.0.2.9", "UA"); err != nil {
+	if _, err := CreateCustomerReview(id, tableID, orderNo, 1, []string{"上菜慢"}, "太慢了", nil, "dev-key", "192.0.2.9", "UA"); err != nil {
 		t.Fatalf("会员评价失败: %v", err)
 	}
 	// 再来一笔匿名的(换一桌下单,避免一单一评约束)。
@@ -195,7 +197,7 @@ func TestAdminReviewListSummary(t *testing.T) {
 	if err := ChangeOrderStatus(int(res2.OrderID), OrderStatusDining, "", "test"); err != nil {
 		t.Fatalf("置状态失败: %v", err)
 	}
-	if _, err := CreateCustomerReview(0, 2, res2.OrderNo, 5, []string{"味道好"}, "", nil, "", ""); err != nil {
+	if _, err := CreateCustomerReview(0, 2, res2.OrderNo, 5, []string{"味道好"}, "", nil, "dev-key", "", ""); err != nil {
 		t.Fatalf("匿名评价失败: %v", err)
 	}
 
@@ -225,11 +227,11 @@ func TestAdminReviewListSummary(t *testing.T) {
 	if err != nil || resBad.Total != 1 || resBad.Items[0].OrderNo != orderNo {
 		t.Fatalf("差评筛选不符: total=%d err=%v", resBad.Total, err)
 	}
-	// 删除 + 删除后列表回零。
-	if _, err := dao.GetReviewByOrderNo(orderNo); err != nil {
+	// 删除 + 删除后列表回零(该单的提交者是会员 id,键为 m:{id})。
+	if _, err := dao.GetReviewByKey(orderNo, fmt.Sprintf("m:%d", id)); err != nil {
 		t.Fatalf("评价应存在: %v", err)
 	}
-	r, _ := dao.GetReviewByOrderNo(orderNo)
+	r, _ := dao.GetReviewByKey(orderNo, fmt.Sprintf("m:%d", id))
 	if _, err := AdminDeleteReview(r.ReviewID, "tester"); err != nil {
 		t.Fatalf("删除失败: %v", err)
 	}
@@ -270,7 +272,7 @@ func TestReviewImageLifecycle(t *testing.T) {
 	if _, ct, ok := dao.GetReviewImage(n1); !ok || ct == "" {
 		t.Fatalf("图1应在独立表: ok=%v ct=%q", ok, ct)
 	}
-	if r, _ := dao.GetReviewByOrderNo(orderNo); r.ReviewID != 0 {
+	if r, _ := dao.GetReviewByKey(orderNo, "dev-key"); r.ReviewID != 0 {
 		t.Fatal("前提不成立: 提交前不应已有评价")
 	}
 	// 非图片内容被拒。
@@ -278,7 +280,7 @@ func TestReviewImageLifecycle(t *testing.T) {
 		t.Fatal("伪装图片应被魔数校验拒绝")
 	}
 	// 提交评价并绑定两张图。
-	st, err := CreateCustomerReview(0, tableID, orderNo, 4, []string{"味道好"}, "带图评价", []string{n1, n2}, "192.0.2.5", "UA")
+	st, err := CreateCustomerReview(0, tableID, orderNo, 4, []string{"味道好"}, "带图评价", []string{n1, n2}, "dev-key", "192.0.2.5", "UA")
 	if err != nil {
 		t.Fatalf("带图评价提交失败: %v", err)
 	}
@@ -303,12 +305,16 @@ func TestReviewImageLifecycle(t *testing.T) {
 	if found == nil || len(found.Images) != 2 {
 		t.Fatalf("列表应带 2 张图: %+v", found)
 	}
-	// 引用他人已绑定的图名:绑定数不足,整体失败。
-	if _, err := CreateCustomerReview(0, tableID, orderNo, 5, nil, "x", []string{n1}, "", ""); err == nil {
-		t.Fatal("重复评价应被一单一评拦截")
+	// 同桌另一位顾客(dev-key2)仍可评价;但其引用的图名 n1 已被第一位绑定,
+	// 绑定数不足整体回滚 —— 「先传后评」的图不能引用他人已占用的行。
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 5, nil, "x", []string{n1}, "dev-key2", "", ""); err == nil || !strings.Contains(err.Error(), "已失效") {
+		t.Fatalf("引用他人已绑定图应报已失效, got %v", err)
 	}
 	// 删除评价 → 图片级联清理。
-	r, _ := dao.GetReviewByOrderNo(orderNo)
+	r, err := dao.GetReviewByKey(orderNo, "dev-key")
+	if err != nil || r.ReviewID == 0 {
+		t.Fatalf("首位顾客的评价应存在: %+v err=%v", r, err)
+	}
 	if _, err := AdminDeleteReview(r.ReviewID, "tester"); err != nil {
 		t.Fatalf("删除失败: %v", err)
 	}
@@ -363,7 +369,7 @@ func TestReviewImageFilter(t *testing.T) {
 		t.Fatalf("上传失败: %v", err)
 	}
 	n := strings.TrimPrefix(u, store.UploadURLPrefix)
-	if _, err := CreateCustomerReview(0, tableID, orderNo, 5, nil, "带图", []string{n}, "", ""); err != nil {
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 5, nil, "带图", []string{n}, "dev-key", "", ""); err != nil {
 		t.Fatalf("带图评价失败: %v", err)
 	}
 	dishID, specID := customerSvcSpecID(t)
@@ -380,7 +386,7 @@ func TestReviewImageFilter(t *testing.T) {
 	if err := ChangeOrderStatus(int(res2.OrderID), OrderStatusDining, "", "test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateCustomerReview(0, 2, res2.OrderNo, 3, nil, "无图", nil, "", ""); err != nil {
+	if _, err := CreateCustomerReview(0, 2, res2.OrderNo, 3, nil, "无图", nil, "dev-key", "", ""); err != nil {
 		t.Fatalf("无图评价失败: %v", err)
 	}
 
@@ -395,5 +401,48 @@ func TestReviewImageFilter(t *testing.T) {
 	all, err := AdminReviewList(dao.ReviewQuery{}, 1, 10)
 	if err != nil || all.Total != 2 {
 		t.Fatalf("全部应 2 条: total=%d err=%v", all.Total, err)
+	}
+}
+
+// TestReviewPerReviewer 一人一评:同桌两位匿名顾客各自评价互不影响,
+// 同一人(同键)重复提交被拒;「已评」查询按键隔离。
+func TestReviewPerReviewer(t *testing.T) {
+	orderNo, tableID, _ := reviewOrder(t)
+	// 顾客 A(device-a)提交。
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 5, nil, "A 的评价", nil, "device-a", "", ""); err != nil {
+		t.Fatalf("A 提交失败: %v", err)
+	}
+	// A 查询:已评;B 查询:未评。
+	if st, err := CustomerReviewStatus(0, tableID, orderNo, "device-a"); err != nil || !st.Reviewed {
+		t.Fatalf("A 应显示已评: %+v err=%v", st, err)
+	}
+	if st, err := CustomerReviewStatus(0, tableID, orderNo, "device-b"); err != nil || st.Reviewed {
+		t.Fatalf("B 应显示未评: %+v err=%v", st, err)
+	}
+	// B(device-b)仍可提交同一订单。
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 2, nil, "B 的评价", nil, "device-b", "", ""); err != nil {
+		t.Fatalf("B 提交失败: %v", err)
+	}
+	// A 再提交被拒(一人一次)。
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 1, nil, "A 再评", nil, "device-a", "", ""); !errors.Is(err, ErrReviewAlready) {
+		t.Fatalf("A 重复提交应被拒, got %v", err)
+	}
+	// 管理端能看到同单两条。
+	res, err := AdminReviewList(dao.ReviewQuery{}, 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, it := range res.Items {
+		if it.OrderNo == orderNo {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("同单应有 2 条评价, got %d", n)
+	}
+	// 匿名不带键提交被拒(防占位)。
+	if _, err := CreateCustomerReview(0, tableID, orderNo, 3, nil, "", nil, "", "", ""); err == nil {
+		t.Fatal("匿名缺评价者键应被拒")
 	}
 }

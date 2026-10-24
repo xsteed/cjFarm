@@ -1423,7 +1423,8 @@ watch(
   ([v]) => {
     const no = currentOrder.value?.orderNo;
     if (!no || (v !== 'settled' && v !== 'done')) return;
-    getReviewStatus(no, tableId.value).then(st => (reviewStatus.value = st)).catch(() => {});
+    // 匿名顾客带设备键:查的是「本机是否评过」;会员由后端按令牌派生,键不传。
+    getReviewStatus(no, tableId.value, visitorId()).then(st => (reviewStatus.value = st)).catch(() => {});
   },
   { immediate: true }
 );
@@ -1440,6 +1441,8 @@ async function submitReview(payload: { rating: number; tags: string[]; content: 
     const st = await createReview({
       tableId: tableId.value,
       orderNo: currentOrder.value.orderNo,
+      // 匿名键=设备 visitorId(持久化,同机恒定);会员后端按身份覆盖。
+      reviewerKey: visitorId(),
       ...payload
     });
     reviewStatus.value = st;

@@ -23,8 +23,9 @@ import (
 // 设计与决策见 docs/design-docs/order-review/spec.md。
 // ============================================================================
 
-// ErrReviewAlready 该订单已评价过(一单一评,前端入口也据此切换形态)。
-var ErrReviewAlready = errors.New("该订单已评价过")
+// ErrReviewAlready 该订单「本人」已评价过(一单一评×一人一次;同桌其他顾客仍可评)。
+// 前端入口据此切换形态;同单不同评价者不受影响。
+var ErrReviewAlready = errors.New("您已评价过本单")
 
 // sanitizeReviewTags 清洗标签入参:逐项去空格、去掉分隔符逗号(否则会污染库内
 // 逗号分隔格式)、按列宽截断、去重、限量。返回可直接 join 的干净列表。
@@ -65,7 +66,7 @@ func reviewableStatus(status int) bool {
 //  5. 会员快照(昵称/手机号)一次性写死,注销后追溯链不断。
 //
 // ip/ua 只存胡椒哈希(明文永不落库),与访问统计同一密钥体系(hashVisitValue)。
-func CreateCustomerReview(customerID, tableID int, orderNo string, rating int, tags []string, content string, images []string, ip, ua string) (dto.CustomerReviewStatus, error) {
+func CreateCustomerReview(customerID, tableID int, orderNo string, rating int, tags []string, content string, images []string, reviewerKey, ip, ua string) (dto.CustomerReviewStatus, error) {
 	orderNo = strings.TrimSpace(orderNo)
 	if orderNo == "" || tableID == 0 {
 		return dto.CustomerReviewStatus{}, errors.New("参数错误")
@@ -75,6 +76,16 @@ func CreateCustomerReview(customerID, tableID int, orderNo string, rating int, t
 	}
 	cleanTags := sanitizeReviewTags(tags)
 	content = truncateRunes(strings.TrimSpace(content), po.ReviewContentMaxLen)
+	// 评价者键:会员一律由服务端按身份派生(入参忽略——单号可猜、键不可信,
+	// 用入参就能冒充他人占位);匿名用设备端持久化的随机串,提交前必须带上。
+	if customerID > 0 {
+		reviewerKey = fmt.Sprintf("m:%d", customerID)
+	} else {
+		reviewerKey = strings.TrimSpace(reviewerKey)
+		if reviewerKey == "" || len(reviewerKey) > 64 {
+			return dto.CustomerReviewStatus{}, errors.New("评价标识缺失，请刷新页面后重试")
+		}
+	}
 
 	o, err := dao.GetOrderReviewTarget(orderNo)
 	if err != nil {
@@ -89,13 +100,14 @@ func CreateCustomerReview(customerID, tableID int, orderNo string, rating int, t
 	if !reviewableStatus(o.OrderStatus) {
 		return dto.CustomerReviewStatus{}, errors.New("用餐结束后才能评价")
 	}
-	if existing, err := dao.GetReviewByOrderNo(orderNo); err == nil && existing.ReviewID > 0 {
+	if existing, err := dao.GetReviewByKey(orderNo, reviewerKey); err == nil && existing.ReviewID > 0 {
 		return dto.CustomerReviewStatus{}, ErrReviewAlready
 	}
 
 	r := po.Review{
 		OrderID:     o.OrderID,
 		OrderNo:     orderNo,
+		ReviewerKey: reviewerKey,
 		BizDate:     o.BizDate,
 		TableID:     o.TableID,
 		TableNo:     o.TableNo,
@@ -134,7 +146,7 @@ func CreateCustomerReview(customerID, tableID int, orderNo string, rating int, t
 	})
 	if err != nil {
 		// 并发双击撞唯一索引:重查确认后转成友好语义,而不是把 SQL 错误抛给顾客。
-		if existing, qErr := dao.GetReviewByOrderNo(orderNo); qErr == nil && existing.ReviewID > 0 {
+		if existing, qErr := dao.GetReviewByKey(orderNo, reviewerKey); qErr == nil && existing.ReviewID > 0 {
 			return dto.CustomerReviewStatus{}, ErrReviewAlready
 		}
 		logger.Errorf("[review][告警] 评价落库失败 单%s: %v", orderNo, err)
@@ -176,9 +188,13 @@ func SaveCustomerReviewImage(fileName string, data []byte) (string, error) {
 	return store.UploadURLPrefix + name, nil
 }
 
-// CustomerReviewStatus 顾客端查「本单是否已评价」(驱动入口按钮的两种形态)。
+// CustomerReviewStatus 顾客端查「本单本人是否已评价」(驱动入口按钮的两种形态)。
 // 归属校验同上:单号可猜测,必须带桌台 ID。
-func CustomerReviewStatus(tableID int, orderNo string) (dto.CustomerReviewStatus, error) {
+//
+// 「本人」的判定:会员键由服务端按身份派生(与提交同一规则,顾客端无需也不能自报
+// 身份);匿名键是设备随机串,缺失即未评。同桌他人是否评过与本查询无关——
+// 同桌每位顾客各自评一次。
+func CustomerReviewStatus(customerID, tableID int, orderNo, reviewerKey string) (dto.CustomerReviewStatus, error) {
 	orderNo = strings.TrimSpace(orderNo)
 	if orderNo == "" || tableID == 0 {
 		return dto.CustomerReviewStatus{}, errors.New("参数错误")
@@ -190,7 +206,12 @@ func CustomerReviewStatus(tableID int, orderNo string) (dto.CustomerReviewStatus
 	if o.TableID != tableID {
 		return dto.CustomerReviewStatus{}, errors.New("订单不属于当前桌台")
 	}
-	r, err := dao.GetReviewByOrderNo(orderNo)
+	if customerID > 0 {
+		reviewerKey = fmt.Sprintf("m:%d", customerID)
+	} else if strings.TrimSpace(reviewerKey) == "" {
+		return dto.CustomerReviewStatus{Reviewed: false, Tags: []string{}}, nil
+	}
+	r, err := dao.GetReviewByKey(orderNo, reviewerKey)
 	if err != nil || r.ReviewID == 0 {
 		// 未评价(查无记录是正常态,不是错误)。
 		return dto.CustomerReviewStatus{Reviewed: false, Tags: []string{}}, nil

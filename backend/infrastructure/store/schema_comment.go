@@ -295,6 +295,7 @@ var columnComments = map[string]string{
 	"tb_review.rating":             "总分 1..5 星",
 	"tb_review.tags":               "快捷标签 逗号分隔 最多6个",
 	"tb_review.content":            "文字评价(最多200字)",
+	"tb_review.reviewer_key":       "评价者键 会员=m:{id} 匿名=设备随机串(唯一索引一单一评一人一次)",
 	"tb_review.ip_hash":            "IP 胡椒哈希(sha256(auth.key|IP) 明文不落库)",
 	"tb_review.ua_hash":            "User-Agent 胡椒哈希(同 ip_hash)",
 	"tb_review.create_time":        "提交时间",

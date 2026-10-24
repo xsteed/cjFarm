@@ -13,7 +13,7 @@ import (
 
 // ReviewCols 评价表完整列(与 ScanReview 顺序一一对应)。
 const ReviewCols = `review_id, order_id, order_no, biz_date, table_id, table_no, table_name,
-	person_count, customer_id, nickname, phone, rating, tags, content, ip_hash, ua_hash,
+	person_count, customer_id, nickname, phone, rating, tags, content, reviewer_key, ip_hash, ua_hash,
 	create_time`
 
 // ScanReview 扫描一行评价记录。
@@ -21,7 +21,7 @@ func ScanReview(rows interface{ Scan(...interface{}) error }) (po.Review, error)
 	var r po.Review
 	err := rows.Scan(&r.ReviewID, &r.OrderID, &r.OrderNo, &r.BizDate, &r.TableID, &r.TableNo, &r.TableName,
 		&r.PersonCount, &r.CustomerID, &r.Nickname, &r.Phone, &r.Rating, &r.Tags, &r.Content,
-		&r.IpHash, &r.UaHash, TS(&r.CreateTime))
+		&r.ReviewerKey, &r.IpHash, &r.UaHash, TS(&r.CreateTime))
 	return r, err
 }
 
@@ -58,14 +58,11 @@ func ReviewMemberSnapshot(customerID int) (nickname, phone string) {
 	return nickname, phone
 }
 
-// GetReviewByOrderNo 按订单号取评价(顾客端「是否已评」与提交去重共用)。
-func GetReviewByOrderNo(orderNo string) (po.Review, error) {
-	var r po.Review
-	err := store.DB.QueryRow(`SELECT `+ReviewCols+` FROM tb_review WHERE order_no=?`, orderNo).
-		Scan(&r.ReviewID, &r.OrderID, &r.OrderNo, &r.BizDate, &r.TableID, &r.TableNo, &r.TableName,
-			&r.PersonCount, &r.CustomerID, &r.Nickname, &r.Phone, &r.Rating, &r.Tags, &r.Content,
-			&r.IpHash, &r.UaHash, TS(&r.CreateTime))
-	return r, err
+// GetReviewByKey 按「订单号 + 评价者键」取评价(顾客端「我是否已评」与提交去重共用)。
+// reviewer_key 会员为服务端派生的 m:{id}、匿名即设备键。
+func GetReviewByKey(orderNo, reviewerKey string) (po.Review, error) {
+	row := store.DB.QueryRow(`SELECT `+ReviewCols+` FROM tb_review WHERE order_no=? AND reviewer_key=?`, orderNo, reviewerKey)
+	return ScanReview(row)
 }
 
 // InsertReview 落一条评价。order_no 上的唯一索引兜底并发双击:后到者拿到
@@ -73,11 +70,11 @@ func GetReviewByOrderNo(orderNo string) (po.Review, error) {
 // 不依赖各库错误码)。
 func InsertReview(r po.Review) (int64, error) {
 	res, err := store.DB.Exec(`INSERT INTO tb_review(order_id, order_no, biz_date, table_id, table_no, table_name,
-		person_count, customer_id, nickname, phone, rating, tags, content, ip_hash, ua_hash, create_time)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		person_count, customer_id, nickname, phone, rating, tags, content, reviewer_key, ip_hash, ua_hash, create_time)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.OrderID, r.OrderNo, r.BizDate, r.TableID, r.TableNo, r.TableName,
 		r.PersonCount, r.CustomerID, r.Nickname, r.Phone, r.Rating, r.Tags, r.Content,
-		r.IpHash, r.UaHash, store.Now())
+		r.ReviewerKey, r.IpHash, r.UaHash, store.Now())
 	if err != nil {
 		return 0, err
 	}
@@ -87,11 +84,11 @@ func InsertReview(r po.Review) (int64, error) {
 // InsertReviewTx 事务内落一条评价,返回主键(评价与图片绑定须同生共死)。
 func InsertReviewTx(tx *sql.Tx, r po.Review) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO tb_review(order_id, order_no, biz_date, table_id, table_no, table_name,
-		person_count, customer_id, nickname, phone, rating, tags, content, ip_hash, ua_hash, create_time)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		person_count, customer_id, nickname, phone, rating, tags, content, reviewer_key, ip_hash, ua_hash, create_time)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.OrderID, r.OrderNo, r.BizDate, r.TableID, r.TableNo, r.TableName,
 		r.PersonCount, r.CustomerID, r.Nickname, r.Phone, r.Rating, r.Tags, r.Content,
-		r.IpHash, r.UaHash, store.Now())
+		r.ReviewerKey, r.IpHash, r.UaHash, store.Now())
 	if err != nil {
 		return 0, err
 	}
@@ -244,12 +241,8 @@ func CustomerAliveMap(ids []int) map[int]bool {
 
 // GetReviewByID 按主键取评价(管理端删除前的取文与审计摘要)。
 func GetReviewByID(reviewID int) (po.Review, error) {
-	var r po.Review
-	err := store.DB.QueryRow(`SELECT `+ReviewCols+` FROM tb_review WHERE review_id=?`, reviewID).
-		Scan(&r.ReviewID, &r.OrderID, &r.OrderNo, &r.BizDate, &r.TableID, &r.TableNo, &r.TableName,
-			&r.PersonCount, &r.CustomerID, &r.Nickname, &r.Phone, &r.Rating, &r.Tags, &r.Content,
-			&r.IpHash, &r.UaHash, TS(&r.CreateTime))
-	return r, err
+	row := store.DB.QueryRow(`SELECT `+ReviewCols+` FROM tb_review WHERE review_id=?`, reviewID)
+	return ScanReview(row)
 }
 
 // DeleteReview 物理删除一条评价(管理端清理不当内容;操作审计另行留痕)。

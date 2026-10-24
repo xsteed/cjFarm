@@ -526,6 +526,8 @@ export interface ReviewCreatePayload extends Extensible {
   tableId?: number;
   /** 已上传图片名(/customer/review/upload 返回的 url 尾段),提交时事务绑定。 */
   images?: string[];
+  /** 匿名顾客的设备评价键(会员由服务端按身份覆盖):一单一评×一人一次。 */
+  reviewerKey?: string;
   orderNo?: string;
   rating?: number;
   tags?: string[];
