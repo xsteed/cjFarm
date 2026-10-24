@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     ActionSheet: typeof import('./apps/admin/src/components/ActionSheet.vue')['default']
     BottomSheet: typeof import('./apps/admin/src/components/BottomSheet.vue')['default']
+    CancelOrderDialog: typeof import('./apps/admin/src/components/order/CancelOrderDialog.vue')['default']
     CreditSettleDialog: typeof import('./apps/admin/src/components/order/CreditSettleDialog.vue')['default']
     MobileFab: typeof import('./apps/admin/src/components/MobileFab.vue')['default']
     OrderDetailDialog: typeof import('./apps/admin/src/components/OrderDetailDialog.vue')['default']

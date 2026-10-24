@@ -105,7 +105,9 @@ const emit = defineEmits<{
 }>();
 
 const { isMobile } = useIsMobile();
-const payText = payStatusText;
+// 未支付标签用商家口径「未确认支付」,与「订单管理」页同一份措辞(先付模式下
+// 顾客可能已付钱,只是还没确认收款),见 packages/shared orderDisplay 的 unpaidLabel。
+const payText = (p: Parameters<typeof payStatusText>[0]) => payStatusText(p, '未确认支付');
 const payTheme = payStatusTheme;
 
 const list = ref<OrderSummary[]>([]);

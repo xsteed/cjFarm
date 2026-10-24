@@ -47,7 +47,7 @@
         >
           <t-option
             value="0"
-            label="未支付"
+            label="未确认支付"
           />
           <t-option
             value="1"
@@ -163,19 +163,28 @@
           v-for="row in list"
           :key="row.orderId"
           class="ocard ocard-tap"
-          :class="{ 'is-new': row.isNew, 'is-need-finish': row.needFinish }"
+          :class="{
+            'is-new': row.isNew,
+            'is-need-finish': row.needFinish,
+            'is-overdue': isOverdueNew(row),
+            'is-stale': isStaleNew(row)
+          }"
           role="button"
           tabindex="0"
           @click="openDetail(row)"
           @keydown.enter="openDetail(row)"
           @keydown.space.prevent="openDetail(row)"
         >
-          <!-- 「新」badge:贴在卡片左上角,顾客刚下单、商家还没操作过的新单一眼可见(仅查看不消解) -->
+          <!-- 「新」badge:贴在卡片左上角,顾客刚下单、商家还没操作过的新单一眼可见(仅查看不消解)。
+               先付单等太久还没确认收款时转成红色「超时」:后厨一直没单,商家必须看到时间在走 -->
           <span
             v-if="row.isNew"
             class="ocard-new"
-            title="新订单，尚未处理"
-            >新</span
+            :class="{ 'is-overdue': isOverdueNew(row) }"
+            :title="
+              isOverdueNew(row) ? `新订单已等待 ${durationText(newOrderAge(row))}，仍未确认收款` : '新订单，尚未处理'
+            "
+            >{{ isOverdueNew(row) ? '超时' : '新' }}</span
           >
           <!-- 「待完成」badge:右上角与「新」左右对称,先付已收款、还差点「完成订单」归档释放桌台 -->
           <span
@@ -201,6 +210,13 @@
             <!-- 桌台优先展示名称(收银认的是「大厅01桌」而非桌号),名称为空的历史单回退桌号;加粗突出桌台 -->
             <span class="ocard-table">{{ row.tableName || row.tableNo + ' 号桌' }}</span> · {{ row.personCount }} 人 ·
             {{ row.createTime }} 下单
+            <!-- 等太久的先付新单:把「已等多久」直接摆在信息行里,不用自己拿当前时间减下单时间 -->
+            <span
+              v-if="isOverdueNew(row)"
+              class="ocard-wait"
+            >
+              · 已等 {{ durationText(newOrderAge(row)) }}
+            </span>
             <t-tag
               v-if="row.pendingUrge"
               theme="danger"
@@ -250,6 +266,19 @@
               {{ payText(row) }}
             </t-tag>
           </div>
+          <!-- 超时未收款提示:先付单在「确认收款」之前不会补出厨房单,等越久顾客越可能在干等。
+               超时后文案升级为引导取消 —— 顾客走了/已线下处理掉的单,继续挂着只会一直占用桌台。 -->
+          <div
+            v-if="isOverdueNew(row)"
+            class="ocard-overdue"
+            :class="{ 'is-stale': isStaleNew(row) }"
+          >
+            <strong>已等 {{ durationText(newOrderAge(row)) }} 未确认收款</strong>
+            <span v-if="isStaleNew(row)"
+              >顾客可能已离开或已线下处理，请点「取消订单」收尾，避免一直挂着未处理的单。</span
+            >
+            <span v-else>后厨尚未出单，请尽快确认收款。</span>
+          </div>
           <!-- 所有可执行操作直接铺在卡片上(不再收进「更多」),一眼看清、一键直达 -->
           <div
             class="ocard-ft"
@@ -259,7 +288,7 @@
               v-for="a in cardActions(row)"
               :key="a.key"
               :theme="a.theme"
-              variant="outline"
+              :variant="a.solid ? 'base' : 'outline'"
               :disabled="a.disabled"
               @click="a.run()"
             >
@@ -516,7 +545,7 @@
           >
             <t-option
               value="0"
-              label="未支付"
+              label="未确认支付"
             />
             <t-option
               value="1"
@@ -577,20 +606,33 @@
       :order-id="detailOrderId"
       @changed="load"
     />
+
+    <!-- 取消订单:确认弹窗里带金额、后果与超时说明,与详情弹窗内的取消共用同一个组件 -->
+    <CancelOrderDialog
+      ref="cancelDialogRef"
+      @changed="load"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, h } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
-import { listOrders, changeOrderStatus, cancelOrder, finishOrder, handleUrge, ORDER_STATUS } from '@dining/api';
+import { listOrders, changeOrderStatus, finishOrder, handleUrge, ORDER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
 import { isRefundable } from '../utils/refundable';
 import { usePullRefresh } from '../composables/usePullRefresh';
 import { usePayFirst } from '../composables/usePayFirst';
 import { hasPerm } from '@dining/auth';
-import { payStatusText, payStatusTheme, money } from '@dining/shared';
+import { payStatusText, payStatusTheme, money, durationText } from '@dining/shared';
 import OrderDetailDialog from '../components/OrderDetailDialog.vue';
+import CancelOrderDialog from '../components/order/CancelOrderDialog.vue';
+import {
+  NEW_ORDER_STALE_MIN,
+  NEW_ORDER_WARN_MIN,
+  isPendingPayNewOrder,
+  newOrderWaitMinutes
+} from '../utils/newOrderWait';
 import BottomSheet from '../components/BottomSheet.vue';
 import PullRefresh from '../components/PullRefresh.vue';
 import type { PageInfo } from 'tdesign-vue-next';
@@ -625,6 +667,39 @@ const canRefundOperate = computed(() => hasPerm('refund:operate')); // 发起退
 const payFirst = usePayFirst();
 const settleMode = computed<'pay' | 'settle'>(() => (payFirst.value ? 'pay' : 'settle'));
 const settleLabel = computed(() => (payFirst.value ? '确认收款' : '后付款结账'));
+
+// ---- 先付新单「等太久」提示 ----
+// 先付单的厨房单不在下单时出,而是商家点「确认收款」那一刻才补出(printKitchenOnPaid)。
+// 商家漏点,顾客就只能干等,后厨也不会出菜。因此按「下单到现在」的时长给新单两档提示:
+//   ≥ NEW_WARN_MIN:角标由「新」转红「超时」、卡片换危险色,并提示尽快确认收款;
+//   ≥ NEW_STALE_MIN:大概率已线下处理或顾客已走,文案升级为引导取消订单。
+// 阈值与时长计算抽在 utils/newOrderWait.ts,与取消订单弹窗共用一份(单位分钟)。
+const NEW_WARN_MIN = NEW_ORDER_WARN_MIN;
+const NEW_STALE_MIN = NEW_ORDER_STALE_MIN;
+
+// 文案里的「已等 X 分钟」要自己走:列表 10s 轮询只刷新数据,网络卡住/切后台回来时
+// 不能停在上一次的时间。30s 一拍够用(分钟级展示),又不至于白白耗电。
+const nowTs = ref(Date.now());
+const AGE_TICK_MS = 30_000;
+let ageTimer: ReturnType<typeof setInterval> | null = null;
+
+// 只对「先付模式 · 已下单 · 未支付 · 商家从未处理过」的新单计时:
+// 后付模式的厨房单在下单时就出了,不会因为没收款而不出菜,标「超时」是误伤。
+function isPendingPayNew(row: OrderRow): boolean {
+  return payFirst.value && isPendingPayNewOrder(row);
+}
+
+function newOrderAge(row: OrderRow): number {
+  return newOrderWaitMinutes(row.createTime, nowTs.value);
+}
+
+function isOverdueNew(row: OrderRow): boolean {
+  return isPendingPayNew(row) && newOrderAge(row) >= NEW_WARN_MIN;
+}
+
+function isStaleNew(row: OrderRow): boolean {
+  return isPendingPayNew(row) && newOrderAge(row) >= NEW_STALE_MIN;
+}
 
 const list = ref<OrderRow[]>([]);
 const loading = ref(false);
@@ -662,9 +737,14 @@ const acting = ref(false);
 const detailRef = ref<InstanceType<typeof OrderDetailDialog> | null>(null);
 const detailVisible = ref(false);
 const detailOrderId = ref(0);
+// 取消订单弹窗:列表卡片/桌面行与详情弹窗共用同一个组件(取消是唯一不可逆的订单动作,
+// 说明文字只维护一份)
+const cancelDialogRef = ref<InstanceType<typeof CancelOrderDialog> | null>(null);
 
 // 结算状态文案/主题与订单详情共用 @dining/shared 里 orderDisplay 的实现,不再各写一份。
-const payText = payStatusText;
+// 「未支付」换成商家口径「未确认支付」:先付模式下顾客可能已付款(现金/扫码),
+// 只是商家还没点「确认收款」—— 写「未支付」会让收银以为顾客没付钱。
+const payText = (p: Parameters<typeof payStatusText>[0]) => payStatusText(p, '未确认支付');
 const payTheme = payStatusTheme;
 
 const columns = computed(() => {
@@ -887,25 +967,11 @@ function openRefund(row: OrderRow): void {
   detailRef.value?.openRefund(row);
 }
 
+// 取消订单:走共享弹窗 components/order/CancelOrderDialog.vue ——
+// 弹窗里带「金额/后果/超时」说明,与详情弹窗、桌台管理页的取消是同一份实现。
+// 超时新单把已等待时长一并传进去,弹窗据此解释「为什么这时候取消是对的」。
 function onCancel(row: OrderRow): void {
-  if (acting.value) return;
-  const dlg = DialogPlugin.confirm({
-    header: '确认取消',
-    body: `确认取消订单【${row.orderNo}】？`,
-    onConfirm: async () => {
-      acting.value = true;
-      try {
-        await cancelOrder({ orderId: row.orderId, cancelReason: '商家取消' });
-        MessagePlugin.success('订单已取消');
-        dlg.hide();
-        await afterRowAction(row.orderId);
-      } catch {
-        dlg.hide();
-      } finally {
-        acting.value = false;
-      }
-    }
-  });
+  cancelDialogRef.value?.open(row, isOverdueNew(row) ? newOrderAge(row) : 0);
 }
 
 // onFinish 完成订单:归档、计入今日统计并释放桌台。与详情弹窗的「完成订单」同一接口,
@@ -964,6 +1030,9 @@ interface CardAction {
   theme: 'default' | 'primary' | 'success' | 'warning' | 'danger';
   run: () => void;
   disabled?: boolean;
+  // 实心按钮。默认全部描边,避免一屏按钮都在抢注意;
+  // 只有「超时新单」的取消键升级为实心,把它从一排描边里拎出来。
+  solid?: boolean;
 }
 
 function cardActions(row: OrderRow): CardAction[] {
@@ -982,7 +1051,15 @@ function cardActions(row: OrderRow): CardAction[] {
         run: () => openSettle(row, settleMode.value)
       });
     if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canCancel.value)
-      items.push({ key: 'cancel', label: '取消订单', theme: 'danger', run: () => onCancel(row) });
+      items.push({
+        key: 'cancel',
+        label: '取消订单',
+        theme: 'danger',
+        // 严重超时(顾客大概率已走/已线下处理):取消是这张卡最可能的下一步,
+        // 用实心红按钮从一排描边里拎出来,配合卡片上的引导文案。
+        solid: isStaleNew(row),
+        run: () => onCancel(row)
+      });
     // 完成订单用 warning(琥珀):与确认收款(success 绿)、取消(danger 红)、详情(primary 橙)
     // 四色全区分 —— 收银一瞥即知哪个是「收尾」,不会跟「收款」看混。
     if (canFinishRow(row))
@@ -1104,19 +1181,39 @@ function onVisibilityChange(): void {
   if (document.hidden) {
     stopAutoRefresh();
   } else {
+    // 回前台先把「已等 X 分钟」按真实时间校准,再补一轮数据
+    nowTs.value = Date.now();
     load(true);
     startAutoRefresh();
+  }
+}
+
+// 新单等待计时:与列表轮询分开 —— 数据没变时轮询不会重算模板里的时长,
+// 而「已等多久」本身就得随钟表走(超时后还要触发角标/文案升级)。
+function startAgeTicker(): void {
+  stopAgeTicker();
+  ageTimer = setInterval(() => {
+    nowTs.value = Date.now();
+  }, AGE_TICK_MS);
+}
+
+function stopAgeTicker(): void {
+  if (ageTimer) {
+    clearInterval(ageTimer);
+    ageTimer = null;
   }
 }
 
 onMounted(() => {
   load();
   startAutoRefresh();
+  startAgeTicker();
   document.addEventListener('visibilitychange', onVisibilityChange);
 });
 
 onUnmounted(() => {
   stopAutoRefresh();
+  stopAgeTicker();
   document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>

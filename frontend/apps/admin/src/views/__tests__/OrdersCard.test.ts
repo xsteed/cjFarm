@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils';
 import TDesign from 'tdesign-vue-next';
 import Orders from '../Orders.vue';
-import { changeOrderStatus, finishOrder, listOrders } from '@dining/api';
+import { changeOrderStatus, finishOrder, listOrders, cancelOrder } from '@dining/api';
 import { setAuth } from '@dining/auth';
 import { clearAllStorage, flushPromises, stubResizeObserver } from '@shell/test/mocks.ts';
 import type { OrderSummary } from '@dining/types';
@@ -94,6 +94,15 @@ const iconStubs = {
 const listOrdersMock = vi.mocked(listOrders);
 const finishOrderMock = vi.mocked(finishOrder);
 const changeOrderStatusMock = vi.mocked(changeOrderStatus);
+const cancelOrderMock = vi.mocked(cancelOrder);
+
+// 卡片上的「超时」判定基于「下单到现在」的时长,createTime 必须相对当前时间生成 ——
+// 写死时间戳会让用例随日历推移而失效(今天的「刚下单」,几个月后就成了超时单)。
+function timeAgo(minutes: number): string {
+  const d = new Date(Date.now() - minutes * 60_000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 
 function order(overrides: Partial<OrderSummary> = {}): OrderSummary {
   return {
@@ -111,7 +120,7 @@ function order(overrides: Partial<OrderSummary> = {}): OrderSummary {
     payStatus: 0,
     payChannel: '',
     refundAmount: 0,
-    createTime: '2026-10-17 12:00:00',
+    createTime: timeAgo(2),
     items: [],
     ...overrides
   };
@@ -147,6 +156,8 @@ beforeEach(() => {
   detailSpies.openRefund.mockClear();
   detailSpies.refresh.mockClear();
   finishOrderMock.mockReset();
+  cancelOrderMock.mockReset();
+  cancelOrderMock.mockResolvedValue({} as never);
 });
 
 afterEach(() => {
@@ -159,8 +170,11 @@ afterEach(() => {
 // 注意:不能 stub teleport —— DialogPlugin 的程序化弹窗经 DialogPlugin._context
 // 继承本 app 的组件解析,teleport 一旦被换成桩,二次确认弹窗只渲染出
 // [object Object],点不到「确认」。
-function mountOrders() {
+// attachTo:取消订单弹窗是 t-dialog(Teleport 到 body),未挂到文档时内容不会真正渲染,
+// 想查 body 里的弹窗 DOM 必须把应用挂到 body 上。
+function mountOrders(options: { attach?: boolean } = {}) {
   return mount(Orders, {
+    ...(options.attach ? { attachTo: document.body } : {}),
     global: {
       plugins: [TDesign],
       stubs: { ...iconStubs },
@@ -394,6 +408,213 @@ describe('Orders 订单管理页 · 移动端订单卡片按钮矩阵', () => {
     const wrapper = mountOrders();
     await flushPromises();
     expect(cardLabels(wrapper)).toEqual(['订单详情', '开始制作', '后付款结账', '取消订单']);
+    wrapper.unmount();
+  });
+});
+
+// 先付单在「确认收款」之前不会补出厨房单,等太久 = 顾客干等、后厨没单。
+// 这里钉住两档提示:超时(≥5 分钟)提醒催办、严重超时(≥20 分钟)引导取消。
+describe('Orders 订单管理页 · 先付新单超时提示', () => {
+  it('等待 ≥5 分钟:角标「新」变「超时」,整卡转危险色并出现提示条', async () => {
+    payFirstState.value = true;
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [order({ orderStatus: 1, payStatus: 0, isNew: true, createTime: timeAgo(6) })]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    const card = wrapper.find('.ocard');
+    expect(card.classes()).toContain('is-overdue');
+    expect(card.classes()).not.toContain('is-stale');
+
+    const badge = wrapper.find('.ocard-new');
+    expect(badge.text()).toBe('超时');
+    expect(badge.classes()).toContain('is-overdue');
+
+    const hint = wrapper.find('.ocard-overdue');
+    expect(hint.exists()).toBe(true);
+    expect(hint.classes()).not.toContain('is-stale');
+    expect(hint.text()).toContain('未确认收款');
+    expect(hint.text()).toContain('后厨尚未出单');
+
+    // 6 分钟还没到「可能已线下处理」的程度,取消键仍是描边
+    const cancelBtn = wrapper.findAll('.ocard-ft button').find(b => (b.text() || '').includes('取消订单'));
+    expect(cancelBtn!.classes()).toContain('t-button--variant-outline');
+    wrapper.unmount();
+  });
+
+  it('等待 ≥20 分钟:提示升级为引导取消,取消键变实心红按钮', async () => {
+    payFirstState.value = true;
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [order({ orderStatus: 1, payStatus: 0, isNew: true, createTime: timeAgo(25) })]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    const card = wrapper.find('.ocard');
+    expect(card.classes()).toContain('is-overdue');
+    expect(card.classes()).toContain('is-stale');
+
+    const hint = wrapper.find('.ocard-overdue');
+    expect(hint.classes()).toContain('is-stale');
+    expect(hint.text()).toContain('请点「取消订单」');
+
+    const cancelBtn = wrapper.findAll('.ocard-ft button').find(b => (b.text() || '').includes('取消订单'));
+    expect(cancelBtn!.classes()).toContain('t-button--variant-base');
+
+    // 引导取消不等于改顺序:确认收款仍在取消之前,避免手快误点
+    expect(cardLabels(wrapper)).toEqual(['订单详情', '确认收款', '取消订单']);
+    wrapper.unmount();
+  });
+
+  it('刚下单(未到阈值)与已支付先付单都不标超时', async () => {
+    payFirstState.value = true;
+    listOrdersMock.mockResolvedValue({
+      total: 2,
+      items: [
+        order({ orderId: 1, orderStatus: 1, payStatus: 0, isNew: true, createTime: timeAgo(2) }),
+        order({
+          orderId: 2,
+          orderNo: 'NO20261017002',
+          orderStatus: 2,
+          payStatus: 1,
+          isNew: true,
+          createTime: timeAgo(30)
+        })
+      ]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+    expect(wrapper.findAll('.ocard.is-overdue')).toHaveLength(0);
+    expect(wrapper.findAll('.ocard-overdue')).toHaveLength(0);
+    expect(wrapper.findAll('.ocard-new').map(b => b.text())).toEqual(['新', '新']);
+    wrapper.unmount();
+  });
+
+  it('后付模式不标超时:厨房单在下单时就出了,不会因为未收款而不出菜', async () => {
+    payFirstState.value = false;
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [order({ orderStatus: 1, payStatus: 0, isNew: true, createTime: timeAgo(30) })]
+    });
+    const wrapper = mountOrders();
+    await flushPromises();
+
+    expect(wrapper.find('.ocard').classes()).not.toContain('is-overdue');
+    expect(wrapper.find('.ocard-new').text()).toBe('新');
+    expect(wrapper.find('.ocard-overdue').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+// 取消是唯一不可逆的订单动作(收款/完成都还有改单兜底),弹窗里必须交代清楚
+// 「会发生什么」;先付单等太久未收款时,还要说明「取消不会浪费菜品」这层业务含义。
+describe('Orders 订单管理页 · 取消订单弹窗', () => {
+  function openCancelDialog(wrapper: ReturnType<typeof mountOrders>) {
+    return wrapper
+      .findAll('.ocard-ft button')
+      .find(b => (b.text() || '').includes('取消订单'))!
+      .trigger('click');
+  }
+
+  it('超时未收款的先付单:弹窗含金额、取消后果与「不会浪费菜品」说明', async () => {
+    payFirstState.value = true;
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [order({ orderStatus: 1, payStatus: 0, isNew: true, createTime: timeAgo(25) })]
+    });
+    const wrapper = mountOrders({ attach: true });
+    await flushPromises();
+
+    await openCancelDialog(wrapper);
+    await flushPromises();
+
+    const box = document.querySelector('.cancel-box') as HTMLElement | null;
+    expect(box).toBeTruthy();
+    const text = box!.textContent || '';
+    expect(text).toContain('¥28.00');
+    expect(text).toContain('取消后不可恢复');
+    expect(text).toContain('桌台立即释放为空闲');
+    expect(text).toContain('操作日志');
+
+    // 先付未收款 = 厨房单还没出:说明里不能出现「菜品无法撤回」这种会吓住收银的话
+    expect(text).toContain('还没有出厨房单');
+    expect(text).not.toContain('请先与后厨确认');
+
+    // 超时说明与卡片同口径(≥20 分钟):红色块 + 已等待时长
+    expect(box!.querySelector('.ct-hint-stale')).toBeTruthy();
+    expect(text).toContain('未确认收款');
+    expect(text).toContain('取消不会造成菜品浪费');
+    wrapper.unmount();
+  });
+
+  it('刚下单的先付单:只给通用后果说明,不出现超时引导', async () => {
+    payFirstState.value = true;
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [order({ orderStatus: 1, payStatus: 0, isNew: true, createTime: timeAgo(2) })]
+    });
+    const wrapper = mountOrders({ attach: true });
+    await flushPromises();
+
+    await openCancelDialog(wrapper);
+    await flushPromises();
+
+    const box = document.querySelector('.cancel-box') as HTMLElement | null;
+    expect(box).toBeTruthy();
+    expect(box!.querySelector('.ct-hint-stale')).toBeNull();
+    expect(box!.querySelector('.ct-hint-wait')).toBeNull();
+    expect(box!.textContent || '').toContain('取消后不可恢复');
+    expect(box!.textContent || '').toContain('还没有出厨房单');
+    wrapper.unmount();
+  });
+
+  it('后付模式的取消:厨房单在下单时就出了,提示要收银先与后厨确认', async () => {
+    payFirstState.value = false;
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [order({ orderStatus: 2, payStatus: 0, createTime: timeAgo(3) })]
+    });
+    const wrapper = mountOrders({ attach: true });
+    await flushPromises();
+
+    await openCancelDialog(wrapper);
+    await flushPromises();
+
+    const box = document.querySelector('.cancel-box') as HTMLElement | null;
+    expect(box).toBeTruthy();
+    const text = box!.textContent || '';
+    expect(text).toContain('后厨可能已经出单');
+    expect(text).toContain('请先与后厨确认');
+    expect(text).not.toContain('还没有出厨房单');
+    wrapper.unmount();
+  });
+
+  it('确认取消后调用取消接口并按「商家取消」落库,随后刷新列表', async () => {
+    payFirstState.value = true;
+    listOrdersMock.mockResolvedValue({
+      total: 1,
+      items: [order({ orderStatus: 1, payStatus: 0, isNew: true, createTime: timeAgo(2) })]
+    });
+    const wrapper = mountOrders({ attach: true });
+    await flushPromises();
+    const loadsBefore = listOrdersMock.mock.calls.length;
+
+    await openCancelDialog(wrapper);
+    await flushPromises();
+
+    // t-dialog 的确认键在 footer 里,按文案取,避开 TDesign 版本差异导致的类名变化
+    const confirmBtn = Array.from(document.querySelectorAll('.t-dialog__footer button')).find(b =>
+      (b.textContent || '').includes('确认取消')
+    ) as HTMLElement | undefined;
+    expect(confirmBtn).toBeTruthy();
+    confirmBtn!.click();
+    await flushPromises();
+
+    expect(cancelOrderMock).toHaveBeenCalledWith({ orderId: 1, cancelReason: '商家取消' });
+    expect(listOrdersMock.mock.calls.length).toBeGreaterThan(loadsBefore);
     wrapper.unmount();
   });
 });

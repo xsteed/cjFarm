@@ -57,6 +57,12 @@
     ref="refundDialogRef"
     @changed="refresh"
   />
+
+  <!-- 取消订单:与订单管理页卡片/表格行的取消共用同一个弹窗(含后果与超时说明) -->
+  <CancelOrderDialog
+    ref="cancelDialogRef"
+    @changed="refresh"
+  />
 </template>
 
 <script setup lang="ts">
@@ -67,7 +73,6 @@ import {
   changeOrderStatus,
   cancelSettle,
   finishOrder,
-  cancelOrder,
   handleUrge,
   reprintOrder,
   listRefunds,
@@ -79,7 +84,9 @@ import OrderEditDialog from './OrderEditDialog.vue';
 import SettleDialog from './order/SettleDialog.vue';
 import CreditSettleDialog from './order/CreditSettleDialog.vue';
 import RefundDialog from './order/RefundDialog.vue';
+import CancelOrderDialog from './order/CancelOrderDialog.vue';
 import { usePayFirst } from '../composables/usePayFirst';
+import { isPendingPayNewOrder, newOrderWaitMinutes } from '../utils/newOrderWait';
 
 type SettleMode = 'pay' | 'settle';
 type DocType = 'kitchen' | 'guest';
@@ -110,6 +117,7 @@ const acting = ref(false);
 const settleDialogRef = ref<InstanceType<typeof SettleDialog> | null>(null);
 const creditDialogRef = ref<InstanceType<typeof CreditSettleDialog> | null>(null);
 const refundDialogRef = ref<InstanceType<typeof RefundDialog> | null>(null);
+const cancelDialogRef = ref<InstanceType<typeof CancelOrderDialog> | null>(null);
 
 // 先付模式开关(模块级单例,与订单管理/结算弹窗同源):用于「完成订单」确认弹窗
 // 追加不出小票的提示,见 onFinish。
@@ -308,23 +316,13 @@ function onFinish(): void {
   });
 }
 
+// 取消订单走共享弹窗(带金额/后果/超时说明)。先付单等太久未确认收款时,
+// 把已等待时长传进去,弹窗会解释「后厨还没出这一单,取消不会浪费」。
 function onCancel(): void {
   const row = detail.value;
   if (!row) return;
-  const dlg = DialogPlugin.confirm({
-    header: '确认取消',
-    body: `确认取消订单【${row.orderNo}】？`,
-    onConfirm: async () => {
-      try {
-        await cancelOrder({ orderId: row.orderId, cancelReason: '商家取消' });
-        MessagePlugin.success('订单已取消');
-        dlg.hide();
-        await refresh();
-      } catch {
-        dlg.hide();
-      }
-    }
-  });
+  const waited = payFirst.value && isPendingPayNewOrder(row) ? newOrderWaitMinutes(row.createTime) : 0;
+  cancelDialogRef.value?.open(row, waited);
 }
 
 async function syncRefund(row: Refund): Promise<void> {

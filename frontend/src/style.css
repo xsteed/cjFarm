@@ -425,6 +425,19 @@ body.drag-sorting * {
   cursor: grabbing !important;
 }
 
+/* 拖拽排序的落位指示线:由 useDragSort 挂在 body 上的 fixed 元素,
+   z-index 要高于被拖项(30)——否则拖起的行/卡片会正好压住这条线。 */
+.drag-insert-line {
+  position: fixed;
+  z-index: 9999;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--brand);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 70%);
+  pointer-events: none;
+  display: none;
+}
+
 /* 分页器在 366px 里放不下"共 N 项 + 7 个页码",允许折行而不是把总数压扁。
    注意 TDesign 给 .t-pagination__total 设的是 flex:1(flex-basis:0%),
    只写 flex-shrink:0 没用 —— basis 是 0 时没有可收缩的余地,必须写 flex:0 0 auto。 */
@@ -908,6 +921,56 @@ body.drag-sorting * {
 /* 有 badge 的卡片给首行让位,避免盖住短号;无 badge 的卡片布局不变 */
 .ocard.is-new .ocard-top {
   padding-left: 29px;
+}
+
+/* 先付新单等太久仍没收款:角标「新」转红「超时」,整卡换危险色。
+   这类单在「确认收款」前不会补出厨房单,红底比橙色更该被余光抓到;
+   呼吸动画停掉 —— 它已经超时了,不需要再「待命中」的节奏。 */
+.ocard-new.is-overdue {
+  background: var(--danger);
+  animation: none;
+}
+
+.ocard.is-overdue {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* 卡片内的超时提示条:说清「后厨没出单」和下一步该做什么。
+   默认浅色(还能救,去点确认收款);严重超时转实心红,引导取消订单。 */
+.ocard-overdue {
+  margin-top: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid #ffd0d0;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.ocard-overdue strong {
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.ocard-overdue.is-stale {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
+.ocard-overdue.is-stale strong {
+  color: #fff;
+}
+
+/* 信息行里的「已等 X 分钟」:与提示条同色,扫一眼就知道卡了多久 */
+.ocard-wait {
+  color: var(--danger);
+  font-weight: 600;
 }
 
 /* 「待完成」badge:贴在右上角,与「新」(左上橙)左右对称 —— 先付已收款、

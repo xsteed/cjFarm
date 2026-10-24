@@ -12,9 +12,15 @@ export interface PayState {
   payType?: string | null;
 }
 
-/** 结算状态文案:未支付 / 已支付 / 免单 / 挂账待收 / 挂账已结 */
-export function payStatusText(p: PayState | null | undefined): string {
-  if (!p || p.payStatus !== 1) return '未支付';
+/**
+ * 结算状态文案:未支付 / 已支付 / 免单 / 挂账待收 / 挂账已结。
+ *
+ * unpaidLabel 允许调用方替换「未支付」的措辞:商家端用「未确认支付」——
+ * 先付模式下顾客可能已经把钱付了(现金/扫码),只是商家还没点「确认收款」,
+ * 标签写「未支付」会让收银以为顾客没付钱;顾客端保持「未支付」直说事实。
+ */
+export function payStatusText(p: PayState | null | undefined, unpaidLabel = '未支付'): string {
+  if (!p || p.payStatus !== 1) return unpaidLabel;
   if (p.settleType === 'free') return '免单';
   if (p.settleType === 'credit') {
     return p.creditStatus === 1
