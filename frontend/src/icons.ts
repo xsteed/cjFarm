@@ -25,7 +25,8 @@ import {
   EllipsisIcon,
   HistoryIcon,
   FilterIcon,
-  MemberIcon
+  MemberIcon,
+  StarIcon
 } from 'tdesign-icons-vue-next';
 
 // 单一图标清单：main.ts 全局注册与 router 的 meta.icon 都从这里取。
@@ -55,5 +56,6 @@ export const iconRegistry = {
   EllipsisIcon,
   HistoryIcon,
   FilterIcon,
-  MemberIcon
+  MemberIcon,
+  StarIcon
 };

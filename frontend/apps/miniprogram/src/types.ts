@@ -510,3 +510,24 @@ export interface GlobalData {
   cart: CartLine[];
   member: MemberState;
 }
+
+// ============ 订单评价(仅商家可见的内部反馈,与 H5 ReviewSheet 同语义) ============
+
+/** 顾客端「本单是否已评价」状态(GET /customer/review)。 */
+export interface CustomerReviewStatus extends Extensible {
+  reviewed?: boolean;
+  rating?: number;
+  tags?: string[];
+  content?: string;
+}
+
+/** 评价提交入参(POST /customer/review)。会员身份由令牌解析,请求体不传。 */
+export interface ReviewCreatePayload extends Extensible {
+  tableId?: number;
+  /** 已上传图片名(/customer/review/upload 返回的 url 尾段),提交时事务绑定。 */
+  images?: string[];
+  orderNo?: string;
+  rating?: number;
+  tags?: string[];
+  content?: string;
+}

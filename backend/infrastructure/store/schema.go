@@ -371,10 +371,52 @@ var schemaTemplate = []string{
 		urge_type   VARCHAR(16)  DEFAULT 'urge',
 		status      INTEGER      DEFAULT 0,
 		remark      VARCHAR(255) DEFAULT '',
-		handle_time VARCHAR(32) DEFAULT NULL,
+		handle_time VARCHAR(32)  DEFAULT NULL,
 		handle_by   VARCHAR(64)  DEFAULT '',
 		create_time {{TSTYPE}} DEFAULT {{NOWDEF}},
 		update_time {{TSTYPE}} DEFAULT NULL{{ONUPD}}
+	){{OPTS}}`,
+
+	// 订单评价(仅商家可见的内部反馈通道,见 docs/design-docs/order-review/spec.md):
+	// 追溯字段(桌台快照/人数/会员昵称与手机号)提交时一次性写死,不联表 ——
+	// 会员注销会物理删除档案并把订单归属置 0,联表方案的追溯链会断裂。
+	// ip_hash/ua_hash 是 sha256(auth.key|值) 胡椒哈希,明文 IP 永不落库。
+	`CREATE TABLE IF NOT EXISTS tb_review (
+		review_id    {{PK}},
+		order_id     INTEGER      NOT NULL,
+		order_no     VARCHAR(64)  NOT NULL,
+		biz_date     VARCHAR(10)  DEFAULT '',
+		table_id     INTEGER      DEFAULT 0,
+		table_no     VARCHAR(32)  DEFAULT '',
+		table_name   VARCHAR(64)  DEFAULT '',
+		person_count INTEGER      DEFAULT 0,
+		customer_id  INTEGER      DEFAULT 0,
+		nickname     VARCHAR(64)  DEFAULT '',
+		phone        VARCHAR(20)  DEFAULT '',
+		rating       INTEGER      DEFAULT 0,
+		tags         VARCHAR(255) DEFAULT '',
+		content      VARCHAR(500) DEFAULT '',
+		ip_hash      VARCHAR(64)  DEFAULT '',
+		ua_hash      VARCHAR(64)  DEFAULT '',
+		create_time  {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time  {{TSTYPE}} DEFAULT NULL{{ONUPD}}
+	){{OPTS}}`,
+
+	// 订单评价图片:与 tb_image 刻意分开的两张表 —— 菜品图是商家管理的资产、
+	// 评价图是顾客上传的用户内容,生命周期(级联删除/孤儿清理)与合规属性完全不同,
+	// 混存一张表既无法区分业务,将来迁对象存储(COS)时也难以整表筛选搬迁。
+	// 图片本体仍以 BLOB 入库(与 tb_image 同一运行时模型,展示统一走 /uploads/{name},
+	// 见 service.GetImage 的两级回落);review_id=0 表示「已上传未绑定评价」,
+	// 由后台孤儿清理任务按 create_time 回收。
+	`CREATE TABLE IF NOT EXISTS tb_review_image (
+		image_id     {{PK}},
+		review_id    INTEGER      DEFAULT 0,
+		img_name     VARCHAR(128) NOT NULL,
+		content_type VARCHAR(32)  DEFAULT '',
+		img_data     {{BLOB}},
+		file_size    INTEGER      DEFAULT 0,
+		create_time  {{TSTYPE}} DEFAULT {{NOWDEF}},
+		update_time  {{TSTYPE}} DEFAULT NULL{{ONUPD}}
 	){{OPTS}}`,
 
 	`CREATE TABLE IF NOT EXISTS tb_payment (
@@ -830,7 +872,7 @@ type indexDef struct {
 	Where string
 }
 
-// indexDefs 全部索引(共 34 个)。
+// indexDefs 全部索引(共 47 个)。
 // 唯一索引保证 order_no / refund_no / 渠道交易号不重复;
 // 其余索引用于订单查询、看板与报表加速。
 var indexDefs = []indexDef{
@@ -848,6 +890,11 @@ var indexDefs = []indexDef{
 	// 挂账核销按 credit_settle_time 归属,补索引避免区间统计逐日扫全表。
 	{Name: "idx_order_pay_time", Table: "tb_order", Columns: "pay_time"},
 	{Name: "idx_order_credit_settle_time", Table: "tb_order", Columns: "credit_settle_time"},
+	// 「已完成订单数」(dao.CountFinishedIn)与「用餐时长」(dao.DiningDurationRows)
+	// 都按 finish_time 的区间归属,此前缺索引只能全表扫订单主表。
+	// order_status 是等值条件、必须排在范围列之前:BTree 才能先收敛到 status=4
+	// 再沿 finish_time 做范围扫描;反过来写则范围列之后的部分用不上。
+	{Name: "idx_order_finish_time", Table: "tb_order", Columns: "order_status, finish_time"},
 	// 会员「我的订单」按时间倒序分页(见 tb_customer)。
 	{Name: "idx_order_customer", Table: "tb_order", Columns: "customer_id, create_time"},
 	// 会员登录查档主路径(provider + external_id),同时兜底并发首登的幂等性。
@@ -870,6 +917,15 @@ var indexDefs = []indexDef{
 	{Name: "idx_refund_update_time", Table: "tb_refund", Columns: "update_time"},
 	{Name: "idx_urge_status", Table: "tb_order_urge", Columns: "status, create_time"},
 	{Name: "idx_urge_order", Table: "tb_order_urge", Columns: "order_id"},
+	// 订单评价:order_no 唯一 = 一单一评的数据库兜底(service 层的查重在事务外,
+	// 并发双击由这里兜住);时间索引用于列表翻页,评分复合索引用于按档位筛选。
+	{Name: "idx_review_order", Table: "tb_review", Columns: "order_no", Unique: true},
+	{Name: "idx_review_time", Table: "tb_review", Columns: "create_time"},
+	{Name: "idx_review_rating", Table: "tb_review", Columns: "rating, create_time"},
+	// 评价图片:文件名唯一(展示/绑定凭据);按评价取图(管理端详情/级联删除);按时间扫孤儿。
+	{Name: "idx_review_image_name", Table: "tb_review_image", Columns: "img_name", Unique: true},
+	{Name: "idx_review_image_review", Table: "tb_review_image", Columns: "review_id"},
+	{Name: "idx_review_image_time", Table: "tb_review_image", Columns: "create_time"},
 	// 打印日志:按订单倒查(「这单到底打了没」)、按时间翻页、按失败筛选。
 	{Name: "idx_print_log_order", Table: "tb_print_log", Columns: "order_id"},
 	{Name: "idx_print_log_time", Table: "tb_print_log", Columns: "create_time"},

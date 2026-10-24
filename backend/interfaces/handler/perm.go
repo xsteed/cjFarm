@@ -154,6 +154,10 @@ var routePerms = map[string]string{
 	"POST /api/admin/order/edit":          "order:edit",
 	"POST /api/admin/order/cancel":        "order:cancel",
 
+	// ---- 订单评价(仅商家可见的内部反馈) ----
+	"GET /api/admin/review/list":   "review:view",
+	"DELETE /api/admin/review/:id": "review:edit",
+
 	// ---- 退款 ----
 	"POST /api/admin/pay/refund":       "refund:operate",
 	"POST /api/admin/pay/refund/query": "refund:operate",

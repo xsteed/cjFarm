@@ -105,7 +105,7 @@ func ReportDishRank(c *gin.Context) {
 			limit = n
 		}
 	}
-	rows, err := service.DishRank(c.Query("sort"), limit)
+	rows, err := service.DishRank(c.Query("sort"), limit, c.Query("start"), c.Query("end"), c.Query("days"))
 	if err != nil {
 		fail(c, err.Error())
 		return

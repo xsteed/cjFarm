@@ -102,6 +102,14 @@ func setupAPI(r *gin.Engine) {
 			middleware.NewIPRateLimit(time.Minute, middleware.LoadCustomerOrderQueryRateLimit()),
 			handler.CustomerOrderByNo)
 		api.POST("/customer/order/urge", handler.CustomerUrgeOrder)
+		// 订单评价(仅商家可见的内部反馈,匿名与会员同入口):已付款且上齐后可评,
+		// 一单一评。匿名可评 = 无鉴权写接口,读写都挂 IP 限流兜底垃圾内容
+		// (见 docs/design-docs/order-review/spec.md)。
+		reviewLimiter := middleware.NewIPRateLimit(time.Minute, middleware.LoadCustomerReviewRateLimit())
+		api.GET("/customer/review", reviewLimiter, handler.CustomerReviewStatus)
+		api.POST("/customer/review", reviewLimiter, handler.CustomerAuthOptional, handler.CustomerReviewCreate)
+		// 评价图片上传(先传后评):独立表 tb_review_image,提交时事务绑定,孤儿 24h 清理。
+		api.POST("/customer/review/upload", reviewLimiter, handler.CustomerAuthOptional, handler.CustomerReviewUpload)
 		api.GET("/customer/pay/qr", handler.CustomerPayQr)
 		api.POST("/customer/pay/create", handler.PayCreate)
 		// 小程序内支付(JSAPI):服务端用 wx.login 的 code 换 openid 并签好调起参数,
@@ -227,6 +235,9 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/order/stale", handler.OrderStale)
 			admin.GET("/order/urge/list", handler.UrgeList)
 			admin.POST("/order/urge/handle", handler.UrgeHandle)
+			// 订单评价(仅商家可见):列表+汇总只读,删除不当内容。
+			admin.GET("/review/list", handler.AdminReviewList)
+			admin.DELETE("/review/:id", handler.AdminReviewDelete)
 			admin.GET("/order/:id", handler.OrderGet)
 			admin.POST("/order/status", handler.OrderStatus)
 			admin.POST("/order/pay", handler.OrderPay)
@@ -382,6 +393,8 @@ func main() {
 	// 混合支付超时释放:余额已扣、微信迟迟未付的订单,15 分钟后自动退回余额并关单。
 	// 放在 handler 层:释放前要用 pay 包关渠道单,service 不得 import pay。
 	handler.StartMixedPaySweeper()
+	// 评价图片孤儿清理:上传后未绑定评价的图 24h 后回收(用户内容不进 tb_image,见 tb_review_image)。
+	service.StartReviewImageOrphanCleaner()
 	// 站点访问统计:批量写 worker + 日聚合补跑 + 明细清理(开关关闭时不起 worker)。
 	// 放在巡检任务之后:两者互不依赖,但日志上保持「后台任务」在同一段。
 	service.StartVisitRollup()

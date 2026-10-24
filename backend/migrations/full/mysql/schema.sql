@@ -293,11 +293,41 @@ CREATE TABLE IF NOT EXISTS tb_order_urge (
         urge_type   VARCHAR(16)  DEFAULT 'urge' COMMENT '类型 urge=催菜',
         status      INTEGER      DEFAULT 0 COMMENT '处理状态 0待处理 1已处理',
         remark      VARCHAR(255) DEFAULT '' COMMENT '处理备注',
-        handle_time VARCHAR(32) DEFAULT NULL COMMENT '处理时间',
+        handle_time VARCHAR(32)  DEFAULT NULL COMMENT '处理时间',
         handle_by   VARCHAR(64)  DEFAULT '' COMMENT '处理人',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间(数据库自动填)',
         update_time DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='催菜记录';
+CREATE TABLE IF NOT EXISTS tb_review (
+        review_id    INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '评价ID(自增主键)',
+        order_id     INTEGER      NOT NULL COMMENT '关联订单ID',
+        order_no     VARCHAR(64)  NOT NULL COMMENT '关联订单号(唯一,一单一评)',
+        biz_date     VARCHAR(10)  DEFAULT '' COMMENT '营业日快照(筛选与报表同口径)',
+        table_id     INTEGER      DEFAULT 0 COMMENT '桌台ID',
+        table_no     VARCHAR(32)  DEFAULT '' COMMENT '桌号快照',
+        table_name   VARCHAR(64)  DEFAULT '' COMMENT '桌名快照(桌台改名不影响历史)',
+        person_count INTEGER      DEFAULT 0 COMMENT '就餐人数快照(差评语境参考)',
+        customer_id  INTEGER      DEFAULT 0 COMMENT '会员ID 0=匿名 注销后仅作历史编号',
+        nickname     VARCHAR(64)  DEFAULT '' COMMENT '会员昵称快照(提交时一次性写死)',
+        phone        VARCHAR(20)  DEFAULT '' COMMENT '会员手机号快照(provider=phone 身份,匿名为空)',
+        rating       INTEGER      DEFAULT 0 COMMENT '总分 1..5 星',
+        tags         VARCHAR(255) DEFAULT '' COMMENT '快捷标签 逗号分隔 最多6个',
+        content      VARCHAR(500) DEFAULT '' COMMENT '文字评价(最多200字)',
+        ip_hash      VARCHAR(64)  DEFAULT '' COMMENT 'IP 胡椒哈希(sha256(auth.key|IP) 明文不落库)',
+        ua_hash      VARCHAR(64)  DEFAULT '' COMMENT 'User-Agent 胡椒哈希(同 ip_hash)',
+        create_time  DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '提交时间',
+        update_time  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='订单评价(仅商家可见的内部反馈,快照自含追溯信息)';
+CREATE TABLE IF NOT EXISTS tb_review_image (
+        image_id     INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '图片ID(自增主键)',
+        review_id    INTEGER      DEFAULT 0 COMMENT '所属评价ID 0=已上传未绑定(孤儿,24h 后清理)',
+        img_name     VARCHAR(128) NOT NULL COMMENT '文件名(唯一,展示走 /uploads/{name})',
+        content_type VARCHAR(32)  DEFAULT '' COMMENT 'MIME 类型',
+        img_data     LONGBLOB COMMENT '图片内容(BLOB,与 tb_image 同一运行时模型)',
+        file_size    INTEGER      DEFAULT 0 COMMENT '文件字节数',
+        create_time  DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
+        update_time  DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间(行更新自动推进)'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='订单评价图片(顾客上传的用户内容,独立于商家资产表 tb_image,便于区分与迁对象存储)';
 CREATE TABLE IF NOT EXISTS tb_payment (
         payment_id       INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '支付单ID(自增主键)',
         order_no         VARCHAR(64)  NOT NULL COMMENT '关联订单号',
@@ -503,6 +533,7 @@ CREATE INDEX idx_order_table_unpaid ON tb_order(table_id, pay_status, order_stat
 CREATE INDEX idx_order_create_time ON tb_order(create_time);
 CREATE INDEX idx_order_pay_time ON tb_order(pay_time);
 CREATE INDEX idx_order_credit_settle_time ON tb_order(credit_settle_time);
+CREATE INDEX idx_order_finish_time ON tb_order(order_status, finish_time);
 CREATE INDEX idx_order_customer ON tb_order(customer_id, create_time);
 CREATE UNIQUE INDEX idx_identity_provider_external ON tb_customer_identity(provider, external_id);
 CREATE INDEX idx_identity_customer ON tb_customer_identity(customer_id);
@@ -517,6 +548,12 @@ CREATE INDEX idx_refund_order ON tb_refund(order_id);
 CREATE INDEX idx_refund_update_time ON tb_refund(update_time);
 CREATE INDEX idx_urge_status ON tb_order_urge(status, create_time);
 CREATE INDEX idx_urge_order ON tb_order_urge(order_id);
+CREATE UNIQUE INDEX idx_review_order ON tb_review(order_no);
+CREATE INDEX idx_review_time ON tb_review(create_time);
+CREATE INDEX idx_review_rating ON tb_review(rating, create_time);
+CREATE UNIQUE INDEX idx_review_image_name ON tb_review_image(img_name);
+CREATE INDEX idx_review_image_review ON tb_review_image(review_id);
+CREATE INDEX idx_review_image_time ON tb_review_image(create_time);
 CREATE INDEX idx_print_log_order ON tb_print_log(order_id);
 CREATE INDEX idx_print_log_time ON tb_print_log(create_time);
 CREATE INDEX idx_print_log_status ON tb_print_log(status, create_time);

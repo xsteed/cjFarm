@@ -298,7 +298,8 @@ func TestReportSvcDishRank(t *testing.T) {
 	}
 	_ = now
 
-	qtyRank, err := DishRank("qty", 10)
+	// 区间留空:走默认的一年窗口。种进来的是当前时间的订单,必在窗口内。
+	qtyRank, err := DishRank("qty", 10, "", "", "")
 	if err != nil || len(qtyRank) < 2 {
 		t.Fatalf("销量排行应返回数据, got %+v err=%v", qtyRank, err)
 	}
@@ -306,7 +307,7 @@ func TestReportSvcDishRank(t *testing.T) {
 		t.Fatalf("按销量排行第一名应为低价菜, got %+v", qtyRank[0])
 	}
 
-	amtRank, err := DishRank("amount", 10)
+	amtRank, err := DishRank("amount", 10, "", "", "")
 	if err != nil || len(amtRank) < 2 {
 		t.Fatalf("销售额排行应返回数据, got %+v err=%v", amtRank, err)
 	}

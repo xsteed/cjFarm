@@ -104,3 +104,17 @@ func LoadCustomerOrderQueryRateLimit() int {
 	}
 	return n
 }
+
+// LoadCustomerReviewRateLimit 解析顾客端评价接口的单 IP 限流值(次/分钟,
+// <=0 表示关闭)。匿名可评 = 无鉴权写接口,限流是垃圾内容的第一道闸。
+func LoadCustomerReviewRateLimit() int {
+	raw := os.Getenv(conf.EnvCustomerReviewRateLimit)
+	if raw == "" {
+		return conf.DefaultCustomerReviewRateLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return conf.DefaultCustomerReviewRateLimit
+	}
+	return n
+}

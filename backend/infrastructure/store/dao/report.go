@@ -308,7 +308,14 @@ func CreditSettledIn(start, end string) (cents int64, count int, err error) {
 const dishRankMaxLimit = 100
 
 // DishRank 菜品排行:按销量(qty)或销售额(amt)排序,仅拼接白名单列防注入。
-func DishRank(orderCol string, limit int) ([]DishRankRow, error) {
+//
+// start/end 是**下单时间**的左闭右开区间(见 tb_order.create_time),与日报/
+// 时段/结算构成同口径;两者任一为空则退化为全历史(保持与区间参数引入前一致,
+// 供不关心区间的调用方使用)。
+// 带上区间后 JOIN 的输入由「全表」收敛到「区间内的订单」:明细表按 order_id
+// 关联(id存在 idx_order_item_order),订单侧走 idx_order_create_time 做范围扫描,
+// 不再把历史明细整张扫一遍 —— 这是菜品排行从「全页最慢」变成毫秒级的关键。
+func DishRank(orderCol string, limit int, start, end string) ([]DishRankRow, error) {
 	if orderCol != "qty" && orderCol != "amt" {
 		orderCol = "qty"
 	}
@@ -319,10 +326,16 @@ func DishRank(orderCol string, limit int) ([]DishRankRow, error) {
 	// 按 (dish_id, dish_name) 分组:不同分类下的同名菜品是两道不同的菜
 	// (价格/成本各自独立),只按名称分组会把它们合并成一行,排行与金额都失真。
 	// 历史行 dish_id 可能为 0,同名的会合并在一起 —— 可接受,好过误并不同菜。
+	where, args := `o.order_status != 5`, []interface{}{}
+	if start != "" && end != "" {
+		where += ` AND o.create_time>=? AND o.create_time<?`
+		args = append(args, start, end)
+	}
+	args = append(args, limit)
 	rows, err := store.DB.Query(`SELECT i.dish_name, SUM(i.quantity) AS qty, SUM(i.amount) AS amt
 		FROM tb_order_item i JOIN tb_order o ON o.order_id = i.order_id
-		WHERE o.order_status != 5
-		GROUP BY i.dish_id, i.dish_name ORDER BY `+orderCol+` DESC, i.dish_id ASC LIMIT ?`, limit)
+		WHERE `+where+`
+		GROUP BY i.dish_id, i.dish_name ORDER BY `+orderCol+` DESC, i.dish_id ASC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

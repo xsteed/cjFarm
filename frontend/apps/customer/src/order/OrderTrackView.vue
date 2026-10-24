@@ -163,12 +163,26 @@
              后付模式只是结账,不加这个紧迫感 -->
         {{ payFirst ? '🔥 去支付' : '去支付' }}
       </div>
+      <!-- 结束态按钮组:去评价与再点一单并排(用户反馈:tip 条看不出可点)。
+           评价按钮只在已付款且上齐后出现;已评变灰只读。canceled 只剩重新点菜 -->
       <div
-        v-if="view === 'settled' || view === 'done' || view === 'canceled'"
-        class="st-neworder"
-        @click="emit('newOrder')"
+        v-if="canReview || canceled || settled || done"
+        class="st-endbtns"
       >
-        {{ view === 'canceled' ? '重新点菜' : '再点一单' }}
+        <div
+          v-if="canReview"
+          class="st-btn st-review-btn"
+          :class="{ done: reviewDone }"
+          @click="!reviewDone && emit('review')"
+        >
+          {{ reviewDone ? '已评价 ✓' : '去评价' }}
+        </div>
+        <div
+          class="st-btn st-neworder"
+          @click="emit('newOrder')"
+        >
+          {{ canceled ? '重新点菜' : '再点一单' }}
+        </div>
       </div>
     </div>
 
@@ -221,6 +235,8 @@ const props = defineProps<{
   showTabbar: boolean;
   /** 门店先付模式:未支付时提示「付款后才开做」 */
   payFirst: boolean;
+  /** 本单是否已评价(后端查得):已评则入口变只读的「已评价 ✓」 */
+  reviewDone?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -228,6 +244,7 @@ const emit = defineEmits<{
   urge: [];
   pay: [];
   newOrder: [];
+  review: [];
 }>();
 
 // 订单状态标签:短文案 + 主题,与小程序 ORDER_STATUS 字典一致(挂在菜品明细卡头右侧)
@@ -245,6 +262,13 @@ const canUrge = computed(() => !props.payFirst || Number(props.currentOrder.payS
 const done = computed(() => props.view === 'done');
 const canceled = computed(() => props.view === 'canceled');
 const settled = computed(() => props.view === 'settled');
+
+// 评价入口的显示条件:已付款 + 已上齐/已完成(3/4),不依赖视图 ——
+// 后付刚结账(settled)固然是主路径,但顾客从「本桌正在出餐」列表、刷新或换设备
+// 回到订单视图(view=order)时同样是吃完待反馈的状态,入口必须同样出现。
+const canReview = computed(
+  () => Number(props.currentOrder.payStatus) === 1 && [3, 4].includes(Number(props.currentOrder.orderStatus))
+);
 
 // 支付状态文案/主题:复用共享实现,与小程序同源
 const payText = computed(() => payStatusText(props.currentOrder));
@@ -558,21 +582,49 @@ const renderItems = computed<RenderItem[]>(() => {
   cursor: pointer;
 }
 
-/* 顾客侧已结束(已结账/完成/取消)后的「再点一单」出口:与去支付同尺寸同级 */
-.st-neworder {
-  width: 100%;
+/* 结束态按钮组:去评价 | 再点一单 并排,各占一半 */
+.st-endbtns {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.st-btn {
+  flex: 1;
   height: 42px;
   border-radius: var(--r-pill);
-  border: 1.5px solid #ffd5c4;
-  background: #fff;
-  color: var(--brand-deep);
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 12px;
   cursor: pointer;
+}
+
+/* 去评价:主色描边(与加菜按钮同款视觉),已评变灰只读 */
+.st-review-btn {
+  border: 1.5px solid #ffd5c4;
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+.st-review-btn:active {
+  background: #ffe3d4;
+}
+
+.st-review-btn.done {
+  border-color: var(--line);
+  background: #f5f5f5;
+  color: var(--ink-3);
+  font-weight: 400;
+  cursor: default;
+}
+
+/* 顾客侧已结束(已结账/完成/取消)后的「再点一单」出口:与去评价并排各半 */
+.st-neworder {
+  border: 1.5px solid #ffd5c4;
+  background: #fff;
+  color: var(--brand-deep);
 }
 
 .st-neworder:active {

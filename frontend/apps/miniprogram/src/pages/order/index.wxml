@@ -275,8 +275,16 @@
       >
         {{payBtnText}}
       </view>
+      <!-- 去评价与再点一单并排(H5 同款);已评变灰只读。两个按钮独立条件并存 -->
       <view
-        wx:elif="{{settled || done || canceled}}"
+        wx:if="{{canReview}}"
+        class="btn-ghost foot-minor {{reviewDone ? 'dim' : ''}}"
+        bindtap="onOpenReview"
+      >
+        {{reviewDone ? '已评价 ✓' : '去评价'}}
+      </view>
+      <view
+        wx:if="{{settled || done || canceled}}"
         class="btn-primary foot-main"
         bindtap="onNewOrder"
       >
@@ -284,6 +292,13 @@
       </view>
     </view>
   </block>
+
+  <!-- 订单评价弹层(仅商家可见):入口在上面的结束态卡片流里 -->
+  <review-sheet
+    visible="{{reviewSheetVisible}}"
+    bindclose="onCloseReview"
+    bindsubmit="onSubmitReview"
+  />
 
   <!-- 常驻底部主导航：加载中 / 「本桌没有进行中订单」的空态下也能切回点餐 -->
   <tab-bar

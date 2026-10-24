@@ -5,6 +5,7 @@ export * from './customer';
 export * from './member';
 export * from './wallet';
 export * from './order';
+export * from './review';
 export * from './printer';
 export * from './report';
 export * from './visit';

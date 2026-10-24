@@ -1,0 +1,108 @@
+<view
+  wx:if="{{visible}}"
+  class="mask"
+  catchtap="onClose"
+>
+  <view
+    class="sheet"
+    catchtap="noop"
+  >
+    <view class="sheet-hd">
+      <view class="sheet-title">这顿吃得如何？</view>
+      <view
+        class="sheet-close"
+        catchtap="onClose"
+      >
+        ×
+      </view>
+    </view>
+    <view class="sheet-sub">您的反馈将帮助我们改进出品与服务</view>
+
+    <!-- 星级:大热区按钮,必填。点选后标签组按好/差联动 -->
+    <view class="stars">
+      <view
+        wx:for="{{[1,2,3,4,5]}}"
+        wx:key="*this"
+        class="star {{item <= rating ? 'on' : ''}}"
+        data-n="{{item}}"
+        catchtap="onPickStar"
+      >
+        ★
+      </view>
+    </view>
+    <view class="rating-text">{{ratingText}}</view>
+
+    <!-- 标签选中态在 JS 里预计算成 on 标记(WXML 表达式不支持函数调用,见 spec-sheet 的实现注意) -->
+    <view
+      wx:if="{{tagChips.length}}"
+      class="chips"
+    >
+      <view
+        wx:for="{{tagChips}}"
+        wx:key="name"
+        class="chip {{item.on ? 'on' : ''}}"
+        data-tag="{{item.name}}"
+        catchtap="onToggleTag"
+      >
+        {{item.name}}
+      </view>
+    </view>
+
+    <!-- 图片(选填,最多 3 张):先传后评,选图即上传独立表,提交按名绑定 -->
+    <view
+      wx:if="{{imgChips.length < 3 || imgChips.length}}"
+      class="imgs"
+    >
+      <view
+        wx:for="{{imgChips}}"
+        wx:key="path"
+        class="img"
+      >
+        <image
+          src="{{item.path}}"
+          mode="aspectFill"
+        />
+        <view
+          wx:if="{{item.uploading}}"
+          class="img-tip"
+          >…</view
+        >
+        <view
+          wx:elif="{{item.error}}"
+          class="img-tip img-err"
+          data-i="{{index}}"
+          catchtap="onRetryImg"
+          >!</view
+        >
+        <view
+          class="img-del"
+          data-i="{{index}}"
+          catchtap="onRemoveImg"
+          >×</view
+        >
+      </view>
+      <view
+        wx:if="{{imgChips.length < 3}}"
+        class="img-add"
+        catchtap="onPickImage"
+        >+</view
+      >
+    </view>
+
+    <textarea
+      class="content"
+      value="{{content}}"
+      maxlength="200"
+      placeholder="想说点什么？(选填)"
+      bindinput="onContentInput"
+    ></textarea>
+    <view class="count">{{contentLen}}/200</view>
+
+    <view
+      class="submit {{(!rating || submitting) ? 'off' : ''}}"
+      catchtap="onSubmit"
+    >
+      {{submitting ? '提交中…' : '提交评价'}}
+    </view>
+  </view>
+</view>

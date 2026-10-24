@@ -102,6 +102,13 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { title: '打印记录', perm: 'printer:view', icon: 'FileIcon', menuOrder: 11, group: 'print' }
       },
       {
+        // 订单评价(仅商家可见的内部反馈):列表+汇总只读,删除需 review:edit。
+        path: 'reviews',
+        name: 'Reviews',
+        component: () => import('./views/Reviews.vue'),
+        meta: { title: '订单评价', perm: 'review:view', icon: 'StarIcon', menuOrder: 6, group: 'order' }
+      },
+      {
         path: 'config',
         name: 'Config',
         component: () => import('./views/Config.vue'),

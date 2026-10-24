@@ -5,7 +5,7 @@
 //
 // 轮询：3s 一拍（与 H5 一致），页面 onShow 启动 / onHide 停止 —— 小程序的页面生命周期
 // 已经覆盖「切后台」和「跳去支付页」，所以不需要再监听 onAppHide（见 store/poller.ts）。
-import { getOrderByNo, updateOrderPerson, urgeOrder } from '../../api/client';
+import { createReview, getOrderByNo, getReviewStatus, updateOrderPerson, urgeOrder } from '../../api/client';
 import { ORDER_POLL_INTERVAL_MS, URGE_COOLDOWN_FALLBACK_S } from '../../config';
 import { cartClear } from '../../store/cart';
 import {
@@ -26,7 +26,7 @@ import { money } from '../../shared/money';
 import { ORDER_STATUS } from '../../shared/dicts';
 import { ORDER_STATUS_CODE, isActiveStatus } from '../../shared/orderStatus';
 import { batchLabels, payStatusText, payStatusTheme } from '../../shared/orderDisplay';
-import type { OrderDetail, TableInfo } from '../../types';
+import type { CustomerReviewStatus, OrderDetail, TableInfo } from '../../types';
 
 /** 「出餐中订单」列表行：WXML 不支持函数调用，标签文案在这里算好。 */
 interface ServingRow {
@@ -112,6 +112,10 @@ Page({
     settled: false,
     done: false,
     canceled: false,
+    // 评价(仅商家可见):canReview 驱动入口显隐,reviewDone 驱动「去评价/已评价」
+    canReview: false,
+    reviewDone: false,
+    reviewSheetVisible: false,
     /** 取消提示整句：有真实原因带上，没有就给标准说明（后端已对原因做可展示性收口） */
     cancelTip: '',
     /** 出餐进度：1已下单 → 2制作中 → 3已上齐（取消单不渲染） */
@@ -423,8 +427,48 @@ Page({
       settled,
       done,
       canceled,
-      cancelTip
+      cancelTip,
+      // 评价入口:已付款 + 已上齐/完成(3/4),不看视图 —— 从「出餐中」列表、
+      // 刷新或换设备回到订单页时同样要能评(与 H5 OrderTrackView 同口径)。
+      canReview: payStatus === 1 && (status === 3 || status === 4)
     });
+    // 进入「已付+上齐」态后查一次评价状态驱动入口形态;silent 失败只表现为仍显示「去评价」。
+    if (payStatus === 1 && (status === 3 || status === 4)) void this.fetchReviewStatus();
+  },
+
+  // ---------- 评价(仅商家可见) ----------
+  async fetchReviewStatus() {
+    const no = this.data.orderNo;
+    const tableId = sessionState().tableId;
+    if (!no || !tableId || this.data.reviewDone) return;
+    try {
+      const st = (await getReviewStatus(no, tableId, { silent: true })) as CustomerReviewStatus;
+      if (st.reviewed) this.setData({ reviewDone: true });
+    } catch {
+      /* 状态查询失败不打扰:入口仍显示「去评价」,提交时后端兜底 */
+    }
+  },
+
+  onOpenReview() {
+    if (this.data.reviewDone) return;
+    this.setData({ reviewSheetVisible: true });
+  },
+
+  onCloseReview() {
+    this.setData({ reviewSheetVisible: false });
+  },
+
+  async onSubmitReview(e: WechatMiniprogram.CustomEvent<{ rating: number; tags: string[]; content: string; images: string[] }>) {
+    const payload = e.detail;
+    const no = this.data.orderNo;
+    if (!no) return;
+    try {
+      await createReview({ tableId: sessionState().tableId, orderNo: no, ...payload });
+      this.setData({ reviewSheetVisible: false, reviewDone: true });
+      toast.success('评价已提交，感谢你的反馈');
+    } catch {
+      /* 失败已由 http 层提示;弹层保持打开,内容不丢,顾客可直接重试 */
+    }
   },
 
   // ---------- 催菜（与 H5 useUrge 同策略：silent 请求，冷却倒计时本地维护） ----------

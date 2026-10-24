@@ -60,6 +60,10 @@ const (
 	// EnvCustomerOrderQueryRateLimit 是顾客端「按单号查订单」接口的单 IP 限流值
 	// （次/分钟）。该接口无鉴权，单号会出现在小票/照片/群聊里，零限流等于放任遍历。
 	EnvCustomerOrderQueryRateLimit = "CUSTOMER_ORDER_QUERY_RATE_LIMIT"
+	// EnvCustomerReviewRateLimit 是顾客端「评价」读写接口的单 IP 限流值(次/分钟)。
+	// 提交评价无鉴权(匿名顾客也要能评),虽然归属校验挡住了「评他人的单」,
+	// 仍需限流兜底垃圾内容灌库(见 docs/design-docs/order-review/spec.md)。
+	EnvCustomerReviewRateLimit = "CUSTOMER_REVIEW_RATE_LIMIT"
 )
 
 const (
@@ -96,6 +100,10 @@ const (
 	// 公网出口（门店 NAT）下约 15 桌同时轮询，又不给「遍历单号」留出可行空间
 	// （35bit 随机段 × 300 次/分钟，穷举需数十年）。
 	DefaultCustomerOrderQueryRateLimit = 300
+	// DefaultCustomerReviewRateLimit 是顾客端评价接口的默认单 IP 限流(次/分钟)。
+	// 10 次/分钟足够「查状态 + 提交 + 重试」的正常节奏,同时把匿名灌垃圾内容的
+	// 速率压到人工清理可跟上的量级。
+	DefaultCustomerReviewRateLimit = 10
 	// DefaultPrintAgentServer 是本地打印代理云端地址默认值。
 	DefaultPrintAgentServer = ""
 	// DefaultPrintAgentToken 是本地打印代理令牌默认值。

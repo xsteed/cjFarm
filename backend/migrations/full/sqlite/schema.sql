@@ -278,10 +278,40 @@ CREATE TABLE IF NOT EXISTS tb_order_urge (
         urge_type   VARCHAR(16)  DEFAULT 'urge',
         status      INTEGER      DEFAULT 0,
         remark      VARCHAR(255) DEFAULT '',
-        handle_time VARCHAR(32) DEFAULT NULL,
+        handle_time VARCHAR(32)  DEFAULT NULL,
         handle_by   VARCHAR(64)  DEFAULT '',
         create_time VARCHAR(32) DEFAULT (datetime('now','localtime')),
         update_time VARCHAR(32) DEFAULT NULL
+    );
+CREATE TABLE IF NOT EXISTS tb_review (
+        review_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id     INTEGER      NOT NULL,
+        order_no     VARCHAR(64)  NOT NULL,
+        biz_date     VARCHAR(10)  DEFAULT '',
+        table_id     INTEGER      DEFAULT 0,
+        table_no     VARCHAR(32)  DEFAULT '',
+        table_name   VARCHAR(64)  DEFAULT '',
+        person_count INTEGER      DEFAULT 0,
+        customer_id  INTEGER      DEFAULT 0,
+        nickname     VARCHAR(64)  DEFAULT '',
+        phone        VARCHAR(20)  DEFAULT '',
+        rating       INTEGER      DEFAULT 0,
+        tags         VARCHAR(255) DEFAULT '',
+        content      VARCHAR(500) DEFAULT '',
+        ip_hash      VARCHAR(64)  DEFAULT '',
+        ua_hash      VARCHAR(64)  DEFAULT '',
+        create_time  VARCHAR(32) DEFAULT (datetime('now','localtime')),
+        update_time  VARCHAR(32) DEFAULT NULL
+    );
+CREATE TABLE IF NOT EXISTS tb_review_image (
+        image_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        review_id    INTEGER      DEFAULT 0,
+        img_name     VARCHAR(128) NOT NULL,
+        content_type VARCHAR(32)  DEFAULT '',
+        img_data     BLOB,
+        file_size    INTEGER      DEFAULT 0,
+        create_time  VARCHAR(32) DEFAULT (datetime('now','localtime')),
+        update_time  VARCHAR(32) DEFAULT NULL
     );
 CREATE TABLE IF NOT EXISTS tb_payment (
         payment_id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -570,6 +600,18 @@ CREATE TRIGGER IF NOT EXISTS trg_tb_order_urge_touch
         BEGIN
             UPDATE tb_order_urge SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
         END;
+CREATE TRIGGER IF NOT EXISTS trg_tb_review_touch
+        AFTER UPDATE ON tb_review FOR EACH ROW
+        WHEN NEW.update_time IS OLD.update_time
+        BEGIN
+            UPDATE tb_review SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
+        END;
+CREATE TRIGGER IF NOT EXISTS trg_tb_review_image_touch
+        AFTER UPDATE ON tb_review_image FOR EACH ROW
+        WHEN NEW.update_time IS OLD.update_time
+        BEGIN
+            UPDATE tb_review_image SET update_time = datetime('now','localtime') WHERE rowid = NEW.rowid;
+        END;
 CREATE TRIGGER IF NOT EXISTS trg_tb_payment_touch
         AFTER UPDATE ON tb_payment FOR EACH ROW
         WHEN NEW.update_time IS OLD.update_time
@@ -650,6 +692,7 @@ CREATE INDEX IF NOT EXISTS idx_order_table_unpaid ON tb_order(table_id, pay_stat
 CREATE INDEX IF NOT EXISTS idx_order_create_time ON tb_order(create_time);
 CREATE INDEX IF NOT EXISTS idx_order_pay_time ON tb_order(pay_time);
 CREATE INDEX IF NOT EXISTS idx_order_credit_settle_time ON tb_order(credit_settle_time);
+CREATE INDEX IF NOT EXISTS idx_order_finish_time ON tb_order(order_status, finish_time);
 CREATE INDEX IF NOT EXISTS idx_order_customer ON tb_order(customer_id, create_time);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_provider_external ON tb_customer_identity(provider, external_id);
 CREATE INDEX IF NOT EXISTS idx_identity_customer ON tb_customer_identity(customer_id);
@@ -664,6 +707,12 @@ CREATE INDEX IF NOT EXISTS idx_refund_order ON tb_refund(order_id);
 CREATE INDEX IF NOT EXISTS idx_refund_update_time ON tb_refund(update_time);
 CREATE INDEX IF NOT EXISTS idx_urge_status ON tb_order_urge(status, create_time);
 CREATE INDEX IF NOT EXISTS idx_urge_order ON tb_order_urge(order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_order ON tb_review(order_no);
+CREATE INDEX IF NOT EXISTS idx_review_time ON tb_review(create_time);
+CREATE INDEX IF NOT EXISTS idx_review_rating ON tb_review(rating, create_time);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_image_name ON tb_review_image(img_name);
+CREATE INDEX IF NOT EXISTS idx_review_image_review ON tb_review_image(review_id);
+CREATE INDEX IF NOT EXISTS idx_review_image_time ON tb_review_image(create_time);
 CREATE INDEX IF NOT EXISTS idx_print_log_order ON tb_print_log(order_id);
 CREATE INDEX IF NOT EXISTS idx_print_log_time ON tb_print_log(create_time);
 CREATE INDEX IF NOT EXISTS idx_print_log_status ON tb_print_log(status, create_time);

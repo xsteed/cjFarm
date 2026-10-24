@@ -397,10 +397,12 @@
         :urge-cooldown="urgeCooldown"
         :show-tabbar="showTabbar"
         :pay-first="payFirst"
+        :review-done="reviewStatus.reviewed"
         @append="startAppend"
         @urge="urge"
         @pay="view = 'pay'"
         @new-order="startNewOrder"
+        @review="openReviewSheet"
       />
 
       <!-- 本桌「已付款出餐中」的订单列表:currentOrder 只含未结账单,
@@ -696,6 +698,14 @@
       @close="payDoneVisible = false"
     />
 
+    <!-- 订单评价弹层(仅商家可见):入口在订单页 settled/done 态,一单一评 -->
+    <ReviewSheet
+      v-if="reviewSheetOpen && currentOrder"
+      :submitting="reviewSubmitting"
+      @close="reviewSheetOpen = false"
+      @submit="submitReview"
+    />
+
     <!-- 菜品单项备注弹窗。层级高于购物车抽屉,详见 RemarkSheet 的 .remark-mask -->
     <RemarkSheet
       v-if="remarkVisible"
@@ -799,16 +809,26 @@ import {
   appendOrder,
   createOrder,
   createPay,
+  createReview,
   getMenu,
   getOrderByNo,
   getPublicConfig,
   getRemarks,
+  getReviewStatus,
   getTable,
   reportVisit,
   setTablePerson
 } from '@dining/api';
 import QRCode from 'qrcode';
-import type { MenuCategory, OrderDetail, OrderSummary, PublicConfig, RemarkOption, TableInfo } from '@dining/types';
+import type {
+  CustomerReviewStatus,
+  MenuCategory,
+  OrderDetail,
+  OrderSummary,
+  PublicConfig,
+  RemarkOption,
+  TableInfo
+} from '@dining/types';
 import { isActiveStatus, safeSession, ui, visitorId } from '@dining/shared';
 import { useCart, useOrderPolling, useUrge, signatureDishes, SIG_CAT_ID } from '@dining/customer-core';
 import { PERSON_MAX, PERSON_MIN, isValidPerson } from '@dining/customer-core';
@@ -827,6 +847,7 @@ import CartDrawer from './order/CartDrawer.vue';
 import SpecSheet from './order/SpecSheet.vue';
 import MenuSearch from './order/MenuSearch.vue';
 import RemarkSheet from './order/RemarkSheet.vue';
+import ReviewSheet from './order/ReviewSheet.vue';
 
 const route = useRoute();
 // 路由参数既可能是「桌台稳定码」(如 K7M3PQ9X),也可能是老的数字桌台 ID(如 1)。
@@ -1365,6 +1386,64 @@ async function startOnlinePay(): Promise<void> {
 function backFromPay(): void {
   onlineQr.value = '';
   view.value = 'order';
+}
+
+// 金额变化守卫:支付页已展示二维码后订单金额变了(同桌另一部手机加菜 / 店员改单),
+// 旧二维码仍按旧金额收款 —— 顾客扫旧码会付成「金额不一致」,钱到账却不入账,
+// 只能人工退款(后端防线拒绝入账并留痕,见 payment_service.RecordMismatchedPayment)。
+// 检测到变化立即作废二维码:按钮上的金额与页头实时金额同源,重新生成即对齐。
+// 首次从 0 变为实际金额(订单加载)不算变化;不在支付页或还没生成过二维码也不处理。
+watch(
+  () => Number(currentOrder.value?.totalAmount) || 0,
+  (now, prev) => {
+    if (prev === 0 || now === prev) return;
+    if (view.value !== 'pay' || !onlineQr.value) return;
+    onlineQr.value = '';
+    MessagePlugin.warning('订单金额有变化，请重新生成支付码');
+  }
+);
+
+// ---- 订单评价(仅商家可见) ----
+// 一单一评:入口在订单页 settled/done 态(见 OrderTrackView 的 canReview)。
+// 状态在进结束视图时查一次驱动「去评价 / 已评价」两种形态;弹层提交后即时更新。
+const reviewStatus = ref<CustomerReviewStatus>({ reviewed: false });
+const reviewSheetOpen = ref(false);
+const reviewSubmitting = ref(false);
+
+// 进结束视图(含轮询把状态推到已付+上齐)时查一次评价状态:
+// silent 失败不打扰 —— 评价是锦上添花,查询失败只表现为入口仍显示「去评价」。
+watch(
+  [view, () => Number(currentOrder.value?.payStatus)],
+  ([v]) => {
+    const no = currentOrder.value?.orderNo;
+    if (!no || (v !== 'settled' && v !== 'done')) return;
+    getReviewStatus(no, tableId.value).then(st => (reviewStatus.value = st)).catch(() => {});
+  },
+  { immediate: true }
+);
+
+function openReviewSheet(): void {
+  if (reviewStatus.value.reviewed) return;
+  reviewSheetOpen.value = true;
+}
+
+async function submitReview(payload: { rating: number; tags: string[]; content: string; images: string[] }): Promise<void> {
+  if (!currentOrder.value || reviewSubmitting.value) return;
+  reviewSubmitting.value = true;
+  try {
+    const st = await createReview({
+      tableId: tableId.value,
+      orderNo: currentOrder.value.orderNo,
+      ...payload
+    });
+    reviewStatus.value = st;
+    reviewSheetOpen.value = false;
+    MessagePlugin.success('评价已提交，感谢你的反馈');
+  } catch {
+    /* 失败已由拦截器提示;弹层保持打开,内容不丢,顾客可直接重试 */
+  } finally {
+    reviewSubmitting.value = false;
+  }
 }
 
 // 桌台人工状态:0 正常 / 1 停用 / 2 预约(店员在管理端「桌台管理」里设置)。

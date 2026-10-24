@@ -66,6 +66,13 @@ var permGroups = []PermGroup{
 		{Code: "credit:view", Name: "挂账查看"},
 		{Code: "credit:settle", Name: "挂账核销"},
 	}},
+	// 订单评价(仅商家可见的内部反馈,见 docs/design-docs/order-review/spec.md):
+	// 查看是列表+汇总;edit 当前只有「删除不当内容」一个动作,与其它模块的
+	// view/edit 二分保持一致,后续新增管理动作(如导出)不再加权限点。
+	{Key: "review", Name: "评价", Perms: []PermDef{
+		{Code: "review:view", Name: "评价查看"},
+		{Code: "review:edit", Name: "评价管理(删除不当内容)"},
+	}},
 	{Key: "refund", Name: "退款", Perms: []PermDef{
 		{Code: "refund:view", Name: "退款查看"},
 		{Code: "refund:operate", Name: "发起退款"},
@@ -358,6 +365,8 @@ var builtinRoleSeeds = []builtinRoleSeed{
 			"credit:view", "credit:settle",
 			"refund:view",
 			"report:view",
+			// 订单评价:查看列表与汇总,删除垃圾/不当内容也是店长的日常。
+			"review:view", "review:edit",
 			"member:view", "member:edit",
 			"wallet:view", "wallet:edit",
 			"config:view", "config:edit",
@@ -376,6 +385,8 @@ var builtinRoleSeeds = []builtinRoleSeed{
 			"order:view", "order:operate", "order:settle", "order:edit", "order:cancel",
 			"credit:view", "credit:settle",
 			"refund:view",
+			// 订单评价只读:收银员是差评的第一接触人,删除不当内容留给店长。
+			"review:view",
 			// 会员只读:收银台要能按昵称认人,但启停用是管理动作,留给店长。
 			"member:view",
 			// 储值只读:能看到客人余额方便收银,调账动钱留给店长。

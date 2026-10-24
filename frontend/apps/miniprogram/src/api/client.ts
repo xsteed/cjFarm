@@ -6,14 +6,16 @@
 //   2) setUiNotifier：把逻辑层的 error/warning/success 接到小程序的 wx.showToast。
 // app.ts 里 `import './api/client'` 正是为了这个副作用在请求发出前完成装配。
 // ============================================================================
-import { httpGet, httpPost, configureHttp } from './http';
+import { httpGet, httpUploadFile, httpPost, configureHttp } from './http';
 import { setUiNotifier } from '../shared/ui';
 import { API_BASE_URL, REQUEST_TIMEOUT_MS } from '../config';
 import type {
+  CustomerReviewStatus,
   Id,
   MenuCategory,
   OrderCreatePayload,
   OrderCreateResult,
+  ReviewCreatePayload,
   OrderDetail,
   PayQueryResult,
   PublicConfig,
@@ -151,5 +153,17 @@ export const cancelMixedByWallet = (orderNo: string): Promise<void> =>
 // 访问统计打点：挂在顾客公开组下，故意不带登录态拦截（匿名打点天然干净）；
 // 失败时绝不能打扰点餐的顾客，故显式 silent，由调用方 .catch 静默消化。
 // ---------------------------------------------------------------------------
+// 订单评价(仅商家可见的内部反馈):匿名与会员同入口,会员令牌自动带上身份。
+// 读写都挂后端 IP 限流;「已评价」重复提交是幂等错误(HTTP 400 + reviewed:true)。
+export const getReviewStatus = (orderNo: Id, tableId: number, config?: { silent?: boolean }): Promise<CustomerReviewStatus> =>
+  httpGet<CustomerReviewStatus>(
+    `/customer/review?orderNo=${encodeURIComponent(String(orderNo))}&tableId=${tableId}`,
+    config
+  );
+export const createReview = (data: ReviewCreatePayload, config?: { silent?: boolean }): Promise<CustomerReviewStatus> =>
+  httpPost<CustomerReviewStatus>('/customer/review', data, config);
+// 评价图片上传(wx.uploadFile):返回 /uploads/{name},提交时取尾段文件名绑定。
+export const uploadReviewImage = (filePath: string, config?: { silent?: boolean }): Promise<{ url: string }> =>
+  httpUploadFile<{ url: string }>('/customer/review/upload', filePath, 'file', config);
 export const reportVisit = (payload: VisitTrackPayload): Promise<unknown> =>
   httpPost<unknown>('/customer/visit', payload, { silent: true });

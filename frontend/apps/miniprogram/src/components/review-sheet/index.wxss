@@ -1,0 +1,237 @@
+/* ============================================================================
+   样式自包含(小程序组件默认样式隔离):不引用 app.wxss 变量,带自己用到的
+   token 副本(取值与 app.wxss page 块一致),见 spec-sheet/index.wxss 的说明。
+   ============================================================================ */
+.mask {
+  position: fixed;
+  /* 显式四方向声明而非 inset 简写:inset 要 iOS 14.5+ 才认(同 spec-sheet)。 */
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: rgb(0 0 0 / 45%);
+}
+
+.sheet {
+  --brand: #ff6b35;
+  --brand-deep: #f0481f;
+  --brand-soft: #fff1ea;
+  --ink: #1a1a1a;
+  --ink-2: #4a4a4a;
+  --ink-3: #8c8c8c;
+  --ink-4: #c7c7c7;
+  --line: #eee;
+  --r-md: 16rpx;
+  --r-xl: 40rpx;
+
+  padding: 36rpx 32rpx calc(36rpx + env(safe-area-inset-bottom));
+  background: #fff;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  animation: slide-up 0.22s ease-out;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(10%);
+    opacity: 0.6;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.sheet-hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sheet-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.sheet-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64rpx;
+  height: 64rpx;
+  margin-right: -12rpx;
+  color: var(--ink-4);
+  font-size: 40rpx;
+  line-height: 1;
+}
+
+.sheet-sub {
+  margin-top: 4rpx;
+  font-size: 24rpx;
+  color: var(--ink-3);
+}
+
+/* 星级:大热区(104rpx),手指点得中;未选灰、选中金 */
+.stars {
+  display: flex;
+  justify-content: center;
+  gap: 12rpx;
+  margin-top: 28rpx;
+}
+
+.star {
+  width: 104rpx;
+  height: 104rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 68rpx;
+  line-height: 1;
+  color: #e5e5e5;
+}
+
+.star.on {
+  color: #ffb400;
+}
+
+.rating-text {
+  text-align: center;
+  margin-top: 4rpx;
+  font-size: 26rpx;
+  color: var(--ink-3);
+  min-height: 36rpx;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 24rpx;
+  justify-content: center;
+}
+
+.chip {
+  padding: 14rpx 30rpx;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+  border: 3rpx solid var(--line);
+  background: #fafafa;
+  color: var(--ink-2);
+}
+
+.chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-weight: 600;
+}
+
+/* 图片网格:三列 160rpx 方块 */
+.imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 28rpx;
+}
+
+.img {
+  position: relative;
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 3rpx solid var(--line);
+}
+
+.img image {
+  width: 100%;
+  height: 100%;
+}
+
+.img-tip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 45%);
+  color: #fff;
+  font-size: 26rpx;
+}
+
+.img-err {
+  color: #ff7875;
+  font-weight: 700;
+}
+
+.img-del {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 44rpx;
+  height: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  font-size: 30rpx;
+  line-height: 1;
+  border-radius: 0 0 0 var(--r-md);
+}
+
+.img-add {
+  width: 160rpx;
+  height: 160rpx;
+  border: 3rpx dashed var(--line);
+  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 52rpx;
+  color: var(--ink-4);
+}
+
+.content {
+  box-sizing: border-box;
+  width: 100%;
+  height: 160rpx;
+  margin-top: 28rpx;
+  padding: 20rpx 28rpx;
+  border: 3rpx solid var(--line);
+  border-radius: var(--r-md);
+  font-size: 27rpx;
+  color: var(--ink);
+}
+
+.count {
+  text-align: right;
+  font-size: 22rpx;
+  color: var(--ink-4);
+  margin-top: 4rpx;
+}
+
+.submit {
+  margin-top: 20rpx;
+  height: 92rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  color: #fff;
+  font-size: 31rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.submit.off {
+  background: #ddd;
+}

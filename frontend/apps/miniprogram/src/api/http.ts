@@ -166,3 +166,43 @@ export function httpGet<T>(path: string, params?: Record<string, unknown>, confi
 export function httpPost<T>(path: string, body?: unknown, config?: RequestConfig): Promise<T> {
   return request<T>('POST', path, body, config);
 }
+
+/** 上传文件(multipart):wx.uploadFile 封装,响应解包与错误语义与 request 一致。 */
+export function httpUploadFile<T>(path: string, filePath: string, name = 'file', config?: { silent?: boolean }): Promise<T> {
+  const url = baseURL + path;
+  const header: Record<string, string> = {};
+  if (isCustomerPath(path)) {
+    const token = safeStorage.get(LS_CUSTOMER_TOKEN);
+    if (token) header.Authorization = `Bearer ${token}`;
+  }
+  return new Promise<T>((resolve, reject) => {
+    wx.uploadFile({
+      url,
+      filePath,
+      name,
+      header,
+      timeout: timeoutMs,
+      success(res) {
+        const status = res.statusCode;
+        let bodyData: { code?: number; msg?: string; data?: unknown } | undefined;
+        try {
+          bodyData = JSON.parse(res.data) as { code?: number; msg?: string; data?: unknown };
+        } catch {
+          /* 非 JSON 响应体:走状态码映射 */
+        }
+        if (status === 200 && bodyData && bodyData.code === 200 && bodyData.data !== undefined) {
+          resolve(bodyData.data as T);
+          return;
+        }
+        const msg = friendlyMessageFrom(bodyData, status);
+        if (!config?.silent) ui.error(msg);
+        reject(new ApiError(msg, status, bodyData));
+      },
+      fail(err) {
+        const msg = friendlyMessageFrom(undefined, 0, err?.errMsg);
+        if (!config?.silent) ui.error(msg);
+        reject(new ApiError(msg, 0));
+      }
+    });
+  });
+}

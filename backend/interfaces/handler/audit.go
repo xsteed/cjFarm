@@ -71,6 +71,9 @@ var routeAudit = map[string]auditMeta{
 	"POST /api/admin/role/update":            {Module: "角色权限", Action: "修改角色权限", Type: po.OperTypeGrant, Target: "role", IDKey: "roleId"},
 	"DELETE /api/admin/role/:id":             {Module: "角色权限", Action: "删除角色", Type: po.OperTypeDelete, Target: "role", IDKey: "id"},
 
+	// ---- 订单评价(仅商家可见):删除不当内容必须留痕(物理删除,删了就查不回) ----
+	"DELETE /api/admin/review/:id": {Module: "评价管理", Action: "删除评价", Type: po.OperTypeDelete, Target: "review", IDKey: "id"},
+
 	// ---- 基础资料 ----
 	"POST /api/admin/table/save":   {Module: "桌台管理", Action: "新增桌台", Type: po.OperTypeInsert, Target: "table"},
 	"POST /api/admin/table/update": {Module: "桌台管理", Action: "修改桌台", Type: po.OperTypeUpdate, Target: "table", IDKey: "tableId"},

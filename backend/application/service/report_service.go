@@ -467,12 +467,20 @@ type DishRankItem struct {
 //
 // 金额排行能看出「卖得贵且卖得动」的菜,与销量排行是两个不同的决策视角
 // (销量榜常被低价的引流菜霸占)。排序表达式只允许白名单列,由 dao 再次兜底防注入。
-func DishRank(sort string, limit int) ([]DishRankItem, error) {
+//
+// 区间口径(start/end/days)与日报一致,唯一区别是默认窗口直接取上限 maxRangeDays:
+// 排行这一块刻意不跟随报表页顶部的日期区间(见 Report.vue loadRange 的注释),此前
+// 因此干脆不带任何过滤 —— 明细 JOIN 订单主表后 GROUP BY 就是全历史扫描,订单量一
+// 上来它就是整页最慢的一块。这里给个一年窗口兜底,把扫描范围从「全历史」收敛到
+// 「近一年」,既消掉无界扫描,又不改变它不受日期控件影响的既有行为。
+func DishRank(sort string, limit int, startStr, endStr, daysStr string) ([]DishRankItem, error) {
 	orderCol := "qty"
 	if sort == "amount" {
 		orderCol = "amt"
 	}
-	rows, err := dao.DishRank(orderCol, limit)
+	start, end := resolveRange(startStr, endStr, daysStr, maxRangeDays, maxRangeDays, BizDayCutoffHour())
+	// dao 侧是左闭右开 [start, end),故 end 需 +1 天把最后一天也算进来(同 DailyTrend)。
+	rows, err := dao.DishRank(orderCol, limit, start.Format(conf.TimeLayout), end.AddDate(0, 0, 1).Format(conf.TimeLayout))
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,8 @@ import type {
   PayQueryResult,
   PublicConfig,
   RemarkOption,
+  CustomerReviewStatus,
+  ReviewCreatePayload,
   TableInfo,
   UrgeResult
 } from '@dining/types';
@@ -181,3 +183,23 @@ export const deleteMemberAccount = (): Promise<void> => http.delete<unknown, voi
  */
 export const bindMemberPhone = (code: string): Promise<{ phone: string }> =>
   http.post<unknown, { phone: string }>('/customer/auth/phone', { code });
+
+// 订单评价(仅商家可见的内部反馈):匿名与会员同一入口,会员令牌自动带上身份。
+// 读写都挂后端 IP 限流;「已评价」重复提交是幂等错误(HTTP 400 + reviewed:true),
+// 提交入口在点击后即锁定,正常交互不会触发。
+export const getReviewStatus = (orderNo: Id, tableId: number): Promise<CustomerReviewStatus> =>
+  http.get<unknown, CustomerReviewStatus>(`/customer/review?orderNo=${encodeURIComponent(String(orderNo))}&tableId=${tableId}`);
+export const createReview = (data: ReviewCreatePayload): Promise<CustomerReviewStatus> =>
+  http.post<unknown, CustomerReviewStatus>('/customer/review', data);
+
+// 评价图片上传(「先传后评」):图片先落在独立表 tb_review_image,提交评价时事务
+// 绑定;未绑定的孤儿由后端 24h 清理。返回 url 形如 /uploads/review_xxx.jpg,
+// 提交时只需尾段文件名。
+export const uploadReviewImage = (file: File): Promise<{ url: string }> => {
+  const fd = new FormData();
+  fd.append('file', file);
+  return http.post<unknown, { url: string }>('/customer/review/upload', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  });
+};

@@ -11,11 +11,11 @@ import (
 
 func TestPermCatalogIntegrity(t *testing.T) {
 	codes := AllPermCodes()
-	// 32 = 15 个模块 / 32 个权限点。这个数字是「权限目录完整性」的锚:
+	// 34 = 16 个模块 / 34 个权限点。这个数字是「权限目录完整性」的锚:
 	// 扩容时必须同步更新内置角色、README 与前端文档,所以刻意保持硬编码 ——
 	// 改了目录却忘了别处,这里会立刻提醒你。
-	if len(codes) != 32 {
-		t.Fatalf("权限点应为 32 个, got %d", len(codes))
+	if len(codes) != 34 {
+		t.Fatalf("权限点应为 34 个, got %d", len(codes))
 	}
 	// 目录里不应有重复码,且每个码都必须能被识别。
 	seen := map[string]bool{}
@@ -193,9 +193,9 @@ func TestBuiltinRoleMatrix(t *testing.T) {
 		key  string
 		want int
 	}{
-		{RoleKeyAdmin, 32},
-		{RoleKeyManager, 26},
-		{RoleKeyCashier, 15},
+		{RoleKeyAdmin, 34},
+		{RoleKeyManager, 28},
+		{RoleKeyCashier, 16},
 		{RoleKeyStaff, 6},
 	}
 	for _, tc := range cases {

@@ -885,8 +885,8 @@ func VisitLogPageOf(startStr, endStr, daysStr, channel, entry, device, os, brows
 		return &v
 	}
 	q := dao.VisitLogQuery{
-		Start:   start,
-		End:     end,
+		Start: start,
+		End:   end,
 		// 渠道只做规整(小写/去空白),不走 normalizeChannel —— 那是写入路径的
 		// 兜底(未知渠道折成 h5),查询路径拿它会把「不限」变成「只看 h5」。
 		Channel: strings.ToLower(strings.TrimSpace(channel)),

@@ -973,3 +973,75 @@ export interface PrintCommandPayload extends ApiPayload {
   printerId?: number;
   docType?: string;
 }
+
+// ============ 订单评价(仅商家可见的内部反馈) ============
+
+/** 顾客端「本单是否已评价」状态(GET /customer/review)。 */
+export interface CustomerReviewStatus extends Extensible {
+  reviewed?: boolean;
+  rating?: number;
+  tags?: string[];
+  content?: string;
+}
+
+/** 评价提交入参(POST /customer/review)。会员身份由令牌解析,请求体不传。 */
+export interface ReviewCreatePayload extends ApiPayload {
+  tableId?: number;
+  /** 已上传图片名(/customer/review/upload 返回的 url 尾段),提交时事务绑定。 */
+  images?: string[];
+  orderNo?: string;
+  rating?: number;
+  tags?: string[];
+  content?: string;
+}
+
+/** 顾客身份三态(管理端列表):匿名 / 在册会员 / 已注销会员(仅存快照)。 */
+export type ReviewCustomerType = 'anonymous' | 'member' | 'deleted';
+
+/** 管理端评价行(GET /admin/review/list)。追溯字段为提交时快照。 */
+export interface Review extends Extensible {
+  reviewId?: number;
+  orderId?: number;
+  orderNo?: string;
+  shortNo?: string;
+  bizDate?: string;
+  tableId?: number;
+  tableNo?: string;
+  tableName?: string;
+  personCount?: number;
+  customerId?: number;
+  customerType?: ReviewCustomerType;
+  nickname?: string;
+  phone?: string;
+  rating?: number;
+  tags?: string[];
+  content?: string;
+  /** 评价图片展示路径(/uploads/{name}),本体在独立表 tb_review_image。 */
+  images?: string[];
+  createTime?: string;
+}
+
+/** 评价标签频次。 */
+export interface ReviewTagCount extends Extensible {
+  name?: string;
+  count?: number;
+}
+
+/** 评价汇总(与列表同一筛选条件下的口径;last7Avg 不受筛选影响)。 */
+export interface ReviewSummary extends Extensible {
+  total?: number;
+  avgScore?: number;
+  badCount?: number;
+  badRate?: number;
+  /** 评分分布 {"1":n,...,"5":n} */
+  dist?: Record<string, number>;
+  tags?: ReviewTagCount[];
+  last7Avg?: number;
+}
+
+/** 管理端评价列表响应。 */
+export interface ReviewListResult extends Extensible {
+  total?: number;
+  items?: Review[];
+  summary?: ReviewSummary;
+}

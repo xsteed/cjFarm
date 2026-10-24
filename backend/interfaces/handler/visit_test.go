@@ -137,7 +137,7 @@ func TestReportVisitLogs(t *testing.T) {
 	seedLog("2026-01-01", "h5", "c:v0", "手机", "iOS", "微信", "2026-01-01 09:00:00")
 	seedLog("2026-01-01", "h5", "c:v1", "手机", "iOS", "微信", "2026-01-01 10:00:00")
 	seedLog("2026-01-01", "h5", "c:v1", "手机", "iOS", "微信", "2026-01-01 11:00:00") // 同访客同日再来
-	seedLog("2026-01-02", "admin", "c:v2", "", "", "", "2026-01-02 09:00:00")       // 终端信息缺失 = 「未知」
+	seedLog("2026-01-02", "admin", "c:v2", "", "", "", "2026-01-02 09:00:00")     // 终端信息缺失 = 「未知」
 	for _, v := range [][2]string{{"c:v0", "2025-12-01"}, {"c:v1", "2026-01-01"}, {"c:v2", "2026-01-02"}} {
 		if _, err := store.DB.Exec(`INSERT INTO tb_visitor(visitor_key, first_visit_date, last_visit_date, visit_count)
 			VALUES(?,?,?,1)`, v[0], v[1], v[1]); err != nil {

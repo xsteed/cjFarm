@@ -194,17 +194,28 @@ func SaveUpload(fileName string, data []byte) (string, error) {
 }
 
 // GetImage 按文件名读取图片内容与 Content-Type。
-// 库中 Content-Type 为空时按扩展名兜底(理论不应发生),仍为空用通用二进制。
+//
+// 两级回落:先查评价图片(tb_review_image,顾客上传的用户内容),未命中再查
+// tb_image(商家资产)。展示链路统一走 /uploads/{name},ServeImage 无需感知
+// 业务归属;存储层两张表独立(见 tb_review_image 建表注释)。
 func GetImage(name string) (data []byte, contentType string, ok bool) {
+	if data, contentType, ok = dao.GetReviewImage(name); ok {
+		return data, normalizeImageContentType(name, contentType), true
+	}
 	data, contentType, ok = dao.GetImage(name)
 	if !ok {
 		return nil, "", false
 	}
+	return data, normalizeImageContentType(name, contentType), true
+}
+
+// normalizeImageContentType Content-Type 为空时按扩展名兜底,仍为空用通用二进制。
+func normalizeImageContentType(name, contentType string) string {
 	if contentType == "" {
 		contentType = store.ImageMIME(filepath.Ext(name))
 	}
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	return data, contentType, true
+	return contentType
 }
