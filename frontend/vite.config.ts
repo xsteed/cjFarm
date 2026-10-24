@@ -36,19 +36,26 @@ export default defineConfig({
   build: {
     // 产物静态资源输出到 dist/static,与后端 Gin 的 /static 托管路径对齐
     assetsDir: 'static',
-    // 警告线 1500 的现实背景:tdesign 全量引入(MessagePlugin/DialogPlugin 等函数式组件
-    // 依赖全量样式)的 chunk 约 1.4MB,压线以下;echarts 已按需引入(约 520KB)。
-    // 若未来 echarts 意外回到全量(>1MB)或 tdesign 显著膨胀,这里会报警提示回归。
-    chunkSizeWarningLimit: 1500,
+    // 警告线 600:去掉 tdesign 的强制合块后,当前最大的块是 echarts(521kB,仅管理端
+    // 报表懒加载),已经没人接近 1MB。再出现超线的大块(比如某处又把 UI 库整包引入)
+    // 就值得停下来看一眼 —— 顾客扫码点菜的首屏体积直接决定「订单卡多久画出来」。
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
-        // 按库拆分 vendor,提升缓存命中率与首屏加载速度
+        // 按库拆分 vendor,提升缓存命中率与首屏加载速度。
+        //
+        // ⚠️ 刻意**不**把 tdesign 合成一个 chunk:顾客端(/order/:tableId 扫码点菜)与
+        // 管理后台共用同一个 SPA 入口,强行按包名归并会把「只有后台用到的组件」也塞进
+        // 顾客端必下的那一块 —— 实测顾客扫码首屏要多下 ~1MB(995kB JS + 449kB CSS)
+        // 才开始画订单卡。交给 Rollup 按真实引用拆,顾客端只带自己用到的几个组件。
         manualChunks(id) {
-          if (!id.includes('node_modules')) return;
-          if (id.includes('tdesign')) return 'tdesign';
-          if (id.includes('echarts') || id.includes('zrender')) return 'echarts';
-          if (id.includes('axios')) return 'axios';
-          if (id.includes('vue')) return 'vue';
+          // 只认 node_modules 下的精确包目录:用 includes('vue') 这种模糊匹配会把
+          // tdesign-vue-next 一起吞进 vue chunk(实测直接把 107kB 撑成 1.1MB)。
+          const pkg = /[\\/]node_modules[\\/](.+?)[\\/]/.exec(id)?.[1];
+          if (!pkg) return;
+          if (pkg === 'echarts' || pkg === 'zrender') return 'echarts';
+          if (pkg === 'axios') return 'axios';
+          if (pkg === 'vue' || pkg === '@vue' || pkg === 'vue-router' || pkg === 'vue-demi') return 'vue';
         }
       }
     }
