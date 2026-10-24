@@ -255,7 +255,7 @@ func ListServingOrdersByTable(tableID int, guardBizDate string) []po.Order {
 // 只看本营业日:更早的属于跨日遗留单,那是「跨日自动清台」的职责(它们要么已被隔离、
 // 要么店家正拿着处理),混进超时告警里会让看板每天一早先响一片昨天的噪音。
 // create_time 为空的行跳过:算不出时长就无从判定是否超时。
-// 注意 SQL 里不能写 create_time<>'':MySQL 下该列是 DATETIME,与空串比较会报
+// 注意 SQL 里不能写 create_time<>”:MySQL 下该列是 DATETIME,与空串比较会报
 // Error 1525,空串过滤只能放在 Go 侧(见 ScanOrder 之后的循环)。
 func ListStaleUnpaidOrders(bizDate, beforeTime string) []po.Order {
 	rows, err := store.DB.Query(
@@ -356,6 +356,20 @@ type OrderQuery struct {
 	SettleRemark string
 	// NewOnly 只看新单:已下单(order_status=1)且商家从未操作过(viewed_at IS NULL)。
 	NewOnly bool
+	// BizStart/BizEnd 营业日区间(YYYY-MM-DD,含首尾),按 create_time 折算营业日过滤,
+	// 与报表「订单数/客流」的分桶口径一致(见 dao/report.go 的 bizDateExpr);
+	// 空串表示不限,单边也可(只给 start 只按下限)。
+	BizStart string
+	BizEnd   string
+	// Hour 下单小时(0-23,create_time 的原始小时,不做营业日折算),
+	// 与报表时段分布的分组口径一致(substr(create_time,12,2));nil 表示不限。
+	Hour *int
+	// ExcludeCanceled 排除已取消(order_status=5)。报表的订单数/客流/结算构成
+	// 都不含已取消,下钻弹窗要和图表数字对上就必须同口径过滤。
+	ExcludeCanceled bool
+	// CutoffHour 营业日切换时刻,由 service 侧从配置取出后传入(dao 不读配置);
+	// 仅 BizStart/BizEnd 过滤用到。
+	CutoffHour int
 }
 
 // ListOrders 按条件分页查询订单列表。
@@ -402,6 +416,26 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 	if q.SettleRemark != "" {
 		where = append(where, "COALESCE(settle_remark,'') LIKE ? ESCAPE '\\'")
 		args = append(args, store.LikeContains(q.SettleRemark))
+	}
+	// 营业日区间筛选:表达式返回 'YYYY-MM-DD',与入参直接做字符串比较即可,
+	// 与 DailyTrendStats 的分桶键完全同构 —— 报表点某天看到的订单数与
+	// 下钻列表的总数才不会打架。
+	if q.BizStart != "" {
+		where = append(where, bizDateExpr("create_time", q.CutoffHour)+">=?")
+		args = append(args, q.BizStart)
+	}
+	if q.BizEnd != "" {
+		where = append(where, bizDateExpr("create_time", q.CutoffHour)+"<=?")
+		args = append(args, q.BizEnd)
+	}
+	// 小时筛选:与 HourlyStats 的订单分组同口径(原始小时,不折算营业日)。
+	if q.Hour != nil {
+		where = append(where, "substr(create_time,12,2)=?")
+		args = append(args, fmt.Sprintf("%02d", *q.Hour))
+	}
+	// 下钻同口径:报表各处订单数都不含已取消,这里排除后「共 N 单」才与图表一致。
+	if q.ExcludeCanceled {
+		where = append(where, "order_status!=5")
 	}
 	// 只看新单:「已下单且商家从未操作过」。判定必须与读侧完全对齐 —— dao.TS 会把
 	// NULL/空串/MySQL 历史零值都折叠成「未操作」,这里若只判 IS NULL,就会出现

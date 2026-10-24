@@ -841,3 +841,106 @@ func VisitStatsOf(startStr, endStr, daysStr string) VisitStats {
 	}
 	return out
 }
+
+// ============ 访问明细下钻(报表页访问统计的弹窗) ============
+
+// VisitLogItem 访问明细下钻的一行(HTTP 出参)。
+type VisitLogItem struct {
+	Time         string `json:"time"`
+	Channel      string `json:"channel"`
+	ChannelLabel string `json:"channelLabel"`
+	Entry        string `json:"entry"`
+	EntryLabel   string `json:"entryLabel"` // 桌名 · 桌号;关联不到桌台时回退码值
+	Device       string `json:"device"`
+	OS           string `json:"os"`
+	Browser      string `json:"browser"`
+	Model        string `json:"model"`
+	City         string `json:"city"`
+	IP           string `json:"ip"`
+	IsNew        bool   `json:"isNew"` // 新访客 = 首访日期等于访问当天(口径同报表)
+	IsMember     bool   `json:"isMember"`
+}
+
+// visitLogUnknown 归一展示值里「未知」的写法:分布图把空值行归一为「未知」展示,
+// 下钻入参传「未知」时这里翻回空串去匹配明细里的空值行。
+const visitLogUnknown = "未知"
+
+// VisitLogPageOf 分页返回访问明细,并给出头部合计(次数/去重访客)与解析后的区间。
+//
+// 区间按自然日:visit_date 落库即写入时刻的自然日期(与 VisitStatsOf 同一理由,
+// 不做营业日折算)。start/end 缺省回退 days(默认 30,上限同报表)。
+func VisitLogPageOf(startStr, endStr, daysStr, channel, entry, device, os, browser string, pageNum, pageSize int) (start, end string, total, visitors int, items []VisitLogItem, err error) {
+	startT, endT := resolveRange(startStr, endStr, daysStr, 30, maxRangeDays, 0)
+	start, end = startT.Format("2006-01-02"), endT.Format("2006-01-02")
+
+	// 「未知」→ 空串:其余展示值原样透传(明细分里存的就是展示值)。
+	toFilter := func(v string) *string {
+		if v == "" {
+			return nil
+		}
+		if v == visitLogUnknown {
+			e := ""
+			return &e
+		}
+		return &v
+	}
+	q := dao.VisitLogQuery{
+		Start:   start,
+		End:     end,
+		// 渠道只做规整(小写/去空白),不走 normalizeChannel —— 那是写入路径的
+		// 兜底(未知渠道折成 h5),查询路径拿它会把「不限」变成「只看 h5」。
+		Channel: strings.ToLower(strings.TrimSpace(channel)),
+		Entry:   entry,
+		Device:  toFilter(device),
+		Os:      toFilter(os),
+		Browser: toFilter(browser),
+	}
+	total, visitors, logs, firstVisit, err := dao.VisitLogPage(q, pageNum, pageSize)
+	if err != nil {
+		return start, end, 0, 0, nil, err
+	}
+
+	// 入口标签:码 → 桌台名(8 位点餐码按 table_code,老码按数字桌台 ID),
+	// 与扫码入口排行的拼法完全一致。
+	labelOf := map[string]string{}
+	if tables, terr := dao.ListTableIdentities(); terr == nil {
+		byKey := make(map[string]dao.TableIdentity, len(tables)*2)
+		for _, tb := range tables {
+			if tb.TableCode != "" {
+				byKey[tb.TableCode] = tb
+			}
+			byKey[strconv.Itoa(tb.TableID)] = tb
+		}
+		for key, tb := range byKey {
+			label := tb.TableNo + " 号桌"
+			if tb.TableName != "" && tb.TableName != tb.TableNo {
+				label = tb.TableName + " · " + tb.TableNo + " 号桌"
+			}
+			labelOf[key] = label
+		}
+	}
+
+	items = make([]VisitLogItem, 0, len(logs))
+	for _, l := range logs {
+		label := l.Entry
+		if v, ok := labelOf[l.Entry]; ok {
+			label = v
+		}
+		items = append(items, VisitLogItem{
+			Time:         l.CreateTime,
+			Channel:      l.Channel,
+			ChannelLabel: visitChannelLabels[l.Channel],
+			Entry:        l.Entry,
+			EntryLabel:   label,
+			Device:       l.Device,
+			OS:           l.OS,
+			Browser:      l.Browser,
+			Model:        l.Model,
+			City:         l.City,
+			IP:           l.IP,
+			IsNew:        firstVisit[l.VisitorKey] == l.VisitDate,
+			IsMember:     l.IsMember == 1,
+		})
+	}
+	return start, end, total, visitors, items, nil
+}

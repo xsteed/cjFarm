@@ -14,9 +14,7 @@
           v-if="Number(summary.todayWalletAmount) > 0"
           class="hero-split"
         >
-          其中储值核销 ¥{{ money(summary.todayWalletAmount) }} · 实际到账 ¥{{
-            money(summary.todayCashAmount)
-          }}
+          其中储值核销 ¥{{ money(summary.todayWalletAmount) }} · 实际到账 ¥{{ money(summary.todayCashAmount) }}
         </div>
         <div
           v-if="deltas.todayAmount !== null"
@@ -32,7 +30,15 @@
         </div>
       </div>
       <div class="hero-stats">
-        <div class="hs">
+        <div
+          class="hs hs-link"
+          role="button"
+          tabindex="0"
+          title="查看今日订单明细"
+          @click="emit('drill-today', 'orders')"
+          @keydown.enter="emit('drill-today', 'orders')"
+          @keydown.space.prevent="emit('drill-today', 'orders')"
+        >
           <div class="hs-top">
             <span class="hs-v">{{ summary.todayOrderCount || 0 }}</span>
             <em
@@ -43,9 +49,17 @@
               {{ arrow(deltas.todayOrder) }}{{ Math.abs(deltas.todayOrder).toFixed(0) }}%
             </em>
           </div>
-          <span class="hs-k">订单</span>
+          <span class="hs-k">订单 ›</span>
         </div>
-        <div class="hs">
+        <div
+          class="hs hs-link"
+          role="button"
+          tabindex="0"
+          title="查看今日订单明细"
+          @click="emit('drill-today', 'guests')"
+          @keydown.enter="emit('drill-today', 'guests')"
+          @keydown.space.prevent="emit('drill-today', 'guests')"
+        >
           <div class="hs-top">
             <span class="hs-v">{{ summary.todayGuestCount || 0 }}</span>
             <em
@@ -56,7 +70,7 @@
               {{ arrow(deltas.todayGuest) }}{{ Math.abs(deltas.todayGuest).toFixed(0) }}%
             </em>
           </div>
-          <span class="hs-k">到店人次</span>
+          <span class="hs-k">到店人次 ›</span>
         </div>
         <div class="hs">
           <div class="hs-top">
@@ -129,6 +143,11 @@ defineProps<{
   summary: ReportSummary;
   deltas: Deltas;
   today: string;
+}>();
+
+// 下钻:订单/到店人次都可点开「今日订单」弹窗(人次是订单 person_count 合计,数据源相同)
+const emit = defineEmits<{
+  'drill-today': [kind: 'orders' | 'guests'];
 }>();
 
 const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
@@ -283,6 +302,24 @@ const arrow = (v: number | null): string => ((v ?? 0) >= 0 ? '↑' : '↓');
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* 可下钻的两块给出可点的反馈:悬停微亮 + 键盘焦点框 */
+.hs-link {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  transition: background-color 0.15s;
+}
+
+.hs-link:hover {
+  background: rgb(255 255 255 / 12%);
+}
+
+.hs-link:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 60%);
+  outline-offset: 1px;
 }
 
 .hs-top {

@@ -252,6 +252,8 @@ func setupAPI(r *gin.Engine) {
 			admin.GET("/report/diningDuration", handler.ReportDiningDuration)
 			// 站点访问统计(PV/UV/新访客/渠道构成),同属 report:view
 			admin.GET("/report/visits", handler.ReportVisits)
+			// 访问明细下钻(访问统计弹窗),同属 report:view
+			admin.GET("/report/visitLogs", handler.ReportVisitLogs)
 
 			// ---- 操作日志(审计留痕) ----
 			admin.GET("/log/list", handler.LogList)

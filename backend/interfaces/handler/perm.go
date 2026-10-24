@@ -170,7 +170,8 @@ var routePerms = map[string]string{
 	"GET /api/admin/report/diningDuration": "report:view",
 	// 站点访问统计(PV/UV/新访客/渠道),同属 report:view —— 访问量是报表的自然
 	// 组成部分,不新增权限点(见 docs/design-docs/visit-analytics/spec.md 第 5.3 节)。
-	"GET /api/admin/report/visits": "report:view",
+	"GET /api/admin/report/visits":    "report:view",
+	"GET /api/admin/report/visitLogs": "report:view",
 
 	// ---- 操作日志(审计) ----
 	// 查看只需 log:view;清理会真的删数据,单独收口到 log:manage。

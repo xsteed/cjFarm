@@ -1,12 +1,12 @@
 // 站点访问统计的 HTTP 层:公开打点接口 + 管理端报表接口。
 //
 // 打点接口的三个「不合常理」之处都是有意的(见 spec 第 5 节):
-//   1. 恒返回 200 —— 埋点失败/参数非法/被限流都不该打扰正在点餐的顾客,
-//      真实原因只进日志(与 customerFail 的收敛哲学一致);
-//   2. 挂在顾客公开组 + CustomerAuthOptional —— 带会员令牌就把访客升级为
-//      「会员身份」(m:<id> 键),不带则匿名,两条路径都放行;
-//   3. customer_id 只认服务端从令牌解析的值,请求体里的 customerId 一律忽略
-//      (防伪造归属,与下单接口同一约定)。
+//  1. 恒返回 200 —— 埋点失败/参数非法/被限流都不该打扰正在点餐的顾客,
+//     真实原因只进日志(与 customerFail 的收敛哲学一致);
+//  2. 挂在顾客公开组 + CustomerAuthOptional —— 带会员令牌就把访客升级为
+//     「会员身份」(m:<id> 键),不带则匿名,两条路径都放行;
+//  3. customer_id 只认服务端从令牌解析的值,请求体里的 customerId 一律忽略
+//     (防伪造归属,与下单接口同一约定)。
 package handler
 
 import (
@@ -80,11 +80,11 @@ func ReportVisits(c *gin.Context) {
 			"totalVisitors": s.TotalVisitors,
 			"memberCount":   s.MemberCount,
 			// 环比基准:后端只给绝对值,涨跌幅由前端统一渲染(同 report/summary)
-			"todayPv":       s.TodayPV,
-			"todayUv":       s.TodayUV,
-			"todayNewUv":    s.TodayNewUV,
-			"yesterdayPv":   s.YesterdayPV,
-			"yesterdayUv":   s.YesterdayUV,
+			"todayPv":     s.TodayPV,
+			"todayUv":     s.TodayUV,
+			"todayNewUv":  s.TodayNewUV,
+			"yesterdayPv": s.YesterdayPV,
+			"yesterdayUv": s.YesterdayUV,
 		},
 		"daily":    s.Daily,
 		"channels": s.Channels,
@@ -94,5 +94,37 @@ func ReportVisits(c *gin.Context) {
 		"devices":  s.Devices,
 		"oses":     s.Oses,
 		"browsers": s.Browsers,
+	})
+}
+
+// ReportVisitLogs 访问明细下钻(报表页访问统计的弹窗数据源),需 report:view。
+//
+// 入参:start&end(YYYY-MM-DD,缺省回退 days,默认 30) + channel/entry/device/os/browser;
+// device/os/browser 传「未知」即筛空值行(分布图把空值归一为「未知」展示)。
+// 出参:total(次数)、visitors(去重访客)、items(明细,新访客已判定)。
+func ReportVisitLogs(c *gin.Context) {
+	pageNum, pageSize := pageParams(c)
+	start, valid := dateArg(c, "start")
+	if !valid {
+		return
+	}
+	end, valid := dateArg(c, "end")
+	if !valid {
+		return
+	}
+	startDay, endDay, total, visitors, items, err := service.VisitLogPageOf(
+		start, end, c.Query("days"),
+		c.Query("channel"), c.Query("entry"),
+		c.Query("device"), c.Query("os"), c.Query("browser"),
+		pageNum, pageSize)
+	if err != nil {
+		fail(c, "访问明细查询失败，请稍后再试")
+		return
+	}
+	ok(c, gin.H{
+		"range":    gin.H{"start": startDay, "end": endDay},
+		"total":    total,
+		"visitors": visitors,
+		"items":    items,
 	})
 }

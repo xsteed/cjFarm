@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,21 @@ func intArg(c *gin.Context, name string) (*int, bool) {
 		return nil, false
 	}
 	return &n, true
+}
+
+// dateArg 解析 YYYY-MM-DD 查询参数(报表区间/下钻用)。空返回 ("", true) 表示不限;
+// 非空但格式非法时写入 400 并返回 ("", false) —— 畸形日期放进 SQL 会静默落空,
+// 看起来像「当天没数据」,必须在入口拦下。
+func dateArg(c *gin.Context, name string) (string, bool) {
+	v := strings.TrimSpace(c.Query(name))
+	if v == "" {
+		return "", true
+	}
+	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(v) {
+		fail(c, "参数 "+name+" 格式应为 YYYY-MM-DD")
+		return "", false
+	}
+	return v, true
 }
 
 // ============ 订单 ============
@@ -73,6 +89,32 @@ func OrderList(c *gin.Context) {
 	// 只看新单:已下单且商家从未操作过(viewed_at 为空),口径与列表「新」角标一致。
 	if v := c.Query("newOnly"); v == "1" || v == "true" {
 		q.NewOnly = true
+	}
+	// 营业日区间(YYYY-MM-DD,含首尾,单边可省):报表图表下钻用。
+	// 口径与日报表「订单数」一致 —— 按 create_time 折算营业日(见 dao.bizDateExpr)。
+	start, ok := dateArg(c, "start")
+	if !ok {
+		return
+	}
+	q.BizStart = start
+	end, ok := dateArg(c, "end")
+	if !ok {
+		return
+	}
+	q.BizEnd = end
+	// 下单小时(0-23):时段分布图下钻用。
+	hour, ok := intArg(c, "hour")
+	if !ok {
+		return
+	}
+	if hour != nil && (*hour < 0 || *hour > 23) {
+		fail(c, "参数 hour 需在 0-23 之间")
+		return
+	}
+	q.Hour = hour
+	// 下钻同口径:报表各图表的订单数都不含已取消,弹窗带 hideCanceled=1 时排除。
+	if v := c.Query("hideCanceled"); v == "1" || v == "true" {
+		q.ExcludeCanceled = true
 	}
 	total, list, pending, err := service.ListOrders(q, pageNum, pageSize)
 	if err != nil {

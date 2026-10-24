@@ -488,6 +488,36 @@ export interface VisitEntryRow extends Extensible {
   pv?: number;
 }
 
+/** 访问明细下钻(GET /api/admin/report/visitLogs)的一行。 */
+export interface VisitLogItem extends Extensible {
+  time?: string;
+  channel?: string;
+  /** 渠道中文名(扫码点餐/小程序/管理后台),后端直接下发。 */
+  channelLabel?: string;
+  entry?: string;
+  /** 入口展示名(桌名 · 桌号;关联不到桌台时回退码值)。 */
+  entryLabel?: string;
+  device?: string;
+  os?: string;
+  browser?: string;
+  model?: string;
+  city?: string;
+  ip?: string;
+  /** 访客级口径:首访日期=访问日的访客,当天所有访问都为 true。 */
+  isNew?: boolean;
+  isMember?: boolean;
+}
+
+/** GET /api/admin/report/visitLogs 的完整出参。 */
+export interface VisitLogPage extends Extensible {
+  range?: { start?: string; end?: string };
+  /** 命中的访问次数(与图表 PV 同口径,按 visit_date 自然日)。 */
+  total?: number;
+  /** 命中的去重访客数(COUNT DISTINCT visitor_key),供弹窗头「M 位访客」。 */
+  visitors?: number;
+  items?: VisitLogItem[];
+}
+
 /** GET /api/admin/report/visits 的完整出参。 */
 export interface VisitStats extends Extensible {
   range?: { start?: string; end?: string };

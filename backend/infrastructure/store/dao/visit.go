@@ -504,3 +504,88 @@ func CountMembers() (int, error) {
 	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_customer WHERE status=?`, po.CustomerStatusEnabled).Scan(&n)
 	return n, err
 }
+
+// ============ 访问明细下钻(报表页访问统计的弹窗) ============
+
+// VisitLogQuery 访问明细下钻的筛选条件。
+// Start/End/Channel/Entry 空串表示不限;Device/Os/Browser 用指针区分
+// 「不限(nil)」与「筛空值行(指向空串,即界面上的『未知』)」。
+type VisitLogQuery struct {
+	Start   string  // visit_date 下界(含),YYYY-MM-DD
+	End     string  // visit_date 上界(含)
+	Channel string  // h5 / miniprogram / admin
+	Entry   string  // 桌台码(含历史数字桌台 ID 形态)
+	Device  *string // 设备类型展示值(手机/平板/电脑;空串=未知)
+	Os      *string // 操作系统展示值
+	Browser *string // 浏览器/宿主展示值
+}
+
+// VisitLogPage 分页返回访问明细(按 visit_id 倒序,最新在前)。
+//
+// visitors 是同条件下去重访客数(COUNT DISTINCT),与列表同一次统计算出,
+// 供弹窗头「共 N 次访问 · M 位访客」;firstVisit 返回命中的访客键 → 首访日期,
+// 「新访客」判定(首访日期 == visit_date)由 service 侧完成。
+// 明细表按保留天数清理,查询结果天然只覆盖保留期,无需在 SQL 里再卡时间。
+func VisitLogPage(q VisitLogQuery, pageNum, pageSize int) (total, visitors int, list []po.VisitLog, firstVisit map[string]string, err error) {
+	where := []string{"1=1"}
+	args := []interface{}{}
+	if q.Start != "" {
+		where = append(where, "visit_date>=?")
+		args = append(args, q.Start)
+	}
+	if q.End != "" {
+		where = append(where, "visit_date<=?")
+		args = append(args, q.End)
+	}
+	if q.Channel != "" {
+		where = append(where, "channel=?")
+		args = append(args, q.Channel)
+	}
+	if q.Entry != "" {
+		where = append(where, "entry=?")
+		args = append(args, q.Entry)
+	}
+	// 列名来自下方白名单式的固定映射,并非用户输入拼接。
+	for _, p := range []struct {
+		col string
+		v   *string
+	}{{"device", q.Device}, {"os", q.Os}, {"browser", q.Browser}} {
+		if p.v != nil {
+			where = append(where, p.col+"=?")
+			args = append(args, *p.v)
+		}
+	}
+	cond := " WHERE " + strings.Join(where, " AND ")
+
+	if err = store.DB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT visitor_key) FROM tb_visit_log`+cond, args...).
+		Scan(&total, &visitors); err != nil {
+		return 0, 0, nil, nil, err
+	}
+
+	rows, err := store.DB.Query(`SELECT l.visit_id, l.visit_date, l.channel, l.visitor_key, l.is_member, l.customer_id,
+			l.entry, l.ip, l.city, l.os, l.browser, l.device, l.model, l.create_time, v.first_visit_date
+		FROM tb_visit_log l
+		LEFT JOIN tb_visitor v ON v.visitor_key = l.visitor_key`+cond+`
+		ORDER BY l.visit_id DESC LIMIT ? OFFSET ?`,
+		append(args, pageSize, (pageNum-1)*pageSize)...)
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	list = []po.VisitLog{}
+	firstVisit = map[string]string{}
+	for rows.Next() {
+		var l po.VisitLog
+		var first sql.NullString
+		if err = rows.Scan(&l.VisitID, &l.VisitDate, &l.Channel, &l.VisitorKey, &l.IsMember, &l.CustomerID,
+			&l.Entry, &l.IP, &l.City, &l.OS, &l.Browser, &l.Device, &l.Model, &l.CreateTime, &first); err != nil {
+			return 0, 0, nil, nil, err
+		}
+		list = append(list, l)
+		if first.Valid {
+			firstVisit[l.VisitorKey] = first.String
+		}
+	}
+	return total, visitors, list, firstVisit, rows.Err()
+}

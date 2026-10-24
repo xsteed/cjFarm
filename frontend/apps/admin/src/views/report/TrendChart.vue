@@ -4,9 +4,18 @@
       <div>
         <div class="chart-title">营业额与订单趋势</div>
         <div class="chart-sub">
-          区间合计 <b>¥{{ money(total.amount) }}</b> · {{ total.orders }} 单 · 客流 {{ total.guests }} 人次
+          区间合计 <b>¥{{ money(total.amount) }}</b> · {{ total.orders }} 单 · 客流 {{ total.guests }} 人次 ·
+          点击数据点看当日订单
         </div>
       </div>
+      <Button
+        size="small"
+        variant="outline"
+        :disabled="!rows.length"
+        @click="emit('drill', undefined)"
+      >
+        区间订单明细
+      </Button>
     </div>
     <div
       ref="el"
@@ -17,6 +26,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
+import { Button } from 'tdesign-vue-next';
 import type { DailyTrendRow } from '@dining/types';
 import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
@@ -36,6 +46,11 @@ import {
 const props = defineProps<{
   rows: DailyTrendRow[];
   total: { amount: number; orders: number; guests: number };
+}>();
+
+// 下钻:点击数据点带出该营业日,表头按钮不带 date 表示整个报表区间
+const emit = defineEmits<{
+  drill: [date?: string];
 }>();
 
 const el = ref<HTMLElement | null>(null);
@@ -140,6 +155,17 @@ function render(): void {
     ]
   };
   c.setOption(option);
+  // 点击数据点下钻当日订单。off+on 重绑而不是只绑一次:实例按 key 复用,
+  // 每次 render 的闭包各自捕获当次 rows,只绑一次会拿到过期数据。
+  // 测试的 echarts mock 没有 on/off,做了能力探测。
+  if (typeof c.on === 'function' && typeof c.off === 'function') {
+    c.off('click');
+    c.on('click', (p: { componentType?: string; dataIndex?: number }) => {
+      if (p?.componentType !== 'series') return;
+      const row: DailyTrendRow | undefined = list[p.dataIndex ?? -1];
+      if (row?.date) emit('drill', row.date);
+    });
+  }
 }
 
 onMounted(render);

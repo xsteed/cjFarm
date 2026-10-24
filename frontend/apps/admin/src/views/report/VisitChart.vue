@@ -8,9 +8,19 @@
           <div class="chart-sub">
             区间合计 <b>{{ total.pv }}</b> 次访问 · 独立访客 <b>{{ total.uv }}</b> 人 · 新访客
             <b>{{ total.newUv }}</b> 人
-            <span class="caliber">UV 按访客去重，匿名访客换设备/换网络会被算作新访客，看趋势即可</span>
+            <span class="caliber"
+              >UV 按访客去重，匿名访客换设备/换网络会被算作新访客，看趋势即可 · 点击数据点看当日明细</span
+            >
           </div>
         </div>
+        <Button
+          size="small"
+          variant="outline"
+          :disabled="!rows.length"
+          @click="drillAll"
+        >
+          访问明细
+        </Button>
       </div>
       <div
         ref="trendEl"
@@ -23,7 +33,7 @@
         <div class="chart-head">
           <div>
             <div class="chart-title">渠道构成</div>
-            <div class="chart-sub">扫码点餐 / 小程序 / 管理后台，PV 与 UV</div>
+            <div class="chart-sub">扫码点餐 / 小程序 / 管理后台，PV 与 UV · 点击条目看该渠道明细</div>
           </div>
         </div>
         <div
@@ -36,7 +46,7 @@
         <div class="chart-head">
           <div>
             <div class="chart-title">扫码入口 Top</div>
-            <div class="chart-sub">哪张桌的二维码被扫得最多（扫码点餐 + 小程序，按桌台码统计）</div>
+            <div class="chart-sub">哪张桌的二维码被扫得最多（扫码点餐 + 小程序，按桌台码统计）· 点击看该桌明细</div>
           </div>
         </div>
         <div
@@ -52,7 +62,7 @@
         <div class="chart-head">
           <div>
             <div class="chart-title">设备类型</div>
-            <div class="chart-sub">手机 / 平板 / 电脑</div>
+            <div class="chart-sub">手机 / 平板 / 电脑 · 点击看明细</div>
           </div>
         </div>
         <div
@@ -64,7 +74,7 @@
         <div class="chart-head">
           <div>
             <div class="chart-title">操作系统</div>
-            <div class="chart-sub">小程序为端上直传，H5 由 UA 解析</div>
+            <div class="chart-sub">小程序为端上直传，H5 由 UA 解析 · 点击看明细</div>
           </div>
         </div>
         <div
@@ -76,7 +86,7 @@
         <div class="chart-head">
           <div>
             <div class="chart-title">浏览器 / 宿主</div>
-            <div class="chart-sub">小程序记为「微信小程序」，H5 能识别微信内打开</div>
+            <div class="chart-sub">小程序记为「微信小程序」，H5 能识别微信内打开 · 点击看明细</div>
           </div>
         </div>
         <div
@@ -90,10 +100,22 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch, type Ref } from 'vue';
+import { Button } from 'tdesign-vue-next';
 import type { VisitChannelRow, VisitDailyRow, VisitDistRow, VisitEntryRow } from '@dining/types';
 import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
-import { AXIS_COLOR, AXIS_LINE, SPLIT_LINE, BRAND, GREEN, BLUE, AMBER, pickTooltipParam } from './reportShared';
+import {
+  AXIS_COLOR,
+  AXIS_LINE,
+  SPLIT_LINE,
+  BRAND,
+  GREEN,
+  BLUE,
+  AMBER,
+  pickTooltipParam,
+  bindChartClick,
+  type VisitDrill
+} from './reportShared';
 
 const props = defineProps<{
   rows: VisitDailyRow[];
@@ -104,6 +126,44 @@ const props = defineProps<{
   browsers: VisitDistRow[];
   total: { pv: number; uv: number; newUv: number };
 }>();
+
+// 下钻:所有点击都汇成 VisitDrill 交给父级打开访问明细弹窗
+const emit = defineEmits<{
+  drill: [payload: VisitDrill];
+}>();
+
+// 下钻区间:逐日数据是补零后的完整区间,首尾日期即当前报表区间
+function drillRange(): { start: string; end: string } {
+  const list = props.rows || [];
+  const start = list[0]?.date;
+  const end = list[list.length - 1]?.date;
+  return { start: String(start || ''), end: String(end || '') };
+}
+
+function drillAll(): void {
+  const r = drillRange();
+  emit('drill', { title: '访问明细', hint: `${r.start} ~ ${r.end}`, query: r });
+}
+
+function drillDay(date: string): void {
+  emit('drill', { title: `${date} 访问明细`, hint: `访问日 ${date}`, query: { start: date, end: date } });
+}
+
+function drillChannel(label: string, channel: string): void {
+  const r = drillRange();
+  emit('drill', { title: `${label}访问明细`, hint: `${r.start} ~ ${r.end}`, query: { ...r, channel } });
+}
+
+function drillEntry(label: string, entry: string): void {
+  const r = drillRange();
+  emit('drill', { title: `${label}访问明细`, hint: `${r.start} ~ ${r.end}`, query: { ...r, entry } });
+}
+
+// dim: 'device' | 'os' | 'browser';name 为「未知」时原样透传,后端匹配空值行
+function drillDist(dim: 'device' | 'os' | 'browser', name: string): void {
+  const r = drillRange();
+  emit('drill', { title: `${name}访问明细`, hint: `${r.start} ~ ${r.end}`, query: { ...r, [dim]: name } });
+}
 
 const trendEl = ref<HTMLElement | null>(null);
 const channelEl = ref<HTMLElement | null>(null);
@@ -220,6 +280,11 @@ function renderTrend(): void {
     ]
   };
   c.setOption(option);
+  bindChartClick(c, p => {
+    if (p?.componentType !== 'series') return;
+    const row: VisitDailyRow | undefined = list[p.dataIndex ?? -1];
+    if (row?.date) drillDay(row.date);
+  });
 }
 
 // 渠道构成:横向条形图（PV / UV 成对），渠道少时比饼图更易读。
@@ -286,6 +351,11 @@ function renderChannels(): void {
     ]
   };
   c.setOption(option);
+  bindChartClick(c, p => {
+    if (p?.componentType !== 'series') return;
+    const row = ordered[p.dataIndex ?? -1];
+    if (row?.channel) drillChannel(row.label || row.channel, row.channel);
+  });
 }
 
 // 扫码入口 Top:横向条形图，标签已由后端拼好（桌名 · 桌号）。
@@ -356,6 +426,11 @@ function renderEntries(): void {
     ]
   };
   c.setOption(option);
+  bindChartClick(c, p => {
+    if (p?.componentType !== 'series') return;
+    const row = ordered[p.dataIndex ?? -1];
+    if (row?.entry) drillEntry(row.label || row.entry, row.entry);
+  });
 }
 
 // 终端小图的通用渲染:横向条形,Top 6,空数据显示「暂无数据」。
@@ -364,7 +439,8 @@ function renderDist(
   el: Ref<HTMLElement | null>,
   rows: VisitDistRow[],
   color: string,
-  title: string
+  title: string,
+  dim: 'device' | 'os' | 'browser'
 ): void {
   const c = chart(key, el.value);
   if (!c) return;
@@ -417,12 +493,17 @@ function renderDist(
     ]
   };
   c.setOption(option);
+  bindChartClick(c, p => {
+    if (p?.componentType !== 'series') return;
+    const row = ordered[p.dataIndex ?? -1];
+    if (row?.name) drillDist(dim, row.name);
+  });
 }
 
 function renderTerminals(): void {
-  renderDist('visitDevice', deviceEl, props.devices || [], GREEN, '设备类型');
-  renderDist('visitOs', osEl, props.oses || [], BLUE, '操作系统');
-  renderDist('visitBrowser', browserEl, props.browsers || [], AMBER, '浏览器');
+  renderDist('visitDevice', deviceEl, props.devices || [], GREEN, '设备类型', 'device');
+  renderDist('visitOs', osEl, props.oses || [], BLUE, '操作系统', 'os');
+  renderDist('visitBrowser', browserEl, props.browsers || [], AMBER, '浏览器', 'browser');
 }
 
 function renderAll(): void {

@@ -14,6 +14,14 @@
         <RadioButton value="qty"> 按销量 </RadioButton>
         <RadioButton value="amount"> 按销售额 </RadioButton>
       </RadioGroup>
+      <Button
+        size="small"
+        variant="outline"
+        :disabled="!rows.length"
+        @click="emit('more')"
+      >
+        完整榜单
+      </Button>
     </div>
     <div
       ref="el"
@@ -24,7 +32,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
-import { RadioButton, RadioGroup } from 'tdesign-vue-next';
+import { Button, RadioButton, RadioGroup } from 'tdesign-vue-next';
 import type { DishRankRow } from '@dining/types';
 import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
@@ -38,6 +46,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:sort': [value: 'qty' | 'amount'];
   change: [value: 'qty' | 'amount'];
+  // 「完整榜单」:图表只画 TOP 10,弹窗里看 TOP 100
+  more: [];
 }>();
 
 const el = ref<HTMLElement | null>(null);

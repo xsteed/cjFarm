@@ -119,3 +119,93 @@ func TestReportVisits(t *testing.T) {
 		t.Fatalf("daily 应为 7 行(缺日补零), got %v", data["daily"])
 	}
 }
+
+// TestReportVisitLogs 访问明细下钻:区间/渠道/终端筛选、「未知」= 空值行、
+// 去重访客数与新访客判定、畸形日期 400。
+func TestReportVisitLogs(t *testing.T) {
+	initAgentTestDB(t)
+	seedLog := func(date, channel, visitor, device, os, browser, createTime string) {
+		t.Helper()
+		if _, err := store.DB.Exec(`INSERT INTO tb_visit_log(visit_date, channel, visitor_key, is_member, customer_id,
+			entry, ip, city, os, browser, device, model, create_time)
+			VALUES(?,?,?,?,0,?, '1.2.3.4', '', ?, ?, ?, '', ?)`,
+			date, channel, visitor, 0, "K7M3PQ9X", os, browser, device, createTime); err != nil {
+			t.Fatalf("插入访问明细失败: %v", err)
+		}
+	}
+	// v0 是老访客(首访远在窗口之前),用于验证 isNew=false 分支。
+	seedLog("2026-01-01", "h5", "c:v0", "手机", "iOS", "微信", "2026-01-01 09:00:00")
+	seedLog("2026-01-01", "h5", "c:v1", "手机", "iOS", "微信", "2026-01-01 10:00:00")
+	seedLog("2026-01-01", "h5", "c:v1", "手机", "iOS", "微信", "2026-01-01 11:00:00") // 同访客同日再来
+	seedLog("2026-01-02", "admin", "c:v2", "", "", "", "2026-01-02 09:00:00")       // 终端信息缺失 = 「未知」
+	for _, v := range [][2]string{{"c:v0", "2025-12-01"}, {"c:v1", "2026-01-01"}, {"c:v2", "2026-01-02"}} {
+		if _, err := store.DB.Exec(`INSERT INTO tb_visitor(visitor_key, first_visit_date, last_visit_date, visit_count)
+			VALUES(?,?,?,1)`, v[0], v[1], v[1]); err != nil {
+			t.Fatalf("插入访客档案失败: %v", err)
+		}
+	}
+
+	bodyOf := func(query string) map[string]interface{} {
+		t.Helper()
+		code, res := rptGet(t, ReportVisitLogs, query)
+		if code != http.StatusOK || res["code"] != float64(200) {
+			t.Fatalf("访问明细(%s)应返回 200, got %d(%v)", query, code, res)
+		}
+		return res["data"].(map[string]interface{})
+	}
+
+	// 全区间:4 次访问、3 位去重访客。
+	data := bodyOf("start=2026-01-01&end=2026-01-02")
+	if data["total"].(float64) != 4 || data["visitors"].(float64) != 3 {
+		t.Fatalf("全区间应 4 次访问 3 位访客, got %v", data)
+	}
+	items := data["items"].([]interface{})
+	if len(items) != 4 {
+		t.Fatalf("items 应 4 行, got %v", items)
+	}
+	// visit_id 倒序:最新一条(01-02 的 v2)在最前。isNew 是访客级口径 ——
+	// 「首访日期=访问日」的访客当天所有访问都打新客标(v1 同日两访都为 true),
+	// 与报表 NewUV 的 COUNT(DISTINCT) 口径一致。
+	first := items[0].(map[string]interface{})
+	if !first["isNew"].(bool) || first["channelLabel"] != "管理后台" {
+		t.Fatalf("v2 应为新客且带渠道标签, got %v", first)
+	}
+	if !items[1].(map[string]interface{})["isNew"].(bool) || !items[2].(map[string]interface{})["isNew"].(bool) {
+		t.Fatalf("v1 当日的访问都应打新客标, got %v", items)
+	}
+	// 最后一条是老访客 v0:首访在窗口之前,不算新客。
+	last := items[3].(map[string]interface{})
+	if last["isNew"].(bool) {
+		t.Fatalf("老访客不应判为新客, got %v", last)
+	}
+	if last["entryLabel"] != "K7M3PQ9X" {
+		t.Fatalf("关联不到桌台的入口应回退码值, got %v", last["entryLabel"])
+	}
+
+	// 渠道筛选。
+	if data := bodyOf("start=2026-01-01&end=2026-01-02&channel=admin"); data["total"].(float64) != 1 {
+		t.Fatalf("channel=admin 应命中 1 条, got %v", data)
+	}
+	// 终端筛选:展示值直接匹配;「未知」匹配空值行。
+	if data := bodyOf("start=2026-01-01&end=2026-01-02&device=%E6%89%8B%E6%9C%BA"); data["total"].(float64) != 3 {
+		t.Fatalf("device=手机 应命中 3 条, got %v", data)
+	}
+	if data := bodyOf("start=2026-01-01&end=2026-01-02&device=未知"); data["total"].(float64) != 1 {
+		t.Fatalf("device=未知 应命中 1 条(空值行), got %v", data)
+	}
+	// 区间单边。
+	if data := bodyOf("start=2026-01-02"); data["total"].(float64) != 1 {
+		t.Fatalf("start=2026-01-02 应命中 1 条, got %v", data)
+	}
+	// 缺省区间走 days 回退。
+	if data := bodyOf("days=7"); data["range"].(map[string]interface{})["start"] == "" {
+		t.Fatalf("缺省区间应回退 days 解析, got %v", data["range"])
+	}
+
+	// 畸形日期 400。
+	for _, bad := range []string{"start=2026-1-1", "end=2026/01/01"} {
+		if code, res := rptGet(t, ReportVisitLogs, bad); code != http.StatusBadRequest || res["code"] != float64(400) {
+			t.Fatalf("非法参数(%s)应返回 400, got %d(%v)", bad, code, res)
+		}
+	}
+}

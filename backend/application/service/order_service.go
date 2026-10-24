@@ -33,6 +33,14 @@ type OrderQuery struct {
 	SettleRemark string // 结算备注(免单原因/挂账人)模糊匹配
 	// NewOnly 只看新单:已下单且商家从未操作过(viewed_at 为空),口径与列表 isNew 一致。
 	NewOnly bool
+	// BizStart/BizEnd 营业日区间(YYYY-MM-DD,含首尾),报表下钻用;
+	// 按 create_time 折算营业日过滤,与报表「订单数」同口径。空表示不限。
+	BizStart string
+	BizEnd   string
+	// Hour 下单小时(0-23,原始小时),报表时段下钻用;nil 表示不限。
+	Hour *int
+	// ExcludeCanceled 排除已取消订单,报表下钻与图表同口径用。
+	ExcludeCanceled bool
 }
 
 // UrgeQuery 催菜列表筛选条件;零值字段表示不限。
@@ -45,15 +53,21 @@ type UrgeQuery struct {
 // 催菜角标一次查询覆盖整页,避免逐单查库退化成 N+1。
 func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order, pending map[int]bool, err error) {
 	total, list, err = dao.ListOrders(dao.OrderQuery{
-		OrderStatus:  q.OrderStatus,
-		PayStatus:    q.PayStatus,
-		OrderNo:      q.OrderNo,
-		TableNo:      q.TableNo,
-		TableName:    q.TableName,
-		SettleType:   q.SettleType,
-		CreditStatus: q.CreditStatus,
-		SettleRemark: q.SettleRemark,
-		NewOnly:      q.NewOnly,
+		OrderStatus:     q.OrderStatus,
+		PayStatus:       q.PayStatus,
+		OrderNo:         q.OrderNo,
+		TableNo:         q.TableNo,
+		TableName:       q.TableName,
+		SettleType:      q.SettleType,
+		CreditStatus:    q.CreditStatus,
+		SettleRemark:    q.SettleRemark,
+		NewOnly:         q.NewOnly,
+		BizStart:        q.BizStart,
+		BizEnd:          q.BizEnd,
+		Hour:            q.Hour,
+		ExcludeCanceled: q.ExcludeCanceled,
+		// dao 不读配置,营业日折算的小时在这里取出传入
+		CutoffHour: BizDayCutoffHour(),
 	}, pageNum, pageSize)
 	if err != nil {
 		return 0, nil, nil, err

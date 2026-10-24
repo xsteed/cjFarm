@@ -107,6 +107,75 @@ func TestOrderListAndFilters(t *testing.T) {
 	}
 }
 
+// TestOrderListBizDayAndHourFilters 报表下钻用的营业日区间 / 下单小时筛选。
+// 口径与报表一致:区间按 create_time 折算营业日(受 biz_date_cutoff_hour 影响),
+// 小时取 create_time 原始小时。
+func TestOrderListBizDayAndHourFilters(t *testing.T) {
+	initFlowTestDB(t)
+	// 两单分别落在 10-23 深夜与 10-24 早间;营业日折算由 cutoff 配置决定归属。
+	insertFlowOrder(t, "ORDBIZN", 1, 0, "create_time='2026-10-23 23:30:00'")
+	insertFlowOrder(t, "ORDBIZD", 1, 0, "create_time='2026-10-24 08:00:00'")
+
+	listTotal := func(query string) int {
+		t.Helper()
+		res := ordGet(t, OrderList, query, nil)
+		if res["code"] != float64(200) {
+			t.Fatalf("订单列表(%s)应返回 200, got %v", query, res)
+		}
+		return int(res["data"].(map[string]interface{})["total"].(float64))
+	}
+
+	// 默认 cutoff=0(自然日):两单分属 10-23 与 10-24。
+	if got := listTotal("start=2026-10-23&end=2026-10-23"); got != 1 {
+		t.Fatalf("自然日口径 10-23 应命中 1 单, got %d", got)
+	}
+	if got := listTotal("start=2026-10-24&end=2026-10-24"); got != 1 {
+		t.Fatalf("自然日口径 10-24 应命中 1 单, got %d", got)
+	}
+	// 小时筛选与区间可叠加。
+	if got := listTotal("start=2026-10-23&end=2026-10-24&hour=23"); got != 1 {
+		t.Fatalf("hour=23 应只命中深夜单, got %d", got)
+	}
+	if got := listTotal("hour=8"); got != 1 {
+		t.Fatalf("hour=8 应只命中早间单, got %d", got)
+	}
+	// 单边区间也可用。
+	if got := listTotal("end=2026-10-23"); got != 1 {
+		t.Fatalf("end=2026-10-23 单边应命中 1 单, got %d", got)
+	}
+
+	// cutoff=4:凌晨 0~4 点归前一营业日;23:30 不受影响。深夜单仍属 10-23,
+	// 早间单不变;再造一条 10-24 凌晨 2 点的单验证它折算回 10-23。
+	if err := service.SetSetting("biz_date_cutoff_hour", "4"); err != nil {
+		t.Fatalf("设置营业日切换时刻失败: %v", err)
+	}
+	defer func() { _ = service.SetSetting("biz_date_cutoff_hour", "0") }()
+	insertFlowOrder(t, "ORDBIZC", 1, 0, "create_time='2026-10-24 02:00:00'")
+	if got := listTotal("start=2026-10-23&end=2026-10-23"); got != 2 {
+		t.Fatalf("cutoff=4 时 10-23 营业日应含深夜单与凌晨单, got %d", got)
+	}
+	if got := listTotal("start=2026-10-24&end=2026-10-24"); got != 1 {
+		t.Fatalf("cutoff=4 时 10-24 营业日应只含早间单, got %d", got)
+	}
+
+	// 非法参数:畸形日期与非 0-23 的 hour 都必须 400,而不是静默当「不限」。
+	for _, bad := range []string{"start=10-23", "end=2026/10/23", "hour=24", "hour=abc"} {
+		res := ordGet(t, OrderList, bad, nil)
+		if res["code"] != float64(400) {
+			t.Fatalf("非法参数(%s)应返回 400, got %v", bad, res)
+		}
+	}
+
+	// hideCanceled=1:已取消订单不计入,与报表订单数同口径。
+	insertFlowOrder(t, "ORDBIZX", 5, 0, "create_time='2026-10-24 09:00:00'")
+	if got := listTotal("start=2026-10-24&end=2026-10-24"); got != 2 {
+		t.Fatalf("含已取消时 10-24 应命中 2 单, got %d", got)
+	}
+	if got := listTotal("start=2026-10-24&end=2026-10-24&hideCanceled=1"); got != 1 {
+		t.Fatalf("hideCanceled=1 时 10-24 应只命中 1 单, got %d", got)
+	}
+}
+
 func TestOrderGetBranches(t *testing.T) {
 	initFlowTestDB(t)
 

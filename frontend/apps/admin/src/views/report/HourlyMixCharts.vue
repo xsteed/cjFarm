@@ -5,7 +5,7 @@
       <div class="chart-head">
         <div>
           <div class="chart-title">经营时段分布</div>
-          <div class="chart-sub">柱为订单数，线为营业额；用于排班与备货</div>
+          <div class="chart-sub">柱为订单数，线为营业额；点击柱条看该时段订单</div>
         </div>
       </div>
       <div
@@ -18,7 +18,7 @@
       <div class="chart-head">
         <div>
           <div class="chart-title">结算方式构成</div>
-          <div class="chart-sub">按订单应收金额，合计 ¥{{ money(mixTotal) }}</div>
+          <div class="chart-sub">按订单应收金额，合计 ¥{{ money(mixTotal) }} · 点击扇区看该类订单</div>
         </div>
       </div>
       <div
@@ -44,13 +44,20 @@ import {
   axisYuan,
   yuan,
   money,
-  pickTooltipParam
+  pickTooltipParam,
+  bindChartClick
 } from './reportShared';
 
 const props = defineProps<{
   hourly: HourlyRow[];
   mix: SettleMixRow[];
   mixTotal: number;
+}>();
+
+// 下钻:时段柱条 → 该小时的订单;结算扇区 → 该结算方式的订单
+const emit = defineEmits<{
+  'drill-hour': [hour: string];
+  'drill-mix': [settleType: string, label: string];
 }>();
 
 const hourlyEl = ref<HTMLElement | null>(null);
@@ -150,6 +157,11 @@ function renderHourly(): void {
     ]
   };
   c.setOption(option);
+  bindChartClick(c, p => {
+    if (p?.componentType !== 'series') return;
+    const row: HourlyRow | undefined = list[p.dataIndex ?? -1];
+    if (row?.hour != null) emit('drill-hour', String(row.hour));
+  });
 }
 
 function renderMix(): void {
@@ -197,6 +209,13 @@ function renderMix(): void {
     ]
   };
   c.setOption(option);
+  // 饼图的 series 点击参数没有 dataIndex 之外的行标识,name 即 label,
+  // 用它回查原始行拿 settleType(label 是后端下发文案,直接透传给弹窗标题)。
+  bindChartClick(c, p => {
+    if (p?.componentType !== 'series') return;
+    const row = list.find(m => m.label === (p as { name?: string }).name);
+    if (row?.settleType) emit('drill-mix', row.settleType, row.label || row.settleType);
+  });
 }
 
 onMounted(() => {

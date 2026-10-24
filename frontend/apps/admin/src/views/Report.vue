@@ -61,6 +61,7 @@
         :summary="summary"
         :deltas="deltas"
         :today="today"
+        @drill-today="onTodayDrill"
       />
       <MetaStrip
         :summary="summary"
@@ -69,6 +70,7 @@
       <TrendChart
         :rows="dailyRows"
         :total="rangeTotal"
+        @drill="onTrendDrill"
       />
       <!-- 站点访问统计:PV/UV/新访客趋势 + 渠道构成 + 扫码入口 Top -->
       <VisitChart
@@ -79,28 +81,74 @@
         :oses="visitOses"
         :browsers="visitBrowsers"
         :total="visitTotal"
+        @drill="onVisitDrill"
       />
       <HourlyMixCharts
         :hourly="hourlyRows"
         :mix="mixRows"
         :mix-total="mixTotal"
+        @drill-hour="onHourDrill"
+        @drill-mix="onMixDrill"
       />
       <DiningDurationChart :stats="durationStats" />
-      <MonthlyChart :rows="monthlyRows" />
+      <MonthlyChart
+        :rows="monthlyRows"
+        @drill="onMonthDrill"
+      />
       <DishRankChart
         v-model:sort="rankSort"
         :rows="rankRows"
         @change="loadRank"
+        @more="onRankMore"
       />
     </Loading>
+
+    <!-- 图表下钻:各图表点击后共用的订单明细弹窗(与图表订单数同口径,不含已取消) -->
+    <OrderDrillDialog
+      v-model:visible="drillVisible"
+      :title="drillTitle"
+      :hint="drillHint"
+      :query="drillQuery"
+    />
+
+    <!-- 访问明细下钻:访问统计各图表点击后共用的明细弹窗 -->
+    <VisitLogDrillDialog
+      v-model:visible="visitDrillVisible"
+      :title="visitDrillTitle"
+      :hint="visitDrillHint"
+      :query="visitDrillQuery"
+    />
+
+    <!-- 菜品完整榜单:图上只画 TOP 10,这里展开到 TOP 100 -->
+    <t-dialog
+      v-model:visible="rankMoreVisible"
+      :header="`菜品排行 TOP ${rankMoreRows.length || ''}`"
+      :width="isMobile ? '94vw' : '620px'"
+      :footer="false"
+      top="8vh"
+    >
+      <t-table
+        :data="rankMoreRows"
+        :columns="rankMoreCols"
+        row-key="dishName"
+        :loading="rankMoreLoading"
+        :max-height="480"
+      >
+        <template #rank="{ rowIndex }">
+          <span class="rank-no">{{ rowIndex + 1 }}</span>
+        </template>
+        <template #amount="{ row }">¥{{ yuan(row.amount) }}</template>
+      </t-table>
+    </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { Button, DateRangePicker, Loading } from 'tdesign-vue-next';
+import { Button, DateRangePicker, Loading, MessagePlugin } from 'tdesign-vue-next';
 import type { DateRangeValue } from 'tdesign-vue-next';
 import { DownloadIcon, RefreshIcon } from 'tdesign-icons-vue-next';
+import { hasPerm } from '@dining/auth';
 import {
   getDailyTrend,
   getDiningDuration,
@@ -131,7 +179,7 @@ import { useEChart } from '../composables/useEChart';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
 import PullRefresh from '../components/PullRefresh.vue';
-import { yuan, type Deltas } from './report/reportShared';
+import { yuan, type Deltas, type VisitDrill } from './report/reportShared';
 import KpiCards from './report/KpiCards.vue';
 import MetaStrip from './report/MetaStrip.vue';
 import TrendChart from './report/TrendChart.vue';
@@ -140,6 +188,8 @@ import MonthlyChart from './report/MonthlyChart.vue';
 import DishRankChart from './report/DishRankChart.vue';
 import DiningDurationChart from './report/DiningDurationChart.vue';
 import VisitChart from './report/VisitChart.vue';
+import OrderDrillDialog from './report/OrderDrillDialog.vue';
+import VisitLogDrillDialog from './report/VisitLogDrillDialog.vue';
 
 // ---------- 日期工具 ----------
 function fmtDay(d: Date): string {
@@ -336,6 +386,119 @@ async function loadRank(): Promise<void> {
   }
 }
 
+// ---------- 图表下钻 ----------
+// 各图表点击后共用一份订单明细弹窗,只差筛选参数。口径统一:
+// 按下单营业日过滤 + 排除已取消(hideCanceled=1),与图表的订单数完全一致。
+const canViewOrders = hasPerm('order:view');
+
+const drillVisible = ref(false);
+const drillTitle = ref('');
+const drillHint = ref('');
+const drillQuery = ref<PageQuery>({});
+
+/** 下钻区间的兜底:控件被清空时用「近 7 天」,与 rangeParams 的回退一致。 */
+function drillRange(): { start: string; end: string } {
+  const r = range.value;
+  if (Array.isArray(r) && r.length === 2 && r[0] && r[1]) {
+    // DateRangeValue 的元素是 string | number,接口入参只认 'YYYY-MM-DD'
+    return { start: String(r[0]), end: String(r[1]) };
+  }
+  return { start: fmtDay(shiftDays(-6)), end: fmtDay(new Date()) };
+}
+
+/** 月份 'YYYY-MM' 的最后一天(月度图下钻用)。 */
+function monthEnd(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return fmtDay(new Date(y, m, 0));
+}
+
+function openOrderDrill(title: string, query: PageQuery, hint?: string): void {
+  // 弹窗数据源是 /admin/order/list(需要 order:view 权限):无权限时明确告知,
+  // 而不是让用户点开一个 403 的空弹窗。
+  if (!canViewOrders) {
+    void MessagePlugin.warning('暂无订单查看权限，无法查看明细');
+    return;
+  }
+  drillTitle.value = title;
+  drillHint.value = hint ? `${hint} · 不含已取消` : '不含已取消';
+  drillQuery.value = { hideCanceled: 1, ...query };
+  drillVisible.value = true;
+}
+
+function onTrendDrill(date?: string): void {
+  if (date) {
+    openOrderDrill(`${date} 营业日订单`, { start: date, end: date }, `营业日 ${date}`);
+    return;
+  }
+  const r = drillRange();
+  openOrderDrill('区间订单明细', { start: r.start, end: r.end }, `${r.start} ~ ${r.end}`);
+}
+
+function onHourDrill(hour: string): void {
+  const r = drillRange();
+  const h = String(Number(hour)).padStart(2, '0');
+  openOrderDrill(
+    `${h}:00 时段订单`,
+    { start: r.start, end: r.end, hour: Number(hour) },
+    `${r.start} ~ ${r.end} 的 ${h}:00 - ${h}:59`
+  );
+}
+
+function onMixDrill(settleType: string, label: string): void {
+  const r = drillRange();
+  openOrderDrill(`${label}订单`, { start: r.start, end: r.end, settleType }, `${r.start} ~ ${r.end}`);
+}
+
+function onMonthDrill(month: string): void {
+  const end = monthEnd(month);
+  openOrderDrill(`${month} 订单明细`, { start: `${month}-01`, end }, `${month}-01 ~ ${end}`);
+}
+
+function onTodayDrill(kind: 'orders' | 'guests'): void {
+  const d = fmtDay(new Date());
+  openOrderDrill(kind === 'guests' ? '今日到店订单' : '今日订单', { start: d, end: d }, `营业日 ${d}`);
+}
+
+// ---------- 菜品完整榜单 ----------
+const rankMoreVisible = ref(false);
+const rankMoreLoading = ref(false);
+const rankMoreRows = ref<DishRankRow[]>([]);
+// t-table 的 columns 放 computed 外即可:列固定,不随数据变
+const rankMoreCols = [
+  { colKey: 'rank', title: '名次', width: 70 },
+  { colKey: 'dishName', title: '菜品' },
+  { colKey: 'quantity', title: '销量', width: 90 },
+  { colKey: 'amount', title: '销售额', width: 110 }
+] as const;
+
+async function onRankMore(): Promise<void> {
+  rankMoreVisible.value = true;
+  rankMoreLoading.value = true;
+  try {
+    // 与图表同 sort 维度;图上只有 TOP 10,榜单展开到 TOP 100
+    rankMoreRows.value = (await getDishRank({ limit: 100, sort: rankSort.value })) || [];
+  } catch {
+    /* 错误提示由请求层统一弹出 */
+  } finally {
+    rankMoreLoading.value = false;
+  }
+}
+
+// ---------- 访问明细下钻 ----------
+// 访问统计各图表(趋势/渠道/入口/终端)点击后共用一份明细弹窗,只差筛选参数。
+// 权限与所在页面同源(report:view),无需像订单下钻那样单独 gate。
+const visitDrillVisible = ref(false);
+const visitDrillTitle = ref('');
+const visitDrillHint = ref('');
+const visitDrillQuery = ref<PageQuery>({});
+
+function onVisitDrill(payload: VisitDrill): void {
+  visitDrillTitle.value = payload.title;
+  visitDrillHint.value = payload.hint || '';
+  visitDrillQuery.value = payload.query;
+  visitDrillVisible.value = true;
+}
+
 // ---------- 导出 ----------
 /** 导出当前区间的逐日明细(带 BOM，Excel 打开中文不乱码)。 */
 /** 导出 CSV 的 object URL 与其延迟回收定时器(卸载时清理,见 onBeforeUnmount) */
@@ -393,6 +556,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.rank-no {
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
 .hint {
   font-size: 12px;
   color: var(--ink-3);

@@ -3,7 +3,7 @@
     <div class="chart-head">
       <div>
         <div class="chart-title">近 12 个月营业额</div>
-        <div class="chart-sub">悬停可看当月订单数与客流</div>
+        <div class="chart-sub">悬停可看当月订单数与客流 · 点击柱条看当月订单</div>
       </div>
     </div>
     <div
@@ -21,6 +21,11 @@ import { AXIS_COLOR, AXIS_LINE, SPLIT_LINE, BRAND, BRAND_DEEP, axisYuan, yuan, p
 
 const props = defineProps<{
   rows: MonthlyTrendRow[];
+}>();
+
+// 下钻:点击月份柱条 → 该月的订单明细
+const emit = defineEmits<{
+  drill: [month: string];
 }>();
 
 const el = ref<HTMLElement | null>(null);
@@ -83,6 +88,16 @@ function render(): void {
     ]
   };
   c.setOption(option);
+  // 点击柱条下钻当月订单。off+on 重绑:实例按 key 复用,每次 render 的闭包
+  // 各自捕获当次 rows,只绑一次会拿到上一轮数据。测试 mock 无 on/off,探测跳过。
+  if (typeof c.on === 'function' && typeof c.off === 'function') {
+    c.off('click');
+    c.on('click', (p: { componentType?: string; dataIndex?: number }) => {
+      if (p?.componentType !== 'series') return;
+      const row: MonthlyTrendRow | undefined = list[p.dataIndex ?? -1];
+      if (row?.month) emit('drill', row.month);
+    });
+  }
 }
 
 onMounted(render);

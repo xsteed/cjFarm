@@ -1,5 +1,5 @@
 import { http } from './http';
-import type { PageQuery, VisitStats, VisitTrackPayload } from '@dining/types';
+import type { PageQuery, VisitLogPage, VisitStats, VisitTrackPayload } from '@dining/types';
 
 // 站点访问统计(见 docs/design-docs/visit-analytics/spec.md)。
 //
@@ -16,3 +16,8 @@ export const reportVisit = (payload: VisitTrackPayload): Promise<unknown> =>
 // 管理端报表(需 report:view):入参与既有报表一致(days=N 或 start&end)。
 export const getVisitStats = (params?: PageQuery): Promise<VisitStats> =>
   http.get<unknown, VisitStats>('/admin/report/visits', { params });
+
+// 访问明细下钻(报表页访问统计弹窗):区间 + 渠道/入口/终端筛选,device/os/browser
+// 传「未知」即筛空值行(与分布图的归一口径一致)。
+export const getVisitLogs = (params?: PageQuery): Promise<VisitLogPage> =>
+  http.get<unknown, VisitLogPage>('/admin/report/visitLogs', { params });

@@ -1,6 +1,10 @@
 import { mount } from '@vue/test-utils';
 import { defineComponent, h } from 'vue';
 import Report from '../../Report.vue';
+import OrderDrillDialog from '../OrderDrillDialog.vue';
+import VisitLogDrillDialog from '../VisitLogDrillDialog.vue';
+import KpiCards from '../KpiCards.vue';
+import { setAuth } from '@dining/auth';
 import {
   getDailyTrend,
   getDiningDuration,
@@ -9,8 +13,11 @@ import {
   getMonthlyTrend,
   getReportSummary,
   getSettleMix,
-  getVisitStats
+  getVisitStats,
+  getVisitLogs,
+  listOrders
 } from '@dining/api';
+import { MessagePlugin } from 'tdesign-vue-next';
 import type {
   DailyTrendRow,
   DiningDurationStats,
@@ -89,7 +96,31 @@ vi.mock('@dining/api', () => ({
   getSettleMix: vi.fn(),
   getDiningDuration: vi.fn(),
   // 访问统计(站点 PV/UV):报表页新增的第三组图表
-  getVisitStats: vi.fn()
+  getVisitStats: vi.fn(),
+  // 访问明细下钻
+  getVisitLogs: vi.fn(),
+  // 图表下钻弹窗
+  listOrders: vi.fn(),
+  ORDER_STATUS: {
+    1: { label: '已下单', theme: 'primary' },
+    2: { label: '制作中', theme: 'warning' },
+    3: { label: '已上齐', theme: 'success' },
+    4: { label: '已完成', theme: 'success' },
+    5: { label: '已取消', theme: 'danger' }
+  }
+}));
+
+// 下钻弹窗内嵌的订单详情弹窗会级联引入收款/退款/改单等一整条组件链,
+// 逐一 mock 其 api 导出得不偿失:测试只关心「下钻列表」本身,整只 stub 掉。
+vi.mock('../../../components/OrderDetailDialog.vue', () => ({
+  default: defineComponent({
+    name: 'OrderDetailDialog',
+    props: { visible: { type: Boolean, default: false }, orderId: { type: Number, default: 0 } },
+    emits: ['update:visible', 'changed'],
+    setup() {
+      return () => null;
+    }
+  })
 }));
 
 vi.mock('vue-router', () => ({
@@ -119,6 +150,7 @@ vi.mock('tdesign-icons-vue-next', () => ({
 }));
 
 vi.mock('tdesign-vue-next', () => ({
+  MessagePlugin: { warning: vi.fn(), success: vi.fn() },
   Button: defineComponent({
     name: 'TButton',
     props: {
@@ -185,6 +217,39 @@ const getHourlyReportMock = vi.mocked(getHourlyReport);
 const getSettleMixMock = vi.mocked(getSettleMix);
 const getDiningDurationMock = vi.mocked(getDiningDuration);
 const getVisitStatsMock = vi.mocked(getVisitStats);
+const listOrdersMock = vi.mocked(listOrders);
+const getVisitLogsMock = vi.mocked(getVisitLogs);
+const messageWarningMock = vi.mocked(MessagePlugin.warning);
+
+const ordersFixture = {
+  total: 2,
+  items: [
+    {
+      orderId: 1,
+      orderNo: 'ORD20250101001',
+      shortNo: 'A1001',
+      tableName: '大厅01桌',
+      orderStatus: 4,
+      personCount: 3,
+      totalAmount: 12800,
+      payStatus: 1,
+      settleType: 'normal',
+      createTime: '2025-01-01 12:30:00'
+    },
+    {
+      orderId: 2,
+      orderNo: 'ORD20250101002',
+      shortNo: 'A1002',
+      tableName: '大厅02桌',
+      orderStatus: 1,
+      personCount: 2,
+      totalAmount: 6600,
+      payStatus: 0,
+      settleType: 'normal',
+      createTime: '2025-01-01 18:40:00'
+    }
+  ]
+};
 
 const summaryFixture: ReportSummary = {
   todayAmount: 12888.5,
@@ -325,6 +390,10 @@ beforeEach(() => {
   restoreResizeObserver = stubResizeObserver();
   disposeAll();
 
+  // 下钻入口依赖 order:view 权限(hasPerm 读 permSet,由 setAuth 灌入);
+  // 个别用例会改权限,故每个用例前重置。
+  setAuth({ perms: ['order:view'] } as never);
+
   getReportSummaryMock.mockResolvedValue(summaryFixture);
   getDailyTrendMock.mockResolvedValue(dailyTrendFixture);
   getMonthlyTrendMock.mockResolvedValue(monthlyFixture);
@@ -333,6 +402,13 @@ beforeEach(() => {
   getSettleMixMock.mockResolvedValue(mixFixture);
   getDiningDurationMock.mockResolvedValue(durationFixture);
   getVisitStatsMock.mockResolvedValue(visitFixture);
+  listOrdersMock.mockResolvedValue(ordersFixture);
+  getVisitLogsMock.mockResolvedValue({
+    range: { start: '2025-01-01', end: '2025-01-03' },
+    total: 2,
+    visitors: 1,
+    items: [{ time: '2025-01-01 10:00:00', channel: 'h5', channelLabel: '扫码点餐', isNew: true }]
+  });
 });
 
 afterEach(() => {
@@ -473,5 +549,90 @@ describe('Report', () => {
       URL.revokeObjectURL = prevRevoke;
       clickSpy.mockRestore();
     }
+  });
+
+  it('点击「区间订单明细」打开下钻弹窗,参数带区间与同口径的 hideCanceled', async () => {
+    const wrapper = mountReport();
+    await flushPromises();
+
+    // 先经日期控件把区间切到固定日期,断言才不依赖「今天」
+    await wrapper.find('.date-range-picker').trigger('click');
+    await flushPromises();
+
+    const btn = wrapper.findAll('button').find(b => b.text().includes('区间订单明细'));
+    if (!btn) throw new Error('未找到区间订单明细按钮');
+    await btn.trigger('click');
+
+    const dlg = wrapper.findComponent(OrderDrillDialog);
+    expect(dlg.props('visible')).toBe(true);
+    expect(dlg.props('title')).toBe('区间订单明细');
+    expect(dlg.props('query')).toEqual({ hideCanceled: 1, start: '2025-01-01', end: '2025-01-10' });
+    expect(dlg.props('hint')).toContain('不含已取消');
+
+    wrapper.unmount();
+  });
+
+  it('无 order:view 权限时下钻入口只提示、不打开弹窗', async () => {
+    setAuth({ perms: [] } as never);
+
+    const wrapper = mountReport();
+    await flushPromises();
+
+    const btn = wrapper.findAll('button').find(b => b.text().includes('区间订单明细'));
+    if (!btn) throw new Error('未找到区间订单明细按钮');
+    await btn.trigger('click');
+
+    expect(messageWarningMock).toHaveBeenCalled();
+    expect(wrapper.findComponent(OrderDrillDialog).props('visible')).toBe(false);
+
+    wrapper.unmount();
+  });
+
+  it('KPI「今日订单」下钻打开当日订单弹窗', async () => {
+    const wrapper = mountReport();
+    await flushPromises();
+
+    wrapper.findComponent(KpiCards).vm.$emit('drill-today', 'orders');
+    await flushPromises();
+
+    const dlg = wrapper.findComponent(OrderDrillDialog);
+    const d = new Date();
+    const p = (n: number): string => String(n).padStart(2, '0');
+    const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    expect(dlg.props('visible')).toBe(true);
+    expect(dlg.props('title')).toBe('今日订单');
+    expect(dlg.props('query')).toEqual({ hideCanceled: 1, start: today, end: today });
+
+    wrapper.unmount();
+  });
+
+  it('菜品「完整榜单」按当前排序维度拉取 TOP 100', async () => {
+    const wrapper = mountReport();
+    await flushPromises();
+
+    const btn = wrapper.findAll('button').find(b => b.text().includes('完整榜单'));
+    if (!btn) throw new Error('未找到完整榜单按钮');
+    await btn.trigger('click');
+    await flushPromises();
+
+    expect(getDishRankMock).toHaveBeenCalledWith({ limit: 100, sort: 'qty' });
+
+    wrapper.unmount();
+  });
+
+  it('访问统计「访问明细」按钮打开明细弹窗,区间取自逐日数据首尾', async () => {
+    const wrapper = mountReport();
+    await flushPromises();
+
+    const btn = wrapper.findAll('button').find(b => b.text().includes('访问明细'));
+    if (!btn) throw new Error('未找到访问明细按钮');
+    await btn.trigger('click');
+
+    const dlg = wrapper.findComponent(VisitLogDrillDialog);
+    expect(dlg.props('visible')).toBe(true);
+    expect(dlg.props('title')).toBe('访问明细');
+    expect(dlg.props('query')).toEqual({ start: '2025-01-01', end: '2025-01-03' });
+
+    wrapper.unmount();
   });
 });
