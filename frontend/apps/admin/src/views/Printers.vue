@@ -22,14 +22,23 @@
           </li>
         </ul>
       </div>
-      <t-space v-if="canEdit && !isMobile">
+      <!-- 视图切换与操作按钮同行靠右;窄屏恒卡片流(见 showCard),切换器在这里没意义。 -->
+      <t-space v-if="!isMobile">
+        <div class="view-mode-switch">
+          <t-radio-group v-model="viewMode">
+            <t-radio-button value="table"> 列表 </t-radio-button>
+            <t-radio-button value="card"> 卡片 </t-radio-button>
+          </t-radio-group>
+        </div>
         <t-button
+          v-if="canEdit"
           variant="outline"
           @click="openBind"
         >
           绑定飞鹅打印机
         </t-button>
         <t-button
+          v-if="canEdit"
           theme="primary"
           @click="openAdd"
         >
@@ -211,10 +220,12 @@
       </div>
     </div>
 
-    <!-- 窄屏:7 列 + 200px 操作列只能横向拖;改为卡片流 -->
+    <!-- 卡片视图:窄屏恒卡片流(7 列 + 200px 操作列只能横向拖);桌面端由工具栏的
+         「列表 / 卡片」决定,选择按「用户名 + 页面」记在本地(见 useViewMode)。 -->
     <div
-      v-if="isMobile"
+      v-if="showCard"
       class="m-list"
+      :class="{ 'pcard-grid': !isMobile }"
     >
       <div
         v-if="!list.length"
@@ -225,41 +236,58 @@
       <div
         v-for="row in list"
         :key="row.printerId"
-        class="mcard"
+        class="mcard pcard"
+        :class="{ 'is-off': row.status !== 1 }"
       >
-        <div class="mcard-hd">
+        <!-- 头部:图标按机型着色,名称下挂「类型 + 通道」,右侧是启用状态 -->
+        <div class="pcard-hd">
           <span
-            class="mcard-no"
-            style="min-width: 0"
-            >{{ row.printerName }}</span
+            class="pcard-ico"
+            :class="row.printerType === 1 ? 'kitchen' : 'guest'"
           >
+            <print-icon />
+          </span>
+          <div class="pcard-title">
+            <div class="pcard-name">{{ row.printerName }}</div>
+            <div class="pcard-tags">
+              <t-tag
+                size="small"
+                :theme="row.printerType === 1 ? 'danger' : 'primary'"
+                variant="light"
+              >
+                {{ row.printerType === 1 ? '厨房单' : '顾客小票' }}
+              </t-tag>
+              <t-tag
+                size="small"
+                :theme="PRINTER_PROVIDER[row.provider]?.theme || 'default'"
+                variant="light"
+              >
+                {{ providerLabel(row.provider) }}
+              </t-tag>
+            </div>
+          </div>
           <t-tag
-            :theme="row.printerType === 1 ? 'danger' : 'primary'"
+            :theme="row.status === 1 ? 'success' : 'default'"
             variant="light"
           >
-            {{ row.printerType === 1 ? '厨房单' : '顾客小票' }}
+            <span class="pcard-dot" />{{ row.status === 1 ? '启用' : '停用' }}
           </t-tag>
+        </div>
+
+        <!-- 地址单独成行:出纸目标是最常核对的一项,埋在两列网格里要找半天 -->
+        <div class="pcard-addr">
+          <span class="pcard-addr-k">{{ row.provider === 'feie' ? '打印机编号' : 'IP 地址' }}</span>
+          <span class="pcard-addr-v mono">{{
+            row.provider === 'feie' ? row.feieSn || '未填写' : `${row.ip}:${row.port || DEFAULT_PRINTER_PORT}`
+          }}</span>
         </div>
 
         <div class="mcard-grid">
           <div class="mcard-cell">
-            <div class="k">通道</div>
-            <div class="v">
-              {{ providerLabel(row.provider) }}
-            </div>
-          </div>
-          <div class="mcard-cell">
-            <div class="k">
-              {{ row.provider === 'feie' ? '打印机编号' : 'IP 地址' }}
-            </div>
-            <div class="v">
-              {{ row.provider === 'feie' ? row.feieSn || '未填写' : `${row.ip}:${row.port || DEFAULT_PRINTER_PORT}` }}
-            </div>
-          </div>
-          <div class="mcard-cell">
             <div class="k">纸宽 / 份数</div>
             <div class="v">{{ row.paperWidth === 32 ? '58mm' : '80mm' }} · {{ row.copies || 1 }} 份</div>
           </div>
+          <!-- 顾客小票机打全部菜品,给它一行「负责分类」只会误导 -->
           <div
             v-if="row.printerType === 1"
             class="mcard-cell"
@@ -267,17 +295,6 @@
             <div class="k">负责分类</div>
             <div class="v">
               {{ row.categoryNames || '全部菜品' }}
-            </div>
-          </div>
-          <div class="mcard-cell">
-            <div class="k">状态</div>
-            <div class="v">
-              <t-tag
-                :theme="row.status === 1 ? 'success' : 'default'"
-                variant="light"
-              >
-                {{ row.status === 1 ? '启用' : '停用' }}
-              </t-tag>
             </div>
           </div>
         </div>
@@ -304,36 +321,26 @@
               theme="primary"
               variant="text"
               size="small"
-              :disabled="testingIds.has(Number(row.printerId))"
-              @click="onTest(row)"
-            >
-              测试打印
-            </t-button>
-            <t-button
-              theme="primary"
-              variant="text"
-              size="small"
               @click="openEdit(row)"
             >
               编辑
             </t-button>
-            <t-button
-              v-if="canClearQueue(row)"
-              theme="warning"
-              variant="text"
-              size="small"
-              @click="onClear(row)"
+            <!-- 低频与危险操作收进「更多」:常驻只留「状态 / 票据预览 / 编辑 / 更多」
+                 四项,300px 的卡片里不会再因为多出一个「清空队列」而折成两行。 -->
+            <t-dropdown
+              trigger="click"
+              placement="bottom-right"
+              :options="moreOptions(row)"
+              @click="onMoreClick($event, row)"
             >
-              清空队列
-            </t-button>
-            <t-button
-              theme="danger"
-              variant="text"
-              size="small"
-              @click="onDelete(row)"
-            >
-              删除
-            </t-button>
+              <t-button
+                theme="default"
+                variant="text"
+                size="small"
+              >
+                更多
+              </t-button>
+            </t-dropdown>
           </template>
         </div>
       </div>
@@ -671,6 +678,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
+import type { DropdownOption } from 'tdesign-vue-next';
 import {
   listPrinters,
   savePrinter,
@@ -687,6 +695,7 @@ import {
   PRINTER_PROVIDER
 } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { useViewMode } from '../composables/useViewMode';
 import { usePullRefresh } from '../composables/usePullRefresh';
 import { hasPerm } from '@dining/auth';
 import PullRefresh from '../components/PullRefresh.vue';
@@ -786,6 +795,12 @@ const form = reactive<PrinterForm>({
 });
 const bindForm = reactive({ sn: '', key: '', name: '', phone: '' });
 const { isMobile } = useIsMobile();
+// 展示模式:列表(t-table)/ 卡片(响应式网格)。与菜品、桌台两页同一套偏好:
+// 默认卡片(一台机一张卡,状态与地址比表格里更好扫),选择按「用户名 + 页面」缓存本地。
+// 窄屏仍强制卡片 —— 表格在 1024px 以下只能横向拖(见 useIsMobile 断点)。
+// 'card' 显式写出:首次进入(本机无缓存)直接是卡片视图,不依赖 useViewMode 的默认参数。
+const viewMode = useViewMode('printers', 'card');
+const showCard = computed(() => (isMobile.value ? true : viewMode.value === 'card'));
 // 移动端下拉刷新打印机列表
 const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
 
@@ -805,6 +820,9 @@ const providerHint = computed((): string => {
       return '要求后端与打印机在同一局域网，下单/结账时后端直发指令到 IP:9100，收银电脑无需开机。';
   }
 });
+
+// 列表顺序由后端决定(启用在前、停用沉底,见 dao.ListPrinters 的 ORDER BY),
+// 前端不再自己排一遍:卡片与表格都直接渲染接口返回的顺序。
 
 // 有没有用到某条通道的打印机 —— 决定要不要显示对应的「未配置/离线」告警。
 // 只在真正用得上时提示,否则没用飞鹅的门店会一直看到一条无关的黄色告警。
@@ -1238,6 +1256,29 @@ function onDelete(row: PrinterRow): void {
   });
 }
 
+// ---- 卡片操作栏的「更多」下拉 ----
+// 一台打印机最多 6 个操作(状态/票据预览/测试打印/编辑/清空队列/删除),
+// 全平铺时 300px 的卡片必然折行,而「清空队列」只出现在飞鹅云与本地代理上,
+// 于是同样是卡片、有的两行有的一行,视觉不齐。把低频与危险的三项收进下拉,
+// 常驻固定 4 项 —— 与桌台卡片的做法一致。
+function moreOptions(row: PrinterRow): DropdownOption[] {
+  const opts: DropdownOption[] = [
+    // 测试打印会真的出纸:在途时置灰,与原先按钮的 :disabled 同一语义(防连点连出多张)
+    { content: '测试打印', value: 'test', disabled: testingIds.value.has(Number(row.printerId)) }
+  ];
+  // 只有飞鹅云与本地代理有队列可清(直连即发即走),没队列的机器不给这一项
+  if (canClearQueue(row)) opts.push({ content: '清空队列', value: 'clear', theme: 'warning' });
+  opts.push({ content: '删除', value: 'delete', theme: 'error' });
+  return opts;
+}
+
+function onMoreClick(opt: unknown, row: PrinterRow): void {
+  const value = String((opt as { value?: unknown } | null)?.value ?? '');
+  if (value === 'test') void onTest(row);
+  else if (value === 'clear') onClear(row);
+  else if (value === 'delete') onDelete(row);
+}
+
 // 代理状态常驻展示,30s 刷新一次保持「在线/离线」不过时;
 // 页面切后台/锁屏时暂停轮询(省流量与后端 QPS),回到可见立即补一轮并恢复节奏。
 const AGENT_POLL_MS = 30_000;
@@ -1413,6 +1454,168 @@ onUnmounted(() => {
 
 .agent-cell .v {
   color: #555;
+}
+
+/* ===== 打印机卡片视图 =====
+   卡片在窄屏与桌面共用同一套结构(见模板 .pcard),仅外层容器不同:
+   移动端沿用全局 .m-list 单列流,桌面端换成自适应网格。 */
+
+/* 桌面网格:卡片最小 300px,余量不够就自动少一列,不用为每个断点写死列数。
+   align-items:start —— 各卡内容行数不同(顾客小票机少一行分类),不拉伸成等高。 */
+.pcard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-items: start;
+  gap: 14px;
+}
+
+/* 空态是网格子项,不占位会被压成一列宽的窄条 */
+.pcard-grid > .m-empty {
+  grid-column: 1 / -1;
+}
+
+.pcard {
+  padding: 14px 16px;
+  transition:
+    border-color 0.18s,
+    box-shadow 0.18s,
+    transform 0.18s;
+}
+
+.pcard-grid .pcard:hover {
+  border-color: #dcdcdc;
+  box-shadow: var(--shadow-1);
+  transform: translateY(-2px);
+}
+
+.pcard-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* 机型图标:厨房单红、顾客小票品牌橙,与表格里的 t-tag 同色系 */
+.pcard-ico {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  font-size: 20px;
+}
+
+.pcard-ico.kitchen {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.pcard-ico.guest {
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+/* 状态标签不参与收缩:长打印机名挤占空间时它不能被压成两行 */
+.pcard-hd > .t-tag {
+  flex: 0 0 auto;
+}
+
+.pcard-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pcard-name {
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+
+  /* 打印机名可能是一长串不带空格的字符,不给断行会撑破卡片 */
+  overflow-wrap: break-word;
+}
+
+.pcard-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+/* 状态圆点吃 t-tag 的文字色:启用绿 / 停用灰,不必再维护一套颜色 */
+.pcard-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+  vertical-align: 1px;
+}
+
+/* 地址行:浅底块 + 等宽字体,IP/SN 一眼可核对 */
+.pcard-addr {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  background: var(--bg);
+}
+
+.pcard-addr-k {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.pcard-addr-v {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+
+/* 卡片内信息行:用 flex 而不是全局的定宽两列网格 —— 顾客小票机没有「负责分类」,
+   只剩一项时能自然占满整行,不会在右侧留半格空白。 */
+.pcard .mcard-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.pcard .mcard-grid .mcard-cell {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+/* 操作栏:常驻「状态 / 票据预览 / 编辑 / 更多」四项。「更多」被 t-dropdown 多包了一层,
+   这一层作为 flex 子项默认可收缩,卡片一窄就会把里面的按钮压成两行。 */
+.pcard .mcard-ft {
+  align-items: center;
+}
+
+.pcard .mcard-ft :deep(.t-dropdown) {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* 停用:整卡退到灰调,与「启用」卡片一眼分得开 */
+.pcard.is-off {
+  background: #fcfcfc;
+}
+
+.pcard.is-off .pcard-name {
+  color: var(--ink-2);
+}
+
+.pcard.is-off .pcard-ico.kitchen,
+.pcard.is-off .pcard-ico.guest {
+  background: #f2f2f2;
+  color: var(--ink-4);
 }
 
 /* ===== 新增/编辑打印机弹窗排版 ===== */

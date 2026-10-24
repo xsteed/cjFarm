@@ -32,9 +32,15 @@ func ScanPrinter(rows interface{ Scan(...interface{}) error }) (po.Printer, erro
 }
 
 // ListPrinters 查询未删除的打印机列表。
+//
+// 排序:启用(status=1)在前、停用沉底,同状态内按 printer_id 升序。
+// 管理页要盯的是正在出单的机器,停用机(换下来的、换季收起来的)压在末尾;
+// 放在 SQL 里而不是前端排 —— 这条接口只给管理页用(打印派单走 ListEnabledPrinters),
+// 顺序由数据源定死,任何调用方拿到都是同一份顺序。
+// status 为 NULL 时按 SQLite/MySQL 的规则在 DESC 下排最后,等同于「未启用」,不会插到前面。
 func ListPrinters() ([]po.Printer, error) {
 	list := []po.Printer{}
-	rows, err := store.DB.Query(`SELECT ` + PrinterCols + ` FROM tb_printer WHERE del_flag='0' ORDER BY printer_id`)
+	rows, err := store.DB.Query(`SELECT ` + PrinterCols + ` FROM tb_printer WHERE del_flag='0' ORDER BY status DESC, printer_id`)
 	if err != nil {
 		return list, err
 	}
