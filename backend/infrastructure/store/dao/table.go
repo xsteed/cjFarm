@@ -129,8 +129,8 @@ func ListTables(q TableQuery, pageNum, pageSize int) (total int, list []po.Table
 	where := []string{"del_flag='0'"}
 	args := []interface{}{}
 	if q.Keyword != "" {
-		where = append(where, "table_name LIKE ?")
-		args = append(args, "%"+q.Keyword+"%")
+		where = append(where, "table_name LIKE ? ESCAPE '\\'")
+		args = append(args, store.LikeContains(q.Keyword))
 	}
 	cond := " WHERE " + strings.Join(where, " AND ")
 

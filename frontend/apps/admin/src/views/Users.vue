@@ -563,28 +563,30 @@ const pagination = computed(() => ({
   pageSizeOptions: [10, 20, 50]
 }));
 
-const columns = [
-  { colKey: 'username', title: '用户名', width: 150 },
-  { colKey: 'realName', title: '姓名', width: 120 },
-  { colKey: 'role', title: '角色', width: 130 },
-  { colKey: 'phone', title: '手机号', width: 140 },
-  { colKey: 'status', title: '状态', width: 90 },
-  { colKey: 'lastLoginTime', title: '最后登录', width: 180 },
-  { colKey: 'op', title: '操作', width: 260 }
-];
+const columns = computed(() => {
+  const cols = [
+    { colKey: 'username', title: '用户名', width: 150 },
+    { colKey: 'realName', title: '姓名', width: 120 },
+    { colKey: 'role', title: '角色', width: 130 },
+    { colKey: 'phone', title: '手机号', width: 140 },
+    { colKey: 'status', title: '状态', width: 90 },
+    { colKey: 'lastLoginTime', title: '最后登录', width: 180 }
+  ];
+  // 只读账号不渲染操作列:否则会多出一整列空白按钮区(与 Dishes.vue 的条件追加同口径)。
+  if (canEdit.value) cols.push({ colKey: 'op', title: '操作', width: 260 });
+  return cols;
+});
 
 function isSelf(row: UserRow): boolean {
   return row.username === getUsername();
 }
-// 当前登录者的 userId:首次在列表里按用户名匹配到后缓存。
+// 当前登录者的 userId:在 load() 成功后按用户名匹配一次并缓存。
 // 直接每次在 list 里查找的话,翻页/刷新后当前页不含自己时会把「本人」误判为 false,
 // 于是「不能修改自己的角色」的禁用失效(提交后仍会被后端拒绝)。
+// 也不能放在 isSelfId 里惰性查 —— 它会在模板渲染期写 ref(渲染副作用),
+// 且未命中时每次渲染都要全表 find。
 const selfUserId = ref<number | null>(null);
 function isSelfId(id: number): boolean {
-  if (selfUserId.value === null) {
-    const me = list.value.find(u => u.username === getUsername());
-    if (me && me.userId != null) selfUserId.value = me.userId;
-  }
   return selfUserId.value !== null && selfUserId.value === id;
 }
 
@@ -601,6 +603,11 @@ async function load(): Promise<void> {
     });
     list.value = (res.items || []) as UserRow[];
     total.value = res.total || 0;
+    // 列表里出现自己时缓存 userId(只缓存一次:翻页后当前页不含自己也不影响判定)
+    if (selfUserId.value === null) {
+      const me = list.value.find(u => u.username === getUsername());
+      if (me && me.userId != null) selfUserId.value = me.userId;
+    }
   } catch {
     /* 失败已由拦截器统一 toast;这里必须 catch,否则 onMounted(load) 会抛未处理的 Promise 拒绝 */
   } finally {

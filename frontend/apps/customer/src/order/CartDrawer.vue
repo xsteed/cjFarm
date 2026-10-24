@@ -172,7 +172,8 @@
                 class="qty-num big"
                 title="点击输入人数"
                 @click="startEditCount"
-              >{{ personCount }}</span>
+                >{{ personCount }}</span
+              >
               <button
                 class="qty-btn plus"
                 @click="personCount < PERSON_MAX && emit('update:personCount', personCount + 1)"
@@ -265,7 +266,8 @@
             class="qty-num big"
             title="点击输入人数"
             @click="startEditCount"
-          >{{ personCount }}</span>
+            >{{ personCount }}</span
+          >
           <button
             class="qty-btn plus"
             @click="personCount < PERSON_MAX && emit('update:personCount', personCount + 1)"
@@ -344,8 +346,10 @@ function startEditCount(): void {
 function commitCount(): void {
   if (!editingCount.value) return;
   editingCount.value = false;
-  // 非法输入(空/非数字)保持原值;范围收敛与小程序 setPersonCount 同规则
-  const n = Math.floor(Number(countInput.value));
+  // 空串/非数字保持原值(注意 Number('')===0 且 isFinite(0)===true,不显式判空会把
+  // 清空输入框当成 0、人数被打回 1,茶位费跟着算错);范围收敛与小程序 setPersonCount 同规则
+  const raw = countInput.value.trim();
+  const n = raw === '' ? NaN : Math.floor(Number(raw));
   const next = Number.isFinite(n) ? Math.max(PERSON_MIN, Math.min(PERSON_MAX, n)) : props.personCount;
   if (next !== props.personCount) emit('update:personCount', next);
 }
@@ -391,6 +395,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
 
 <style scoped>
 /* ---------- 购物车抽屉 ---------- */
+
 /* TDesign 抽屉 Teleport 到 body 外,scoped 的 :deep 选择器匹配不到其内部结构;
    改用文件末尾的全局样式块覆盖 */
 
@@ -410,6 +415,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   display: flex;
   justify-content: space-between;
   align-items: center;
+
   /* 右侧预留关闭按钮的位置，避免清空按钮与其重叠 */
   padding-right: 34px;
 }
@@ -621,7 +627,7 @@ const payHint = '本店为先付模式：下单后先完成支付，后厨即刻
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 8px 0 8px;
+  margin: 8px 0;
   color: var(--ink-3);
   font-size: 12px;
   white-space: nowrap;

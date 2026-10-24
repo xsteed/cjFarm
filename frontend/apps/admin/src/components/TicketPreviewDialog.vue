@@ -249,13 +249,17 @@ async function ensureQR(content: string): Promise<void> {
 }
 
 watch(
-  () => props.chunks,
-  chunks => {
-    if (!chunks) return;
+  // 必须监听渲染用的 blocks(它汇总了 sections 与 chunks 两种入参):只监听 props.chunks
+  // 会让 sections 模式(Printers.vue 的票据预览正用这种方式传参)永远拿不到二维码 ——
+  // 那种模式下 props.chunks 恒为 null,watcher 一次都不会触发,占位文案顶掉二维码。
+  () => blocks.value,
+  sections => {
     const todo = new Set<string>();
-    for (const ck of chunks) {
-      for (const line of ck) {
-        if (line.qr) todo.add(line.qr);
+    for (const sec of sections) {
+      for (const ck of sec.chunks ?? []) {
+        for (const line of ck) {
+          if (line.qr) todo.add(line.qr);
+        }
       }
     }
     for (const c of todo) void ensureQR(c);
@@ -318,8 +322,7 @@ watch(
 
 .preview-section .paper-scroll {
   max-height: none;
-  overflow-x: auto;
-  overflow-y: visible;
+  overflow: visible auto;
 }
 
 .preview-loading {
@@ -410,6 +413,7 @@ watch(
   font-weight: 700;
   font-size: 2em;
   line-height: 1.25;
+
   /* 高度沿用 .ticket-line 的 1.5em(相对 2em 字号 = 两倍行高):
      空行也占位,和出纸时空行仍走一行纸的动作一致。 */
   padding: 2px 0;
@@ -468,6 +472,7 @@ watch(
 
 .paper-meta {
   margin: 10px auto 0;
+
   /* 弹窗是 width:fit-content,meta 不限宽的话一行长文案会把整个弹窗撑到超出屏幕;
      限宽后长说明在此折行,弹窗宽度始终由纸面决定。 */
   max-width: min(560px, 86vw);

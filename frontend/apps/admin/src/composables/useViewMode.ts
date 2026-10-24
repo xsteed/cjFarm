@@ -21,17 +21,27 @@ function storeKey(page: string): string {
   return `${PREFIX}:${getUsername() || 'anon'}:${page}`;
 }
 
+/** 默认合法视图:仅「列表 / 卡片」两种。 */
+const DEFAULT_VIEWS: readonly RadioValue[] = ['table', 'card'];
+
 /**
  * 记住某个页面的视图模式,返回值直接给 t-radio-group 的 v-model:
  * 初次进入读上次的选择(无缓存或值已失效则回落 fallback),切换时自动落盘。
  *
  * @param page 页面标识(如 dishes / tables),不同页面互不干扰
  * @param fallback 无缓存时的默认视图
+ * @param allowed 该页面支持的视图白名单;新增第三种视图时必须传,
+ *                否则新值写入后会因为校验不通过而永远回落 fallback
  */
-export function useViewMode(page: string, fallback: RadioValue = 'card') {
+export function useViewMode(
+  page: string,
+  fallback: RadioValue = 'card',
+  allowed: readonly RadioValue[] = DEFAULT_VIEWS
+) {
   const cached = safeStorage.get(storeKey(page));
-  // 只认仍在用的两个值:将来新增/删掉某个视图时,旧缓存不会把页面卡成空白
-  const initial: RadioValue = cached === 'table' || cached === 'card' ? cached : fallback;
+  // 按调用方声明的白名单校验(统一转字符串比较:RadioValue 允许 number/boolean)
+  const initial: RadioValue =
+    cached !== null && allowed.map(String).includes(cached) ? (cached as RadioValue) : fallback;
   const viewMode = ref<RadioValue>(initial);
 
   // watch 建在 setup 期间,随组件卸载自动停止

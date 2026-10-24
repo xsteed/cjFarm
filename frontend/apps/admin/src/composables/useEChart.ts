@@ -1,4 +1,4 @@
-import { onBeforeUnmount } from 'vue';
+import { onBeforeUnmount, onMounted } from 'vue';
 // 按需引入:只注册报表用到的 line/bar/pie 与基础组件,比 `import * from 'echarts'`
 // 全量引入(约 1MB)小一大截。类型仍从 'echarts' 导入 —— 纯类型导入编译后无运行时成本。
 import * as echarts from 'echarts/core';
@@ -35,7 +35,16 @@ const charts: Record<string, echarts.EChartsType> = {};
 
 export function chart(key: string, el: HTMLElement | null | undefined): echarts.EChartsType | null {
   if (!el) return null;
-  if (!charts[key]) charts[key] = echarts.init(el);
+  const existing = charts[key];
+  // 复用前必须确认实例还绑在这个 DOM 上:组件被 v-if 卸载后重新挂载时,旧实例绑的是
+  // 已分离的 canvas,直接复用会把 clear()+setOption() 画进游离 DOM(可见区域一片空白)。
+  // 此时 dispose 旧实例重新 init。
+  if (existing) {
+    if (existing.getDom() === el) return existing;
+    existing.dispose();
+    delete charts[key];
+  }
+  charts[key] = echarts.init(el);
   return charts[key];
 }
 
@@ -69,9 +78,15 @@ let refCount = 0;
  * 父壳调用 observeRoot 绑定 ResizeObserver + window.resize，卸载时自动清理。
  */
 export function useEChart() {
-  refCount++;
   // 每个消费者独立的 ResizeObserver:模块级单例会在多页面场景互相覆盖。
   let myRo: ResizeObserver | null = null;
+
+  // 引用计数必须与「实际挂载/卸载」配对。写在 composable 体里的话,keep-alive / HMR
+  // 会让计数漂移(挂载路径可能走多次而卸载只走一次),refCount 永远回不到 0,
+  // 实例字典也就永不释放。
+  onMounted(() => {
+    refCount++;
+  });
 
   function observeRoot(root: HTMLElement | null): void {
     if (!root) return;
@@ -88,12 +103,18 @@ export function useEChart() {
       myRo = null;
     }
     window.removeEventListener('resize', scheduledResize);
-    refCount--;
-    if (refCount <= 0) {
-      refCount = 0;
+    refCount = Math.max(0, refCount - 1);
+    if (refCount === 0) {
+      // 最后一个消费者卸载:取消挂起中的 resize 帧,避免卸载后仍回调到已销毁实例
+      if (resizeRafId !== null) {
+        cancelAnimationFrame(resizeRafId);
+        resizeRafId = null;
+      }
       disposeAll();
     }
   });
 
-  return { chart, resizeAll, disposeAll, observeRoot };
+  // 不把 disposeAll 交给消费者:任一组件误调会把别人还在用的图表全部销毁。
+  // (需要整体销毁时直接 import 模块级 disposeAll,测试即如此。)
+  return { chart, resizeAll, observeRoot };
 }

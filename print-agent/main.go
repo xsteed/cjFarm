@@ -332,16 +332,19 @@ func runCycle(client *http.Client, base string, cfg config, st *jobState) (int, 
 				logf("[提示] %s", hint)
 			}
 		} else {
+			// 状态异常提醒在常驻模式下同样要打:此前被 if cfg.once 包住,门店
+			// 正常运行(非常驻一次)时,缺纸/开盖导致「没出纸却回执成功」完全不
+			// 留痕,厨房单就这么静默丢了。仍按成功回执 —— 改成失败会让整张票
+			// 重打,缺纸场景下反而更容易重复出纸/糊纸。
+			if printerStatus != nil && (printerStatus.paperOut || printerStatus.coverOpen ||
+				printerStatus.paperNearEnd || printerStatus.paused || printerStatus.errFatal) {
+				logf("[提醒] %s 打印机状态异常: %s(若纸未出请人工补打)", jobBrief(j), printerStatus.raw)
+			}
 			if cfg.once {
 				if printerStatus != nil {
 					logf("[状态] %s DLE EOT raw=%s queried=%v", jobBrief(j), printerStatus.raw, printerStatus.queried)
 				} else {
 					logf("[状态] %s DLE EOT raw=<未查询>", jobBrief(j))
-				}
-				// 状态回读是附加观测:有异常(缺纸/盖板开)时单独提示,仍按成功回执。
-				if printerStatus != nil && (printerStatus.paperOut || printerStatus.coverOpen ||
-					printerStatus.paperNearEnd || printerStatus.paused || printerStatus.errFatal) {
-					logf("[提醒] %s 打印机状态异常: %s", jobBrief(j), printerStatus.raw)
 				}
 			}
 			// 先落盘再回执:把「重复打印」的窗口压到「打印成功 → 落盘」之间的毫秒级。

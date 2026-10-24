@@ -139,8 +139,36 @@ func placeholders(n int) string {
 
 // ---------------- 元数据查询(建表/升级时使用) ----------------
 
+// isIdentifier 报告 s 是否是合法的 SQL 标识符(字母/数字/下划线,非数字开头)。
+// 用于拼进 SQL 的标识符(表名/列名)白名单校验 —— 标识符不能用占位符绑定,
+// 只能靠这一层挡住注入。
+func isIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_':
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // columnExists 报告表中是否已存在指定列。
+//
+// SQLite 分支把表名直接拼进 PRAGMA(PRAGMA 不支持参数绑定)。当前调用方全是
+// 常量,暂无可利用路径;仍先做标识符白名单校验,避免将来传动态值即构成注入。
 func columnExists(table, column string) bool {
+	if !isIdentifier(table) || !isIdentifier(column) {
+		logger.Warnf("[db] columnExists 收到非法标识符 table=%q column=%q,已拒绝", table, column)
+		return false
+	}
 	if IsMySQL() {
 		var n int
 		err := DB.QueryRow(`SELECT COUNT(*) FROM information_schema.COLUMNS

@@ -423,6 +423,8 @@ func TestSaveSettingsSecret(t *testing.T) {
 
 // TestSaveSettingsPersistError 落库失败必须返回 error(而非静默 warning 后报「保存成功」):
 // DB 故障时管理员看到「保存成功」而配置实际没写入,是最难排查的一类假成功。
+// 保存已事务化:任一条写入失败整体回滚,错误信息带「保存配置失败」前缀
+// (具体失败键在日志里;关库场景下事务开启即失败,不会有键名)。
 func TestSaveSettingsPersistError(t *testing.T) {
 	settingInitDB(t)
 	// 关库制造写入故障:SetSetting 全部失败。
@@ -439,8 +441,8 @@ func TestSaveSettingsPersistError(t *testing.T) {
 	if detail != "" {
 		t.Fatalf("落库失败不应生成审计摘要, got %q", detail)
 	}
-	if !strings.Contains(err.Error(), "shop_name") {
-		t.Fatalf("错误应列出失败键, got %v", err)
+	if !strings.Contains(err.Error(), "保存配置失败") {
+		t.Fatalf("错误应标明保存配置失败, got %v", err)
 	}
 }
 

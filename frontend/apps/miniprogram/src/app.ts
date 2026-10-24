@@ -6,6 +6,7 @@
 import './api/client';
 import { installMemberUnauthorizedHandler, restoreMember } from './store/member';
 import { reportVisit } from './api/client';
+import { mpDeviceInfo } from './utils/device';
 import { mpVisitorId } from './utils/visitor';
 import { resolveLaunchTableCode } from './utils/scene';
 import { PRIVACY_ROUTE, setPrivacyResolver } from './store/privacy';
@@ -65,7 +66,10 @@ App<GlobalData>({
       void reportVisit({
         visitorId: mpVisitorId(),
         channel: 'miniprogram',
-        entry: resolveLaunchTableCode(options)
+        entry: resolveLaunchTableCode(options),
+        // 端上直传设备信息：小程序能拿到精确机型与系统版本，服务端不必再猜 UA
+        // （拿不到时字段为空串，服务端自有 UA 兜底，不影响打点本身）。
+        client: mpDeviceInfo()
       }).catch(() => {
         /* 静默失败 */
       });
@@ -124,6 +128,11 @@ function checkUpdate(): void {
 //
 // 放在模块加载期而不是 onLaunch：注册动作越早越好，晚于第一个隐私接口调用就漏了。
 // ---------------------------------------------------------------------------
+// 已导航标记:两个隐私接口在同一 tick 内被挂起时,第二次回调执行时页面栈里
+// 还没有 privacy 页(第一次 navigateTo 尚未生效),会再 push 一个空实例。
+// 兑现侧「一次选择兑现全部 + leaving 守卫」不会漏兑现,但栈里留个空页面很难看。
+let privacyNavigating = false;
+
 if (typeof wx.onNeedPrivacyAuthorization === 'function') {
   wx.onNeedPrivacyAuthorization(res => {
     // 类型库把这个 listener 的首个参数标成了 `GeneralCallbackResult`，但**运行时
@@ -134,6 +143,13 @@ if (typeof wx.onNeedPrivacyAuthorization === 'function') {
     // 已经停在授权页了（顾客在同一页又点了别的隐私按钮）：那页会把这次也一并处理。
     const top = getCurrentPages().slice(-1)[0] as { route?: string } | undefined;
     if (top?.route === PRIVACY_ROUTE) return;
-    wx.navigateTo({ url: `/${PRIVACY_ROUTE}` });
+    if (privacyNavigating) return;
+    privacyNavigating = true;
+    wx.navigateTo({
+      url: `/${PRIVACY_ROUTE}`,
+      complete: () => {
+        privacyNavigating = false;
+      }
+    });
   });
 }

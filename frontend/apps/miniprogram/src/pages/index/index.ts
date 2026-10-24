@@ -35,7 +35,7 @@ import { ORDER_STATUS } from '../../shared/dicts';
 import { isActiveStatus } from '../../shared/orderStatus';
 // 搜索与「几个规格算多」都与 H5 共用同一份实现：改一处两端同步
 import { filterMenu } from '../../core/search';
-import { INLINE_SPEC_MAX } from '../../core/spec';
+import { INLINE_SPEC_MAX, minPositivePrice } from '../../core/spec';
 import { PERSON_MAX, PERSON_MIN, isValidPerson } from '../../core/person';
 import type { Dish, DishSpec, MenuCategory, OrderDetail, RemarkOption, TableInfo } from '../../types';
 
@@ -316,6 +316,13 @@ Page({
    */
   failedImgs: null as Set<string> | null,
 
+  /** loadAll 在途标记 + 本次加载的桌台码：只对「同一桌台的重复点击」去重。
+   *  复扫到另一张桌台必须放行 —— 否则新码被静默丢弃，页面还停在上一桌。 */
+  loadingAll: false,
+  loadingCode: '',
+  /** 最新一次加载的序号:换桌后旧响应据此丢弃,防止把 session/菜单写回上一桌 */
+  loadSeq: 0,
+
   onLoad(options: Record<string, string | undefined>) {
     // 优先级：扫码参数 > 上次进入的桌台 > 开发期兜底（正式版为空，见 config.ts）
     const code = resolveTableCode(options) || readPersisted().tableCode || devTableCode();
@@ -351,6 +358,14 @@ Page({
   },
 
   async loadAll(code: string) {
+    // 同一桌台的在途加载直接忽略（重试连点会并发多份四请求，后到的响应互相覆盖）；
+    // 换了一张桌台则必须放行，否则复扫的新码会被静默丢弃。
+    if (this.loadingAll && this.loadingCode === code) return;
+    // 换桌放行后要有「最新一次加载」的令牌:前一次请求若后到,会把 session/菜单
+    // 写回上一桌(顾客看到 A 桌菜单却按 B 桌下单,错单+资损)。
+    const seq = ++this.loadSeq;
+    this.loadingAll = true;
+    this.loadingCode = code;
     // 重新加载意味着网络可能已恢复：清掉本次实例里累积的坏图记录，让菜品图再试一次
     // （实例内「只增不减」是为了避免同一个坏 URL 被反复请求、占位图反复闪回）
     this.failedImgs = null;
@@ -361,6 +376,9 @@ Page({
         getMenu(),
         getRemarks()
       ]);
+      // 换桌放行后,前一次(旧桌台)的响应若后到,必须整段丢弃 —— 否则会 applyTable
+      // 把 session 写回上一桌并渲染旧菜单,顾客看到的与下单的桌台不一致。
+      if (seq !== this.loadSeq) return;
       const info = table as TableInfo;
 
       applyConfig(config);
@@ -414,7 +432,11 @@ Page({
 
       this.renderMenu(info);
     } catch (e) {
-      this.setData({ loading: false, error: this.friendlyError(e) });
+      if (seq === this.loadSeq) this.setData({ loading: false, error: this.friendlyError(e) });
+    } finally {
+      // 只有「最新一次」才复位在途标记:并发两次加载时,先回来的那次若解锁,
+      // 第三次 loadAll 又能插进来,变成三方并发。
+      if (seq === this.loadSeq) this.loadingAll = false;
     }
   },
 
@@ -423,7 +445,10 @@ Page({
     // 只给「时间 + 菜数 + 金额」三行：够本人认出自己的单，
     // 又不至于把上一桌具体点了什么菜摊给陌生人看。
     // 时间口径与其它处一致：把 ISO 的 T 归一为空格再截取，避免出现 "10-09T12:03"。
-    const time = String(order.createTime || '').replace('T', ' ').slice(5, 16) || '--:--';
+    const time =
+      String(order.createTime || '')
+        .replace('T', ' ')
+        .slice(5, 16) || '--:--';
     const count = (order.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0);
     const amount = money(Number(order.totalAmount) || 0);
     wx.showModal({
@@ -643,7 +668,8 @@ Page({
     const picked = specs.find(s => Number(s.specId) === specId);
     const only = specs.length === 1;
     const inline = specs.length > 1 && specs.length <= INLINE_SPEC_MAX;
-    const min = specs.length ? Math.min(...specs.map(s => Number(s.price) || 0)) : 0;
+    // 起售价取「有效规格」的最小值:直接 Math.min 会被 0/缺失价污染成 ¥0.00
+    const min = minPositivePrice(specs);
     // 与 H5 dishQty 同口径：只算「当前选中规格」的份数，显示与加减的对象永远一致
     const line = cartState().find(l => l.dishId === dishId && l.specId === specId);
     // 人工售罄（dish.sold_out）或「所有规格库存都卖完」→ 菜品级售罄。
@@ -708,7 +734,7 @@ Page({
           dishName: String(dish.dishName || ''),
           // 与菜品行共用一本坏图账（failedImgs 按 dish-<id> 记）：一处加载失败，两处都不闪破图
           image: this.failedImgs?.has(`dish-${dishId}`) ? '' : mediaUrl(dish.dishImage),
-          priceText: money(Math.min(...specs.map(s => Number(s.price) || 0))),
+          priceText: money(minPositivePrice(specs)),
           manySpecs: specs.length > 1,
           soldOut: Number(dish.soldOut) === 1 || allSoldOut
         });
@@ -1204,6 +1230,10 @@ Page({
   addToCart(dishId: number, spec: SpecPick, itemRemark?: string, quantity = 1): void {
     const dish = this.findDish(dishId);
     if (!dish) return;
+    // 带上该规格的剩余份数:store/cart 据此夹紧数量并提示,
+    // 别让顾客加到 99 份、到提交才被后端以 stock < qty 拒绝。
+    const realSpec = (dish.specs || []).find(s => Number(s.specId) === Number(spec.specId));
+    const stock = Number(realSpec?.stock);
     cartAdd(
       {
         dishId,
@@ -1212,7 +1242,8 @@ Page({
         specName: String(spec.specName || ''),
         price: Number(spec.price) || 0,
         image: mediaUrl(dish.dishImage),
-        itemRemark
+        itemRemark,
+        stock: Number.isFinite(stock) && stock >= 0 ? stock : -1
       },
       quantity
     );

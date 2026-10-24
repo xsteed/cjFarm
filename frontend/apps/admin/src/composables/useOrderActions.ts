@@ -3,6 +3,7 @@ import type { ComputedRef, Ref } from 'vue';
 import { hasPerm } from '@dining/auth';
 import { ORDER_STATUS_CODE, isActiveStatus } from '@dining/shared';
 import type { OrderDetail } from '@dining/types';
+import { isRefundable } from '../utils/refundable';
 
 export interface OrderActions {
   canOperate: ComputedRef<boolean>;
@@ -67,17 +68,9 @@ export function useOrderActions(detail: Ref<OrderDetail | null>): OrderActions {
       detail.value?.settleType !== 'normal' &&
       !(detail.value?.settleType === 'credit' && detail.value?.creditStatus === 2)
   );
-  // 仅在线支付(微信/支付宝)且已支付、未全额退款的订单可发起在线退款。
-  // refundingAmount(处理中的退款单)同样占用可退额度,必须一并排除 ——
-  // 否则退款到账前按钮仍可点,点了会被后端按额度校验拒绝。
-  const canRefundOrder = computed(
-    () =>
-      canRefundOperate.value &&
-      detail.value?.payStatus === 1 &&
-      ['wxpay', 'alipay'].includes(detail.value?.payChannel ?? '') &&
-      !(detail.value?.refundingAmount && detail.value.refundingAmount > 0) &&
-      (detail.value?.refundAmount || 0) < (detail.value?.totalAmount || 0)
-  );
+  // 仅在线支付(微信/支付宝)且已支付、未全额退款、且无处理中退款的订单可发起在线退款。
+  // 状态判定收敛在 utils/refundable 的 isRefundable,与订单列表行(Orders.vue)同一份实现。
+  const canRefundOrder = computed(() => canRefundOperate.value && isRefundable(detail.value));
   const hasExtraActions = computed(
     () => canFinish.value || canCreditSettleOrder.value || canCancelSettleOrder.value || canRefundOrder.value
   );

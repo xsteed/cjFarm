@@ -137,7 +137,10 @@ func (p *Wxpay) paySign(appID, prepayID string) (JsapiParams, error) {
 		return JsapiParams{}, err
 	}
 	ts := fmt.Sprintf("%d", time.Now().Unix())
-	nonce := randNonce()
+	nonce, err := randNonce()
+	if err != nil {
+		return JsapiParams{}, err
+	}
 	pkg := "prepay_id=" + prepayID
 	sig, err := signRSASHA256(priv, appID+"\n"+ts+"\n"+nonce+"\n"+pkg+"\n")
 	if err != nil {
@@ -377,7 +380,10 @@ func (p *Wxpay) do(method, path string, body []byte) ([]byte, error) {
 		return nil, err
 	}
 	ts := fmt.Sprintf("%d", time.Now().Unix())
-	nonce := randNonce()
+	nonce, err := randNonce()
+	if err != nil {
+		return nil, err
+	}
 	msg := method + "\n" + path + "\n" + ts + "\n" + nonce + "\n" + string(body) + "\n"
 	sig, err := signRSASHA256(priv, msg)
 	if err != nil {
@@ -604,10 +610,17 @@ func decryptAESGCM(keyHex, nonce, aad, ciphertextB64 string) ([]byte, error) {
 	return gcm.Open(nil, []byte(nonce), ct, []byte(aad))
 }
 
-func randNonce() string {
+// randNonce 生成 32 位十六进制随机 nonce。
+//
+// crypto/rand 失败时返回 error 而不是拿全零 nonce 继续签名:nonce 可预测会
+// 削弱签名防重放的意义,而且「偶发签名失败」比显式失败更难排查
+// (与 service.randBase32 对单号的处理口径一致)。
+func randNonce() (string, error) {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("读取随机源失败: %w", err)
+	}
+	return fmt.Sprintf("%x", b), nil
 }
 
 func truncateRunes(s string, n int) string {

@@ -17,8 +17,8 @@
       </div>
 
       <div
-        v-for="it in renderItems"
-        :key="it.itemId"
+        v-for="(it, idx) in renderItems"
+        :key="it.itemId ?? idx"
         class="st-item"
       >
         <div class="si-main">
@@ -155,7 +155,7 @@
 
       <!-- 按钮只给动作，金额由上方账单末行的「合计」承担，避免同屏出现两次 -->
       <div
-        v-if="view === 'order' && currentOrder.payStatus === 0"
+        v-if="view === 'order' && Number(currentOrder.payStatus) === 0"
         class="st-paybtn"
         @click="emit('pay')"
       >

@@ -54,7 +54,7 @@ func VisitRatePerMin() int {
 // ============================================================================
 
 // visitLogInsertChunk 单条多行 INSERT 的最大行数。
-// modernc.org/sqlite 默认 SQLITE_MAX_VARIABLE_NUMBER=32766,200 行 × 10 列 = 2000
+// modernc.org/sqlite 默认 SQLITE_MAX_VARIABLE_NUMBER=32766,200 行 × 15 列 = 3000
 // 参数,留一个数量级的余量;MySQL 的占位符上限(65535)同样宽裕。
 const visitLogInsertChunk = 200
 
@@ -63,7 +63,10 @@ const visitLogInsertChunk = 200
 // 两者必须在同一事务:明细落了、访客没落,「新访客」就会少算;反之则会凭空
 // 多出新访客。事务失败整体回滚,由调用方(service worker)决定重试或丢弃。
 func WriteVisitBatch(logs []po.VisitLog, visitors []po.Visitor) error {
-	if len(logs) == 0 {
+	// 只在「两者都为空」时短路:旧实现见 logs 为空就整体返回,若调用方只带
+	// visitors(纯建档),访客档案会被静默丢弃、「新访客」少算。虽然当前唯一
+	// 调用方(worker)不会构造这种入参,但契约上不该有这条隐形前提。
+	if len(logs) == 0 && len(visitors) == 0 {
 		return nil
 	}
 	return store.WithTx(func(tx *sql.Tx) error {
@@ -140,7 +143,11 @@ func upsertVisitorsTx(tx *sql.Tx, visitors []po.Visitor) error {
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n > 0 {
 			continue
 		}
 		if _, err := tx.Exec(`INSERT INTO tb_visitor(visitor_key, first_visit_date, last_visit_date, visit_count, is_member, customer_id, create_time)
@@ -428,8 +435,14 @@ type VisitEntryCount struct {
 // utf8mb4_0900_ai_ci,与表列的 utf8mb4_general_ci 冲突;SQLite 没有这个
 // 概念,单测拦不住)。数字桌台 ID 与码两种形态由调用方统一匹配。
 func TopVisitEntryCodes(start, end string, limit int) ([]VisitEntryCount, error) {
-	if limit <= 0 || limit > 50 {
+	// 夹紧而不是静默改写:调用方传 100 时只拿到 10 条、却完全不知道被截断,
+	// 会以为是「只有 10 个入口」。<=0 用默认值,过大则夹到上限(仍返回前 N 名)。
+	const entryRankMax = 50
+	if limit <= 0 {
 		limit = 10
+	}
+	if limit > entryRankMax {
+		limit = entryRankMax
 	}
 	rows, err := store.DB.Query(`SELECT entry, COUNT(*) AS pv FROM tb_visit_log
 		WHERE visit_date>=? AND visit_date<=? AND entry<>''

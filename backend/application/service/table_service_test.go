@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -276,6 +277,38 @@ func TestReleaseTableRejectsBadInput(t *testing.T) {
 	}
 	if _, err := ReleaseTable(context.Background(), 99999, ReleaseActionSettle, "店长"); err == nil || !strings.Contains(err.Error(), "桌台不存在") {
 		t.Fatalf("桌台不存在应报错, got %v", err)
+	}
+}
+
+// TestTableGuardRejectsActiveOrder 钉住「桌上有进行中订单时不允许删除/停用」。
+//
+// 守卫的判定来自 GetActiveOrderByTableE:它必须把 sql.ErrNoRows 与真实查询错误
+// 分开 —— 旧实现把任何错误都当成「没有订单」,库抖动时会放行删除/停用正在用餐
+// 的桌台,进行中订单随即失去桌台入口(加菜/收款/结账全部卡死)。
+func TestTableGuardRejectsActiveOrder(t *testing.T) {
+	tableInitDB(t)
+	id, err := SaveTable(context.Background(), dto.Table{TableNo: "T9", TableName: "占用桌"})
+	if err != nil {
+		t.Fatalf("SaveTable 失败: %v", err)
+	}
+	// 直接插一笔「已下单、未支付」的进行中订单(table_id 指向该桌)。
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		_, e := dao.InsertOrderTx(tx, "TBL-GUARD-1", CurrentBizDate(), 0, int(id), 2, 0,
+			"T9", "占用桌", "", 1000, 0, 0, 0, 1000)
+		return e
+	}); err != nil {
+		t.Fatalf("插入进行中订单失败: %v", err)
+	}
+
+	if err := DeleteTable(int(id)); err == nil || !strings.Contains(err.Error(), "进行中订单") {
+		t.Fatalf("有进行中订单时删除应被拒绝, got %v", err)
+	}
+	if err := SetTableLock(int(id), po.TableLockDisabled, "维修"); err == nil || !strings.Contains(err.Error(), "进行中订单") {
+		t.Fatalf("有进行中订单时停用应被拒绝, got %v", err)
+	}
+	// 停用以外的状态(预约)允许与进行中订单并存。
+	if err := SetTableLock(int(id), po.TableLockReserved, "王先生 18:30"); err != nil {
+		t.Fatalf("预约不应被进行中订单挡住: %v", err)
 	}
 }
 

@@ -191,6 +191,11 @@ func parseFlags() (config, error) {
 	}
 	if u, err := url.Parse(cfg.server); err != nil || u.Scheme == "" || u.Host == "" {
 		return cfg, fmt.Errorf("--server 不是合法地址: %q(应形如 https://dining.example.com)", cfg.server)
+	} else if u.Scheme != "https" {
+		// 明文传输意味着代理令牌(X-Agent-Token)在链路上可被嗅探。门店反代配错
+		// 协议是很常见的输入错误,必须显式告警而不是静默放行。
+		logf("[警告] --server 使用 %s:// 而非 https://,代理令牌将明文传输;"+
+			"请确认该地址仅在内网/本机可达,或改用 https", u.Scheme)
 	}
 	if cfg.token == "" {
 		return cfg, errors.New("缺少 --token(代理令牌),请在管理端「系统配置 → 小票打印」生成并填入")

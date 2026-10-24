@@ -59,7 +59,9 @@ export function useOrderPolling({ view, currentOrder, onlineQr, clearUrgeTimer, 
             currentOrder.value = o;
             onlineQr.value = '';
             view.value = 'settled';
-            onPaid?.();
+            // 与下方常规分支同一口径:只有「这一拍才付的款」才给反馈,
+            // 已是已支付状态的订单(刷新/返回进 pay 视图)不重复弹。
+            if (Number(base?.payStatus) !== 1) onPaid?.();
           }
           return;
         }

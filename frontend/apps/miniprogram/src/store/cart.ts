@@ -9,6 +9,7 @@ import type { GlobalData, CartLine } from '../types';
 import type { OrderCreateItem, PublicConfig } from '../types';
 import { round2 } from '../shared/money';
 import { saveCart } from './cartPersist';
+import { toast } from '../utils/toast';
 
 /** 购物车数组本体（跨页共享，见 src/types.ts 顶部注释）。 */
 export function cartState(): CartLine[] {
@@ -38,6 +39,12 @@ export function cartDishQty(dishId: number): number {
     .reduce((sum, l) => sum + l.quantity, 0);
 }
 
+/** 规格剩余份数归一：-1 / 非数字 / 负数视为不限量，>=0 为可购份数（与后端 po.Spec 一致）。 */
+function stockCapOf(stock: number | undefined): number {
+  const n = Number(stock);
+  return Number.isFinite(n) && n >= 0 ? n : Number.POSITIVE_INFINITY;
+}
+
 /** 加一份；同一 dish+spec 合并成一行。 */
 export function cartAdd(
   line: Omit<CartLine, 'key' | 'quantity' | 'itemRemark'> & { itemRemark?: string },
@@ -48,13 +55,34 @@ export function cartAdd(
   const key = `${line.dishId}:${line.specId}`;
   const cart = cartState();
   const exist = cart.find(l => l.key === key);
+  const cap = stockCapOf(line.stock);
   if (exist) {
-    exist.quantity += qty;
+    // 快照必须在任何提前 return 之前刷新:售罄分支 return 时若没更新,
+    // exist.stock 会停留在旧的 -1(不限量),购物车页的 + 就按 Infinity 放行。
+    if (line.stock !== undefined) exist.stock = line.stock;
+    if (exist.quantity + qty > cap) {
+      // 超出剩余份数:夹到上限并明确告知,别让顾客到提交才被后端拒
+      const allowed = Math.max(0, cap - exist.quantity);
+      if (allowed <= 0) {
+        toast.info(cap > 0 ? `该规格仅剩 ${cap} 份` : '该商品已售罄');
+        return;
+      }
+      toast.info(`该规格仅剩 ${cap} 份，已按上限加入`);
+      exist.quantity = cap;
+    } else {
+      exist.quantity += qty;
+    }
     if (line.itemRemark !== undefined) exist.itemRemark = line.itemRemark;
     saveCart();
     return;
   }
-  cart.push({ ...line, key, quantity: qty, itemRemark: line.itemRemark ?? '' });
+  const add = Math.min(qty, cap);
+  if (add <= 0) {
+    toast.info('该商品已售罄');
+    return;
+  }
+  if (add < qty) toast.info(`该规格仅剩 ${cap} 份，已按上限加入`);
+  cart.push({ ...line, key, quantity: add, itemRemark: line.itemRemark ?? '' });
   saveCart();
 }
 
@@ -69,8 +97,25 @@ export function cartMergeLines(lines: CartLine[]): void {
   for (const line of lines) {
     const exist = cart.find(l => l.key === line.key);
     if (exist) {
-      exist.quantity += line.quantity;
-      if (line.itemRemark) exist.itemRemark = line.itemRemark;
+      // 快照以「再来一单」复核后的现值为准(rebuild 已按当前库存夹紧过)
+      if (line.stock !== undefined) exist.stock = line.stock;
+      // 合并也要按库存夹紧:自己 2 份 + 历史 3 份,库存只有 3 份时不能并成 5 份,
+      // 否则提交时被后端按 stock >= qty 拒绝。
+      const cap = stockCapOf(exist.stock);
+      const next = exist.quantity + line.quantity;
+      if (next > cap) {
+        const allowed = Math.max(0, cap - exist.quantity);
+        if (allowed <= 0) {
+          toast.info(cap > 0 ? `该规格仅剩 ${cap} 份` : '该商品已售罄');
+          continue;
+        }
+        toast.info(`该规格仅剩 ${cap} 份，已按上限并入`);
+        exist.quantity = cap;
+      } else {
+        exist.quantity = next;
+      }
+      // 不拿历史单的备注覆盖当前行:那是顾客自己为这道菜写的(如「不要辣」)，
+      // 「再来一单」只应补份数。与上面的注释「已经点过的菜不会被覆盖」保持一致。
       continue;
     }
     cart.push({ ...line });
@@ -83,9 +128,18 @@ export function cartChangeQty(key: string, delta: number): void {
   const cart = cartState();
   const idx = cart.findIndex(l => l.key === key);
   if (idx < 0) return;
-  const next = cart[idx].quantity + delta;
+  const line = cart[idx];
+  // 加号同样按加购时记下的库存快照夹紧（这里拿不到菜单对象，用快照）
+  if (delta > 0) {
+    const cap = stockCapOf(line.stock);
+    if (line.quantity + delta > cap) {
+      toast.info(cap > 0 ? `该规格仅剩 ${cap} 份` : '该商品已售罄');
+      return;
+    }
+  }
+  const next = line.quantity + delta;
   if (next <= 0) cart.splice(idx, 1);
-  else cart[idx].quantity = next;
+  else line.quantity = next;
   saveCart();
 }
 

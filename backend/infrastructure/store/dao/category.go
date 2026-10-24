@@ -18,8 +18,14 @@ func ListCategories() ([]po.Category, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var ct po.Category
-		rows.Scan(&ct.CategoryID, &ct.CategoryName, &ct.SortOrder, &ct.DelFlag, TS(&ct.CreateTime), TS(&ct.UpdateTime))
+		// 扫描失败上抛:静默丢弃会让分类从菜单里少一块,且无任何迹象。
+		if err := rows.Scan(&ct.CategoryID, &ct.CategoryName, &ct.SortOrder, &ct.DelFlag, TS(&ct.CreateTime), TS(&ct.UpdateTime)); err != nil {
+			return nil, err
+		}
 		list = append(list, ct)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return list, nil
 }
@@ -60,6 +66,8 @@ func DeleteCategory(id int) error {
 
 // CategoryNameMapByIDs 按分类 ID 批量查询分类名称,返回 id→名称 映射。
 // 打印机列表用它一次性补齐所有打印机的分类名,避免逐台查询(N+1)。
+//
+// 扫描失败的行不进 map(调用方按缺失处理),迭代错误同样不部分返回半份结果。
 func CategoryNameMapByIDs(ids []int) map[int]string {
 	out := map[int]string{}
 	if len(ids) == 0 {
@@ -81,7 +89,9 @@ func CategoryNameMapByIDs(ids []int) map[int]string {
 	defer rows.Close()
 	for rows.Next() {
 		var c po.Category
-		rows.Scan(&c.CategoryID, &c.CategoryName)
+		if err := rows.Scan(&c.CategoryID, &c.CategoryName); err != nil {
+			break
+		}
 		out[c.CategoryID] = c.CategoryName
 	}
 	return out

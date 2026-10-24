@@ -42,6 +42,9 @@ export function createPoller(tick: () => void | Promise<void>, intervalMs: numbe
       }
     },
     trigger(): void {
+      // 故意不检查 timer：手动刷新（订单页的「刷新」）就是在轮询已停止的状态下
+      // 才需要补拍（错误态/已结束状态）。页面卸载后不再 setData 由调用方的
+      // unloaded 标志负责，不能靠这里静默丢弃 —— 那会让刷新按钮直接失效。
       void run();
     }
   };

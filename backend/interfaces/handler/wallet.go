@@ -493,7 +493,14 @@ func WalletCancelMixedPay(c *gin.Context) {
 
 	// 只能撤销自己名下的订单:单号是可枚举的,不校验归属就成了「帮你把别人的支付取消掉」。
 	// 混合支付在扣余额时会认领匿名单,所以这里订单必然已有归属。
-	if owner := service.OrderOwner(orderNo); owner != 0 && owner != customerIDFrom(c) {
+	// 归属读取失败必须直接拒绝(fail-closed):折叠成 0 会被当成匿名单放行,
+	// 一次 DB 抖动就把这道校验绕过。
+	owner, err := service.OrderOwnerE(orderNo)
+	if err != nil {
+		fail(c, "订单不存在")
+		return
+	}
+	if owner != 0 && owner != customerIDFrom(c) {
 		fail(c, "只能撤销自己的订单")
 		return
 	}

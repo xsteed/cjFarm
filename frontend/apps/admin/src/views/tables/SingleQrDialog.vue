@@ -149,6 +149,7 @@ import {
   CARD_PRESETS,
   PRINT_TOOLBAR_CSS
 } from '../../utils/tableQr';
+import { esc } from '../../utils/htmlEscape';
 import { getTableWeappCode } from '@dining/api';
 import type { TableInfo } from '@dining/types';
 
@@ -164,9 +165,6 @@ const emit = defineEmits<{
   'update:visible': [value: boolean];
   copy: [text?: string];
 }>();
-
-const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
-const esc = (s: string): string => s.replace(/[<>&"]/g, c => escMap[c]);
 
 const dialogVisible = computed({
   get: () => props.visible,
@@ -212,9 +210,15 @@ function tableQrUrl(t: TableInfo): string {
   return `${props.h5Base}/order/${t.tableCode || t.tableId}`;
 }
 
+// 与 BatchQrDialog 同款竞态守卫:180ms 防抖内连续改「码类型/尺寸/卡片尺寸」会有多次
+// renderSingle 并发(小程序码还要等后端),先发后到的慢请求会把新图覆盖成旧图,
+// 旧请求的 catch 还会把新图清成空串。
+let renderToken = 0;
+
 async function renderSingle(): Promise<void> {
   const row = props.row;
   if (!row) return;
+  const token = ++renderToken;
   qrLoading.value = true;
   try {
     const preset = CARD_PRESETS.find(c => c.key === cardKey.value) || CARD_PRESETS[0];
@@ -230,25 +234,31 @@ async function renderSingle(): Promise<void> {
     if (isWeapp.value) {
       // 小程序码由微信生成、后端缓存;中心是「小程序头像」,因此以图片形式嵌入卡片。
       const res = await getTableWeappCode(String(row.tableCode || row.tableId), Number(qrSize.value) || 640);
+      if (token !== renderToken) return; // 期间用户又改了选项:丢弃这次结果
       if (!res.dataUrl) throw new Error('微信未返回小程序码图片');
       weappCodeUrl.value = res.dataUrl; // 供「仅下载二维码」复用
-      qrDataUrl.value = await renderCardDataUrl({ ...baseOpts, qrImageSrc: res.dataUrl });
+      const card = await renderCardDataUrl({ ...baseOpts, qrImageSrc: res.dataUrl });
+      if (token !== renderToken) return;
+      qrDataUrl.value = card;
       qrEnv.value = res.envVersion || 'release';
     } else {
-      qrDataUrl.value = await renderCardDataUrl({
+      const card = await renderCardDataUrl({
         ...baseOpts,
         text: qrUrl.value,
         logo: qrUseLogo.value && props.shopLogo ? props.shopLogo : '',
         centerText: !qrUseLogo.value && qrUseText.value ? (row.tableNo ?? '') : ''
       });
+      if (token !== renderToken) return;
+      qrDataUrl.value = card;
       qrEnv.value = 'release';
     }
     qrError.value = '';
   } catch (e) {
+    if (token !== renderToken) return;
     qrDataUrl.value = '';
     qrError.value = e instanceof Error && e.message ? e.message : '二维码生成失败';
   } finally {
-    qrLoading.value = false;
+    if (token === renderToken) qrLoading.value = false;
   }
 }
 
@@ -256,7 +266,14 @@ async function renderSingle(): Promise<void> {
 watch(
   () => [props.visible, props.row] as const,
   ([visible, row]) => {
-    if (!visible || !row) return;
+    if (!visible || !row) {
+      // 父组件直接改 visible=false(路由切换/外部关闭)时不会走 @close,
+      // 残留下沉的 qrEnv / weappCodeUrl 会让下次打开出现「上次是体验版」的告警,
+      // 或「仅下载二维码」复用上一个尺寸的缓存图。
+      renderToken++;
+      onQrClose();
+      return;
+    }
     qrDataUrl.value = '';
     qrError.value = '';
     qrUrl.value = tableQrUrl(row);

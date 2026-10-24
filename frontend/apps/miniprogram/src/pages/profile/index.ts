@@ -67,14 +67,19 @@ Page({
     loadingMore: false
   },
 
+  /** 储值余额请求在途标记:onShow 与翻页会并发触发,防止叠请求 */
+  walletLoading: false,
+
   onShow() {
     // 每次进入都刷新一次开关与登录态（配置可能在菜单页才拉到）。
+    // 合并为一次 setData:连续两次 setData 会触发两次渲染。
     const enabled = memberEnabled();
     const loggedIn = memberState().customerId !== 0;
-    this.setData({ enabled, loggedIn });
     // 储值充值开关:管理端配置 + 微信支付已开通,任一未就绪就只显示余额不给充值入口。
     const cfg = sessionState().config ?? {};
     this.setData({
+      enabled,
+      loggedIn,
       canRecharge: cfg.wallet_recharge_enabled === '1' && cfg.wxpay_jsapi_enabled === '1'
     });
     if (loggedIn) {
@@ -85,11 +90,16 @@ Page({
 
   /** 拉储值余额（失败静默：余额是增强信息，不该打断会员卡渲染）。 */
   async reloadWallet(): Promise<void> {
+    // 在途守卫:onShow 与订单列表并行触发,快速切页会叠请求
+    if (this.walletLoading) return;
+    this.walletLoading = true;
     try {
       const w = await getWallet();
       this.setData({ balance: w.balance, balanceText: money(w.balance) });
     } catch {
       /* 静默 */
+    } finally {
+      this.walletLoading = false;
     }
   },
 

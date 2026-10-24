@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { buildZip, dataUrlToBytes, downloadZip } from '../zip';
+import { buildZip, dataUrlToBytes, downloadZip, OBJECT_URL_TTL_MS } from '../zip';
 
 describe('zip 极简 ZIP 打包器', () => {
   let createObjectURL: ReturnType<typeof vi.fn>;
@@ -78,7 +78,7 @@ describe('zip 极简 ZIP 打包器', () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(4000);
+    vi.advanceTimersByTime(OBJECT_URL_TTL_MS);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
   });
 

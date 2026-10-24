@@ -68,9 +68,16 @@ func ListOrderBatchCounts(orderIDs []int) map[int]int {
 }
 
 // ListOrderRefundingAmounts 批量统计订单「处理中」的退款金额(分),供列表展示「退款中」。
-// 与 ListOrderBatchCounts 同口径:一次 IN 查询覆盖整页,失败返回空 map。
+// 与 ListOrderBatchCounts 同口径:一次 IN 查询覆盖整页。
+// 查询失败返回空 map 并告警:列表只是不打「退款中」标记(不阻断看单),
+// 但绝不能静默 —— 漏标会让收银重复发起退款。
 func ListOrderRefundingAmounts(orderIDs []int) map[int]int64 {
-	return dao.RefundingAmounts(orderIDs)
+	out, err := dao.RefundingAmounts(orderIDs)
+	if err != nil {
+		logger.Warnf("[order] 统计处理中退款金额失败,本次不展示「退款中」标记: %v", err)
+		return map[int]int64{}
+	}
+	return out
 }
 
 // MarkOrderViewed 标记订单已被商家实际操作(仅查看不算),用于列表「新」角标消解。
@@ -212,11 +219,7 @@ func ChangeOrderStatus(orderID, target int, reason, operator string) error {
 	if target == OrderStatusCanceled && cur.PayStatus == 1 {
 		return fmt.Errorf("已支付订单不能取消，请先处理退款")
 	}
-	if r := []rune(strings.TrimSpace(reason)); len(r) > 60 {
-		reason = string(r[:60])
-	} else {
-		reason = string(r)
-	}
+	reason = truncateRunes(strings.TrimSpace(reason), cancelReasonMaxLen)
 	tableID, err := dao.GetOrderTable(orderID)
 	if err != nil {
 		return fmt.Errorf("订单不存在")
@@ -276,7 +279,13 @@ func ListUrges(q UrgeQuery, pageNum, pageSize int) (total int, list []po.OrderUr
 // 传 urgeID 处理单条。orderID 优先。
 func HandleUrges(urgeID, orderID int, operator string) error {
 	if orderID > 0 {
-		dao.HandleUrgesByOrder(orderID, operator)
+		n, err := dao.HandleUrgesByOrderCount(orderID, operator)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("该订单没有待处理的催菜")
+		}
 		return nil
 	}
 	affected, err := dao.HandleUrge(urgeID, operator)
@@ -333,10 +342,7 @@ func SettleOrder(orderID int, settleTypeRaw, payTypeRaw, remark, operator string
 	}
 	settleType := NormalizeSettleType(settleTypeRaw)
 	// 免单/挂账属于让利与赊账,必须留痕;超长文本裁剪防污染。
-	remark = strings.TrimSpace(remark)
-	if r := []rune(remark); len(r) > 60 {
-		remark = string(r[:60])
-	}
+	remark = truncateRunes(strings.TrimSpace(remark), cancelReasonMaxLen)
 	if settleType == SettleTypeFree && remark == "" {
 		return SettleOutcome{}, fmt.Errorf("免单必须填写原因")
 	}
@@ -462,9 +468,7 @@ func CancelSettleOrder(orderID int, reason, operator string) (CancelSettleOutcom
 	if info.SettleType == SettleTypeCredit && info.CreditStatus == CreditStatusSettled {
 		return CancelSettleOutcome{}, fmt.Errorf("挂账已核销，不能撤销")
 	}
-	if r := []rune(reason); len(r) > 60 {
-		reason = string(r[:60])
-	}
+	reason = truncateRunes(strings.TrimSpace(reason), cancelReasonMaxLen)
 	// 恢复到结账前的真实状态;历史订单(未记录快照,值为 0)回退为已上齐(3)。
 	restoreStatus := info.PreSettleStatus
 	if restoreStatus < OrderStatusPlaced || restoreStatus > OrderStatusDining {
@@ -525,7 +529,7 @@ func FinishOrder(orderID int, operator string) error {
 	return nil
 }
 
-// CancelOrder 取消未支付订单并释放桌台,返回原始取消原因。
+// CancelOrder 取消未支付订单并释放桌台,返回落库所用的取消原因(已按列宽裁剪)。
 func CancelOrder(orderID int, reason, operator string) (string, error) {
 	cur, err := dao.GetOrderState(orderID)
 	if err != nil {
@@ -537,6 +541,9 @@ func CancelOrder(orderID int, reason, operator string) (string, error) {
 	if cur.PayStatus == 1 {
 		return "", fmt.Errorf("已支付订单不能直接取消，请先处理退款")
 	}
+	// 与 /order/status{5} 同一口径裁剪:cancel_reason 列宽有限,超长输入在
+	// MySQL 严格模式下会让整个取消事务失败。返回裁剪后的值,审计摘要与落库一致。
+	reason = truncateRunes(strings.TrimSpace(reason), cancelReasonMaxLen)
 	tableID, err := dao.GetOrderTable(orderID)
 	if err != nil {
 		return "", fmt.Errorf("订单不存在")
@@ -602,9 +609,9 @@ func EditOrder(ctx context.Context, orderID, personCount int, orderRemark string
 	if personCount < 1 {
 		personCount = 1
 	}
-	// 与下单/加菜同一上限(customer_service.go):开启茶位费时,人数直接乘进茶位费,
-	// 一次误填就会算出巨额应收;这里必须拒绝而不是夹紧。
-	if personCount > 100 {
+	// 与下单/加菜同一上限(customer_service.go 的 maxPersonCount):开启茶位费时,
+	// 人数直接乘进茶位费,一次误填就会算出巨额应收;这里必须拒绝而不是夹紧。
+	if personCount > maxPersonCount {
 		return EditOrderOutcome{}, fmt.Errorf("用餐人数超出限制")
 	}
 	// 改单用 ForEdit 版本:本单已占用的库存会在事务内先回补,售罄判定必须把它算进去,
@@ -613,6 +620,8 @@ func EditOrder(ctx context.Context, orderID, personCount int, orderRemark string
 	if err != nil {
 		return EditOrderOutcome{}, err
 	}
+	// order_remark 列宽 500:超长输入在 MySQL 严格模式下会让改单事务失败。
+	orderRemark = truncateRunes(strings.TrimSpace(orderRemark), orderRemarkMaxLen)
 	// 改单前的应收金额只用于审计摘要,查询失败(而非金额为 0)必须能被区分:
 	// 静默折叠成 0 会让审计里凭空出现「¥0.00 → ¥X」,事后无法据此对账。
 	oldTotal, oldTotalErr := dao.GetOrderTotalE(orderID)
@@ -620,11 +629,6 @@ func EditOrder(ctx context.Context, orderID, personCount int, orderRemark string
 		logger.CtxWarnf(ctx, "[order][告警] 改单审计:读取改单前金额失败,摘要将标注金额未知 订单%d: %v", orderID, oldTotalErr)
 	}
 	dishAmount, seatFee, discount, giftAmount, total := RecalcAmount(personCount, resolved)
-
-	poItems := make([]po.OrderItem, 0, len(resolved))
-	for _, it := range resolved {
-		poItems = append(poItems, it.ToPO())
-	}
 
 	err = store.WithTx(func(tx *sql.Tx) error {
 		// 先对订单行取写锁(自赋值 no-op):改单是「UPDATE tb_order → DELETE 明细重建」,
@@ -643,6 +647,27 @@ func EditOrder(ctx context.Context, orderID, personCount int, orderRemark string
 			if err := dao.RestoreSpecStockTx(tx, it.SpecID, it.Quantity); err != nil {
 				return err
 			}
+		}
+		// 幂等键随明细重建保留:ReplaceOrderItemsTx 是「DELETE 全删再重建」,
+		// 旧明细的 client_request_id 不带过来就会丢失 —— 顾客端因超时/双击重放
+		// 同一 clientRequestId 的加菜请求时,HasOrderItemRequestTx 查不到键,
+		// 会再插一遍明细、再扣一次库存、金额重复累加。按 spec_id 对应带回
+		// (同一规格被多次加菜时取第一条非空键:判重本就是「本单是否存在该键」)。
+		requestIDBySpec := map[int]string{}
+		for _, it := range existing {
+			if it.ClientRequestID != "" {
+				if _, ok := requestIDBySpec[it.SpecID]; !ok {
+					requestIDBySpec[it.SpecID] = it.ClientRequestID
+				}
+			}
+		}
+		poItems := make([]po.OrderItem, 0, len(resolved))
+		for _, it := range resolved {
+			p := it.ToPO()
+			if rid, ok := requestIDBySpec[p.SpecID]; ok {
+				p.ClientRequestID = rid
+			}
+			poItems = append(poItems, p)
 		}
 		n, err := dao.UpdateOrderForEditTx(tx, orderID, personCount, orderRemark,
 			po.ToCents(dishAmount), po.ToCents(seatFee), po.ToCents(discount), po.ToCents(giftAmount), po.ToCents(total), operator)

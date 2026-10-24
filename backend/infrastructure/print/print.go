@@ -591,11 +591,12 @@ func runFeieBatch(batch []job) error {
 		firstErr   error
 		failDetail string // 第一次失败那次推送的返回原文
 		lastDetail string // 最后一次推送的返回原文(全部成功时用)
-		// 最后一次成功推送的云端单号、台账主键与票据标识:出纸确认只对成功的那次推送
-		// 有意义(失败的那次云端没有单号可查),确认结果也只回写到它的台账行上。
-		confirmID    string
-		confirmLogs  []int
-		confirmLabel []string
+		// 每一段成功推送的云端单号、台账主键与票据标识:一批被拆成多段时
+		// **每段**都要做出纸确认。此前的实现只保留最后一段,前几段即使飞鹅已
+		// 受理但打印机离线未出纸,其台账行也永远停在「成功」—— 正是
+		// confirmFeiePrinted 要防的「记成功却没出纸」,却对前几段失效
+		// (一菜一单菜多时一段票据极易超过 feie.MaxBytes 被拆箱)。
+		confirms []feieConfirm
 	)
 	for start := 0; start < len(batch); {
 		end, lines := packFeiePush(tickets, start)
@@ -622,9 +623,12 @@ func runFeieBatch(batch []job) error {
 		} else {
 			pushed += end - start
 			if remoteID != "" {
-				confirmID = remoteID
-				confirmLogs = ids
-				confirmLabel = append([]string(nil), labels[start:end]...)
+				confirms = append(confirms, feieConfirm{
+					job:    batch[start],
+					labels: append([]string(nil), labels[start:end]...),
+					order:  remoteID,
+					ids:    ids,
+				})
 			}
 		}
 		start = end
@@ -644,13 +648,25 @@ func runFeieBatch(batch []job) error {
 	// 异步回查云端状态(见 confirmFeiePrinted):受理不等于出纸,缺纸/离线的任务会被
 	// 飞鹅缓存住,不回查就永远停在「成功却没出纸」。客户端在这里构造好传入,
 	// 别让确认协程醒来后再去碰全局连接与配置。
-	if confirmID != "" {
-		if client, cerr := NewFeieClient(); cerr == nil {
-			j, ids, labelsOf, order := batch[0], confirmLogs, confirmLabel, confirmID
-			goSafe("打印出纸确认", func() { confirmFeiePrinted(j, labelsOf, order, ids, client) })
+	// 逐段各起一个确认协程:每段一个云端单号,合并处理会让前面的单号永远没人查。
+	for _, cf := range confirms {
+		client, cerr := NewFeieClient()
+		if cerr != nil {
+			continue
 		}
+		j, labelsOf, order, ids := cf.job, cf.labels, cf.order, cf.ids
+		goSafe("打印出纸确认", func() { confirmFeiePrinted(j, labelsOf, order, ids, client) })
 	}
 	return nil
+}
+
+// feieConfirm 一次成功推送的出纸确认任务:云端单号 + 该次推送写下的台账主键 +
+// 票据标识(确认日志用)。job 只用于取日志器与打印机信息。
+type feieConfirm struct {
+	job    job
+	labels []string
+	order  string
+	ids    []int
 }
 
 // buildJobs 按「单据类型 + 分类分单 + 打印粒度」为一批启用的打印机生成作业。

@@ -5,7 +5,8 @@ import { getPublicConfig } from '@dining/api';
 // 「店铺名称 · 点餐系统」这个拼接格式统一收在这里 —— 格式反复调整过几次,
 // 复制成两份必然会漂移,改一处忘一处。
 //
-// 模块级单例:多个组件同时挂载只会发一次请求(与 @dining/auth 的 permSet 同一做法)。
+// 模块级单例 + 在途去重:多个组件同时挂载只发一次请求(与 @dining/auth 的 permSet 同一做法)。
+// 注意这是「并发去重」不是缓存:请求结束 inflight 立即归零,失败后下次挂载仍会重试。
 const shopName = ref('');
 let inflight: Promise<void> | null = null;
 

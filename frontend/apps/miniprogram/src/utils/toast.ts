@@ -13,7 +13,9 @@ const ICON_MAX_LEN = 7;
 function show(title: string, icon: 'success' | 'none', duration: number): void {
   const text = String(title || '').trim();
   if (!text) return;
-  const clipped = icon !== 'none' && text.length > ICON_MAX_LEN ? `${text.slice(0, ICON_MAX_LEN)}…` : text;
+  // 截断后连省略号一起不超过上限：slice(0, 7) + '…' 是 8 个字符，
+  // 微信会再截一次，省略号反而被吃掉。
+  const clipped = icon !== 'none' && text.length > ICON_MAX_LEN ? `${text.slice(0, ICON_MAX_LEN - 1)}…` : text;
   wx.showToast({ title: clipped, icon, duration, mask: false });
 }
 

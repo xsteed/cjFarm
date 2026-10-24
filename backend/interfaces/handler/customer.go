@@ -87,7 +87,12 @@ func CustomerSetTablePerson(c *gin.Context) {
 		fail(c, "参数错误")
 		return
 	}
-	service.SetTablePendingPerson(p.TableID, p.PersonCount)
+	// 越界/非法输入显式报错:此前静默丢弃后仍回 ok,前端无法区分「生效」与
+	// 「被丢弃」,同桌另一部手机会重复弹同一个选人数面板。
+	if err := service.SetTablePendingPerson(p.TableID, p.PersonCount); err != nil {
+		fail(c, err.Error())
+		return
+	}
 	ok(c, nil)
 }
 

@@ -7,6 +7,7 @@
 // 3. 打印使用 mm 单位排版:A4 网格(亚克力桌牌常见)或每页一张(标签机)。
 
 import QRCode from 'qrcode';
+import { esc } from './htmlEscape';
 
 export interface CardPreset {
   key: string;
@@ -91,6 +92,17 @@ const DEFAULTS: Required<QrOptions> = {
   centerTextColor: '#1f2329'
 };
 
+/** 图片加载超时(ms):挂住的图片请求会让 renderQrCanvas / renderCardCanvas 永久 pending,
+ * 批量渲染时整批卡死。到点按失败处理,调用方的 catch 会走占位/降级路径。 */
+const IMAGE_LOAD_TIMEOUT_MS = 10_000;
+
+/** 中心文字底板的「参考长边占比」。与 logoRatio 分开:文字是方形底板、Logo 按自身宽高比
+ *  归一化,两者语义不同,共用一个值会让改一方连带改另一方。 */
+const CENTER_TEXT_RATIO = 0.22;
+
+/** 图片解码后等版面稳定的时间(ms),再唤起打印预览;等太短会打出空白图。 */
+const PRINT_SETTLE_MS = 300;
+
 /** 加载图片,返回 HTMLImageElement。 */
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -99,8 +111,22 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
     if (abs && typeof window !== 'undefined' && !src.startsWith(window.location.origin)) {
       img.crossOrigin = 'anonymous';
     }
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('图片加载失败:' + src));
+    // 超时句柄:onload/onerror 里取掉,避免 Promise 已兑现后 timer 空跑;
+    // 到点未加载完按失败拒绝,不让调用方的 await 永久挂起。
+    const timer = setTimeout(() => {
+      img.onload = null;
+      img.onerror = null;
+      img.src = '';
+      reject(new Error('图片加载超时:' + src));
+    }, IMAGE_LOAD_TIMEOUT_MS);
+    img.onload = () => {
+      clearTimeout(timer);
+      resolve(img);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error('图片加载失败:' + src));
+    };
     img.src = src;
   });
 }
@@ -131,7 +157,9 @@ function snapToModules(px: number, modulePx: number): number {
  * 扫描 Logo 的透明包围盒,裁掉其自带的透明/白边,使不同来源的 Logo 拥有相同的「内容重量」。
  * 跨域(无 CORS)或读图失败时回退为整图(不裁剪)。
  */
-async function measureLogo(img: HTMLImageElement): Promise<{ sx: number; sy: number; sw: number; sh: number; rw: number; rh: number }> {
+async function measureLogo(
+  img: HTMLImageElement
+): Promise<{ sx: number; sy: number; sw: number; sh: number; rw: number; rh: number }> {
   try {
     const maxScan = 240;
     const scale = Math.min(1, maxScan / Math.max(img.width, img.height));
@@ -143,7 +171,10 @@ async function measureLogo(img: HTMLImageElement): Promise<{ sx: number; sy: num
     const c = off.getContext('2d', { willReadFrequently: true })!;
     c.drawImage(img, 0, 0, cw, ch);
     const d = c.getImageData(0, 0, cw, ch).data;
-    let minX = cw, minY = ch, maxX = -1, maxY = -1;
+    let minX = cw,
+      minY = ch,
+      maxX = -1,
+      maxY = -1;
     for (let y = 0; y < ch; y++) {
       for (let x = 0; x < cw; x++) {
         if (d[(y * cw + x) * 4 + 3] > 16) {
@@ -247,7 +278,7 @@ export async function renderQrCanvas(text: string, opts: QrOptions = {}): Promis
     ctx.drawImage(img, b.sx, b.sy, b.sw, b.sh, ix, iy, drawnW, drawnH);
     ctx.restore();
   } else if (o.centerText) {
-    const box = snapToModules(S * (o.logoRatio || 0.22), modulePx);
+    const box = snapToModules(S * CENTER_TEXT_RATIO, modulePx);
     const bx = (S - box) / 2;
     ctx.fillStyle = '#ffffff';
     roundRect(ctx, bx, bx, box, box, box * 0.24);
@@ -461,10 +492,7 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
     const bodyTop = cy + (hasShop ? headH + sp(4) : pad + sp(4));
     const bodyBottom = cy + ch - pad;
     const bodyH = Math.max(120, bodyBottom - bodyTop);
-    qrSide = Math.max(
-      100,
-      Math.min(bodyH - platePad * 2, Math.round(cw * 0.5) - platePad * 2)
-    );
+    qrSide = Math.max(100, Math.min(bodyH - platePad * 2, Math.round(cw * 0.5) - platePad * 2));
     plateX = cx + pad;
     plateY = bodyTop + Math.max(0, (bodyH - (qrSide + platePad * 2)) / 2);
   } else {
@@ -473,10 +501,7 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
     const qrTop = cy + (hasShop ? headH + sp(4) : pad + sp(4));
     const qrBottom = cy + ch - pad - footH;
     const qrAreaH = Math.max(100, qrBottom - qrTop);
-    qrSide = Math.max(
-      100,
-      Math.min(innerW - platePad * 2, qrAreaH - platePad * 2 - footGap)
-    );
+    qrSide = Math.max(100, Math.min(innerW - platePad * 2, qrAreaH - platePad * 2 - footGap));
     plateX = cx + (cw - (qrSide + platePad * 2)) / 2;
     const slackV = Math.max(0, qrAreaH - footGap - (qrSide + platePad * 2));
     plateY = qrTop + Math.round(slackV * 0.4);
@@ -506,13 +531,7 @@ export async function renderCardCanvas(params: QrCardOptions): Promise<HTMLCanva
   const k = Math.min(qrSide / iw, qrSide / ih);
   const dw = iw * k;
   const dh = ih * k;
-  ctx.drawImage(
-    draw as CanvasImageSource,
-    plateX + (plateSide - dw) / 2,
-    plateY + (plateSide - dh) / 2,
-    dw,
-    dh
-  );
+  ctx.drawImage(draw as CanvasImageSource, plateX + (plateSide - dw) / 2, plateY + (plateSide - dh) / 2, dw, dh);
 
   if (horizontal) {
     // 右侧文字列:垂直居中。桌台名称进胶囊做主视觉,桌号是下方的小号灰字。
@@ -631,15 +650,6 @@ export async function renderCardDataUrl(params: QrCardOptions): Promise<string> 
 }
 
 // ============ 打印排版 ============
-
-const HTML_ESCAPE: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;'
-};
-
-const esc = (s: unknown): string => String(s == null ? '' : s).replace(/[&<>"]/g, c => HTML_ESCAPE[c]);
 
 /**
  * 打印页顶栏样式(A4 单据、桌台码两种打印页共用,避免多处各自漂移)。
@@ -789,9 +799,7 @@ export function buildPrintSheetHtml(cards: QrCard[], opts: PrintSheetOptions = {
   for (let i = 0; i < cards.length; i += perPage) pages.push(cards.slice(i, i + perPage));
 
   const pageCss =
-    o.mode === 'label'
-      ? `@page { size: ${o.cardW}mm ${o.cardH}mm; margin: 0; }`
-      : `@page { size: A4; margin: 10mm; }`;
+    o.mode === 'label' ? `@page { size: ${o.cardW}mm ${o.cardH}mm; margin: 0; }` : `@page { size: A4; margin: 10mm; }`;
 
   const pageHtml = pages
     .map((items, pi) => {
@@ -873,9 +881,7 @@ export function buildCardImagesSheetHtml(images: CardImage[], opts: CardSheetOpt
   for (let i = 0; i < images.length; i += perPage) pages.push(images.slice(i, i + perPage));
 
   const pageCss =
-    o.mode === 'label'
-      ? `@page { size: ${o.cardW}mm ${o.cardH}mm; margin: 0; }`
-      : `@page { size: A4; margin: 10mm; }`;
+    o.mode === 'label' ? `@page { size: ${o.cardW}mm ${o.cardH}mm; margin: 0; }` : `@page { size: A4; margin: 10mm; }`;
 
   const pageHtml = pages
     .map((items, pi) => {
@@ -1014,14 +1020,22 @@ async function autoPrintWhenReady(w: Window): Promise<void> {
       ),
       IMAGE_DECODE_TIMEOUT
     );
-    // 再给一帧让版面稳定,否则打印预览偶尔会漏掉刚解码的图。
-    await new Promise<void>(r => setTimeout(r, 300));
+    // 再等一小段让版面稳定,否则打印预览偶尔会漏掉刚解码的图。
+    await new Promise<void>(r => setTimeout(r, PRINT_SETTLE_MS));
     if (!w.closed) w.print();
   } catch {
     /* 窗口已关闭或解码异常:放弃自动打印,用户仍可点工具栏按钮 */
   }
 }
 
+/** Promise 竞速超时:到点直接放行(不 reject);无论谁先完成都清掉计时器,
+ *  避免 Promise 已兑现后 timer 仍空跑(批量出码时每次打印都会留一个)。 */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | void> {
-  return Promise.race([p, new Promise<void>(r => setTimeout(r, ms))]);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<void>(resolve => {
+    timer = setTimeout(resolve, ms);
+  });
+  return Promise.race([p, timeout]).finally(() => {
+    if (timer !== null) clearTimeout(timer);
+  });
 }

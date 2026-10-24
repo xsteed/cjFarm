@@ -119,7 +119,11 @@ func ConsumeRememberToken(token, uaFP string) (*AuthInfo, error) {
 		return nil, fmt.Errorf("记住登录令牌已过期")
 	}
 	// 环境绑定:指纹不一致 = 疑似令牌被带到其它环境,作废并拒绝。
-	if ua != "" && uaFP != "" && ua != uaFP {
+	// 本次请求取不到指纹(未带 User-Agent)时一律按不匹配处理 —— 否则 Strip 掉
+	// UA 的客户端可以整体跳过绑定,把令牌复制到任意设备使用。浏览器必然携带 UA,
+	// 此分支只可能是脚本/代理刻意为之。存量行(ua 为空)首次使用仍允许补写绑定
+	// (见下方 ua == "" 分支)。
+	if uaFP == "" || (ua != "" && ua != uaFP) {
 		DeleteRememberToken(token)
 		return nil, fmt.Errorf("登录环境已变更,请重新登录")
 	}

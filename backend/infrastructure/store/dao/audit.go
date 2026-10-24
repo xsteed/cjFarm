@@ -69,8 +69,8 @@ func ListOperLogs(q OperLogQuery, pageNum, pageSize int) (int, []po.OperLog, err
 	where := []string{"1=1"}
 	args := []interface{}{}
 	if kw := strings.TrimSpace(q.Operator); kw != "" {
-		where = append(where, "operator LIKE ?")
-		args = append(args, "%"+kw+"%")
+		where = append(where, "operator LIKE ? ESCAPE '\\'")
+		args = append(args, store.LikeContains(kw))
 	}
 	if v := strings.TrimSpace(q.Module); v != "" {
 		where = append(where, "module=?")

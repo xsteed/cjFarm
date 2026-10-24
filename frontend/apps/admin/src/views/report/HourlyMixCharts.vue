@@ -93,7 +93,8 @@ function renderHourly(): void {
       data: list.map(h => h.hour as string),
       axisTick: { show: false },
       axisLine: { lineStyle: { color: AXIS_LINE } },
-      axisLabel: { color: AXIS_COLOR, fontSize: 11, interval: 1 }
+      // 24 个档位在窄屏会挤成一团:移动端隔两个显示,桌面端隔一个
+      axisLabel: { color: AXIS_COLOR, fontSize: 11, interval: mobile ? 2 : 1 }
     },
     yAxis: [
       {

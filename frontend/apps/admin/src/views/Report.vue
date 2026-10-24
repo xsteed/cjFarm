@@ -97,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { Button, DateRangePicker, Loading } from 'tdesign-vue-next';
 import type { DateRangeValue } from 'tdesign-vue-next';
 import { DownloadIcon, RefreshIcon } from 'tdesign-icons-vue-next';
@@ -117,6 +117,7 @@ import type {
   DishRankRow,
   HourlyRow,
   MonthlyTrendRow,
+  PageQuery,
   ReportSummary,
   SettleMixRow,
   VisitChannelRow,
@@ -125,7 +126,7 @@ import type {
   VisitEntryRow,
   VisitStats
 } from '@dining/types';
-import type { PageQuery } from '@dining/types';
+
 import { useEChart } from '../composables/useEChart';
 import { useIsMobile } from '../utils/useMobile';
 import { usePullRefresh } from '../composables/usePullRefresh';
@@ -245,11 +246,25 @@ const visitTotal = computed(() => ({
 }));
 
 // ---------- 数据加载 ----------
-async function loadAll(): Promise<void> {
+// 两个加载入口(全量 / 切区间)共享一份「加载中」计数:各自置 true/false 会让
+// 先结束的那个提前灭掉另一个请求的 loading(刷新按钮的转圈中途停住)。
+let loadingCount = 0;
+function beginLoad(): void {
+  loadingCount++;
   loading.value = true;
+}
+function endLoad(): void {
+  loadingCount = Math.max(0, loadingCount - 1);
+  if (loadingCount === 0) loading.value = false;
+}
+
+async function loadAll(): Promise<void> {
+  beginLoad();
   try {
-    // 各接口互不依赖，并行拉取；任一失败由 axios 拦截器统一提示
-    const [s, d, h, m, mo, r, du, v] = await Promise.all([
+    // 各接口互不依赖，并行拉取；单块失败只丢那一块，其余图表照常显示 ——
+    // 全有或全无的 Promise.all 会让任一失败都把整页留在旧数据/空白，
+    // 与「任一失败由拦截器统一提示」的承诺不是一回事（提示照弹，页面不该白）。
+    const [s, d, h, m, mo, r, du, v] = await Promise.allSettled([
       getReportSummary(),
       getDailyTrend(rangeParams()),
       getHourlyReport(rangeParams()),
@@ -259,39 +274,41 @@ async function loadAll(): Promise<void> {
       getDiningDuration(rangeParams()),
       getVisitStats(rangeParams())
     ]);
-    summary.value = s || {};
-    dailyRows.value = d || [];
-    hourlyRows.value = h || [];
-    mixRows.value = m || [];
-    monthlyRows.value = mo || [];
-    rankRows.value = r || [];
-    durationStats.value = du || {};
-    applyVisitStats(v);
+    summary.value = (s.status === 'fulfilled' && s.value) || {};
+    dailyRows.value = (d.status === 'fulfilled' && d.value) || [];
+    hourlyRows.value = (h.status === 'fulfilled' && h.value) || [];
+    mixRows.value = (m.status === 'fulfilled' && m.value) || [];
+    monthlyRows.value = (mo.status === 'fulfilled' && mo.value) || [];
+    rankRows.value = (r.status === 'fulfilled' && r.value) || [];
+    durationStats.value = (du.status === 'fulfilled' && du.value) || {};
+    if (v.status === 'fulfilled') applyVisitStats(v.value);
     updatedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-  } catch {
-    // 错误提示已由请求层统一处理，这里只需保证 loading 收尾
   } finally {
-    loading.value = false;
+    endLoad();
   }
 }
 
 /** 切换区间只重取「区间相关」的接口，汇总与月度、排行不受影响。 */
 async function loadRange(): Promise<void> {
+  // 切区间也要有加载反馈:此前只有工具栏「刷新」会点亮 loading,
+  // 换日期区间时页面毫无反应,弱网下像是没生效。
+  beginLoad();
   try {
-    const [d, h, m, du, v] = await Promise.all([
+    // 与 loadAll 同一策略:单块失败不影响其余图表（错误提示仍由请求层弹出）。
+    const [d, h, m, du, v] = await Promise.allSettled([
       getDailyTrend(rangeParams()),
       getHourlyReport(rangeParams()),
       getSettleMix(rangeParams()),
       getDiningDuration(rangeParams()),
       getVisitStats(rangeParams())
     ]);
-    dailyRows.value = d || [];
-    hourlyRows.value = h || [];
-    mixRows.value = m || [];
-    durationStats.value = du || {};
-    applyVisitStats(v);
-  } catch {
-    /* 同上 */
+    dailyRows.value = (d.status === 'fulfilled' && d.value) || [];
+    hourlyRows.value = (h.status === 'fulfilled' && h.value) || [];
+    mixRows.value = (m.status === 'fulfilled' && m.value) || [];
+    durationStats.value = (du.status === 'fulfilled' && du.value) || {};
+    if (v.status === 'fulfilled') applyVisitStats(v.value);
+  } finally {
+    endLoad();
   }
 }
 
@@ -316,6 +333,10 @@ async function loadRank(): Promise<void> {
 
 // ---------- 导出 ----------
 /** 导出当前区间的逐日明细(带 BOM，Excel 打开中文不乱码)。 */
+/** 导出 CSV 的 object URL 与其延迟回收定时器(卸载时清理,见 onBeforeUnmount) */
+let exportUrl: string | null = null;
+let exportRevokeTimer: ReturnType<typeof setTimeout> | null = null;
+
 function exportCsv(): void {
   const rows: Array<Array<string | number>> = [['日期', '营业额(元)', '订单数', '客流(人次)']];
   for (const d of dailyRows.value) {
@@ -330,8 +351,14 @@ function exportCsv(): void {
   a.href = url;
   a.download = `营业明细_${range.value?.[0] || ''}_${range.value?.[1] || ''}.csv`;
   a.click();
-  // 延迟回收:Firefox/Safari 对立即 revoke 的 blob URL 可能中断下载(参照 utils/zip.ts 的做法)
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  // 延迟回收:Firefox/Safari 对立即 revoke 的 blob URL 可能中断下载(参照 utils/zip.ts 的做法)。
+  // 句柄记下来,卸载时清掉并立即回收,避免组件已卸载后还留一个待执行的定时器与无人释放的 URL。
+  exportUrl = url;
+  exportRevokeTimer = setTimeout(() => {
+    URL.revokeObjectURL(url);
+    exportUrl = null;
+    exportRevokeTimer = null;
+  }, 4000);
 }
 
 // ---------- 移动端 ----------
@@ -345,6 +372,18 @@ const { observeRoot } = useEChart();
 onMounted(() => {
   loadAll();
   observeRoot(rootRef.value);
+});
+
+onBeforeUnmount(() => {
+  // 导出 CSV 的 object URL:清掉待执行的回收定时器并立即回收
+  if (exportRevokeTimer) {
+    clearTimeout(exportRevokeTimer);
+    exportRevokeTimer = null;
+  }
+  if (exportUrl) {
+    URL.revokeObjectURL(exportUrl);
+    exportUrl = null;
+  }
 });
 </script>
 

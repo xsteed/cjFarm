@@ -62,6 +62,9 @@ func GetCustomerByIdentity(provider, externalID string) (*po.Customer, error) {
 // 只写档案字段 —— 登录凭据由 InsertIdentityTx 单独绑定(两者同事务,见 CreateCustomerWithIdentity)。
 func InsertCustomerTx(tx *sql.Tx, c po.Customer) (int64, error) {
 	now := store.Now()
+	// 刻意不写 update_time:口径是「create_time 仅 INSERT 写一次,update_time 仅
+	// UPDATE 推进」,INSERT 时留 NULL 才能区分「从未被改过」与「刚创建」
+	// (见 TestCustomerTimestampColumns)。
 	res, err := tx.Exec(`INSERT INTO tb_customer(nickname, avatar_url, status, order_count, last_order_time, create_time, last_login_time, remark)
 		VALUES(?,?,1,0,'',?,?,?)`,
 		c.Nickname, c.AvatarURL, now, now, c.Remark)
@@ -171,10 +174,10 @@ func ListMembers(q MemberQuery, pageNum, pageSize int) (int, []MemberRow, error)
 	args := []interface{}{}
 	if kw := strings.TrimSpace(q.Keyword); kw != "" {
 		// 昵称或手机号(手机号在身份表里,用 EXISTS 而不是 JOIN,避免与登录方式聚合重复)。
-		where = append(where, `(c.nickname LIKE ? OR EXISTS (
+		where = append(where, `(c.nickname LIKE ? ESCAPE '\' OR EXISTS (
 			SELECT 1 FROM tb_customer_identity i2
-			WHERE i2.customer_id=c.customer_id AND i2.provider='phone' AND i2.external_id LIKE ?))`)
-		like := "%" + kw + "%"
+			WHERE i2.customer_id=c.customer_id AND i2.provider='phone' AND i2.external_id LIKE ? ESCAPE '\'))`)
+		like := store.LikeContains(kw)
 		args = append(args, like, like)
 	}
 	if q.Status != nil {

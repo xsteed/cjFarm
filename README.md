@@ -37,7 +37,7 @@ dining-system/
 │   │   ├── main.ts         #   创建应用、注册图标与全局 $money、注入 UI 通知实现
 │   │   └── router/index.ts #   拼接两端路由（顾客端 + 管理端）+ 登录/权限守卫
 │   ├── apps/
-│   │   ├── admin/          # 管理端：layout（侧栏）+ views（13 个管理页）+ components
+│   │   ├── admin/          # 管理端：layout（侧栏）+ views（16 个管理页）+ components
 │   │   │   └── src/routes.ts / menu.ts   # 路由表与侧栏菜单派生（菜单由路由表筛出）
 │   │   ├── customer/       # 顾客点餐端（H5）：OrderPage + order/* + 打印票据页
 │   │   │   └── src/routes.ts             # /order/:tableId、/printTicket（公开）
@@ -180,8 +180,8 @@ npm run mp:verify    # 类型检查 + lint + WXML/WXSS 审计 + 单测 + 产物�
 
 然后用微信开发者工具「导入项目」指向 `frontend/apps/miniprogram/`。
 
-> ⚠️ 当前只是**第一版实现，不能直接上线**：还需要 HTTPS 备案域名 + 合法域名白名单（AppID 已配置），
-> 在线支付（JSAPI）与订阅消息尚未接入。**完整清单见 [`docs/miniprogram.md`](docs/miniprogram.md)。**
+> ⚠️ 当前**不能直接上线**：还需要 HTTPS 备案域名 + 合法域名白名单（AppID 已配置），
+> 订阅消息尚未接入（在线支付 JSAPI 已接通，见该文档 4.1 节）。**完整清单见 [`docs/miniprogram.md`](docs/miniprogram.md)。**
 
 ### 5. 安卓壳 APK（安卓设备 / 鸿蒙 4.x）
 

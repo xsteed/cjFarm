@@ -419,7 +419,8 @@ const itemCols = computed(() =>
       ]
 );
 
-// 待收统计:仅统计当前列表为待收时的总额;用于顶部 KPI 展示。
+// 待收统计:取自 report/summary 的**全站**挂账待收总额(与当前 tab/列表无关),
+// 用于顶部 KPI 展示。
 const pendingTotal = computed(() => summary.value.creditPendingAmount || 0);
 const pendingCount = computed(() => summary.value.creditPendingCount || 0);
 
@@ -442,6 +443,15 @@ async function load(): Promise<void> {
     const res = await listOrders(params);
     list.value = res.items || [];
     pagination.total = res.total;
+    // 与 Orders.vue 同口径的页码夹取:核销会把刚处理的单踢出当前筛选、总数缩水,
+    // 当前页码可能越界 —— 后端不纠偏(越界页码返回空列表),不停在空白页。
+    // 夹取后递归一层必命中合法页码,不会再次触发。
+    const maxPage = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
+    if (pagination.current > maxPage) {
+      pagination.current = maxPage;
+      await load();
+      return;
+    }
     if (canReport.value) summary.value = await getReportSummary();
   } catch {
     /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted(load) 会抛未处理的 Promise 拒绝 */

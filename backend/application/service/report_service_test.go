@@ -122,7 +122,10 @@ func TestReportSvcReportSummary(t *testing.T) {
 	// 已取消订单。
 	reportSvcInsertOrder(t, "RP5", OrderStatusCanceled, 0, 2000, 1)
 
-	s := ReportSummary()
+	s, err := ReportSummary()
+	if err != nil {
+		t.Fatalf("报表汇总失败: %v", err)
+	}
 	if s.TableCount < 1 || s.FreeTableCount < 1 {
 		t.Fatalf("桌台统计异常: %+v", s)
 	}
@@ -168,7 +171,10 @@ func TestReportSvcTrendsAndStats(t *testing.T) {
 		t.Fatalf("单日趋势数据异常: %+v", trend[0])
 	}
 
-	monthly := MonthlyTrend()
+	monthly, err := MonthlyTrend()
+	if err != nil {
+		t.Fatalf("月度趋势查询失败: %v", err)
+	}
 	if len(monthly) != 12 {
 		t.Fatalf("月度趋势应返回 12 项, got %d", len(monthly))
 	}

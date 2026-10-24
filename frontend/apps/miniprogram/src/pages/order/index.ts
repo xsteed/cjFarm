@@ -25,7 +25,7 @@ import { toast } from '../../utils/toast';
 import { money } from '../../shared/money';
 import { ORDER_STATUS } from '../../shared/dicts';
 import { ORDER_STATUS_CODE, isActiveStatus } from '../../shared/orderStatus';
-import { payStatusText, payStatusTheme } from '../../shared/orderDisplay';
+import { batchLabels, payStatusText, payStatusTheme } from '../../shared/orderDisplay';
 import type { OrderDetail, TableInfo } from '../../types';
 
 /** 「出餐中订单」列表行：WXML 不支持函数调用，标签文案在这里算好。 */
@@ -145,6 +145,9 @@ Page({
   urgeTimer: null as ReturnType<typeof setInterval> | null,
   /** 冷启动带 query 时 recover 已经在拉：onShow 的第一拍跳过，免得同一单同时请求两次 */
   skipFirstTick: false,
+  /** 页面是否已卸载：onUnload 置 true。轮询在途那一拍回来后据此跳过 setData，
+   *  否则会对已销毁的页面 setData（微信打告警，且浪费一次渲染）。 */
+  unloaded: false,
 
   onLoad(options: Record<string, string | undefined>) {
     // 没有原生返回箭头时（tab 切页 redirectTo，栈深 1）才画自己的返回按钮
@@ -190,6 +193,7 @@ Page({
   },
 
   onUnload() {
+    this.unloaded = true;
     this.stopPolling();
     this.clearUrgeTimer();
   },
@@ -259,6 +263,8 @@ Page({
       // 不带桌台参数等于任人凭单号遍历别人的订单（桌台、金额、菜品、备注）。
       // tableId 为 0（会话还没拿到桌台详情）时后端自动退化为不限桌，与原先行为一致。
       const order = (await getOrderByNo(orderNo, sessionState().tableId)) as OrderDetail;
+      // await 期间页面可能已被卸载（顾客进页面立刻返回）：不再渲染
+      if (this.unloaded) return;
       applyOrder(order);
       this.render(order);
       this.setData({ loading: false, canRetry: false, noOrder: false });
@@ -296,11 +302,15 @@ Page({
 
   async tick() {
     const orderNo = this.data.orderNo;
-    if (!orderNo) return;
+    if (!orderNo || this.unloaded) return;
     // 与 recover 同口径带上 tableId：轮询是同一个接口的另一条调用路径，
     // 只在 recover 里传等于给高频请求留了一扇敞开的门。
-    const order = (await getOrderByNo(orderNo, sessionState().tableId)) as OrderDetail;
+    // silent：轮询路径网络失败不弹全局 toast（poller 本就静默重试），
+    // 手动重试的 recover 不走 silent，照常给用户可见的错误。
+    const order = (await getOrderByNo(orderNo, sessionState().tableId, { silent: true })) as OrderDetail;
     applyOrder(order);
+    // await 期间页面可能被卸载（顾客返回）：此时不再渲染
+    if (this.unloaded) return;
     this.render(order);
     // 已结束的订单不必继续轮询（状态先归一：字符串型状态会让这个判断永远不成立）
     const status = Number(order.orderStatus) || 0;
@@ -320,16 +330,11 @@ Page({
     const settled = payStatus === 1 && active;
 
     // 加过菜的单才标批次：顾客能分清哪几道是后来加的；只有一批时不标，省得满屏标签。
-    // 按「出现顺序」编号而不是 batchNo-1：后端批次号万一跳号（1、3），文案也不会错位。
-    const batchOrder = new Map<number, number>();
-    for (const it of order.items || []) {
-      const b = Number(it.batchNo) || 1;
-      if (!batchOrder.has(b)) batchOrder.set(b, batchOrder.size + 1);
-    }
-    const multiBatch = batchOrder.size > 1;
+    // 算法收敛在 shared/orderDisplay.ts 的 batchLabels(与管理端同一份口径:
+    // 按「出现顺序」编号,后端批次号万一跳号(1、3)文案也不会错位)。
+    const labels = batchLabels(order.items);
 
     const rows: OrderRow[] = (order.items || []).map((it, i) => {
-      const seq = batchOrder.get(Number(it.batchNo) || 1) || 1;
       // 赠送菜(amount 记 0):金额位显示「赠」而不是 ¥0.00,避免顾客误以为漏算。
       const isGift = Number(it.isGift) === 1;
       return {
@@ -340,7 +345,7 @@ Page({
         qtyText: `x${Number(it.quantity) || 0}`,
         amountText: isGift ? '赠' : money(it.amount),
         isGift,
-        batchLabel: multiBatch ? (seq <= 1 ? '首单' : `加菜${seq - 1}`) : ''
+        batchLabel: labels[i] || ''
       };
     });
 
@@ -378,6 +383,14 @@ Page({
     const payBtnText = payFirst && active && payStatus === 0 ? '🔥 去支付' : '去支付';
 
     const table = sessionState().table;
+    // 人数回写会话：同桌其他设备改人数后，菜单页/购物车页的茶位费估算要跟着变 ——
+    // 只写页面 data 会让两端显示不一致（订单页显示 5 人、购物车还按 2 人算茶位费）。
+    // 人数回写会话:同桌其他设备改人数后,菜单页/购物车页的茶位费估算要跟着变 ——
+    // 只写页面 data 会让两端显示不一致(订单页显示 5 人、购物车还按 2 人算茶位费)。
+    // 取收敛后的返回值:服务端下发 0/25 时页面与会话一致。
+    // 取舍:这一拍每 3s 用服务端值覆盖会话,若顾客刚在本机改过人数、请求还没回来,
+    // 会短暂跳回旧值;购物车页 appendMode 本就以 order.personCount 为准,影响有限。
+    const personCount = setPersonCount(Number(order.personCount) || 1);
     this.setData({
       steps,
       showProgress: !canceled,
@@ -395,7 +408,7 @@ Page({
       discountText: money(order.discountAmount),
       showSeatFee: Number(order.seatFee) > 0,
       showDiscount: Number(order.discountAmount) > 0,
-      personCount: Number(order.personCount) || 1,
+      personCount,
       createTimeText: String(order.createTime || ''),
       orderRemark: String(order.orderRemark || ''),
       rows,
@@ -510,14 +523,15 @@ Page({
         orderNo: this.data.orderNo,
         personCount
       })) as OrderDetail;
-      // 三处同步：会话人数（购物车页/菜单页的茶位费都读它）、订单快照、本页渲染
-      setPersonCount(Number(order.personCount) || personCount);
+      // 三处同步：会话人数（购物车页/菜单页的茶位费都读它）、订单快照、本页渲染。
+      // 取收敛后的返回值：服务端下发 0/25 时页面显示与会话一致（都走 1..20）。
+      const nextPerson = setPersonCount(Number(order.personCount) || personCount);
       // 显式改过人数即「已选」：落盘后冷启动不再弹「选人数」面板
       markPersonChosen();
       persistPersonChoice();
       applyOrder(order);
       this.render(order);
-      toast.success(`已更新为 ${Number(order.personCount) || personCount} 人`);
+      toast.success(`已更新为 ${nextPerson} 人`);
     } catch {
       // 失败提示由请求拦截器统一给出（含「订单已支付，不可修改人数」这类业务文案）
     } finally {

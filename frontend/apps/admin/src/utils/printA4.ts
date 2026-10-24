@@ -8,19 +8,10 @@
 //
 // 版式复刻同目录 tableQr.ts 的做法：拼 HTML 字符串 -> 新窗口 write -> @page A4 -> window.print()。
 
-import { buildPrintToolbar, openPrintWindow, PRINT_TOOLBAR_CSS } from './tableQr';
+import { buildPrintToolbar, PRINT_TOOLBAR_CSS } from './tableQr';
+import { esc } from './htmlEscape';
 import { ORDER_STATUS } from '@dining/shared';
-import type { OrderDetail, PublicConfig } from '@dining/types';
-
-const HTML_ESCAPE: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;'
-};
-
-const esc = (v: unknown): string => String(v == null ? '' : v).replace(/[&<>"']/g, c => HTML_ESCAPE[c]);
+import type { OrderDetail } from '@dining/types';
 
 const money = (v: unknown): string => Number(v || 0).toFixed(2);
 
@@ -36,7 +27,6 @@ interface A4PrintOptions {
   shopName?: string;
   reprint?: boolean;
   printTime?: string;
-  getPublicConfig?: () => Promise<PublicConfig>;
 }
 
 function itemRows(order: OrderDetail, withPrice: boolean): string {
@@ -199,39 +189,6 @@ export function buildA4Html(order: OrderDetail, docType: 'kitchen' | 'guest', op
 </body></html>`;
 }
 
-/** 缓存店铺名：一单可能连点多次 A4，没必要每次都请求配置 */
-let shopNameCache: string | null = null;
-async function resolveShopName(api: () => Promise<PublicConfig>): Promise<string> {
-  if (shopNameCache) return shopNameCache;
-  try {
-    const cfg = await api();
-    shopNameCache = cfg?.shop_name || '';
-  } catch {
-    shopNameCache = '';
-  }
-  return shopNameCache;
-}
-
-function nowText(): string {
-  const d = new Date();
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
-/**
- * 打开 A4 打印页。
- * @param order 订单详情
- * @param docType 单据类型
- * @param opt { getPublicConfig, reprint }
- * @returns 是否被浏览器拦截
- */
-export async function printOrderA4(
-  order: OrderDetail | null,
-  docType: 'kitchen' | 'guest',
-  opt: A4PrintOptions = {}
-): Promise<boolean> {
-  if (!order) return false;
-  const shopName = opt.getPublicConfig ? await resolveShopName(opt.getPublicConfig) : '';
-  const html = buildA4Html(order, docType, { shopName, reprint: opt.reprint !== false, printTime: nowText() });
-  return openPrintWindow(html);
-}
+// printOrderA4 / resolveShopName / nowText / shopNameCache 此前是无任何调用方的导出链
+// （A4 打印还没有 UI 入口），已删除 —— 保留 buildA4Html 这一层纯拼接函数（有单测），
+// 等界面上真正需要「浏览器打印 A4」时再接一层薄封装即可。

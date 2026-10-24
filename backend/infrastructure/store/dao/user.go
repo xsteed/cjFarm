@@ -138,8 +138,8 @@ func ListUsers(q UserQuery, pageNum, pageSize int) (int, []UserRow, error) {
 	where := []string{"u.del_flag='0'"}
 	args := []interface{}{}
 	if kw := strings.TrimSpace(q.Keyword); kw != "" {
-		where = append(where, "(u.username LIKE ? OR COALESCE(u.real_name,'') LIKE ? OR COALESCE(u.phone,'') LIKE ?)")
-		like := "%" + kw + "%"
+		where = append(where, "(u.username LIKE ? ESCAPE '\\' OR COALESCE(u.real_name,'') LIKE ? ESCAPE '\\' OR COALESCE(u.phone,'') LIKE ? ESCAPE '\\')")
+		like := store.LikeContains(kw)
 		args = append(args, like, like, like)
 	}
 	if q.RoleID > 0 {
@@ -159,7 +159,7 @@ func ListUsers(q UserQuery, pageNum, pageSize int) (int, []UserRow, error) {
 
 	rows, err := store.DB.Query(`SELECT `+userCols+`
 		FROM tb_user u
-		LEFT JOIN tb_role r ON r.role_id = u.role_id
+		LEFT JOIN tb_role r ON r.role_id = u.role_id AND r.del_flag='0'
 		`+cond+` ORDER BY u.user_id LIMIT ? OFFSET ?`,
 		append(args, pageSize, (pageNum-1)*pageSize)...)
 	if err != nil {
@@ -220,6 +220,11 @@ func GetUserByID(userID int) (*UserRow, error) {
 	for rows.Next() {
 		return scanUser(rows)
 	}
+	// 迭代错误必须上抛:否则连接中断会被当成「无此行」,上层按「账号不存在」
+	// 处理(登录失败/员工不存在),与真实原因相去甚远。
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return nil, sql.ErrNoRows
 }
 
@@ -235,6 +240,10 @@ func GetUserByUsername(username string) (*UserRow, error) {
 	defer rows.Close()
 	for rows.Next() {
 		return scanUser(rows)
+	}
+	// 同上:迭代错误不能被折叠成「用户不存在」。
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return nil, nil
 }
@@ -459,10 +468,16 @@ func ListRoles() ([]RoleRow, error) {
 	defer rows.Close()
 	list := []RoleRow{}
 	for rows.Next() {
-		if r, err := scanRole(rows); err == nil {
-			r.UserCount = counts[r.RoleID]
-			list = append(list, *r)
+		// 扫描失败必须上抛:静默丢行会让角色列表「莫名少几条」,管理员看不到任何错误。
+		r, err := scanRole(rows)
+		if err != nil {
+			return nil, err
 		}
+		r.UserCount = counts[r.RoleID]
+		list = append(list, *r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return list, nil
 }

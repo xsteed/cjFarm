@@ -196,8 +196,8 @@ func TestTableReleaseSettlePersistsOrderAndRevenue(t *testing.T) {
 	// 营收统计必须能统计到这笔:按 pay_time 归属当天
 	day := store.Now()[:10]
 	next := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
-	if got := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); got != 12800 {
-		t.Fatalf("补结账金额应进当天营收, got %d want 12800", got)
+	if got, err := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); err != nil || got != 12800 {
+		t.Fatalf("补结账金额应进当天营收, got %d want 12800 err=%v", got, err)
 	}
 	_ = orderID
 }
@@ -240,8 +240,8 @@ func TestTableReleaseCancelRestoresStockAndKeepsUnpaid(t *testing.T) {
 	// 作废的单不进营收
 	day := store.Now()[:10]
 	next := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
-	if got := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); got != 0 {
-		t.Fatalf("作废单不应计入营收, got %d", got)
+	if got, err := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); err != nil || got != 0 {
+		t.Fatalf("作废单不应计入营收, got %d err=%v", got, err)
 	}
 }
 
@@ -317,8 +317,8 @@ func TestTableReleaseHandlesMultipleOrdersAtOnce(t *testing.T) {
 	// 1 元 + 2.5 元两笔补结账进当天营收,已收款那笔不重复计入
 	day := store.Now()[:10]
 	next := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
-	if got := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); got != 3500 {
-		t.Fatalf("当天营收应为 3500 分, got %d", got)
+	if got, err := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); err != nil || got != 3500 {
+		t.Fatalf("当天营收应为 3500 分, got %d err=%v", got, err)
 	}
 }
 
@@ -358,8 +358,8 @@ func TestTableReleaseSkipsStaleOrdersWhenGuardOn(t *testing.T) {
 	// 只有今日那笔进营收:遗留单没被偷偷入账
 	day := store.Now()[:10]
 	next := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
-	if got := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); got != 2500 {
-		t.Fatalf("当天营收应为 2500 分(仅今日单), got %d", got)
+	if got, err := dao.RangeAmount(day+" 00:00:00", next+" 00:00:00"); err != nil || got != 2500 {
+		t.Fatalf("当天营收应为 2500 分(仅今日单), got %d err=%v", got, err)
 	}
 
 	// 桌台照样置空闲

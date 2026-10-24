@@ -124,6 +124,9 @@ function render(): void {
 
 onMounted(render);
 watch(() => props.rows, render);
+// 排序维度也要重绘:切换「按销量/按销售额」后若 loadRank 失败(Report 里静默 catch),
+// 只监听 rows 会让图停在旧数据上,而坐标轴语义已经跟着 props.sort 变了。
+watch(() => props.sort, render);
 // 断点变化时重绘排行图
 watch(isMobile, render);
 </script>

@@ -146,11 +146,11 @@
         class="m-pager"
       >
         <t-pagination
-          v-model="query.pageNum"
+          :current="query.pageNum"
           :total="total"
           :page-size="query.pageSize"
           size="small"
-          @change="load"
+          @change="onPageChange"
         />
       </div>
     </div>
@@ -310,12 +310,11 @@
 
       <div class="pager">
         <t-pagination
-          v-model="query.pageNum"
-          v-model:page-size="query.pageSize"
+          :current="query.pageNum"
+          :page-size="query.pageSize"
           :total="total"
           :page-size-options="[10, 20, 50]"
-          @change="load"
-          @page-size-change="reload"
+          @change="onPageChange"
         />
       </div>
     </template>
@@ -341,6 +340,7 @@ import {
   WALLET_TXN_LABELS
 } from '@dining/api';
 import type { MemberRow, WalletTxnRow } from '@dining/api';
+import type { PageInfo } from 'tdesign-vue-next';
 import { useIsMobile } from '../utils/useMobile';
 
 const { isMobile } = useIsMobile();
@@ -493,6 +493,17 @@ async function load(): Promise<void> {
 
 function reload(): void {
   query.pageNum = 1;
+  void load();
+}
+
+/**
+ * 分页变化：从事件参数取新页码/页大小。
+ * 不依赖 v-model 的 update:current 先于 change 派发 —— 切每页条数时 tdesign 会先派发
+ * page-size-change、再在 nextTick 派发 change，用 v-model + 两个事件会发两次请求且页码竞态。
+ */
+function onPageChange(page: PageInfo): void {
+  query.pageNum = page.current;
+  query.pageSize = page.pageSize;
   void load();
 }
 

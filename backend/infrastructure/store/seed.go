@@ -32,7 +32,12 @@ func seed() {
 	// 以避免 store 根包反向依赖 dao 包。
 
 	var n int
-	DB.QueryRow(`SELECT COUNT(*) FROM tb_category`).Scan(&n)
+	// 计数查询失败必须终止:Scan 失败时 n 保持 0,会绕过下面的短路对已有数据的库
+	// 重复灌种子,产生冲突行/重复数据。
+	if err := DB.QueryRow(`SELECT COUNT(*) FROM tb_category`).Scan(&n); err != nil {
+		logger.Warnf("[seed] 读取分类表计数失败,跳过种子初始化: %v", err)
+		return
+	}
 	if n > 0 {
 		return
 	}
@@ -366,52 +371,83 @@ var seedDishRows = []dishSeed{
 // seedTables 写入桌台,桌台码随机生成(保证不可枚举)。
 func seedTables() {
 	for _, t := range seedTableRows {
-		DB.Exec(`INSERT INTO tb_table(table_no, table_name, capacity, status, sort_order, del_flag, table_code, create_time, update_time)
-			VALUES(?,?,?,?,?,?,?,?,?)`, t.TableNo, t.TableName, t.Capacity, t.Status, t.SortOrder, "0", NewUniqueTableCode(), seedCreateTime, seedTableUpdTime)
+		if _, err := DB.Exec(`INSERT INTO tb_table(table_no, table_name, capacity, status, sort_order, del_flag, table_code, create_time, update_time)
+			VALUES(?,?,?,?,?,?,?,?,?)`, t.TableNo, t.TableName, t.Capacity, t.Status, t.SortOrder, "0", NewUniqueTableCode(), seedCreateTime, seedTableUpdTime); err != nil {
+			logger.Warnf("[seed] 写入桌台 %s 失败: %v", t.TableNo, err)
+		}
 	}
 }
 
 func seedCategories() {
 	for _, c := range seedCategoryRows {
-		DB.Exec(`INSERT INTO tb_category(category_name, sort_order, del_flag, create_time, update_time)
-			VALUES(?,?,?,?,?)`, c.CategoryName, c.SortOrder, "0", seedSysCreateTime, seedSysCreateTime)
+		if _, err := DB.Exec(`INSERT INTO tb_category(category_name, sort_order, del_flag, create_time, update_time)
+			VALUES(?,?,?,?,?)`, c.CategoryName, c.SortOrder, "0", seedSysCreateTime, seedSysCreateTime); err != nil {
+			logger.Warnf("[seed] 写入分类 %s 失败: %v", c.CategoryName, err)
+		}
 	}
 }
 
 func seedDishes() {
 	// 分类名 -> id
 	catID := map[string]int{}
-	rows, _ := DB.Query(`SELECT category_id, category_name FROM tb_category`)
+	rows, err := DB.Query(`SELECT category_id, category_name FROM tb_category`)
+	if err != nil {
+		// 查询失败时 rows 为 nil,直接遍历会空指针 panic 拖垮启动;
+		// 分类读不到就无法给菜品归属,整段跳过(下次启动库正常时再灌)。
+		logger.Warnf("[seed] 读取分类失败,跳过菜品种子: %v", err)
+		return
+	}
 	for rows.Next() {
 		var id int
 		var name string
-		rows.Scan(&id, &name)
+		if err := rows.Scan(&id, &name); err != nil {
+			logger.Warnf("[seed] 扫描分类行失败,跳过菜品种子: %v", err)
+			rows.Close()
+			return
+		}
 		catID[name] = id
 	}
 	rows.Close()
 
 	for i, s := range seedDishRows {
-		res, _ := DB.Exec(`INSERT INTO tb_dish(category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time)
+		// Exec 失败时 res 为 nil,接着取 LastInsertId 会空指针 panic。
+		// 任一行失败即放弃整段种子:半份种子(有菜无规格)比没有更难排查。
+		res, err := DB.Exec(`INSERT INTO tb_dish(category_id, dish_name, dish_image, description, status, sort_order, del_flag, create_time, update_time)
 			VALUES(?,?,?,?,?,?,?,?,?)`,
 			catID[s.cat], s.name, s.img, s.desc, 1, i+1, "0", seedSysCreateTime, seedSysCreateTime)
-		dishID, _ := res.LastInsertId()
+		if err != nil {
+			logger.Warnf("[seed] 写入菜品 %s 失败,跳过剩余菜品种子: %v", s.name, err)
+			return
+		}
+		dishID, err := res.LastInsertId()
+		if err != nil {
+			logger.Warnf("[seed] 读取菜品 %s 主键失败,跳过剩余菜品种子: %v", s.name, err)
+			return
+		}
 		for _, sp := range s.specs {
-			DB.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, create_time) VALUES(?,?,?,?)`,
-				dishID, sp.name, sp.price, seedSysCreateTime)
+			if _, err := DB.Exec(`INSERT INTO tb_spec(dish_id, spec_name, price, create_time) VALUES(?,?,?,?)`,
+				dishID, sp.name, sp.price, seedSysCreateTime); err != nil {
+				logger.Warnf("[seed] 写入菜品 %s 规格 %s 失败,跳过剩余菜品种子: %v", s.name, sp.name, err)
+				return
+			}
 		}
 	}
 }
 
 func seedRemarks() {
 	for i, r := range seedRemarkRows {
-		DB.Exec(`INSERT INTO tb_remark(option_name, sort_order, del_flag, create_time, update_time)
-			VALUES(?,?,?,?,?)`, r, i+1, "0", seedSysCreateTime, seedSysCreateTime)
+		if _, err := DB.Exec(`INSERT INTO tb_remark(option_name, sort_order, del_flag, create_time, update_time)
+			VALUES(?,?,?,?,?)`, r, i+1, "0", seedSysCreateTime, seedSysCreateTime); err != nil {
+			logger.Warnf("[seed] 写入备注 %s 失败: %v", r, err)
+		}
 	}
 }
 
 func seedPrinters() {
 	for _, p := range seedPrinterRows {
-		DB.Exec(`INSERT INTO tb_printer(printer_name, printer_type, ip, port, paper_width, status, del_flag, create_time, update_time)
-			VALUES(?,?,?,?,?,?,?,?,?)`, p.Name, p.PType, p.IP, p.Port, p.Width, 0, "0", seedSysCreateTime, seedSysCreateTime)
+		if _, err := DB.Exec(`INSERT INTO tb_printer(printer_name, printer_type, ip, port, paper_width, status, del_flag, create_time, update_time)
+			VALUES(?,?,?,?,?,?,?,?,?)`, p.Name, p.PType, p.IP, p.Port, p.Width, 0, "0", seedSysCreateTime, seedSysCreateTime); err != nil {
+			logger.Warnf("[seed] 写入打印机 %s 失败: %v", p.Name, err)
+		}
 	}
 }

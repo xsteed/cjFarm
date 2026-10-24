@@ -293,11 +293,15 @@ func ClaimPrintJobs(agentID string, limit, leaseSeconds int, kitchenCutoff, gues
 
 	// 待取单:从未取过,或上次失败后已过了退避时间。过期任务不能下发,
 	// 否则代理离线多天后恢复会把陈旧厨房单重新打出来。
+	//
+	// WHERE 里的可空时间列必须与 SELECT 侧同口径 COALESCE:这两列可能为 NULL
+	// (迁移补列 DEFAULT NULL / 手工插入),SQL 三值逻辑下 NULL 参与比较恒为假,
+	// 直接写 next_try_time='' 会把这类待取行永久漏掉,只能等到被 TTL 作废。
 	pendingArgs := append([]interface{}{po.PrintJobPending, now}, expiredArgs...)
 	pendingArgs = append(pendingArgs, scopeArgs...)
 	pendingArgs = append(pendingArgs, limit)
 	if err := pick(`SELECT `+jobColsCoalesced+` FROM tb_print_job
-		WHERE status=? AND (next_try_time='' OR next_try_time<=?)
+		WHERE status=? AND (COALESCE(next_try_time,'')='' OR COALESCE(next_try_time,'')<=?)
 		AND NOT (`+printJobExpiredCond+`)`+scopeCond+`
 		ORDER BY job_id LIMIT ?`, pendingArgs...); err != nil {
 		return nil, err
@@ -309,7 +313,7 @@ func ClaimPrintJobs(agentID string, limit, leaseSeconds int, kitchenCutoff, gues
 		claimedArgs = append(claimedArgs, scopeArgs...)
 		claimedArgs = append(claimedArgs, limit-len(candidates))
 		if err := pick(`SELECT `+jobColsCoalesced+` FROM tb_print_job
-			WHERE status=? AND claim_time<>'' AND claim_time<=?
+			WHERE status=? AND COALESCE(claim_time,'')<>'' AND COALESCE(claim_time,'')<=?
 			AND NOT (`+printJobExpiredCond+`)`+scopeCond+`
 			ORDER BY job_id LIMIT ?`, claimedArgs...); err != nil {
 			return nil, err
@@ -406,9 +410,9 @@ func RetryPrintJob(jobID int, errMsg string, backoffSeconds int) (bool, error) {
 
 	var status int
 	if err := store.DB.QueryRow(`SELECT status FROM tb_print_job WHERE job_id=?`, jobID).Scan(&status); err != nil {
-		if err == sql.ErrNoRows {
-			return false, err
-		}
+		// 行不存在(已被清理)与真错误一并返回:调用方按失败处理即可。
+		// 原实现在这里用 == 比较 sql.ErrNoRows 后再原样返回同一个 err,
+		// 分支与落体温合等价,是死代码,已删除。
 		return false, err
 	}
 	return status == po.PrintJobPending, nil

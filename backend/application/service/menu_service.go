@@ -28,7 +28,10 @@ func DishList(dishName, categoryID string, pageNum, pageSize int) (int, []dto.Di
 	for _, d := range rows {
 		ids = append(ids, d.DishID)
 	}
-	specMap := dao.LoadSpecsByDishIDs(ids)
+	specMap, err := dao.LoadSpecsByDishIDs(ids)
+	if err != nil {
+		return 0, nil, err
+	}
 	out := make([]dto.Dish, 0, len(rows))
 	for _, row := range rows {
 		specs := make([]dto.Spec, 0, len(specMap[row.DishID]))
@@ -46,7 +49,10 @@ func DishGet(id int) (dto.Dish, error) {
 	if err != nil {
 		return dto.Dish{}, err
 	}
-	poSpecs := dao.LoadDishSpecs(row.DishID)
+	poSpecs, err := dao.LoadDishSpecs(row.DishID)
+	if err != nil {
+		return dto.Dish{}, err
+	}
 	specs := make([]dto.Spec, 0, len(poSpecs))
 	for _, s := range poSpecs {
 		specs = append(specs, dto.FromSpec(s))

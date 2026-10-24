@@ -463,6 +463,8 @@ function toggleGift(row: EditFormItem): void {
 }
 
 async function submit(): Promise<void> {
+  // 防重复提交:按钮的 :loading 只是视觉禁用,连点/回车仍可能发两次改单请求
+  if (saving.value) return;
   const f = form.value;
   const o = props.order;
   if (!f || !o) return;

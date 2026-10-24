@@ -137,14 +137,13 @@ function onResize(): void {
 }
 
 onMounted(() => {
-  const rect = el.value?.getBoundingClientRect();
   const saved = loadPos();
   if (saved) {
     pos.value = clampPos(saved.x, saved.y);
-  } else if (rect) {
-    // 首次进入:固定到右下角默认位置,CSS 默认即在此,转换后不发生跳动
-    pos.value = clampPos(window.innerWidth - size().w - 16, rect.top);
   }
+  // 没有保存位置时保持 pos=null,直接用 CSS 的右下角定位 —— 首次渲染不再做一次
+  // 「JS 夹取值 vs CSS 值」的换算(两者边距/底部预留口径本就差几像素,会让按钮跳一下)。
+  // 首次拖拽时 onDown 从 getBoundingClientRect 取起点,无需预先转换。
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);

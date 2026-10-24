@@ -5,8 +5,6 @@
 // 小程序端用 wx.storage 持久化(见 safeStorage),生成规则与 Web 端一致。
 // ============================================================================
 
-import { safeStorage } from './storage';
-
 /** 访客 ID 在本地存储里的键名。 */
 export const LS_VISITOR_ID = 'dining_visitor_id';
 
@@ -32,14 +30,5 @@ export function generateVisitorId(): string {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/**
- * 取本机访客 ID:没有则现场生成并落盘,之后同一设备永远拿到同一个值。
- * 只读不回写不行 —— 打点接口是 fire-and-forget,若每次都生成新 ID,UV 会退化成 PV。
- */
-export function visitorId(): string {
-  const existing = safeStorage.get(LS_VISITOR_ID);
-  if (existing) return existing;
-  const id = generateVisitorId();
-  safeStorage.set(LS_VISITOR_ID, id);
-  return id;
-}
+// 取值入口在小程序端自己的 utils/visitor.ts(mpVisitorId):它直接用 wx.getStorageSync,
+// 而这里注入的 safeStorage 后端并不覆盖这套用法。此处曾有一份等价的 visitorId(),无调用方,已删。

@@ -60,6 +60,8 @@ Page({
   pendingRequestId: '',
   /** 幂等键对应的「提交内容指纹」：内容变了就换新键（见 submit 内说明）。 */
   pendingFingerprint: '',
+  /** 整单备注的落盘防抖句柄：逐字符同步写 storage 在低端机上可直接感到卡顿 */
+  remarkSaveTimer: null as ReturnType<typeof setTimeout> | null,
 
   onShow() {
     const s = sessionState();
@@ -190,6 +192,21 @@ Page({
     // 同步进会话并落盘：备注若只留在页面 data 里，页面一销毁（跳订单页是 redirectTo）
     // 就丢了，而购物车本身还能恢复 —— 恢复出半份信息比不恢复更让人困惑。
     sessionState().orderRemark = value;
+    // 防抖落盘：每次输入事件都全量 wx.setStorageSync，输入 20 字就是 20 次同步写，
+    // 低端机上可直接感到卡顿。最后一次在 onUnload 兜底补写。
+    if (this.remarkSaveTimer) clearTimeout(this.remarkSaveTimer);
+    this.remarkSaveTimer = setTimeout(() => {
+      this.remarkSaveTimer = null;
+      saveCart();
+    }, 400);
+  },
+
+  onUnload() {
+    // 防抖未到期的最后一次落盘：页面跳走（redirectTo）前必须补写，否则备注丢失
+    if (this.remarkSaveTimer) {
+      clearTimeout(this.remarkSaveTimer);
+      this.remarkSaveTimer = null;
+    }
     saveCart();
   },
 

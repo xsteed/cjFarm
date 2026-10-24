@@ -126,14 +126,28 @@ func bizDateGuardSQL(guardBizDate string) (string, []interface{}) {
 
 // GetActiveOrderByTable 查询桌台最近一笔进行中订单。
 func GetActiveOrderByTable(tableID int, guardBizDate string) (po.Order, bool) {
+	o, ok, _ := GetActiveOrderByTableE(tableID, guardBizDate)
+	return o, ok
+}
+
+// GetActiveOrderByTableE 是 GetActiveOrderByTable 的带错误版本。
+//
+// 调用方是「删桌台 / 停用桌台」这类**拦截型守卫**:必须区分「确实没有进行中订单」
+// (sql.ErrNoRows) 与「查询失败」。旧实现把两者都返回 (零值, false),库抖动时
+// 守卫会被误判为「无订单」而放行 —— 正在用餐的桌台被删掉/停用,进行中订单随即
+// 失去入口,加菜/收款/结账全部卡死。
+func GetActiveOrderByTableE(tableID int, guardBizDate string) (po.Order, bool, error) {
 	guard, args := bizDateGuardSQL(guardBizDate)
 	o, err := ScanOrder(store.DB.QueryRow(
 		`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`+guard+` ORDER BY order_id DESC LIMIT 1`,
 		append([]interface{}{tableID}, args...)...))
 	if err != nil {
-		return po.Order{}, false
+		if errors.Is(err, sql.ErrNoRows) {
+			return po.Order{}, false, nil
+		}
+		return po.Order{}, false, err
 	}
-	return o, true
+	return o, true, nil
 }
 
 // GetUnpaidOrderByTable 查询桌台最近一笔「未结账」订单(顾客付款前可加菜/付款的那一单)。
@@ -181,13 +195,23 @@ func ListStaleTableIDs(today string) []int {
 // 未结单,漏掉任何一笔都会让桌台卡在占用态。
 // guardBizDate 非空时带营业日隔离,语义见 bizDateGuardSQL。
 func ListActiveOrdersByTable(tableID int, guardBizDate string) []po.Order {
+	list, _ := ListActiveOrdersByTableE(tableID, guardBizDate)
+	return list
+}
+
+// ListActiveOrdersByTableE 是 ListActiveOrdersByTable 的带错误版本。
+//
+// 调用方(强制清台)在拿不到完整列表时必须失败而不是当成「没有订单」:
+// 后者会走进「仅重置占用状态」分支,操作者却看到「清台完成」—— 未结账的订单
+// 一筆都没被处理,桌台反而显示空闲。
+func ListActiveOrdersByTableE(tableID int, guardBizDate string) ([]po.Order, error) {
 	guard, args := bizDateGuardSQL(guardBizDate)
 	rows, err := store.DB.Query(
 		`SELECT `+OrderCols+` FROM tb_order WHERE table_id=? AND order_status IN (1,2,3)`+guard+` ORDER BY order_id`,
 		append([]interface{}{tableID}, args...)...)
 	if err != nil {
 		logger.Warnf("[dao] 查询桌台进行中订单失败 table=%d: %v", tableID, err)
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	list := []po.Order{}
@@ -196,11 +220,15 @@ func ListActiveOrdersByTable(tableID int, guardBizDate string) []po.Order {
 		if scanErr != nil {
 			// 单行扫描失败就整批放弃返回:静默少收一笔,桌台会解不开。
 			logger.Warnf("[dao] 扫描桌台进行中订单失败 table=%d: %v", tableID, scanErr)
-			return nil
+			return nil, scanErr
 		}
 		list = append(list, o)
 	}
-	return list
+	if err := rows.Err(); err != nil {
+		logger.Warnf("[dao] 遍历桌台进行中订单中断 table=%d: %v", tableID, err)
+		return nil, err
+	}
+	return list, nil
 }
 
 // ListServingOrdersByTable 查询桌台「已付款但出餐未完成」的订单,顾客扫码时据此查看出餐进度。
@@ -345,8 +373,8 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 		args = append(args, *q.PayStatus)
 	}
 	if q.OrderNo != "" {
-		where = append(where, "order_no LIKE ?")
-		args = append(args, "%"+q.OrderNo+"%")
+		where = append(where, "order_no LIKE ? ESCAPE '\\'")
+		args = append(args, store.LikeContains(q.OrderNo))
 	}
 	if q.TableNo != "" {
 		where = append(where, "table_no=?")
@@ -356,8 +384,8 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 	// 且桌台可改名,历史单上留的是改名前的快照 —— 必须服务端过滤,
 	// 前端只过滤当前页会让第 2 页起的命中记录永远搜不到。
 	if q.TableName != "" {
-		where = append(where, "COALESCE(table_name,'') LIKE ?")
-		args = append(args, "%"+q.TableName+"%")
+		where = append(where, "COALESCE(table_name,'') LIKE ? ESCAPE '\\'")
+		args = append(args, store.LikeContains(q.TableName))
 	}
 	// 结算方式筛选:normal 正常收款 / free 免单 / credit 挂账
 	if q.SettleType != "" {
@@ -372,8 +400,8 @@ func ListOrders(q OrderQuery, pageNum, pageSize int) (total int, list []po.Order
 	// 结算备注(免单原因/挂账人)模糊匹配:必须与 COUNT 用同一 cond,
 	// 否则总数与实际列表口径不一致,分页器会出现「翻不到的空页」。
 	if q.SettleRemark != "" {
-		where = append(where, "COALESCE(settle_remark,'') LIKE ?")
-		args = append(args, "%"+q.SettleRemark+"%")
+		where = append(where, "COALESCE(settle_remark,'') LIKE ? ESCAPE '\\'")
+		args = append(args, store.LikeContains(q.SettleRemark))
 	}
 	// 只看新单:「已下单且商家从未操作过」。判定必须与读侧完全对齐 —— dao.TS 会把
 	// NULL/空串/MySQL 历史零值都折叠成「未操作」,这里若只判 IS NULL,就会出现
@@ -652,18 +680,32 @@ func TouchOrderTx(tx *sql.Tx, orderID int) error {
 // finish_time 统计,不写该字段会让走本函数的归档订单永远不计入完成数(与 FinishOrderTx
 // 口径不一致,同一个「已完成」在不同入口下含义不同)。
 // 同时写 meal_end_time:这是「用餐结束」的落地点之一(另两处见 SettleOrderTx / FinishOrderTx)。
+//
+// 支付维度守卫(service 侧的校验是事务外快照,存在 check-then-act 窗口,SQL 守卫
+// 才是原子兜底):
+//   - 目标为已完成(4):要求 pay_status=1 —— 未收款订单不能被「完成」归档,否则漏收;
+//   - 目标为已取消(5):要求 pay_status=0 —— 已收款订单不能被「取消」作废,否则
+//     钱已收、单已废,且取消路径还会回补库存造成超卖(与 CancelOrderTx 的守卫一致);
+//   - 其余目标(1/2/3 进行中):不设支付守卫 —— 已收款订单仍可正常流转上齐/出餐。
 func UpdateOrderStatusTx(tx *sql.Tx, orderID, status int, operator string, curStatus int) (int64, error) {
 	now := store.Now()
-	if status == 4 { // 4 = 已完成(po.OrderStatusFinished 的字面值,dao 层不反向依赖 service)
+	payGuard := ""
+	switch status {
+	case 4: // 4 = 已完成(po.OrderStatusFinished 的字面值,dao 层不反向依赖 service)
+		payGuard = " AND pay_status=1"
+	case 5: // 5 = 已取消(po.OrderStatusCanceled 的字面值)
+		payGuard = " AND pay_status=0"
+	}
+	if status == 4 {
 		res, err := tx.Exec(`UPDATE tb_order SET order_status=?, finish_time=?, meal_end_time=?, update_by=?, update_time=?
-			WHERE order_id=? AND order_status=?`,
+			WHERE order_id=? AND order_status=?`+payGuard,
 			status, now, now, operator, now, orderID, curStatus)
 		if err != nil {
 			return 0, err
 		}
 		return res.RowsAffected()
 	}
-	res, err := tx.Exec(`UPDATE tb_order SET order_status=?, update_by=?, update_time=? WHERE order_id=? AND order_status=?`,
+	res, err := tx.Exec(`UPDATE tb_order SET order_status=?, update_by=?, update_time=? WHERE order_id=? AND order_status=?`+payGuard,
 		status, operator, now, orderID, curStatus)
 	if err != nil {
 		return 0, err
@@ -770,8 +812,13 @@ func CancelSettleTx(tx *sql.Tx, orderID int, settleType, reason string, restoreS
 // FinishOrderTx 在事务中将订单归档为已完成,并用当前状态守卫并发变更。
 //
 // 归档同样是一次「用餐结束」,写 meal_end_time(与 SettleOrderTx 同口径)。
+//
+// pay_status=1 守卫:完成是对「已支付」订单的收尾归档。service 侧的未支付校验是
+// 事务外快照,若并发收款/撤销结算(撤销会把 pay_status 打回 0)落在校验与写入之间,
+// 没有这道 SQL 守卫就会把一笔未收款订单归档成已完成 —— 报表不计营收,钱却永远
+// 收不回来(漏收)。
 func FinishOrderTx(tx *sql.Tx, orderID int, operator string, curStatus int) (int64, error) {
-	res, err := tx.Exec(`UPDATE tb_order SET order_status=4, finish_time=?, meal_end_time=?, update_by=?, update_time=? WHERE order_id=? AND order_status=?`,
+	res, err := tx.Exec(`UPDATE tb_order SET order_status=4, finish_time=?, meal_end_time=?, update_by=?, update_time=? WHERE order_id=? AND order_status=? AND pay_status=1`,
 		store.Now(), store.Now(), operator, store.Now(), orderID, curStatus)
 	if err != nil {
 		return 0, err

@@ -159,8 +159,17 @@ export function adoptServingPerson(table: TableInfo | null): boolean {
 /** 把当前订单写回会话，并同步持久化（供下次按 orderNo 恢复）。 */
 export function applyOrder(order: OrderDetail | null): void {
   const s = sessionState();
+  const no = order ? String(order.orderNo || '') : '';
+  const prev = s.currentOrder ? String(s.currentOrder.orderNo || '') : '';
   s.currentOrder = order;
-  persistSession(s.tableCode, order ? String(order.orderNo || '') : '');
+  // 轮询每 3s 会调一次：持久化只存 orderNo 供恢复，同一笔单没必要每拍都同步写
+  // wx.setStorageSync（同步 IO，长时间用餐累积上千次）。
+  // 稳态（单号没变且非清空）直接返回，不读盘；只在「单号变了」或「要清空」时
+  // 才对一下磁盘上的值 —— 清空场景必须真的落盘，否则冷启动后菜单页判定本桌无
+  // 进行中订单时，磁盘上还留着上一轮的旧单号，下次进订单页会把它恢复出来。
+  if (no === prev && no !== '') return;
+  if ((readPersisted().orderNo || '') === no) return;
+  persistSession(s.tableCode, no);
 }
 
 /** 仅清掉内存里的当前订单，保留持久化的 orderNo（本桌还有已付款订单在出餐时用）。 */

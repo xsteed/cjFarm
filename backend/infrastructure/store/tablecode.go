@@ -10,14 +10,15 @@ import (
 const tableCodeAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 
 // NewTableCode 生成 8 位随机桌台码(约 32^8 ≈ 1.1e12 种组合,不可枚举)。
+//
+// 随机源异常时 panic,不退化:桌台码本身是「扫码进这张桌」的能力凭据,
+// 退化成顺序字符 = 可预测 = 可枚举他人桌台(与订单号/充值单号同一取舍)。
 func NewTableCode() string {
 	b := make([]byte, 8)
 	for i := range b {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(tableCodeAlphabet))))
 		if err != nil {
-			// 随机源异常时退化为顺序字符,极不可能发生。
-			b[i] = tableCodeAlphabet[i%len(tableCodeAlphabet)]
-			continue
+			panic("store: crypto/rand 不可用,拒绝生成可预测的桌台码: " + err.Error())
 		}
 		b[i] = tableCodeAlphabet[n.Int64()]
 	}

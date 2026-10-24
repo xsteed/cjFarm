@@ -107,7 +107,7 @@
     <!-- 代理在线也可能积压:队列堆积或最老单据等太久时单独提示,不并入上面的 v-else-if 链,
          否则「在线但积压」这种最需要提醒的场景反而被隐藏。 -->
     <t-alert
-      v-if="agentStateReady && (agent.pending > 20 || agent.oldestPendingSec > 300)"
+      v-if="agentStateReady && (agent.pending > BACKLOG_WARN_COUNT || agent.oldestPendingSec > BACKLOG_WARN_SEC)"
       theme="warning"
       class="mb"
     >
@@ -253,7 +253,7 @@
               {{ row.provider === 'feie' ? '打印机编号' : 'IP 地址' }}
             </div>
             <div class="v">
-              {{ row.provider === 'feie' ? row.feieSn || '未填写' : `${row.ip}:${row.port}` }}
+              {{ row.provider === 'feie' ? row.feieSn || '未填写' : `${row.ip}:${row.port || DEFAULT_PRINTER_PORT}` }}
             </div>
           </div>
           <div class="mcard-cell">
@@ -371,7 +371,7 @@
         <span
           v-else
           class="mono"
-          >{{ row.ip }}:{{ row.port }}</span
+          >{{ row.ip }}:{{ row.port || DEFAULT_PRINTER_PORT }}</span
         >
       </template>
       <template #paperWidth="{ row }">
@@ -705,6 +705,12 @@ import type {
 // 并拿 provider 当字典下标,Printer 字段全可选,这里收紧为必填。
 type PrinterRow = Printer & { printerId: number; provider: string };
 
+/** ESC/POS 网络打印机的默认端口(表单初值、复位、历史数据缺端口时的展示兜底)。 */
+const DEFAULT_PRINTER_PORT = 9100;
+/** 代理积压告警阈值:待打单数超过它、或最老单据等待超过 BACKLOG_WARN_SEC 秒就提示。 */
+const BACKLOG_WARN_COUNT = 20;
+const BACKLOG_WARN_SEC = 300;
+
 const list = ref<PrinterRow[]>([]);
 const loading = ref(false);
 const dialogVisible = ref(false);
@@ -715,10 +721,9 @@ const categories = ref<MenuCategory[]>([]);
 
 interface FeieState {
   configured: boolean;
-  user: string;
 }
 
-const feie = reactive<FeieState>({ configured: false, user: '' });
+const feie = reactive<FeieState>({ configured: false });
 
 // 飞鹅 / 代理的状态字段在首次拉取前都是初始值(false)。页面加载时「打印机列表」与
 // 「状态接口」是两个并行的请求,一旦列表先回来,就会拿 configured=false 先渲染出一条
@@ -772,7 +777,7 @@ const form = reactive<PrinterForm>({
   printerType: 1,
   provider: 'tcp',
   ip: '',
-  port: 9100,
+  port: DEFAULT_PRINTER_PORT,
   feieSn: '',
   paperWidth: 48,
   copies: 1,
@@ -871,7 +876,6 @@ async function loadFeie(): Promise<void> {
   try {
     const res = await getFeieInfo();
     feie.configured = !!res.configured;
-    feie.user = res.user || '';
   } catch {
     feie.configured = false;
   } finally {
@@ -926,7 +930,7 @@ function resetForm(): void {
     printerType: 1,
     provider: 'tcp',
     ip: '',
-    port: 9100,
+    port: DEFAULT_PRINTER_PORT,
     feieSn: '',
     paperWidth: 48,
     copies: 1,
@@ -948,7 +952,7 @@ function openEdit(row: PrinterRow): void {
     // 归一化:库里出现未知通道时回落到直连,避免单选组拿到不存在的值而渲染空白。
     provider: row.provider && PRINTER_PROVIDER[row.provider] ? row.provider : 'tcp',
     ip: row.ip || '',
-    port: row.port || 9100,
+    port: row.port || DEFAULT_PRINTER_PORT,
     feieSn: row.feieSn || '',
     paperWidth: row.paperWidth || 48,
     copies: row.copies || 1,
@@ -958,14 +962,33 @@ function openEdit(row: PrinterRow): void {
   dialogVisible.value = true;
 }
 
+/** 打印机 IP:IPv4(每段 0~255)或 DNS 主机名(标签内字母/数字/连字符,不以连字符起止)。 */
+function isValidPrinterIp(raw: unknown): boolean {
+  const v = String(raw || '').trim();
+  const octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v);
+  if (octets) return octets.slice(1).every(o => Number(o) <= 255);
+  return /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,62}[a-zA-Z0-9])?)*$/.test(v);
+}
+
 async function save(): Promise<void> {
-  if (!form.printerName) {
+  // 防重入放在最前:此前在全部校验之后,连点会先把校验提示弹一遍才返回
+  if (saving.value) return;
+  // trim 后再判:纯空格能穿过 `!form.printerName`,落库成一张看不见名字的打印机
+  const printerName = form.printerName.trim();
+  if (!printerName) {
     MessagePlugin.warning('请填写打印机名称');
     return;
   }
+  form.printerName = printerName;
   // tcp 与 agent 都要填 IP(agent 通道下它是打印机在门店内网的地址,由代理使用)。
   if (form.provider !== 'feie' && !form.ip) {
     MessagePlugin.warning(form.provider === 'agent' ? '请填写打印机在门店内网的 IP 地址' : '请填写打印机 IP 地址');
+    return;
+  }
+  // 格式也要拦:端口侧做了 1~65535 的严格校验,IP 侧只判空会让 "abc"/"1.2.3"/"300.1.1.1"
+  // 原样入库,直到测试打印才以「连不上打印机」暴露,报错信息指不到真正原因。
+  if (form.provider !== 'feie' && !isValidPrinterIp(form.ip)) {
+    MessagePlugin.warning('请填写合法的 IP 地址(IPv4，如 192.168.1.8)或主机名');
     return;
   }
   if (form.provider === 'feie' && !form.feieSn) {
@@ -1106,12 +1129,18 @@ const previewMeta = computed((): string => {
   return `由后端「出纸同一份渲染代码」按该机当前设置生成；纸宽 ${paper}，上下两张分别是下单与结账时实际会出的票（「测试打印」出的就是这两张）。`;
 });
 
+// 票据预览的请求序号:快速连点 A 机「预览」再点 B 机时,A 的后到响应必须丢弃,
+// 否则会把 previewOrderData 覆盖成 A 的内容,而弹窗标题已是 B 机 ——
+// 用户看到「B 机的名字 + A 机的票据」。同 OrderDetailDialog 的 reqSeq 模式。
+let previewSeq = 0;
+
 async function onPreview(row: PrinterRow): Promise<void> {
   previewRow.value = row;
   previewVisible.value = true;
   previewLoading.value = true;
   previewOrderData.value = null;
   previewSettleData.value = null;
+  const seq = ++previewSeq;
   try {
     // 厨房机不出结账票(结账只出小票机,见后端 PrintGuestTicket),少发一次请求。
     const isGuest = Number(row.printerType) === 2;
@@ -1119,13 +1148,15 @@ async function onPreview(row: PrinterRow): Promise<void> {
       previewPrinter(row.printerId),
       isGuest ? previewPrinter(row.printerId, { trigger: 'settle' }) : Promise.resolve(null)
     ]);
+    // 序号过期(用户又点了别的机器):丢弃,别覆盖新弹窗的数据。
+    if (seq !== previewSeq) return;
     previewOrderData.value = order;
     previewSettleData.value = settle;
   } catch {
     // 失败原因由请求拦截器统一弹出
-    previewVisible.value = false;
+    if (seq === previewSeq) previewVisible.value = false;
   } finally {
-    previewLoading.value = false;
+    if (seq === previewSeq) previewLoading.value = false;
   }
 }
 

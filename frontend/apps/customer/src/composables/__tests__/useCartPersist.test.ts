@@ -38,6 +38,7 @@ function item(over: Partial<CartItem> = {}): CartItem {
     price: 18, // 故意与菜单现值不同：恢复后应取菜单的 20
     quantity: 2,
     remark: '不要辣',
+    stock: -1,
     ...over
   };
 }

@@ -172,9 +172,15 @@ async function open(orderId?: number | null): Promise<void> {
 // 打开弹窗、或弹窗开着时切换订单(如桌台页连续点不同桌台)都要重新拉取。
 // 同时侦听 [visible, orderId]:父级在同一同步块里赋两个 prop(打开弹窗的标准写法)时
 // 只触发一次拉取 —— 此前的双 watch 会让每次打开都把详情+退款各拉两遍。
-watch([() => props.visible, () => props.orderId], ([visible, id]) => {
-  if (visible && id) void open(id);
-});
+// immediate:父级以「visible 一开始就是 true」挂载时(如从路由直接打开)首帧也要拉取,
+// 否则弹窗是个空壳。父级常规写法 visible=false 起步,immediate 不会多发请求。
+watch(
+  [() => props.visible, () => props.orderId],
+  ([visible, id]) => {
+    if (visible && id) void open(id);
+  },
+  { immediate: true }
+);
 
 function onClosed(): void {
   detail.value = null;

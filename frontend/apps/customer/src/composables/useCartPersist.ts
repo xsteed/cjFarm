@@ -126,6 +126,12 @@ export function useCartPersist(cart: Ref<CartItem[]>, tableId: Ref<number>, orde
       if (!dish || isSoldOut(dish) || !isOrderable(dish)) continue;
       const spec = (dish.specs || []).find(s => Number(s.specId) === Number(it.specId));
       if (!spec || Number(spec.stock) === 0) continue;
+      const stock = Number(spec.stock);
+      const unlimited = !Number.isFinite(stock) || stock < 0;
+      const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
+      // stock 也取整:脏数据(0.5 份)会让 Math.min 得出小数 quantity,
+      // 而后续 +/- 与后端 stock >= qty 都是整数口径。
+      const cap = unlimited ? Number.POSITIVE_INFINITY : Math.floor(stock);
       valid.push({
         key: `${dish.dishId}-${spec.specId}`,
         dishId: Number(dish.dishId),
@@ -134,13 +140,23 @@ export function useCartPersist(cart: Ref<CartItem[]>, tableId: Ref<number>, orde
         specName: spec.specName || '',
         // 价格以菜单现值为准，不沿用存的旧价
         price: Number(spec.price) || 0,
-        quantity: Math.max(1, Number(it.quantity) || 1),
-        remark: String(it.remark || '')
+        // 恢复时按当前库存夹紧:存了 5 份、期间被别人买走只剩 2 份 → 恢复成 2 份,
+        // 别让顾客点到结算才被后端拒。
+        quantity: Math.min(qty, cap),
+        remark: String(it.remark || ''),
+        stock: unlimited ? -1 : cap
       });
     }
     // 复核后一行不剩：清掉存储，别让坏数据一直留着
-    if (valid.length) cart.value = valid;
-    else safeStorage.remove(storageKey());
+    if (!valid.length) {
+      safeStorage.remove(storageKey());
+      return;
+    }
+    // 合并而不是整体替换:恢复发生在菜单到位之后,弱网下菜单先渲染、恢复后到,
+    // 期间顾客可能已经手动加了菜 —— 整体赋值会把这些行吞掉。同 key 以当前为准。
+    const existing = new Set(cart.value.map(i => i.key));
+    const missing = valid.filter(i => !existing.has(i.key));
+    if (missing.length) cart.value = [...cart.value, ...missing];
   }
 
   // 本次会话的起点必须在拿到桌台 id 的当下就记下来：若拖到「有车要恢复」时才记,

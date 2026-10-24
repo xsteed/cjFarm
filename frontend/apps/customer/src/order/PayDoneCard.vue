@@ -1,7 +1,7 @@
 <template>
   <div
     class="pd-mask"
-    @click="emit('close')"
+    @click.self="emit('close')"
   >
     <div class="pd-card">
       <span class="pd-check">

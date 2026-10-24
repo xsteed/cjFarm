@@ -11,14 +11,9 @@
 // ⚠️ 只在 match 以下前提下有效：微信公众平台「设置 → 服务内容声明 → 用户隐私保护指引」
 //    里已经提交并通过了《 Он 指引》。指引没配，这个页面根本不会被唤起，
 //    对应的隐私接口会直接 fail —— 那是平台侧动作，代码侧无从替代。
-import {
-  AGREEMENT_ROUTE,
-  privacyCollects,
-  privacyRights,
-  type PrivacyItem
-} from '../../shared/privacy-text';
+import { AGREEMENT_ROUTE, privacyCollects, privacyRights, type PrivacyItem } from '../../shared/privacy-text';
 import { sessionState } from '../../store/session';
-import { reportPrivacyExposure, takePrivacyResolver } from '../../store/privacy';
+import { reportPrivacyExposure, takeAllPrivacyResolvers } from '../../store/privacy';
 
 Page({
   data: {
@@ -46,10 +41,10 @@ Page({
   },
 
   onUnload() {
-    // 顾客用左上角返回离开 = 没有做出选择，按「不同意」收尾。
+    // 顾客用左上角返回离开 = 没有做出选择，按「不同意」收尾（全部挂起的接口一起）。
     // 这一步不能省：resolver 不被兑现就永远挂在内存里，此后每次点隐私按钮都不会再
     // 触发回调，顾客会发现「绑定手机号」彻底失灵，而我们连重 exhibited 的机会都没有。
-    takePrivacyResolver()?.({ event: 'disagree' });
+    for (const resolve of takeAllPrivacyResolvers()) resolve({ event: 'disagree' });
   },
 
   /**
@@ -60,12 +55,13 @@ Page({
    * 被点过」，随手写一个不存在的 id 会让这次授权静默失败。
    */
   onAgree(): void {
-    takePrivacyResolver()?.({ event: 'agree', buttonId: 'agree-btn' });
+    // 一次选择兑现全部：平台侧会释放所有被挂起的隐私接口，只兑现一个会让其余的挂起
+    for (const resolve of takeAllPrivacyResolvers()) resolve({ event: 'agree', buttonId: 'agree-btn' });
     this.leave();
   },
 
   onDisagree(): void {
-    takePrivacyResolver()?.({ event: 'disagree' });
+    for (const resolve of takeAllPrivacyResolvers()) resolve({ event: 'disagree' });
     this.leave();
   },
 

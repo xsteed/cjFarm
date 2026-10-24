@@ -531,11 +531,11 @@ const columns = computed(() => {
 }
 
 /* 占用中的桌台行可点开订单详情。scoped 样式进不到 t-table 内部，需要 :deep。 */
-::deep(.row-clickable) {
+:deep(.row-clickable) {
   cursor: pointer;
 }
 
-::deep(.row-clickable:hover > td) {
+:deep(.row-clickable:hover > td) {
   background: var(--brand-ghost, #fff8f5);
 }
 

@@ -84,6 +84,29 @@ func genSerialNo(prefix string) string {
 	return prefix + time.Now().Format(serialNoTimeLayout) + randBase32(serialNoRandomLen)
 }
 
+// truncateRunes 按字符(rune)截断字符串到至多 n 个字符。
+//
+// 自由文本入参(取消原因/备注等)落库前必须截断:列宽有限(如 order_remark
+// VARCHAR(500)、cancel_reason VARCHAR(255)),MySQL 严格模式下超长输入会让
+// 整条 INSERT/UPDATE 失败,顾客端只看到「系统繁忙」。按 rune 截断而不是按字节,
+// 避免把中文切坏成乱码。
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
+
+// orderRemarkMaxLen 订单备注列宽(tb_order.order_remark VARCHAR(500))。
+const orderRemarkMaxLen = 500
+
+// cancelReasonMaxLen 取消原因截断长度(与 ChangeOrderStatus 等入口一致的 60 字符口径)。
+const cancelReasonMaxLen = 60
+
 // randBase32 返回 n 位 Crockford Base32 随机串(来自 crypto/rand),每字符 5bit。
 //
 // 逐字节取低 5 位索引字母表:256 能被 32 整除,每个 5bit 取值恰好命中 8 次,

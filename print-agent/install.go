@@ -158,6 +158,11 @@ func writeAgentEnv(path, server, token string, overrideServer, overrideToken boo
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return nil, err
 	}
+	// os.WriteFile 的 perm 只对「新建」生效,对已存在的文件不会收紧权限:
+	// 早期版本或人工建出的 0644 agent.env(内含令牌)必须显式改回来。
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, err
+	}
 	return updated, nil
 }
 
@@ -193,7 +198,11 @@ func upsertEnvKey(path, key, value string) error {
 	if !replaceFirst(active) && !replaceFirst(commented) {
 		lines = append(lines, newLine)
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		return err
+	}
+	// 同 writeAgentEnv:已存在的文件不会被 WriteFile 的 perm 收紧权限。
+	return os.Chmod(path, 0o600)
 }
 
 // readEnvValue 从指定的 agent.env 里读一个键;文件不存在、键缺失或值为空都返回空串。

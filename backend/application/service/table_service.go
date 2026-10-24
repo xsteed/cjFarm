@@ -90,20 +90,17 @@ func tableDiningByTable() map[int]tableDining {
 	return out
 }
 
-// SaveTable 校验并新增桌台,返回桌台 ID;插入后补发稳定桌台码。
+// SaveTable 校验并新增桌台,返回桌台 ID。
+//
+// 桌台码由 InsertTable 内的 store.NewUniqueTableCode 生成(已含 16 次撞码重试),
+// 因此这里不再做「插入后补发」—— 插入失败时补发代码永远走不到,而插入成功时
+// 码必然非空,补发是无操作。历史注释声称的「冲突重试补发」从未生效过,
+// 唯一索引冲突时用户看到的是一次明确的插入失败,重试即可。
 func SaveTable(ctx context.Context, t dto.Table) (int64, error) {
 	if strings.TrimSpace(t.TableNo) == "" || strings.TrimSpace(t.TableName) == "" {
 		return 0, errors.New("请填写桌号和桌台名称")
 	}
-	id, err := dao.InsertTable(t.ToPO())
-	if err != nil {
-		return 0, err
-	}
-	// 兜底:若随机码插入冲突(唯一索引),重试补发,确保新桌台必有稳定码。
-	if _, err := store.EnsureTableCode(int(id)); err != nil {
-		logger.CtxWarnf(ctx, "[table] 补发桌台稳定码失败(table %d): %v", id, err)
-	}
-	return id, nil
+	return dao.InsertTable(t.ToPO())
 }
 
 // UpdateTable 校验并更新桌台基础信息(桌号/桌名/容纳人数/排序)。
@@ -129,14 +126,18 @@ func SetTableLock(id, lockStatus int, lockRemark string) error {
 	if lockStatus == po.TableLockDisabled {
 		// 与顾客端同一套营业日隔离:跨日遗留单不该阻止店家停用这张桌 ——
 		// 想收拾的恰恰是这种桌,却因为一笔早该处理的旧单卡住,只会把人逼去改库。
-		if _, ok := dao.GetActiveOrderByTable(id, StaleGuardBizDate()); ok {
+		// 查询失败必须拒绝(fail-closed):旧实现把任何错误都当成「无订单」,
+		// 库抖动时会放行停用正在用餐的桌台,进行中订单随即失去桌台入口。
+		_, hasActive, err := dao.GetActiveOrderByTableE(id, StaleGuardBizDate())
+		if err != nil {
+			logger.Warnf("[table] 停用前查询进行中订单失败,拒绝停用 table=%d: %v", id, err)
+			return errors.New("系统繁忙，请稍后重试")
+		}
+		if hasActive {
 			return errors.New("该桌台存在进行中订单，请先完成或取消订单后再停用")
 		}
 	}
-	lockRemark = strings.TrimSpace(lockRemark)
-	if r := []rune(lockRemark); len(r) > 60 {
-		lockRemark = string(r[:60])
-	}
+	lockRemark = truncateRunes(strings.TrimSpace(lockRemark), cancelReasonMaxLen)
 	return dao.SetTableLock(id, lockStatus, lockRemark)
 }
 
@@ -167,7 +168,7 @@ type ReleaseOutcome struct {
 func finishPaidOrder(orderID, curStatus int, operator string) error {
 	tableID, err := dao.GetOrderTable(orderID)
 	if err != nil {
-		return fmt.Errorf("订单不存在")
+		return errors.New("订单不存在")
 	}
 	guard := StaleGuardBizDate()
 	err = store.WithTx(func(tx *sql.Tx) error {
@@ -176,7 +177,7 @@ func finishPaidOrder(orderID, curStatus int, operator string) error {
 			return err
 		}
 		if n == 0 {
-			return fmt.Errorf("订单状态已变更，请刷新后重试")
+			return errors.New("订单状态已变更，请刷新后重试")
 		}
 		return releaseTableIfIdle(tx, tableID, guard)
 	})
@@ -222,7 +223,13 @@ func ReleaseTable(ctx context.Context, tableID int, action, operator string) (Re
 	//
 	// 少了这层对齐,开启清台后一桌「昨日旧单 + 今日新单」会被一并补结账,
 	// 正在用餐那位客人的单就被记成已收款了。
-	orders := dao.ListActiveOrdersByTable(tableID, StaleGuardBizDate())
+	// 查询失败必须整体失败:旧实现拿到 nil 就当成「没有进行中订单」,走进下面的
+	// 「仅重置占用状态」分支 —— 未结账的订单一筆都没处理,桌台却显示空闲,
+	// 而操作者收到的是「清台完成」。
+	orders, err := dao.ListActiveOrdersByTableE(tableID, StaleGuardBizDate())
+	if err != nil {
+		return out, errors.New("读取该桌进行中订单失败，请稍后重试")
+	}
 	if len(orders) == 0 {
 		// 无进行中订单却仍显示占用(历史脏数据):仅重置占用状态,不动任何账务。
 		// 同样走 releaseTableIfIdle(而非无条件置空闲):快照与写入之间存在
@@ -279,8 +286,14 @@ func ReleaseTable(ctx context.Context, tableID int, action, operator string) (Re
 // 删除前先查该桌是否存在进行中订单(1已下单/2制作中/3已上齐):
 // 顾客端 CustomerTable 只按 del_flag='0' 过滤桌台,若把正在用餐的桌台删掉,
 // 进行中订单会失去可进入的桌台入口,加菜/收款/结账全部卡死,故先拦截并透传提示。
+// 查询失败一律拒绝:把「查不到」误判成「没有订单」正是这个守卫要防的事。
 func DeleteTable(id int) error {
-	if _, ok := dao.GetActiveOrderByTable(id, StaleGuardBizDate()); ok {
+	_, hasActive, err := dao.GetActiveOrderByTableE(id, StaleGuardBizDate())
+	if err != nil {
+		logger.Warnf("[table] 删除前查询进行中订单失败,拒绝删除 table=%d: %v", id, err)
+		return errors.New("系统繁忙，请稍后重试")
+	}
+	if hasActive {
 		return errors.New("该桌台存在进行中订单,请先完成或取消订单")
 	}
 	return dao.DeleteTable(id)

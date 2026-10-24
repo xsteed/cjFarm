@@ -13,6 +13,7 @@
 // 接口全部是现成的公开接口（/customer/config、/customer/menu、/customer/table），
 // 后端零改动；任何一项失败都只影响对应区块，扫码主路径永远可用。
 import { getMenu, getPublicConfig, getTable } from '../../api/client';
+import { minPositivePrice } from '../../core/spec';
 import { mediaUrl } from '../../config';
 import { ORDER_STATUS } from '../../shared/dicts';
 import { money } from '../../shared/money';
@@ -157,7 +158,9 @@ Page({
           dishId,
           dishName: String(dish.dishName || ''),
           image: this.failedImgs?.has(dishId) ? '' : mediaUrl(dish.dishImage),
-          priceText: money(Math.min(...specs.map(s => Number(s.price) || 0))),
+          // 价格取「有效规格」的最小值:任一规格价格缺失/为 0 时直接 Math.min 会显示
+          // 「¥0.00 起」,点进去价格却完全不同。
+          priceText: money(minPositivePrice(specs)),
           manySpecs: specs.length > 1,
           soldOut: Number(dish.soldOut) === 1 || allSoldOut
         });

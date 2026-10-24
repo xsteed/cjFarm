@@ -51,6 +51,9 @@ Component({
     custom: '',
     /** 本次要加的份数：每次打开重置为 1（「确定」= 加 N 份，不是改成 N 份） */
     qty: 1,
+    /** 份数上下限（供 WXML 判断按钮灰显）：模板拿不到 TS 常量，这里同步一份，避免 1/99 两处各写一遍 */
+    qtyMin: QTY_MIN,
+    qtyMax: QTY_MAX,
     priceText: '0.00',
     multiSpec: false,
     /** 防重入锁：连点「确定」会触发多个 confirm 事件，父页面每收一次就加一份菜（不进模板，只为持有状态） */

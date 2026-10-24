@@ -293,7 +293,11 @@ function renderEntries(): void {
   const c = chart('visitEntry', entryEl.value);
   if (!c) return;
   c.clear();
-  const list = (props.entries || []).filter(x => (x.pv || 0) > 0).slice(0, 8);
+  // 先按 PV 降序再截取:直接 slice 是「前 8 条」,后端一旦改了返回顺序就不是 Top 了
+  const list = (props.entries || [])
+    .filter(x => (x.pv || 0) > 0)
+    .sort((a, b) => (b.pv || 0) - (a.pv || 0))
+    .slice(0, 8);
   if (!list.length) {
     // 空态分两种:整个区间压根没访问 → 「暂无数据」;有访问却没入口 → 说明顾客
     // 不是从桌台码进来的(或顾客端版本未上报入口)。后者必须说清楚,否则店家
@@ -355,11 +359,21 @@ function renderEntries(): void {
 }
 
 // 终端小图的通用渲染:横向条形,Top 6,空数据显示「暂无数据」。
-function renderDist(key: string, el: Ref<HTMLElement | null>, rows: VisitDistRow[], color: string, title: string): void {
+function renderDist(
+  key: string,
+  el: Ref<HTMLElement | null>,
+  rows: VisitDistRow[],
+  color: string,
+  title: string
+): void {
   const c = chart(key, el.value);
   if (!c) return;
   c.clear();
-  const list = (rows || []).filter(x => (x.pv || 0) > 0).slice(0, 6);
+  // 同上:先按 PV 降序再截取 Top 6
+  const list = (rows || [])
+    .filter(x => (x.pv || 0) > 0)
+    .sort((a, b) => (b.pv || 0) - (a.pv || 0))
+    .slice(0, 6);
   if (!list.length) {
     c.setOption(EMPTY_OPTION);
     return;

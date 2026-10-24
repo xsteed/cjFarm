@@ -136,8 +136,8 @@ func ListPrintLogs(q PrintLogQuery, pageNum, pageSize int) (total int, list []po
 		args = append(args, *q.PrinterID)
 	}
 	if q.OrderNo != "" {
-		where = append(where, "order_no LIKE ?")
-		args = append(args, "%"+q.OrderNo+"%")
+		where = append(where, "order_no LIKE ? ESCAPE '\\'")
+		args = append(args, store.LikeContains(q.OrderNo))
 	}
 	cond := " WHERE " + strings.Join(where, " AND ")
 

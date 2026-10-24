@@ -173,7 +173,8 @@ async function enter(res: LoginResult): Promise<void> {
 }
 
 async function onSubmit(): Promise<void> {
-  if (!form.username || !form.password) {
+  // trim 后再判:纯空格会穿过 !form.username 的原校验,白跑一趟后端
+  if (!form.username.trim() || !form.password) {
     MessagePlugin.warning('请输入用户名和密码');
     return;
   }
@@ -498,12 +499,6 @@ onMounted(() => {
   height: 14px;
   accent-color: var(--brand);
   cursor: pointer;
-}
-
-.login-tip {
-  font-size: 11.5px;
-  color: var(--ink-4);
-  margin-top: 18px;
 }
 
 .spin {

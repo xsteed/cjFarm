@@ -287,7 +287,10 @@ async function renderPreview(): Promise<void> {
   const token = ++previewToken;
   if (!t) {
     previewUrl.value = '';
-    previewError.value = '';
+    // 不要在这里清 previewError:loadPreview 刚在 catch 里写好了「读取失败」的原因,
+    // 清掉会让接口失败被误报成「所选范围内没有桌台」,排查方向直接带偏。
+    // loading 必须收尾,否则「生成中…」会一直挂着。
+    previewLoading.value = false;
     return;
   }
   previewLoading.value = true;
@@ -320,6 +323,8 @@ watch(
       previewUrl.value = '';
       previewTable.value = null;
       previewError.value = '';
+      // 在「生成中」关闭再打开(且范围内无桌台)时,不收尾 loading 会让预览区永远停在「生成中…」
+      previewLoading.value = false;
       return;
     }
     batch.progress = '';
@@ -374,7 +379,11 @@ async function collectCards(): Promise<QrCard[] | null> {
   const rows: TableInfo[] = [];
   for (let page = 1; ; page++) {
     const res = await listTables({ pageNum: page, pageSize: FULL_PAGE_SIZE, ...params });
-    rows.push(...(res.items || []));
+    const items = res.items || [];
+    rows.push(...items);
+    // 空页必须兜底退出:并发删除 / 后端 total 与 items 漂移时,
+    // 仅凭「已取条数 >= total」会在这里无限循环连续打接口。
+    if (!items.length) break;
     if (rows.length >= res.total) break;
   }
   if (!rows.length) {

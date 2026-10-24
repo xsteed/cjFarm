@@ -9,11 +9,19 @@ import (
 
 	"dining-system/application/service"
 	"dining-system/domain/po"
+	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/print"
 	"dining-system/interfaces/dto"
 )
 
 // ============ 打印机 ============
+
+// 打印机默认值(与前端表单、escpos 发送端保持同一口径)。
+const (
+	defaultPrinterPort = 9100 // 热敏打印机 RAW/JetDirect 的标准端口
+	paperWidth58       = 32   // 58mm 纸宽(字符数)
+	paperWidth80       = 48   // 80mm 纸宽(字符数)
+)
 
 // normalizePrinter 规范化打印机的可枚举字段,避免非法值入库。
 //
@@ -34,11 +42,13 @@ func normalizePrinter(p *dto.Printer) {
 	if p.Provider == po.PrinterProviderFeie {
 		p.FeieSN = po.NormalizeFeieSN(p.FeieSN)
 	}
-	if p.Port == 0 {
-		p.Port = 9100
+	// 端口兜底对「0 与负数」同一处理:负数同样是「没填/填错」,放过去只会在
+	// 真正连打印机时失败(escpos 侧虽也有拦截,但保存时就该归一)。
+	if p.Port <= 0 {
+		p.Port = defaultPrinterPort
 	}
-	if p.PaperWidth != 32 && p.PaperWidth != 48 {
-		p.PaperWidth = 48
+	if p.PaperWidth != paperWidth58 && p.PaperWidth != paperWidth80 {
+		p.PaperWidth = paperWidth80
 	}
 	if p.Copies < 1 {
 		p.Copies = 1
@@ -110,7 +120,13 @@ func PrinterList(c *gin.Context) {
 		fail(c, err.Error())
 		return
 	}
-	cats, _ := service.ListCategories()
+	cats, err := service.ListCategories()
+	if err != nil {
+		// 展示数据可降级(分类列显示为空),但必须留痕:否则门店只会看到
+		// 「负责分类」整列莫名变空,没有任何线索。
+		logger.CtxWarnf(c.Request.Context(), "[printer] 读取分类列表失败,分类列将显示为空: %v", err)
+		cats = nil
+	}
 	nameMap := map[int]string{}
 	for _, ct := range cats {
 		nameMap[ct.CategoryID] = ct.CategoryName
@@ -364,12 +380,25 @@ func PrinterBind(c *gin.Context) {
 		fail(c, "请填写打印机编号(SN)与识别码(KEY)")
 		return
 	}
+	// SN 形态与保存入口同一校验(po.IsFeieSN):带空格/中文/标点的 SN 会被飞鹅
+	// 按「不存在的编号」处理,错误信息绕一大圈才回来。
+	if !po.IsFeieSN(p.SN) {
+		fail(c, "飞鹅打印机编号只能是数字或字母(机身标签形如 SN 961828266,只填 961828266 即可),当前填的是:"+p.SN)
+		return
+	}
 	client, err := print.NewFeieClient()
 	if err != nil {
 		fail(c, err.Error())
 		return
 	}
 	// 格式: 打印机编号#识别码#备注名称#流量卡号(后两项可省)。
+	// 备注名/卡号是自由文本,含 # 会破坏飞鹅的分隔格式(字段错位、绑定失败)。
+	// 只有本接口会把它们拼进 # 分隔串(保存入口的打印机名称只存本地,不下发飞鹅),
+	// 所以这层校验放在这里。
+	if strings.ContainsAny(p.Name, "#") || strings.ContainsAny(p.Phone, "#") {
+		fail(c, "备注名称与流量卡号不能包含 # 字符")
+		return
+	}
 	parts := []string{p.SN, p.Key}
 	if n := strings.TrimSpace(p.Name); n != "" {
 		parts = append(parts, n)

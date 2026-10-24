@@ -95,12 +95,7 @@ function buildQuery(params?: Record<string, unknown>): string {
   return parts.length ? `?${parts.join('&')}` : '';
 }
 
-function request<T>(
-  method: 'GET' | 'POST',
-  path: string,
-  body: unknown,
-  config?: RequestConfig
-): Promise<T> {
+function request<T>(method: 'GET' | 'POST', path: string, body: unknown, config?: RequestConfig): Promise<T> {
   const params = config?.params;
   const silent = !!config?.silent;
   const url = baseURL + path + (method === 'GET' ? buildQuery(params as Record<string, unknown>) : '');
@@ -161,9 +156,10 @@ function request<T>(
   });
 }
 
-/** GET：第二个参数是查询参数对象（空值会被丢弃并做编码）。 */
-export function httpGet<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-  return request<T>('GET', path, undefined, { params });
+/** GET：第二个参数是查询参数对象（空值会被丢弃并做编码），第三个可传 { silent: true }
+ *  跳过全局错误提示 —— 轮询路径必须静默，否则网络故障时每 3~5s 弹一次 toast。 */
+export function httpGet<T>(path: string, params?: Record<string, unknown>, config?: { silent?: boolean }): Promise<T> {
+  return request<T>('GET', path, undefined, { params, silent: config?.silent });
 }
 
 /** POST：body 为请求体，config 可传 { silent: true } 跳过全局错误提示。 */

@@ -13,10 +13,11 @@
 package dao
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand"
 	"time"
 
 	"dining-system/domain/po"
@@ -364,9 +365,14 @@ func ListWalletTxns(customerID, pageNum, pageSize int) (int, []WalletTxnRow, err
 // ============================================================================
 
 // newRechargeNo 生成充值单号:R + 时间戳 + 6 位随机数。
-// 唯一索引兜底撞号(同秒内 1/10^6 概率,撞上由调用方重试一次)。
+// 随机段走 crypto/rand(与订单号/退款号同一熵源口径);读取失败即 panic,
+// 由 HTTP 层的 GinRecovery 转成 500 —— 可预测单号比偶发失败更难排查。
 func newRechargeNo() string {
-	return fmt.Sprintf("R%s%06d", time.Now().Format("20060102150405"), rand.Intn(1000000))
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("dao: crypto/rand 不可用,拒绝生成可预测的充值单号: %v", err))
+	}
+	return fmt.Sprintf("R%s%06d", time.Now().Format("20060102150405"), binary.BigEndian.Uint32(b)%1000000)
 }
 
 // InsertRecharge 建一笔待支付充值单,返回单号。撞号(唯一索引冲突)自动重试一次。
@@ -381,11 +387,13 @@ func InsertRecharge(customerID int, amountCents, giftCents int64) (string, error
 		if err == nil {
 			return no, nil
 		}
-		if attempt == 1 {
+		// 只对「唯一索引冲突」重试:其它错误(连接断、磁盘满)重试同样失败,
+		// 白耗一次往返还会把真实故障包装成「生成失败」。
+		if !isUniqueConflict(err) {
 			return "", err
 		}
 	}
-	return "", errors.New("生成充值单失败")
+	return "", errors.New("生成充值单号失败，请重试")
 }
 
 // scanRechargeFull 与 rechargeFullCols 的扫描顺序一一对应。
@@ -483,9 +491,18 @@ func ExpirePendingRecharges(cutoff string) (int, error) {
 //
 // 供「顾客撤销自己的支付」这类只读校验使用:它不该为了一次归属判断开事务。
 func OrderCustomer(orderNo string) int {
-	var cid int
-	_ = store.DB.QueryRow(`SELECT COALESCE(customer_id,0) FROM tb_order WHERE order_no=?`, orderNo).Scan(&cid)
+	cid, _ := OrderCustomerE(orderNo)
 	return cid
+}
+
+// OrderCustomerE 是 OrderCustomer 的带错误版本。
+//
+// 归属判断(尤其「只能操作自己的订单」)必须用错误版:查询失败折叠成 0 会被
+// 当成「匿名单/无归属」,等于把 fail-closed 的校验变成 fail-open。
+func OrderCustomerE(orderNo string) (int, error) {
+	var cid int
+	err := store.DB.QueryRow(`SELECT COALESCE(customer_id,0) FROM tb_order WHERE order_no=?`, orderNo).Scan(&cid)
+	return cid, err
 }
 
 // OrderCustomerTx 事务内读订单归属(0 = 匿名单)。

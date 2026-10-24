@@ -20,10 +20,14 @@ const props = defineProps<{
   distance: number;
   refreshing: boolean;
   pulling: boolean;
+  /** 与 usePullRefresh 的 threshold 保持一致;不传即默认阈值(目前所有调用点都用默认值) */
+  threshold?: number;
 }>();
 
-// 阈值与手势判定共用一处计算:提示「松开立即刷新」的距离就是真正会刷新的距离
-const readyDistance = readyDistanceFor();
+// 阈值与手势判定共用一处计算:提示「松开立即刷新」的距离就是真正会刷新的距离。
+// 必须跟随 usePullRefresh 的 threshold —— 否则调用方一旦自定义阈值,就会出现
+// 「提示了松开却不刷新」。
+const readyDistance = readyDistanceFor(props.threshold);
 
 // 与 usePullRefresh 同口径按「本次手势的最大距离」出文案:一旦过了阈值就一直提示松开,
 // 不会因为松手前手指轻微回抬把提示收回去(那样松手就成了「提示过却不刷新」)

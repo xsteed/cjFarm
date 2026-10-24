@@ -5,6 +5,7 @@ import (
 
 	"dining-system/application/service"
 	"dining-system/domain/po"
+	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/print"
 	"dining-system/interfaces/dto"
 )
@@ -19,18 +20,22 @@ import (
 func PrintLogList(c *gin.Context) {
 	pageNum, pageSize := pageParams(c)
 	var q service.PrintLogQuery
-	if v := c.Query("status"); v != "" {
-		q.Status = intArg(v)
+	status, ok := intArg(c, "status")
+	if !ok {
+		return
 	}
+	q.Status = status
 	if v := c.Query("docType"); v != "" {
 		q.DocType = v
 	}
 	if v := c.Query("provider"); v != "" {
 		q.Provider = v
 	}
-	if v := c.Query("printerId"); v != "" {
-		q.PrinterID = intArg(v)
+	printerID, ok := intArg(c, "printerId")
+	if !ok {
+		return
 	}
+	q.PrinterID = printerID
 	if v := c.Query("orderNo"); v != "" {
 		q.OrderNo = v
 	}
@@ -212,7 +217,12 @@ func PrintPreviewSample(c *gin.Context) {
 		KitchenShowPrice *bool   `json:"kitchenShowPrice"` // 厨房单带金额覆盖
 		KitchenSplit     *string `json:"kitchenSplit"`     // 厨房单打印粒度覆盖(whole/item/portion)
 	}
-	_ = c.ShouldBindJSON(&p)
+	// 绑定失败(如请求体为空/非法 JSON)时刻意忽略:本接口是「所见即所改」的
+	// 覆盖预览,调用方可能不带体,此时全部覆盖项回落到默认值即正确行为。
+	// 记一条 debug 日志,便于排查「改了没生效是不是请求体根本没发对」。
+	if err := c.ShouldBindJSON(&p); err != nil {
+		logger.CtxDebugf(c.Request.Context(), "[print] 示例预览未收到覆盖项(按默认渲染): %v", err)
+	}
 	chunks, lineWidth := print.PreviewTicketSample(p.DocType, p.PaperWidth, print.SampleOverrides{
 		Footer:           p.Footer,
 		ShowDiscount:     p.ShowDiscount,
@@ -237,15 +247,15 @@ func PrintPreviewSample(c *gin.Context) {
 // 与「补打」对称 —— 一条日志记录唯一确定「预览哪一张纸」,前端拿文本行按等宽字体
 // 渲染即可得到与 9100 出纸 1:1 的版式(渲染发生在后端,与出纸同一份代码)。
 func PrintPreview(c *gin.Context) {
-	printID := 0
-	if v := intArg(c.Query("printId")); v != nil {
-		printID = *v
+	printID, valid := intArg(c, "printId")
+	if !valid {
+		return
 	}
-	if printID == 0 {
+	if printID == nil || *printID <= 0 {
 		fail(c, "参数错误")
 		return
 	}
-	entry, err := service.LoadPrintLog(printID)
+	entry, err := service.LoadPrintLog(*printID)
 	if err != nil {
 		fail(c, "打印记录不存在")
 		return

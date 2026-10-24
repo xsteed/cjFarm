@@ -347,11 +347,18 @@ func TestPayAlipayCallNon200(t *testing.T) {
 
 // TestPayRandNonce 微信签名 nonce:32 位十六进制、单次调用唯一性高。
 func TestPayRandNonce(t *testing.T) {
-	n := randNonce()
+	n, err := randNonce()
+	if err != nil {
+		t.Fatalf("randNonce 失败: %v", err)
+	}
 	if len(n) != 32 || strings.Trim(n, "0123456789abcdef") != "" {
 		t.Fatalf("randNonce 格式非法: %q", n)
 	}
-	if randNonce() == n {
+	n2, err := randNonce()
+	if err != nil {
+		t.Fatalf("randNonce 失败: %v", err)
+	}
+	if n2 == n {
 		t.Fatal("randNonce 连续两次不应相同")
 	}
 }

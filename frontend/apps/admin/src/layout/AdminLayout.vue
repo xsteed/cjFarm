@@ -320,14 +320,21 @@ onBeforeUnmount(() => window.removeEventListener('popstate', onPopState));
 // 仅桌面端有意义,移动端不渲染折叠按钮、该状态也不参与布局。
 const collapsed = ref(false);
 
+// 左上角品牌名:配置了店铺名就展示「店铺名称 · 点餐系统」,未配置回退「扫码点餐系统」。
+// 取数与拼接格式在 useShopBrand 里统一维护(登录页共用同一份,避免两处漂移)。
+const { brandName, loadShopBrand } = useShopBrand('扫码点餐系统');
+
 // 路由变化(含浏览器后退、程序跳转)一律收起抽屉,避免新页面被遮罩挡住。
 // 菜单项跳转也走这条路,而不是在 @click 里同步收:
 // vue-router 压新记录(history.push)早于 currentRoute 更新,所以这个 watcher
 // 跑起来时占位记录已不是当前记录,watch(drawerOpen) 里不会误发 history.back()。
+// 顺带重取店铺名:布局常驻,只在挂载时拉一次的话,去「系统配置」改完店名
+// 要整页刷新才生效;随路由轻量重取,切到别的页面就能看到新名字。
 watch(
   () => route.path,
   () => {
     drawerOpen.value = false;
+    void loadShopBrand();
   }
 );
 
@@ -337,14 +344,11 @@ function onMenuNav(path: string): void {
   if (route.path === path) drawerOpen.value = false;
 }
 
-// 从移动端宽度切回桌面宽度时,抽屉状态没有意义,顺手复位;
+// 宽度模式切换时抽屉状态没有意义,一律收起;
 // 进入移动端时折叠态也无意义(移动端侧栏是抽屉),一并清除,避免菜单变成 64px 破图
 watch(isMobile, v => {
-  if (!v) drawerOpen.value = false;
-  else {
-    drawerOpen.value = false;
-    collapsed.value = false;
-  }
+  drawerOpen.value = false;
+  if (v) collapsed.value = false;
 });
 
 // 菜单直接从路由表派生(见 ../routes.ts 的 meta.menuOrder / meta.perm / meta.group):
@@ -412,18 +416,6 @@ const tabs = computed(() => {
 
 const currentTitle = computed(() => route.meta.title || '');
 
-// 左上角品牌名:配置了店铺名就展示「店铺名称 · 点餐系统」,未配置回退「扫码点餐系统」。
-// 取数与拼接格式在 useShopBrand 里统一维护(登录页共用同一份,避免两处漂移)。
-const { brandName, loadShopBrand } = useShopBrand('扫码点餐系统');
-// 布局在整段会话里常驻,只在挂载时拉一次的话,去「系统配置」改完店铺名左上角不会跟着变
-// (要整页刷新才生效)。这里随路由变化轻量重取一次,切到别的页面就能看到新名字。
-watch(
-  () => route.path,
-  () => {
-    loadShopBrand();
-  }
-);
-
 const displayName = computed(() => getDisplayName());
 const roleName = computed(() => getRoleName());
 // 侧栏底部展示的版本号,直接取自 package.json,发版改版本号即可同步,不会漂移
@@ -450,9 +442,7 @@ const filteredPickRows = computed(() => {
   const kw = pickerKeyword.value.trim().toLowerCase();
   if (!kw) return pickerRows.value;
   return pickerRows.value.filter(
-    t =>
-      (t.tableName || '').toLowerCase().includes(kw) ||
-      (t.tableNo || '').toLowerCase().includes(kw)
+    t => (t.tableName || '').toLowerCase().includes(kw) || (t.tableNo || '').toLowerCase().includes(kw)
   );
 });
 
@@ -543,7 +533,9 @@ function onLogout() {
   color: var(--ink);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .pick-item:hover {
@@ -813,66 +805,66 @@ function onLogout() {
    @media (min-width: 1025px) 限定,否则桌面端折叠后若视口缩到移动端,
    collapsed 类仍在,会覆盖移动端抽屉样式(侧栏变 64px 破图)。 */
 @media (width >= 1025px) {
-/* 折叠后侧栏收成 64px 图标列;overflow 放开,让 hover 浮层能溢出到侧栏外面 */
-.side.collapsed {
-  width: 64px;
-  padding: 18px 8px;
-  overflow: visible;
-}
+  /* 折叠后侧栏收成 64px 图标列;overflow 放开,让 hover 浮层能溢出到侧栏外面 */
+  .side.collapsed {
+    width: 64px;
+    padding: 18px 8px;
+    overflow: visible;
+  }
 
-.side.collapsed .logo {
-  justify-content: center;
-  padding: 0 0 18px;
-}
+  .side.collapsed .logo {
+    justify-content: center;
+    padding: 0 0 18px;
+  }
 
-.side.collapsed .logo-text {
-  display: none;
-}
+  .side.collapsed .logo-text {
+    display: none;
+  }
 
-.side.collapsed .mi,
-.side.collapsed .mg-head {
-  justify-content: center;
-  padding: 9px 0;
-}
+  .side.collapsed .mi,
+  .side.collapsed .mg-head {
+    justify-content: center;
+    padding: 9px 0;
+  }
 
-.side.collapsed .txt,
-.side.collapsed .mg-arrow {
-  display: none;
-}
+  .side.collapsed .txt,
+  .side.collapsed .mg-arrow {
+    display: none;
+  }
 
-/* 折叠态下分组子菜单用 hover 浮层展开(纯 CSS):默认隐藏,悬停组头时弹出 */
-.side.collapsed .mg {
-  position: relative;
-}
+  /* 折叠态下分组子菜单用 hover 浮层展开(纯 CSS):默认隐藏,悬停组头时弹出 */
+  .side.collapsed .mg {
+    position: relative;
+  }
 
-.side.collapsed .mg-body {
-  display: none !important;
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 0;
-  width: 168px;
-  padding: 6px;
-  margin: 0;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
-  z-index: 970;
-}
+  .side.collapsed .mg-body {
+    display: none !important;
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 0;
+    width: 168px;
+    padding: 6px;
+    margin: 0;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+    z-index: 970;
+  }
 
-.side.collapsed .mg:hover .mg-body {
-  display: flex !important;
-}
+  .side.collapsed .mg:hover .mg-body {
+    display: flex !important;
+  }
 
-/* 浮层里的子项恢复正常形态:有文字、缩进收窄 */
-.side.collapsed .mi.sub {
-  padding: 7px 10px;
-}
+  /* 浮层里的子项恢复正常形态:有文字、缩进收窄 */
+  .side.collapsed .mi.sub {
+    padding: 7px 10px;
+  }
 
-/* 折叠后版本号与底部区域一并隐藏,只留图标列 */
-.side.collapsed .side-foot {
-  display: none;
-}
+  /* 折叠后版本号与底部区域一并隐藏,只留图标列 */
+  .side.collapsed .side-foot {
+    display: none;
+  }
 }
 
 /* ---------- 主体 ---------- */
@@ -1116,7 +1108,7 @@ function onLogout() {
   .top {
     height: calc(52px + env(safe-area-inset-top, 0px));
     padding: 0 12px;
-    padding-top: env(safe-area-inset-top, 0px);
+    padding-top: env(safe-area-inset-top, 0);
     gap: 8px;
     box-sizing: border-box;
   }

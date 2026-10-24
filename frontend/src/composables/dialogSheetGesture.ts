@@ -84,7 +84,7 @@ function onTouchEnd(): void {
   document.removeEventListener('touchcancel', onTouchEnd);
 
   if (dy > DISMISS_THRESHOLD) {
-    // 立即触发关闭:离场动画(tDialogSlideDown)的起点取当前 transform,
+    // 立即触发关闭:离场动画(t-dialog-slide-down)的起点取当前 transform,
     // 会从拖拽到的位置继续平滑滑出,遮罩同步淡出;内联样式延后清理
     panel.style.transition = `transform ${SETTLE_MS}ms ease`;
     window.setTimeout(() => {

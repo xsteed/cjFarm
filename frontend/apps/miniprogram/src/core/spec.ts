@@ -21,7 +21,13 @@ export function isOrderable(d: Dish): boolean {
   return (d.specs || []).length > 0;
 }
 
-/** 规格多到行内放不下 → 进规格弹层，不默默按默认规格下单。 */
-export function isManySpecs(d: Dish): boolean {
-  return (d.specs || []).length > INLINE_SPEC_MAX;
+/**
+ * 规格里的最小「有效」价格（> 0）。全部缺失/为零时返回 0。
+ *
+ * 直接 Math.min(...prices) 会被 0/缺失价污染:招牌菜与「起」价会显示 ¥0.00,
+ * 点进去价格却完全不同。首页与菜单页共用这一份。
+ */
+export function minPositivePrice(specs: Array<{ price?: number | null }>): number {
+  const prices = specs.map(s => Number(s.price) || 0).filter(p => p > 0);
+  return prices.length ? Math.min(...prices) : 0;
 }

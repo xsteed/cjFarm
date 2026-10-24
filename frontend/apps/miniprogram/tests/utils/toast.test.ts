@@ -12,8 +12,9 @@ describe('toast', () => {
     toast.success('下单成功');
     expect(wxMock.toasts[0]).toEqual({ title: '下单成功', icon: 'success' });
 
+    // 截断后连省略号一起不超过 7 个字符,否则微信会再截一次、把省略号吃掉
     toast.success('加菜成功，已通知后厨');
-    expect(wxMock.lastToast).toBe('加菜成功，已通…');
+    expect(wxMock.lastToast).toBe('加菜成功，已…');
   });
 
   it('error / warning / info 用纯文字图标，且完整保留长文案', () => {

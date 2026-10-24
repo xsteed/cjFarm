@@ -124,7 +124,9 @@ async function memberedGet<T>(call: () => Promise<T>): Promise<T> {
     // ApiError.status：401 = 令牌过期（http.ts 在 401 时已清掉本地令牌）
     const status = (e as { status?: number })?.status;
     if (status !== 401) throw e;
-    saveToken('');
+    // 这里不再 saveToken('')：http.ts 的 401 分支已经 remove 过；且若这发 401 晚于
+    // 「401 兜底触发的静默重登」完成到达，清空会把刚刷新好的令牌擦掉，逼出额外一轮
+    // wx.login + 登录请求。直接重登（单飞去重）+ 重放即可。
     await memberLogin();
     return await attempt();
   }

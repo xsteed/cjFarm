@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"dining-system/domain/po"
+	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/store"
 )
 
@@ -94,13 +95,21 @@ func ListPrintAgents() []po.PrintAgent {
 	list := []po.PrintAgent{}
 	rows, err := store.DB.Query(`SELECT ` + PrintAgentCols + ` FROM tb_print_agent ORDER BY agent_id`)
 	if err != nil {
+		logger.Warnf("[printagent] 查询代理身份失败: %v", err)
 		return list
 	}
 	defer rows.Close()
 	for rows.Next() {
-		if a, err := scanPrintAgent(rows); err == nil {
-			list = append(list, a)
+		// 扫描失败上抛:静默丢行会让某台代理从管理端「消失」,门店看不到它在轮询。
+		a, err := scanPrintAgent(rows)
+		if err != nil {
+			logger.Warnf("[printagent] 扫描代理身份失败: %v", err)
+			return list
 		}
+		list = append(list, a)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Warnf("[printagent] 遍历代理身份中断: %v", err)
 	}
 	return list
 }
@@ -138,7 +147,13 @@ func UpdatePrintAgent(agentID int, name, printerIDs string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("代理不存在")
+		// MySQL 默认不带 CLIENT_FOUND_ROWS:值与旧值完全相同时 RowsAffected 也是 0。
+		// 「点了保存但什么都没改」不该被报成「代理不存在」,先回查一行确认存在性
+		// (与 DeletePrintAgent 的区分思路一致)。
+		if _, e := loadPrintAgentByID(agentID); e != nil {
+			return errors.New("代理不存在")
+		}
+		return nil
 	}
 	return nil
 }
@@ -172,8 +187,11 @@ func FindPrintAgentByToken(tok string) (po.PrintAgent, bool) {
 	a, err := scanPrintAgent(store.DB.QueryRow(`SELECT `+PrintAgentCols+` FROM tb_print_agent
 		WHERE token_hash=? AND status=1 LIMIT 1`, computed))
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return po.PrintAgent{}, false
+		// 令牌无效与库故障都返回 (零值,false),但**必须区分**:库故障会让所有代理
+		// 同时掉线,排查时返回值却与「令牌错了」一模一样。这里落一条告警,
+		// 让「代理集体掉线 + 这条日志」成为可定位的现场。
+		if !errors.Is(err, sql.ErrNoRows) {
+			logger.Warnf("[printagent] 按令牌查询代理身份失败(库故障,非令牌无效): %v", err)
 		}
 		return po.PrintAgent{}, false
 	}

@@ -37,11 +37,6 @@ export function dishMatches(dish: Dish, keywords: string[]): boolean {
   return keywords.every(kw => hay.includes(kw) || isSubsequence(kw, name));
 }
 
-/** 关键词空时不过滤（原样返回同一份引用，调用方据此走「不过滤」的零成本路径）。 */
-export function isSearching(raw: string): boolean {
-  return !!String(raw || '').trim();
-}
-
 /**
  * 过滤整份菜单：只保留有命中的菜品与分类，分类顺序不变。
  * 关键词为空时返回同一份引用。

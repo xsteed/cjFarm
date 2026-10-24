@@ -14,6 +14,21 @@ export interface CartItem {
   price: number;
   quantity: number;
   remark: string;
+  /** 加购时该规格的剩余份数快照：-1 = 不限量，>=0 为可购份数。
+   *  购物车抽屉里的 + 拿不到菜单对象，靠它夹紧（后端下单事务按 stock >= qty 校验）。 */
+  stock: number;
+}
+
+/** 规格剩余份数归一：-1 / 非数字 / 负数视为不限量，>=0 为可购份数（与后端 po.Spec 一致）。 */
+function rawStock(spec: { stock?: number | null }): number {
+  const n = Number(spec.stock);
+  return Number.isFinite(n) && n >= 0 ? n : -1;
+}
+
+/** 可加购上限；不限量时返回 Infinity，便于统一比较。 */
+function stockCap(spec: { stock?: number | null }): number {
+  const s = rawStock(spec);
+  return s < 0 ? Number.POSITIVE_INFINITY : s;
 }
 
 export interface RemarkTarget {
@@ -76,13 +91,23 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
       }
     }
     const spec = currentSpec(d);
+    const cap = stockCap(spec);
     // 只有「加」才受沽清影响:减号操作的是购物车里已有的条目,不该因为该规格今天沽清
     // 就减不掉（否则卡片步进器会「点不动」,顾客只能去购物车抽屉里删）。
-    if (delta > 0 && Number(spec.stock) === 0) return;
+    if (delta > 0 && cap === 0) return;
     const key = `${d.dishId}-${spec.specId || 0}`;
     const f = cart.value.find(i => i.key === key);
     if (f) {
+      // 按剩余份数夹紧:stock=2 时不能加到 5 份(后端下单事务按 stock >= qty 校验,
+      // 超出只会让顾客在提交时整单失败)。
+      if (delta > 0 && f.quantity + delta > cap) {
+        ui.warning(`该规格仅剩 ${cap} 份`);
+        f.stock = rawStock(spec);
+        f.quantity = cap;
+        return;
+      }
       f.quantity += delta;
+      f.stock = rawStock(spec);
       if (f.quantity <= 0) cart.value = cart.value.filter(i => i.key !== key);
     } else if (delta > 0) {
       cart.value.push({
@@ -93,12 +118,18 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
         specName: spec.specName || '',
         price: Number(spec.price) || 0,
         quantity: 1,
-        remark: ''
+        remark: '',
+        stock: rawStock(spec)
       });
     }
   }
 
   function changeCartQty(item: CartItem, delta: number): void {
+    // 抽屉里的 + 也要按加购时记下的库存快照夹紧（这里拿不到菜单对象，用快照）。
+    if (delta > 0 && item.stock >= 0 && item.quantity + delta > item.stock) {
+      ui.warning(item.stock > 0 ? `该规格仅剩 ${item.stock} 份` : '该规格已售罄');
+      return;
+    }
     item.quantity += delta;
     if (item.quantity <= 0) cart.value = cart.value.filter(i => i.key !== item.key);
   }
@@ -208,6 +239,12 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
     const s = (sheetDish.value?.specs || []).find(x => Number(x.specId) === specId);
     if (!s || Number(s.stock) === 0) return; // 售罄规格点不动
     sheetSpecId.value = Number(s.specId) || 0;
+    // 切规格时把「新规格那一行」已有的备注带进来:否则会把旧规格的备注写进新规格，
+    // 顺带覆盖掉新规格已经填好的内容。
+    const line = cart.value.find(i => i.key === `${sheetDish.value?.dishId}-${Number(s.specId) || 0}`);
+    const parsed = parseRemark(line ? line.remark : '');
+    sheetRemark.selected = parsed.selected;
+    sheetRemark.custom = parsed.custom;
   }
 
   function toggleSheetRemark(name: string): void {
@@ -219,9 +256,24 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
   /** 加购;同一 dish+spec 合并成一行(与小程序 cartAdd 同规则:合并时覆盖备注)。qty 默认 1(弹层可选多份)。 */
   function addToCart(d: Dish, spec: DishSpec, remark?: string, qty = 1): void {
     const key = `${d.dishId}-${spec.specId || 0}`;
+    const cap = stockCap(spec);
+    // qty 收敛:弹层可能传 0/负数/小数(与小程序 cartAdd 的 Math.max(1, floor) 同规则)
+    const want = Math.max(1, Math.floor(Number(qty) || 1));
     const exist = cart.value.find(i => i.key === key);
+    const base = exist ? exist.quantity : 0;
+    let add = want;
+    if (Number.isFinite(cap) && base + add > cap) {
+      // 超出剩余份数:夹到上限并明确告知,别让顾客到提交才被后端拒
+      add = Math.max(0, cap - base);
+      if (add <= 0) {
+        ui.warning(cap > 0 ? `该规格仅剩 ${cap} 份` : '该商品已售罄');
+        return;
+      }
+      ui.warning(`该规格仅剩 ${cap} 份，已按上限加入`);
+    }
     if (exist) {
-      exist.quantity += qty;
+      exist.quantity += add;
+      exist.stock = rawStock(spec);
       if (remark !== undefined) exist.remark = remark;
       return;
     }
@@ -232,8 +284,9 @@ export function useCart(remarks: Ref<RemarkOption[]>) {
       specId: spec.specId as number,
       specName: spec.specName || '',
       price: Number(spec.price) || 0,
-      quantity: qty,
-      remark: remark ?? ''
+      quantity: add,
+      remark: remark ?? '',
+      stock: rawStock(spec)
     });
   }
 

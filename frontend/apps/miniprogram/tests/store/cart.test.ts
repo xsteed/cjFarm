@@ -10,6 +10,7 @@ import {
   cartCount,
   cartDishQty,
   cartDishTotal,
+  cartMergeLines,
   cartRemove,
   cartSetRemark,
   cartSettle,
@@ -28,6 +29,28 @@ function addLine(dishId: number, specId: number, price: number, qty = 1, remark 
     price,
     image: '',
     itemRemark: remark
+  });
+  for (let i = 1; i < qty; i++) cartChangeQty(`${dishId}:${specId}`, 1);
+}
+
+/** 带库存快照的加购（真实调用方 pages/index 会传 stock）。 */
+function addLineWithStock(
+  dishId: number,
+  specId: number,
+  price: number,
+  stock: number,
+  qty = 1,
+  remark?: string
+): void {
+  cartAdd({
+    dishId,
+    dishName: `菜${dishId}`,
+    specId,
+    specName: `规格${specId}`,
+    price,
+    image: '',
+    stock,
+    ...(remark !== undefined ? { itemRemark: remark } : {})
   });
   for (let i = 1; i < qty; i++) cartChangeQty(`${dishId}:${specId}`, 1);
 }
@@ -151,6 +174,75 @@ describe('cart store', () => {
         3
       );
       expect(s).toMatchObject({ dishTotal: 100, seatFee: 6, discount: 20, total: 86 });
+    });
+  });
+
+  describe('库存上限（与后端 stock >= qty 的校验口径对齐）', () => {
+    it('加购数量被剩余份数夹紧', () => {
+      addLineWithStock(101, 1, 58, 2, 5);
+      expect(cartState()[0].quantity).toBe(2);
+    });
+
+    it('购物车页的 + 也被快照夹紧，减号不受影响', () => {
+      addLineWithStock(101, 1, 58, 2);
+      cartChangeQty('101:1', 1); // 2/2 已到顶
+      expect(cartState()[0].quantity).toBe(2);
+      cartChangeQty('101:1', -1);
+      expect(cartState()[0].quantity).toBe(1);
+    });
+
+    it('stock = -1 / 缺省视为不限量', () => {
+      addLineWithStock(101, 1, 58, -1, 10);
+      expect(cartState()[0].quantity).toBe(10);
+      cartAdd({ dishId: 102, dishName: '菜102', specId: 1, specName: '份', price: 10, image: '' }, 9);
+      expect(cartState()[1].quantity).toBe(9);
+    });
+
+    it('售罄规格加不动，并把快照刷新成 0（购物车页的 + 随后也被挡）', () => {
+      addLineWithStock(101, 1, 58, 5, 5); // 加满 5 份
+      addLineWithStock(101, 1, 58, 0); // 被别人买完：加不动，但快照要刷新
+      expect(cartState()[0].quantity).toBe(5);
+      expect(cartState()[0].stock).toBe(0);
+      cartChangeQty('101:1', 1); // 快照已更新，不能再加
+      expect(cartState()[0].quantity).toBe(5);
+    });
+
+    it('再来一单合并也按库存夹紧', () => {
+      addLineWithStock(101, 1, 58, 3, 2); // 自己已点 2 份
+      cartMergeLines([
+        {
+          key: '101:1',
+          dishId: 101,
+          dishName: '菜101',
+          specId: 1,
+          specName: '规格1',
+          price: 58,
+          image: '',
+          quantity: 3,
+          itemRemark: '',
+          stock: 3
+        }
+      ]);
+      expect(cartState()[0].quantity).toBe(3); // 2 + 3 被夹到库存 3
+    });
+
+    it('再来一单不用历史备注覆盖顾客自己填的备注', () => {
+      addLineWithStock(101, 1, 58, -1, 1, '不要辣');
+      cartMergeLines([
+        {
+          key: '101:1',
+          dishId: 101,
+          dishName: '菜101',
+          specId: 1,
+          specName: '规格1',
+          price: 58,
+          image: '',
+          quantity: 1,
+          itemRemark: '少盐',
+          stock: -1
+        }
+      ]);
+      expect(cartState()[0].itemRemark).toBe('不要辣');
     });
   });
 });

@@ -1,11 +1,29 @@
 package dao
 
 import (
+	"fmt"
+
 	"dining-system/domain/po"
 	"dining-system/infrastructure/store"
 )
 
 // 报表统计查询，金额单位均为分。
+
+// bizDateExpr 返回把时间列折算成「营业日(YYYY-MM-DD)」的 SQL 表达式。
+//
+// cutoffHour=0 → 自然日,等价于 substr(col,1,10)(两库行为一致);
+// >0 → 先把时间整体前移 cutoff 小时再取日期,凌晨 0~cutoff 点的记录归入前一天的营业日。
+// 两库的日期函数不同:SQLite 用 datetime(x,'-H hours'),MySQL 用 DATE_SUB(x, INTERVAL H HOUR)。
+// 调用方保证列里是 'YYYY-MM-DD HH:MM:SS' 形态(见 conf.TimeLayout)。
+func bizDateExpr(col string, cutoffHour int) string {
+	if cutoffHour <= 0 {
+		return "substr(" + col + ",1,10)"
+	}
+	if store.IsMySQL() {
+		return fmt.Sprintf("DATE_FORMAT(DATE_SUB(%s, INTERVAL %d HOUR),'%%Y-%%m-%%d')", col, cutoffHour)
+	}
+	return fmt.Sprintf("substr(datetime(%s, '-%d hours'),1,10)", col, cutoffHour)
+}
 
 // DishRankRow 菜品排行的一行结果。
 type DishRankRow struct {
@@ -39,9 +57,12 @@ type SettleMixRow struct {
 // 为什么不再用 tb_order.pay_channel='wallet':混合支付(余额 + 微信补差)的订单
 // 结算渠道是微信,但它同样有一半钱来自储值,按订单渠道统计会把这部分漏掉。
 // 退回到储值的钱不计入核销(它也没产生现金流出),与 RangeAmount 的退款口径配套。
-func RangeWalletConsume(start, end string) int64 {
+//
+// 查询失败返回 error:静默按 0 返回会让报表把「查不到」显示成「今天没有储值核销」,
+// 与 DailyTrendStats 等函数的错误处理口径保持一致。
+func RangeWalletConsume(start, end string) (int64, error) {
 	var v int64
-	store.DB.QueryRow(`SELECT
+	err := store.DB.QueryRow(`SELECT
 		(SELECT COALESCE(SUM(p.amount),0) FROM tb_payment p
 		 JOIN tb_order o ON o.order_no=p.order_no
 		 WHERE o.pay_time>=? AND o.pay_time<? AND o.order_status!=5 AND o.pay_status=1
@@ -52,7 +73,7 @@ func RangeWalletConsume(start, end string) int64 {
 		     AND r.channel=?)`,
 		start, end, "wallet", PayStatusPaid, PayStatusRefunded,
 		start, end, po.RefundStatusSuccess, "wallet").Scan(&v)
-	return v
+	return v, err
 }
 
 // RangeAmount 统计区间 [start, end) 的营业额(实收资金流,单位分)。
@@ -67,9 +88,12 @@ func RangeWalletConsume(start, end string) int64 {
 // 追溯拉低往日营业额(昨天的数字今天再看会变小),而「今日退款额」又按今天统计,
 // 两个数字永远对不上账;资金流口径下每天的数字落定后不再漂移,且能与渠道账单对账。
 // 重复支付自动退回(is_duplicate=1)的钱从未计入营收,因此也不在这里扣减。
-func RangeAmount(start, end string) int64 {
+//
+// 查询失败返回 error(不静默按 0):否则 DB 抖动时首页会显示「今日营业额 0.00」,
+// 店主据此误判「今天没开张」—— 比接口报错更难排查。
+func RangeAmount(start, end string) (int64, error) {
 	var v int64
-	store.DB.QueryRow(`SELECT
+	err := store.DB.QueryRow(`SELECT
 		(SELECT COALESCE(SUM(COALESCE(paid_amount,0)+COALESCE(refund_amount,0)),0) FROM tb_order
 			WHERE pay_time>=? AND pay_time<? AND order_status!=5 AND pay_status=1
 			  AND COALESCE(settle_type,'normal')<>'credit')
@@ -78,7 +102,7 @@ func RangeAmount(start, end string) int64 {
 		- (SELECT COALESCE(SUM(amount),0) FROM tb_refund
 			WHERE update_time>=? AND update_time<? AND status=? AND COALESCE(is_duplicate,0)=0)`,
 		start, end, start, end, start, end, po.RefundStatusSuccess).Scan(&v)
-	return v
+	return v, err
 }
 
 // DailyTrendBucket 区间内某一天的营业额/订单/客流(用于折线趋势)。
@@ -99,23 +123,30 @@ type DailyTrendBucket struct {
 //     退款 update_time;三类来源先各自按日期前缀分组,再用 UNION ALL 合并求和;
 //   - 订单数 / 客流按「下单时间 create_time」归属;
 //   - substr(x,1,10) 在 SQLite 与 MySQL 下都返回 'YYYY-MM-DD',两库行为一致。
-func DailyTrendStats(start, end string) (map[string]DailyTrendBucket, error) {
+//
+// cutoffHour 为营业日切换时刻(见 service.BizDayCutoffHour):>0 时日期键按
+// 「时间前移 cutoff 小时后取日期」折算,凌晨 0~cutoff 点的流水归入前一天;
+// =0 时退化为自然日,与历史口径完全一致。分桶键与 service 侧的区间边界
+// 必须用同一个 cutoff,否则折线图与汇总数字会打架。
+func DailyTrendStats(start, end string, cutoffHour int) (map[string]DailyTrendBucket, error) {
 	out := map[string]DailyTrendBucket{}
+	// 三种时间列的营业日表达式同构,只是列名不同。
+	dayOf := func(col string) string { return bizDateExpr(col, cutoffHour) }
 
 	// 营业额(分):退款子查询返回负值,与正常收款/挂账核销相加即得到当日资金流净额。
 	rows, err := store.DB.Query(`SELECT d, SUM(amt) FROM (
-		SELECT substr(pay_time,1,10) AS d, COALESCE(SUM(COALESCE(paid_amount,0)+COALESCE(refund_amount,0)),0) AS amt
+		SELECT `+dayOf("pay_time")+` AS d, COALESCE(SUM(COALESCE(paid_amount,0)+COALESCE(refund_amount,0)),0) AS amt
 			FROM tb_order
 			WHERE pay_time>=? AND pay_time<? AND order_status!=5 AND pay_status=1
 			  AND COALESCE(settle_type,'normal')<>'credit'
 			GROUP BY d
 		UNION ALL
-		SELECT substr(credit_settle_time,1,10) AS d, COALESCE(SUM(COALESCE(paid_amount,0)),0) AS amt
+		SELECT `+dayOf("credit_settle_time")+` AS d, COALESCE(SUM(COALESCE(paid_amount,0)),0) AS amt
 			FROM tb_order
 			WHERE credit_settle_time>=? AND credit_settle_time<? AND order_status!=5 AND credit_status=2
 			GROUP BY d
 		UNION ALL
-		SELECT substr(update_time,1,10) AS d, -COALESCE(SUM(amount),0) AS amt
+		SELECT `+dayOf("update_time")+` AS d, -COALESCE(SUM(amount),0) AS amt
 			FROM tb_refund
 			WHERE update_time>=? AND update_time<? AND status=? AND COALESCE(is_duplicate,0)=0
 			GROUP BY d
@@ -140,7 +171,7 @@ func DailyTrendStats(start, end string) (map[string]DailyTrendBucket, error) {
 	}
 
 	// 订单数 / 客流一次按日分组拿到,避免再逐日 COUNT。
-	rows, err = store.DB.Query(`SELECT substr(create_time,1,10) AS d, COUNT(*) AS cnt, COALESCE(SUM(person_count),0) AS guests
+	rows, err = store.DB.Query(`SELECT `+dayOf("create_time")+` AS d, COUNT(*) AS cnt, COALESCE(SUM(person_count),0) AS guests
 		FROM tb_order WHERE create_time>=? AND create_time<? AND order_status!=5 GROUP BY d`, start, end)
 	if err != nil {
 		return nil, err
@@ -164,33 +195,33 @@ func DailyTrendStats(start, end string) (map[string]DailyTrendBucket, error) {
 }
 
 // RangeOrderCount 统计区间 [start, end) 内未取消的订单数。
-func RangeOrderCount(start, end string) int {
+func RangeOrderCount(start, end string) (int, error) {
 	var v int
-	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order
+	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order
 		WHERE create_time>=? AND create_time<? AND order_status!=5`, start, end).Scan(&v)
-	return v
+	return v, err
 }
 
 // RangeGuestCount 统计区间 [start, end) 内未取消订单的人数合计。
-func RangeGuestCount(start, end string) int {
+func RangeGuestCount(start, end string) (int, error) {
 	var v int
-	store.DB.QueryRow(`SELECT COALESCE(SUM(person_count),0) FROM tb_order
+	err := store.DB.QueryRow(`SELECT COALESCE(SUM(person_count),0) FROM tb_order
 		WHERE create_time>=? AND create_time<? AND order_status!=5`, start, end).Scan(&v)
-	return v
+	return v, err
 }
 
 // CountFinishedIn 统计区间内按完成时间归属的已完成订单数。
-func CountFinishedIn(start, end string) int {
+func CountFinishedIn(start, end string) (int, error) {
 	var v int
-	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE finish_time>=? AND finish_time<? AND order_status=4`, start, end).Scan(&v)
-	return v
+	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE finish_time>=? AND finish_time<? AND order_status=4`, start, end).Scan(&v)
+	return v, err
 }
 
 // CountCanceledIn 统计区间内按下单时间归属的已取消订单数。
-func CountCanceledIn(start, end string) int {
+func CountCanceledIn(start, end string) (int, error) {
 	var v int
-	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE create_time>=? AND create_time<? AND order_status=5`, start, end).Scan(&v)
-	return v
+	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE create_time>=? AND create_time<? AND order_status=5`, start, end).Scan(&v)
+	return v, err
 }
 
 // SumRefundIn 统计区间 [start, end) 内发生的退款总额(分)。
@@ -201,75 +232,75 @@ func CountCanceledIn(start, end string) int {
 // refund_amount 是累计值、refund_time 是最后一次的时间,第二天会把第一天的
 // 金额重复计入;按流水逐笔统计则天然正确。
 // 重复支付自动退回(is_duplicate=1)不计入:那部分钱从未计入营收。
-func SumRefundIn(start, end string) int64 {
+func SumRefundIn(start, end string) (int64, error) {
 	var v int64
-	store.DB.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_refund
+	err := store.DB.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_refund
 		WHERE update_time>=? AND update_time<? AND status=? AND COALESCE(is_duplicate,0)=0`,
 		start, end, po.RefundStatusSuccess).Scan(&v)
-	return v
+	return v, err
 }
 
 // TableCount 统计未删除桌台总数。
-func TableCount() int {
+func TableCount() (int, error) {
 	var v int
-	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_table WHERE del_flag='0'`).Scan(&v)
-	return v
+	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_table WHERE del_flag='0'`).Scan(&v)
+	return v, err
 }
 
 // FreeTableCount 统计空闲桌台数。
-func FreeTableCount() int {
+func FreeTableCount() (int, error) {
 	var v int
-	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_table WHERE del_flag='0' AND status=0`).Scan(&v)
-	return v
+	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_table WHERE del_flag='0' AND status=0`).Scan(&v)
+	return v, err
 }
 
 // ActiveOrderCount 统计进行中的订单数。
-func ActiveOrderCount(guardBizDate string) int {
+func ActiveOrderCount(guardBizDate string) (int, error) {
 	guard, args := bizDateGuardSQL(guardBizDate)
 	var v int
-	store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE order_status IN (1,2,3)`+guard, args...).Scan(&v)
-	return v
+	err := store.DB.QueryRow(`SELECT COUNT(*) FROM tb_order WHERE order_status IN (1,2,3)`+guard, args...).Scan(&v)
+	return v, err
 }
 
 // SumFreeIn 统计区间内免单让利总额(按订单应收金额)。
-func SumFreeIn(start, end string) int64 {
+func SumFreeIn(start, end string) (int64, error) {
 	var v int64
-	store.DB.QueryRow(`SELECT COALESCE(SUM(total_amount),0) FROM tb_order
+	err := store.DB.QueryRow(`SELECT COALESCE(SUM(total_amount),0) FROM tb_order
 		WHERE create_time>=? AND create_time<? AND order_status!=5 AND settle_type='free'`, start, end).Scan(&v)
-	return v
+	return v, err
 }
 
 // SumGiftIn 统计区间内赠送让利总额(按订单赠送金额 gift_amount)。
 // 与 SumFreeIn 同口径:按下单时间 create_time 归属,排除已取消订单。
-func SumGiftIn(start, end string) int64 {
+func SumGiftIn(start, end string) (int64, error) {
 	var v int64
-	store.DB.QueryRow(`SELECT COALESCE(SUM(gift_amount),0) FROM tb_order
+	err := store.DB.QueryRow(`SELECT COALESCE(SUM(gift_amount),0) FROM tb_order
 		WHERE create_time>=? AND create_time<? AND order_status!=5`, start, end).Scan(&v)
-	return v
+	return v, err
 }
 
 // CreditPendingStats 统计待收款挂账的金额与笔数。
-func CreditPendingStats() (cents int64, count int) {
-	store.DB.QueryRow(`SELECT COALESCE(SUM(credit_amount),0), COUNT(*) FROM tb_order
+func CreditPendingStats() (cents int64, count int, err error) {
+	err = store.DB.QueryRow(`SELECT COALESCE(SUM(credit_amount),0), COUNT(*) FROM tb_order
 		WHERE order_status!=5 AND settle_type='credit' AND credit_status=1`).
 		Scan(&cents, &count)
-	return cents, count
+	return cents, count, err
 }
 
 // SumCreditIn 统计区间内产生的挂账金额。
-func SumCreditIn(start, end string) int64 {
+func SumCreditIn(start, end string) (int64, error) {
 	var v int64
-	store.DB.QueryRow(`SELECT COALESCE(SUM(credit_amount),0) FROM tb_order
+	err := store.DB.QueryRow(`SELECT COALESCE(SUM(credit_amount),0) FROM tb_order
 		WHERE create_time>=? AND create_time<? AND order_status!=5 AND settle_type='credit'`, start, end).Scan(&v)
-	return v
+	return v, err
 }
 
 // CreditSettledIn 统计区间内核销的挂账金额与笔数。
-func CreditSettledIn(start, end string) (cents int64, count int) {
-	store.DB.QueryRow(`SELECT COALESCE(SUM(credit_amount),0), COUNT(*) FROM tb_order
+func CreditSettledIn(start, end string) (cents int64, count int, err error) {
+	err = store.DB.QueryRow(`SELECT COALESCE(SUM(credit_amount),0), COUNT(*) FROM tb_order
 		WHERE credit_settle_time>=? AND credit_settle_time<? AND credit_status=2`, start, end).
 		Scan(&cents, &count)
-	return cents, count
+	return cents, count, err
 }
 
 // dishRankMaxLimit 菜品排行单次返回上限。排行本质是「看头部」,全量拉取既无
@@ -285,10 +316,13 @@ func DishRank(orderCol string, limit int) ([]DishRankRow, error) {
 	if limit <= 0 || limit > dishRankMaxLimit {
 		limit = dishRankMaxLimit
 	}
+	// 按 (dish_id, dish_name) 分组:不同分类下的同名菜品是两道不同的菜
+	// (价格/成本各自独立),只按名称分组会把它们合并成一行,排行与金额都失真。
+	// 历史行 dish_id 可能为 0,同名的会合并在一起 —— 可接受,好过误并不同菜。
 	rows, err := store.DB.Query(`SELECT i.dish_name, SUM(i.quantity) AS qty, SUM(i.amount) AS amt
 		FROM tb_order_item i JOIN tb_order o ON o.order_id = i.order_id
 		WHERE o.order_status != 5
-		GROUP BY i.dish_name ORDER BY `+orderCol+` DESC LIMIT ?`, limit)
+		GROUP BY i.dish_id, i.dish_name ORDER BY `+orderCol+` DESC, i.dish_id ASC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

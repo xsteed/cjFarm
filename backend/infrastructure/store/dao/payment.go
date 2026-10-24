@@ -178,30 +178,47 @@ func GetRefundOrderInfo(orderID int) (po.Order, error) {
 // 混合支付(余额抵扣 + 渠道支付剩余)的金额防线全靠它:
 // 渠道回调的金额只覆盖「剩余部分」,拿它跟订单总额比必然不相等;
 // 正确的判据是「本笔 + 其它渠道已入账 = 订单总额」。
+//
+// 只算**当前仍为已支付**(Paid)的流水:已退款(Refunded)的钱已退回顾客,
+// 不再构成「已入账」。混合支付撤销(AbortMixedPay)后按原路重试时,那笔储值
+// 流水已是 Refunded,若计入就会让重试的渠道金额被压低 —— 订单最终标记已付,
+// 对应差额却从未真实收取。
 func SumPaidPaymentsExcept(orderNo, exceptChannel string) int64 {
-	var v int64
-	_ = store.DB.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_payment
-		WHERE order_no=? AND channel<>? AND status IN (?,?)`,
-		orderNo, exceptChannel, PayStatusPaid, PayStatusRefunded).Scan(&v)
+	v, _ := SumPaidPaymentsExceptE(orderNo, exceptChannel)
 	return v
 }
 
-// SumPaidPaymentsTx 事务内统计订单已入账(已支付/已退款)的支付合计(分)。
-// 混合支付据此算「还差多少」:订单总额 - 已入账合计。
+// SumPaidPaymentsExceptE 是 SumPaidPaymentsExcept 的带错误版本。
+//
+// 回调金额校验必须用它:查询失败若折叠成 0,「期望金额」会退化成订单总额,
+// 混合支付(渠道只付差额)的合法回调会被误判成「金额不一致」→ 不入账且应答成功,
+// 顾客已付款却永不入账,渠道也不会再重试。
+func SumPaidPaymentsExceptE(orderNo, exceptChannel string) (int64, error) {
+	var v int64
+	err := store.DB.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_payment
+		WHERE order_no=? AND channel<>? AND status=?`,
+		orderNo, exceptChannel, PayStatusPaid).Scan(&v)
+	return v, err
+}
+
+// SumPaidPaymentsTx 事务内统计订单已入账(当前仍为已支付)的支付合计(分)。
+// 混合支付据此算「还差多少」:订单总额 - 已入账合计。口径同 SumPaidPaymentsExcept
+// (不含已退款:那笔钱已退回顾客)。
 func SumPaidPaymentsTx(tx *sql.Tx, orderNo string) (int64, error) {
 	var v int64
 	err := tx.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_payment
-		WHERE order_no=? AND status IN (?,?)`,
-		orderNo, PayStatusPaid, PayStatusRefunded).Scan(&v)
+		WHERE order_no=? AND status=?`,
+		orderNo, PayStatusPaid).Scan(&v)
 	return v, err
 }
 
 // SumPaidPaymentsExceptTx 是 SumPaidPaymentsExcept 的事务版本。
+// 口径一致:只算当前仍为已支付(Paid)的流水,已退款不计入(见 SumPaidPaymentsExcept)。
 func SumPaidPaymentsExceptTx(tx *sql.Tx, orderNo, exceptChannel string) (int64, error) {
 	var v int64
 	err := tx.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM tb_payment
-		WHERE order_no=? AND channel<>? AND status IN (?,?)`,
-		orderNo, exceptChannel, PayStatusPaid, PayStatusRefunded).Scan(&v)
+		WHERE order_no=? AND channel<>? AND status=?`,
+		orderNo, exceptChannel, PayStatusPaid).Scan(&v)
 	return v, err
 }
 
@@ -293,6 +310,24 @@ func SumRefundedByPaymentTx(tx *sql.Tx, orderNo string) (map[int]int64, error) {
 func MarkPaymentStatusTx(tx *sql.Tx, paymentID, status int) error {
 	_, err := tx.Exec(`UPDATE tb_payment SET status=?, update_time=? WHERE payment_id=?`, status, store.Now(), paymentID)
 	return err
+}
+
+// MarkPaymentStatusIfTx 条件状态迁移:仅当流水当前状态为 from 时才改为 to,返回是否命中。
+//
+// 用于「谁先抢到谁执行有副作用动作」的资金场景:撤销混合支付要按流水退余额,
+// 并发撤销(顾客连点取消 / 取消与超时巡检撞车)若各自先读后写,同一笔钱会被退两次。
+// 条件 UPDATE 在行锁上串行化:后到者命中 0 行,据此跳过退款。
+func MarkPaymentStatusIfTx(tx *sql.Tx, paymentID, from, to int) (bool, error) {
+	res, err := tx.Exec(`UPDATE tb_payment SET status=?, update_time=? WHERE payment_id=? AND status=?`,
+		to, store.Now(), paymentID, from)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // LastPaidPayment 查询订单最近一条已支付或(部分)已退款的支付流水。

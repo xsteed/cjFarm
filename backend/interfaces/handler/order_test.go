@@ -62,18 +62,33 @@ func ordInsertUrge(t *testing.T, orderID int, orderNo, tableNo string) int {
 	return int(id)
 }
 
+// intArgTestCtx 构造一个带指定 query 的测试上下文。
+func intArgTestCtx(query string) (*gin.Context, *httptest.ResponseRecorder) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/test?"+query, nil)
+	return c, w
+}
+
 func TestIntArg(t *testing.T) {
-	if v := intArg("12"); v == nil || *v != 12 {
-		t.Fatalf("intArg(\"12\") 期望 12, got %v", v)
+	// 空值 = 不限:(nil, true)。
+	c, _ := intArgTestCtx("")
+	if v, ok := intArg(c, "n"); !ok || v != nil {
+		t.Fatalf("空查询值应返回 (nil, true), got %v ok=%v", v, ok)
 	}
-	if v := intArg(" 7 "); v == nil || *v != 7 {
-		t.Fatalf("intArg(\" 7 \") 期望 7, got %v", v)
+	// 合法整数(带空格)。
+	c, _ = intArgTestCtx("n=%207%20")
+	if v, ok := intArg(c, "n"); !ok || v == nil || *v != 7 {
+		t.Fatalf("intArg(\" 7 \") 期望 7, got %v ok=%v", v, ok)
 	}
-	if v := intArg("abc"); v != nil {
-		t.Fatalf("intArg(\"abc\") 应返回 nil, got %v", *v)
+	// 非法值:400 + (nil, false)。
+	c, w := intArgTestCtx("n=abc")
+	if v, ok := intArg(c, "n"); ok || v != nil {
+		t.Fatalf("非法值应返回 (nil, false), got %v ok=%v", v, ok)
 	}
-	if v := intArg(""); v != nil {
-		t.Fatalf("intArg(\"\") 应返回 nil, got %v", *v)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("非法值应写 400, got %d", w.Code)
 	}
 }
 

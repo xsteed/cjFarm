@@ -23,7 +23,7 @@ func InitBuildInfo(version, gitCommit, buildTime string) {
 	if gitCommit != "" {
 		buildGitCommit = gitCommit
 	}
-	if buildBuildTime != "" {
+	if buildTime != "" {
 		buildBuildTime = buildTime
 	}
 }

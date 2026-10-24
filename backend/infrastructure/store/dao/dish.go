@@ -41,8 +41,8 @@ func ListDishes(q DishQuery, pageNum, pageSize int) (total int, list []DishRow, 
 	where := []string{"d.del_flag='0'"}
 	args := []interface{}{}
 	if q.DishName != "" {
-		where = append(where, "d.dish_name LIKE ?")
-		args = append(args, "%"+q.DishName+"%")
+		where = append(where, "d.dish_name LIKE ? ESCAPE '\\'")
+		args = append(args, store.LikeContains(q.DishName))
 	}
 	if q.CategoryID != "" {
 		where = append(where, "d.category_id=?")
@@ -64,9 +64,17 @@ func ListDishes(q DishQuery, pageNum, pageSize int) (total int, list []DishRow, 
 	defer rows.Close()
 	list = []DishRow{}
 	for rows.Next() {
-		if d, err := ScanDish(rows); err == nil {
-			list = append(list, d)
+		// 扫描失败必须上抛:静默丢弃会让 total(COUNT 成功)与实际返回条数矛盾,
+		// 前端分页显示「共 50 条」却只渲染 40 条,且 MySQL 严格模式下的类型不符
+		// 会整行静默消失。
+		d, err := ScanDish(rows)
+		if err != nil {
+			return 0, nil, err
 		}
+		list = append(list, d)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
 	}
 	return total, list, nil
 }
@@ -81,9 +89,14 @@ func ListEnabledDishes() ([]DishRow, error) {
 	defer rows.Close()
 	list := []DishRow{}
 	for rows.Next() {
-		if d, err := ScanDish(rows); err == nil {
-			list = append(list, d)
+		d, err := ScanDish(rows)
+		if err != nil {
+			return nil, err
 		}
+		list = append(list, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return list, nil
 }
@@ -168,6 +181,12 @@ func UpdateDish(d po.Dish, specs []po.Spec) error {
 				toDelete = append(toDelete, id)
 			}
 		}
+		// 迭代本身出错(连接断等)时结果集可能不完整:不检查就会漏删,
+		// 顾客仍能点到「已删除的规格」。
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
 		rows.Close()
 		for _, id := range toDelete {
 			if _, err := tx.Exec(`DELETE FROM tb_spec WHERE spec_id=?`, id); err != nil {
@@ -246,26 +265,34 @@ func LoadSpecsForOrder(specIDs []int) (map[int]SpecOrderInfo, error) {
 }
 
 // LoadDishSpecs 加载单道菜品的规格。
-func LoadDishSpecs(dishID int) []po.Spec {
+//
+// 扫描失败返回 error:静默丢弃会让菜品「看起来没有规格」,下单时按 0 元成交;
+// 而把半扫描的零值 Spec append 进去更糟(price=0 的幽灵规格)。
+func LoadDishSpecs(dishID int) ([]po.Spec, error) {
 	rows, err := store.DB.Query(`SELECT spec_id, dish_id, spec_name, price, stock FROM tb_spec WHERE dish_id=? ORDER BY spec_id`, dishID)
 	if err != nil {
-		return []po.Spec{}
+		return nil, err
 	}
 	defer rows.Close()
 	specs := []po.Spec{}
 	for rows.Next() {
 		var s po.Spec
-		rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price, &s.Stock)
+		if err := rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price, &s.Stock); err != nil {
+			return nil, err
+		}
 		specs = append(specs, s)
 	}
-	return specs
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return specs, nil
 }
 
 // LoadSpecsByDishIDs 批量加载多道菜品的规格,避免 N+1 查询。
-func LoadSpecsByDishIDs(ids []int) map[int][]po.Spec {
+func LoadSpecsByDishIDs(ids []int) (map[int][]po.Spec, error) {
 	out := map[int][]po.Spec{}
 	if len(ids) == 0 {
-		return out
+		return out, nil
 	}
 	placeholders := ""
 	args := make([]interface{}, 0, len(ids))
@@ -278,15 +305,20 @@ func LoadSpecsByDishIDs(ids []int) map[int][]po.Spec {
 	}
 	rows, err := store.DB.Query(`SELECT spec_id, dish_id, spec_name, price, stock FROM tb_spec WHERE dish_id IN (`+placeholders+`) ORDER BY dish_id, spec_id`, args...)
 	if err != nil {
-		return out
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var s po.Spec
-		rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price, &s.Stock)
+		if err := rows.Scan(&s.SpecID, &s.DishID, &s.SpecName, &s.Price, &s.Stock); err != nil {
+			return nil, err
+		}
 		out[s.DishID] = append(out[s.DishID], s)
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // DecrementSpecStockTx 在事务内扣减某个规格的库存（下单 / 加菜 / 改单写入明细时调用）。

@@ -63,7 +63,12 @@ export function useScrollSpy(menu: Ref<MenuCategory[]>) {
     }
     // 已滚到底:末尾分类内容不足一屏时,它的标题永远无法顶到列表顶部,
     // 若不特判,点最后一个分类会一直高亮在上一类。
-    if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 2) {
+    // 但必须先确认「真的能滚」:整份菜单装得下一屏(宽屏/搜索结果少)时,
+    // 上面这个条件对任意 scrollTop 都成立,会把高亮永远钉在最后一个分类。
+    if (
+      listEl.scrollHeight > listEl.clientHeight + 2 &&
+      listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 2
+    ) {
       activeCat.value = cats[cats.length - 1].categoryId ?? null;
       return;
     }

@@ -87,12 +87,12 @@
         <view class="sec-title">数量</view>
         <view class="qty">
           <view
-            class="qty-btn {{qty <= 1 ? 'off' : ''}}"
+            class="qty-btn {{qty <= qtyMin ? 'off' : ''}}"
             catchtap="onQtyMinus"
           ></view>
           <view class="qty-num">{{qty}}</view>
           <view
-            class="qty-btn qty-plus"
+            class="qty-btn qty-plus {{qty >= qtyMax ? 'off' : ''}}"
             catchtap="onQtyPlus"
           ></view>
         </view>

@@ -130,6 +130,8 @@ func AdminLogin(c *gin.Context) {
 
 	res := service.Authenticate(ctx, username, p.Password, ip)
 	switch res.Fail {
+	case service.LoginOK:
+		// 登录成功:落到下面的成功分支(写登录日志、签发令牌)。
 	case service.LoginFailUserLocked:
 		// 文案与「用户名或密码错误」保持一致:账号是否被锁定属于内部状态,
 		// 回给前端会成为「账号存在」的枚举信道(时序差异已在 Authenticate 里
@@ -153,6 +155,13 @@ func AdminLogin(c *gin.Context) {
 	case service.LoginFailRoleDisabled:
 		WriteLoginLog(c, res.UserID, res.Username, false, "账号所属角色已停用")
 		fail(c, "账号所属角色已停用,请联系管理员")
+		return
+	default:
+		// 未知失败原因(未来新增枚举忘加 case 时落到这里):按「用户名或密码错误」
+		// 兜底并 return —— 否则会继续往下走 res.Auth.UserID,而失败时 res.Auth
+		// 为 nil,直接 panic。
+		WriteLoginLog(c, res.UserID, res.Username, false, "登录失败")
+		fail(c, "用户名或密码错误")
 		return
 	}
 

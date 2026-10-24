@@ -219,20 +219,20 @@ svg.ic-svg {
      (tDialogZoomIn/Out)。滑出 keyframes 只定义终点,起点取元素当前
      transform——下拉手势拖到一半松手时能从当前位置平滑滑出,不跳变。 */
   .t-dialog-zoom__vue-enter-active .t-dialog {
-    animation-name: tDialogSlideUp;
+    animation-name: t-dialog-slide-up;
   }
 
   .t-dialog-zoom__vue-leave-active .t-dialog {
-    animation-name: tDialogSlideDown;
+    animation-name: t-dialog-slide-down;
   }
 
-  @keyframes tDialogSlideUp {
+  @keyframes t-dialog-slide-up {
     from {
       transform: translateY(100%);
     }
   }
 
-  @keyframes tDialogSlideDown {
+  @keyframes t-dialog-slide-down {
     to {
       transform: translateY(100%);
     }
@@ -426,6 +426,7 @@ svg.ic-svg {
 .m-pager .t-pagination__total {
   flex: 0 0 auto;
   white-space: nowrap;
+
   /* 「共 N 项」右侧留出与页码/条数选择器的间距,顶到边不好看 */
   margin-right: 12px;
 }
@@ -787,7 +788,10 @@ svg.ic-svg {
 /* ---- 悬浮主操作按钮(小巧、可拖拽、避开底部 tabbar) ---- */
 .m-fab {
   position: fixed;
-  right: 16px;
+
+  /* 与 fabPosition.ts 的 FAB_MARGIN 一致:拖拽吸附用 12,默认位置也用 12,
+     否则「吸附到右边缘」会比初始位置多出 4px,看起来像没对齐。 */
+  right: 12px;
 
   /* 66px = tabbar 内容高度 54px + 12px 间距;安全区部分与 tabbar 共用同一变量 */
   bottom: calc(66px + var(--safe-bottom-tabbar, env(safe-area-inset-bottom, 0px)));

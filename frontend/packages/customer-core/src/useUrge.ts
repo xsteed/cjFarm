@@ -31,11 +31,17 @@ export function useUrge(currentOrder: Ref<OrderDetail | null>, tableId: Ref<numb
 
   function startUrgeCooldown(sec: number): void {
     clearUrgeTimer();
-    urgeCooldown.value = Math.max(0, Math.floor(sec) || 0);
-    if (urgeCooldown.value <= 0) return;
+    const total = Math.max(0, Math.floor(sec) || 0);
+    urgeCooldown.value = total;
+    if (total <= 0) return;
+    // 按「截止时刻」计算剩余秒数,而不是每拍 -1:setInterval 本身不精确,
+    // 且后台标签页被节流后回调会成批补发,逐拍自减在数百秒的冷却里会累计漂移
+    // (页面显示的倒计时与后端真实冷却对不上,顾客早点了反而被拒)。
+    const deadline = Date.now() + total * 1000;
     urgeTimer = setInterval(() => {
-      urgeCooldown.value -= 1;
-      if (urgeCooldown.value <= 0) clearUrgeTimer();
+      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      urgeCooldown.value = left;
+      if (left <= 0) clearUrgeTimer();
     }, 1000);
   }
 

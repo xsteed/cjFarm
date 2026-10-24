@@ -131,116 +131,148 @@
               class="op-dish"
               @click="openSheet(d)"
             >
-            <div class="op-img">
-              <img
-                v-if="d.dishImage && !imgErr(d.dishId)"
-                :src="d.dishImage || ''"
-                :alt="d.dishName || ''"
-                loading="lazy"
-                @error="onImgErr(d.dishId)"
-              />
-              <div
-                v-else
-                class="img-fallback"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="26"
-                  height="26"
-                  fill="#dcd4cc"
+              <div class="op-img">
+                <img
+                  v-if="d.dishImage && !imgErr(d.dishId)"
+                  :src="d.dishImage || ''"
+                  :alt="d.dishName || ''"
+                  loading="lazy"
+                  @error="onImgErr(d.dishId)"
+                />
+                <div
+                  v-else
+                  class="img-fallback"
                 >
-                  <path
-                    d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v9l3.5-3.5L12 14l3-3 5 5V5H5zm10 1.5A1.5 1.5 0 1 1 13.5 8 1.5 1.5 0 0 1 15 6.5z"
-                  />
-                </svg>
-                <span>暂无图片</span>
-              </div>
-              <!-- 招牌角标:图片左上角,帮顾客快速锁定镇店菜(与售罄蒙版互不干扰) -->
-              <span
-                v-if="Number(d.signature) === 1"
-                class="op-signature"
-              >招牌</span>
-              <!-- 售罄蒙版:盖住图片(或占位图),与菜名后的「售罄」标签互相印证,与小程序端一致 -->
-              <div
-                v-if="isSoldOut(d)"
-                class="op-soldout-mask"
-              >
-                售罄
-              </div>
-            </div>
-
-            <div class="op-info">
-              <div class="op-name">
-                {{ d.dishName }}
-                <!-- 加菜时标注已下单份数,否则顾客只看到空加号,容易重复点 -->
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="26"
+                    height="26"
+                    fill="#dcd4cc"
+                  >
+                    <path
+                      d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v9l3.5-3.5L12 14l3-3 5 5V5H5zm10 1.5A1.5 1.5 0 1 1 13.5 8 1.5 1.5 0 0 1 15 6.5z"
+                    />
+                  </svg>
+                  <span>暂无图片</span>
+                </div>
+                <!-- 招牌角标:图片左上角,帮顾客快速锁定镇店菜(与售罄蒙版互不干扰) -->
                 <span
-                  v-if="orderedQty(d.dishId)"
-                  class="op-ordered"
-                  >已点 {{ orderedQty(d.dishId) }}</span
+                  v-if="Number(d.signature) === 1"
+                  class="op-signature"
+                  >招牌</span
                 >
-                <span
+                <!-- 售罄蒙版:盖住图片(或占位图),与菜名后的「售罄」标签互相印证,与小程序端一致 -->
+                <div
                   v-if="isSoldOut(d)"
-                  class="op-soldout-tag"
-                  >售罄</span
+                  class="op-soldout-mask"
                 >
-              </div>
-              <div
-                v-if="d.description"
-                class="op-desc"
-              >
-                {{ d.description }}
+                  售罄
+                </div>
               </div>
 
-              <div
-                v-if="inlineSpecs(d)"
-                class="op-specs"
-              >
-                <span
-                  v-for="s in d.specs || []"
-                  :key="s.specId"
-                  class="op-spec"
-                  :class="{ on: specOn(d, s), off: isSpecSoldOut(s) }"
-                  @click.stop="selectSpec(d, s)"
-                  >{{ s.specName }}<template v-if="isSpecSoldOut(s)"> 售罄</template></span
+              <div class="op-info">
+                <div class="op-name">
+                  {{ d.dishName }}
+                  <!-- 加菜时标注已下单份数,否则顾客只看到空加号,容易重复点 -->
+                  <span
+                    v-if="orderedQty(d.dishId)"
+                    class="op-ordered"
+                    >已点 {{ orderedQty(d.dishId) }}</span
+                  >
+                  <span
+                    v-if="isSoldOut(d)"
+                    class="op-soldout-tag"
+                    >售罄</span
+                  >
+                </div>
+                <div
+                  v-if="d.description"
+                  class="op-desc"
                 >
-              </div>
+                  {{ d.description }}
+                </div>
 
-              <div class="op-bottom">
-                <!-- 价格整段不折行:单规格显示「¥价格/规格名」,多规格显示最低价 +「起」(与小程序同口径) -->
-                <div class="op-price">¥{{ priceText(d) }}<small v-if="d.specs && d.specs.length === 1">/{{ singleSpecName(d) }}</small><small v-else-if="isManySpecs(d)" class="op-from">起</small></div>
-                <!-- 已在购物车里的菜：即使随后沽清也要显示步进器 ——
+                <div
+                  v-if="inlineSpecs(d)"
+                  class="op-specs"
+                >
+                  <span
+                    v-for="s in d.specs || []"
+                    :key="s.specId"
+                    class="op-spec"
+                    :class="{ on: specOn(d, s), off: isSpecSoldOut(s) }"
+                    @click.stop="selectSpec(d, s)"
+                    >{{ s.specName }}<template v-if="isSpecSoldOut(s)"> 售罄</template></span
+                  >
+                </div>
+
+                <div class="op-bottom">
+                  <!-- 价格整段不折行:单规格显示「¥价格/规格名」,多规格显示最低价 +「起」(与小程序同口径) -->
+                  <div class="op-price">
+                    ¥{{ priceText(d) }}<small v-if="d.specs && d.specs.length === 1">/{{ singleSpecName(d) }}</small
+                    ><small
+                      v-else-if="isManySpecs(d)"
+                      class="op-from"
+                      >起</small
+                    >
+                  </div>
+                  <!-- 已在购物车里的菜：即使随后沽清也要显示步进器 ——
                      「−」在购物车层面本来就是允许的（见 useCart.changeQty，减号不受沽清影响），
                      把加减号整体换成「售罄」会让顾客在卡片上减不掉，只能进购物车抽屉删。
                      此时「+」置灰且不可点（不能再加），价格仍照常展示。 -->
-                <div
-                  v-if="dishQty(d.dishId, d) > 0"
-                  class="op-stepper"
-                >
+                  <div
+                    v-if="dishQty(d.dishId, d) > 0"
+                    class="op-stepper"
+                  >
+                    <span
+                      class="m"
+                      @click.stop="changeQty(d, -1)"
+                      ><svg
+                        viewBox="0 0 24 24"
+                        width="13"
+                        height="13"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                      >
+                        <path d="M5 12h14" /></svg
+                    ></span>
+                    <span class="n">{{ dishQty(d.dishId, d) }}</span>
+                    <span
+                      class="p"
+                      :class="{ off: !canAddMore(d) }"
+                      @click.stop="onAdd(d, $event)"
+                      ><svg
+                        viewBox="0 0 24 24"
+                        width="13"
+                        height="13"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                      >
+                        <path d="M12 5v14M5 12h14" /></svg
+                    ></span>
+                  </div>
                   <span
-                    class="m"
-                    @click.stop="changeQty(d, -1)"
-                    ><svg
-                      viewBox="0 0 24 24"
-                      width="13"
-                      height="13"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                      stroke-linecap="round"
-                    >
-                      <path d="M5 12h14" /></svg
-                  ></span>
-                  <span class="n"
-                    >{{ dishQty(d.dishId, d) }}</span
+                    v-else-if="isSoldOut(d)"
+                    class="op-soldout"
+                    >售罄</span
                   >
                   <span
-                    class="p"
-                    :class="{ off: !canAddMore(d) }"
+                    v-else-if="!isOrderable(d)"
+                    class="op-soldout"
+                    >暂不可点</span
+                  >
+                  <span
+                    v-else
+                    class="op-add"
                     @click.stop="onAdd(d, $event)"
                     ><svg
                       viewBox="0 0 24 24"
-                      width="13"
-                      height="13"
+                      width="16"
+                      height="16"
                       fill="none"
                       stroke="currentColor"
                       stroke-width="2.5"
@@ -249,34 +281,8 @@
                       <path d="M12 5v14M5 12h14" /></svg
                   ></span>
                 </div>
-                <span
-                  v-else-if="isSoldOut(d)"
-                  class="op-soldout"
-                  >售罄</span
-                >
-                <span
-                  v-else-if="!isOrderable(d)"
-                  class="op-soldout"
-                  >暂不可点</span
-                >
-                <span
-                  v-else
-                  class="op-add"
-                  @click.stop="onAdd(d, $event)"
-                  ><svg
-                    viewBox="0 0 24 24"
-                    width="16"
-                    height="16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                  >
-                    <path d="M12 5v14M5 12h14" /></svg
-                ></span>
               </div>
             </div>
-          </div>
           </div>
         </template>
         <!-- 菜单全量渲染,滚到底就是真到底了:给一句小提示,顾客不会以为还没加载完 -->
@@ -317,25 +323,26 @@ const props = withDefaults(
     keyword: string;
     /** 招牌菜卡片（由页面层用 customer-core 的 signatureDishes 提取）：非空时在左栏置顶「本店招牌」、右栏置顶横滑卡片条 */
     sigCards?: SigCard[];
-  selectedSpec: Record<number, number>;
-  imgErrs: Set<number>;
-  showTabbar: boolean;
-  activeCat: number | null;
-  orderedQty: (dishId: number | undefined) => number;
-  currentSpec: (d: Dish) => DishSpec;
-  /** 第二参传 dish 时按「当前生效规格」计数,与 +/- 改动的条目保持一致(见 useCart.dishQty) */
-  dishQty: (dishId: number | undefined, dish?: Dish) => number;
-  selectSpec: (d: Dish, s: DishSpec) => void;
-  changeQty: (d: Dish, delta: number) => void;
-  onImgErr: (id: number | undefined) => void;
-  setListRef: (el: unknown) => void;
-  setGroupRef: (categoryId: number | undefined, el: unknown) => void;
-  jumpTo: (categoryId: number | undefined) => void;
-  handleScroll: () => void;
-  /** 打开规格/备注弹层（多规格菜点「+」或点菜名时） */
-  openSheet: (d: Dish) => void;
-}>(),
+    selectedSpec: Record<number, number>;
+    imgErrs: Set<number>;
+    showTabbar: boolean;
+    activeCat: number | null;
+    orderedQty: (dishId: number | undefined) => number;
+    currentSpec: (d: Dish) => DishSpec;
+    /** 第二参传 dish 时按「当前生效规格」计数,与 +/- 改动的条目保持一致(见 useCart.dishQty) */
+    dishQty: (dishId: number | undefined, dish?: Dish) => number;
+    selectSpec: (d: Dish, s: DishSpec) => void;
+    changeQty: (d: Dish, delta: number) => void;
+    onImgErr: (id: number | undefined) => void;
+    setListRef: (el: unknown) => void;
+    setGroupRef: (categoryId: number | undefined, el: unknown) => void;
+    jumpTo: (categoryId: number | undefined) => void;
+    handleScroll: () => void;
+    /** 打开规格/备注弹层（多规格菜点「+」或点菜名时） */
+    openSheet: (d: Dish) => void;
+  }>(),
   {
+    cart: () => [],
     sigCards: () => []
   }
 );
@@ -614,6 +621,7 @@ function onOpenSig(id: number): void {
 .op-group-t {
   position: sticky;
   top: 0;
+
   /* 高于卡片内的招牌角标(z-index 1)、售罄蒙版(z-index 3)等图层:
      否则标题 sticky 停在顶部时,底下滚过的卡片图 tag / 蒙版会透到标题之上 */
   z-index: 10;

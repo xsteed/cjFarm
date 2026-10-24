@@ -215,7 +215,7 @@ const router = useRouter();
 const { isMobile } = useIsMobile();
 
 // 移动端下拉刷新看板实时数据
-const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(load);
+const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refreshPulling } = usePullRefresh(loadOnce);
 
 // 看板上的桌台 / 订单点一下直达对应管理页,减少一级查找
 function goTables(): void {
@@ -271,7 +271,9 @@ function hasUrge(t: TableInfo): boolean {
 const urgeTables = computed(() => {
   const seen = new Map<string, string>();
   urges.value.forEach(u => {
-    const key = `${u.tableId ?? ''}-${u.orderId ?? ''}`;
+    // 口径是「几桌在催」:按桌去重 —— 同一桌多笔进行中单同时催菜只算一桌。
+    // 按桌+单去重会把一桌的连催算成多桌,文案还会出现「大厅01桌 · 大厅01桌」。
+    const key = String(u.tableId ?? u.tableName ?? u.tableNo ?? '');
     const label = u.tableName || u.tableNo || '';
     if (label && !seen.has(key)) seen.set(key, label);
   });
@@ -343,17 +345,24 @@ async function load(): Promise<void> {
 // (与订单管理/桌台管理页同策略)。
 const AUTO_REFRESH_MS = 15_000;
 let autoTimer: ReturnType<typeof setInterval> | null = null;
-// 看板没有 loading 态,用 in-flight 标记防止上一轮请求未回就叠新一轮。
-let inflight = false;
+
+// 看板没有 loading 态,用「共享在途 Promise」去重:自动刷新、回到前台、下拉刷新、
+// 首屏加载都可能同时触发 —— 此前只有定时器那一拍有守卫,其余路径仍会并发多份,
+// 既重复打后端,也让先到的旧快照被后到的覆盖。
+let inflightLoad: Promise<void> | null = null;
+
+function loadOnce(): Promise<void> {
+  if (inflightLoad) return inflightLoad;
+  inflightLoad = load().finally(() => {
+    inflightLoad = null;
+  });
+  return inflightLoad;
+}
 
 function startAutoRefresh(): void {
   stopAutoRefresh();
   autoTimer = setInterval(() => {
-    if (inflight) return;
-    inflight = true;
-    load().finally(() => {
-      inflight = false;
-    });
+    void loadOnce();
   }, AUTO_REFRESH_MS);
 }
 
@@ -368,13 +377,13 @@ function onVisibilityChange(): void {
   if (document.hidden) {
     stopAutoRefresh();
   } else {
-    load();
+    void loadOnce();
     startAutoRefresh();
   }
 }
 
 onMounted(() => {
-  load();
+  void loadOnce();
   startAutoRefresh();
   document.addEventListener('visibilitychange', onVisibilityChange);
 });

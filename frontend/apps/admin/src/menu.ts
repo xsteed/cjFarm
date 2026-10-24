@@ -44,7 +44,8 @@ export interface RouteLike {
 
 /**
  * 侧栏菜单分组:把同类的低频入口收进可折叠子菜单,一级菜单从 15 行压到 7 行。
- * 数组顺序即分组在侧栏的先后;组内条目按各自 menuOrder 排序。
+ * 分组在侧栏的先后由「组内最小 menuOrder」决定(见 menuUnits),不是数组顺序;
+ * 组内条目按各自 menuOrder 排序。
  * 分组只影响「展示」:权限过滤仍在每条路由的 meta.perm 上,路由守卫不变;
  * 某组只剩一个可见条目时,侧栏会把它退化成普通菜单项,不多套一层折叠。
  */
@@ -62,17 +63,20 @@ interface MenuEntry {
 
 /** 全部「有权限访问」的菜单叶子(已按权限过滤,保留分组标记)。 */
 function accessibleEntries(routes: readonly RouteLike[]): MenuEntry[] {
-  return routes
-    .filter(r => r.meta?.menuOrder && (!r.meta.perm || hasPerm(r.meta.perm)))
-    .map(r => ({
-      leaf: {
-        path: r.path,
-        title: r.meta?.title ?? '',
-        icon: r.meta?.icon ?? '',
-        menuOrder: r.meta?.menuOrder ?? 0
-      },
-      group: r.meta?.group
-    }));
+  return (
+    routes
+      // menuOrder === 0 也是合法排序值,用 != null 而不是真值判断
+      .filter(r => r.meta?.menuOrder != null && (!r.meta.perm || hasPerm(r.meta.perm)))
+      .map(r => ({
+        leaf: {
+          path: r.path,
+          title: r.meta?.title ?? '',
+          icon: r.meta?.icon ?? '',
+          menuOrder: r.meta?.menuOrder ?? 0
+        },
+        group: r.meta?.group
+      }))
+  );
 }
 
 /**

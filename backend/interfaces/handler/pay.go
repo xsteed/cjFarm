@@ -308,8 +308,16 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 			}
 			// 已关闭的单是终态:顾客早已放弃这笔充值,延迟通知绝不能让它复活。
 			// 应答成功 —— 让渠道停止重试,否则一笔永远不该入账的单会被无限重发。
+			// 但「应答成功」不等于「钱没到账」:service 侧已落 Error 日志(含渠道
+			// 交易号),若顾客确实在关单后付了款,需店家在渠道后台人工退款。
 			if errors.Is(err, service.ErrRechargeClosed) {
-				logger.CtxWarnf(ctx, "[wallet] 充值单已关闭,拒绝入账并应答成功 单%s", notify.OrderNo)
+				logger.CtxWarnf(ctx, "[wallet] 充值单已关闭,拒绝入账并应答成功(若已实际付款需人工退款) 单%s", notify.OrderNo)
+				return true
+			}
+			// 金额不一致:金额不会因重试而变化,让渠道重试 24 小时纯属空耗,
+			// 与订单回调口径一致 —— 留痕后应答成功,由人工核对(service 已落 Error 日志)。
+			if errors.Is(err, service.ErrRechargeAmountMismatch) {
+				logger.CtxErrorf(ctx, "[wallet][告警] 充值回调金额不一致,已应答成功待人工核对 单%s", notify.OrderNo)
 				return true
 			}
 			logger.CtxErrorf(ctx, "[wallet][告警] 充值入账失败,应答失败待渠道重试 单%s: %v", notify.OrderNo, err)
@@ -338,7 +346,15 @@ func handlePayNotify(c *gin.Context, channel string, notify pay.PayNotify) bool 
 	// 「本笔 + 其它渠道已入账 == 订单总额」。订单已支付时不校验 ——
 	// 任何额外到账都是重复支付,交给 applyPaymentSuccess 判重并自动原路退回。
 	if o.PayStatus != 1 {
-		expect := totalCents - service.PaidPaymentsExcept(notify.OrderNo, channel)
+		// 已入账额查询失败必须应答 FAIL 让渠道重试:折叠成 0 会让「期望金额」
+		// 退化成订单总额,混合支付的合法回调被误判为金额不一致 → 不入账且应答
+		// 成功,顾客已付款却永不入账(掉单不可恢复)。
+		paidOther, err := service.PaidPaymentsExceptE(notify.OrderNo, channel)
+		if err != nil {
+			logger.CtxErrorf(ctx, "[pay][告警] 回调校验读取已入账金额失败,应答失败待渠道重试 订单%s: %v", notify.OrderNo, err)
+			return false
+		}
+		expect := totalCents - paidOther
 		if expect < 0 {
 			expect = 0
 		}
@@ -458,7 +474,14 @@ func settleQueryResult(ctx context.Context, orderID int, orderNo, channel string
 	totalCents := o.TotalAmount
 	// 期望金额 = 订单总额 - 其它渠道已入账的部分:混合支付时渠道只收差额,
 	// 拿它直接跟订单总额比会把每一笔混合支付都判成「金额不一致」。
-	expect := totalCents - service.PaidPaymentsExcept(orderNo, channel)
+	// 查询失败时不补单也不留「金额不一致」痕迹(那是误判):本次跳过,下次轮询或
+	// 回调重试再判。
+	paidOther, err := service.PaidPaymentsExceptE(orderNo, channel)
+	if err != nil {
+		logger.CtxWarnf(ctx, "[pay][告警] 主动查单读取已入账金额失败,本次跳过补单 订单%s: %v", orderNo, err)
+		return
+	}
+	expect := totalCents - paidOther
 	if expect < 0 {
 		expect = 0
 	}

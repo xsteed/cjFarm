@@ -286,12 +286,16 @@ func TestRefundingAmountsAndSum(t *testing.T) {
 	covInsertRefund(t, po.Refund{OrderID: oid, OrderNo: "RA1", Channel: "wxpay", RefundNo: "RA-RN1", ChannelRefundNo: "ch-ra-1", Amount: 30, Status: po.RefundStatusProcessing})
 	covInsertRefund(t, po.Refund{OrderID: oid, OrderNo: "RA1", Channel: "wxpay", RefundNo: "RA-RN2", ChannelRefundNo: "ch-ra-2", Amount: 20, Status: po.RefundStatusSuccess})
 
-	m := RefundingAmounts([]int{oid})
+	m, err := RefundingAmounts([]int{oid})
+	if err != nil {
+		t.Fatalf("统计处理中退款失败: %v", err)
+	}
 	if m[oid] != 30 {
 		t.Fatalf("处理中退款应为 30, got %d", m[oid])
 	}
-	if m2 := RefundingAmounts(nil); len(m2) != 0 {
-		t.Fatal("空输入应返回空 map")
+	m2, err := RefundingAmounts(nil)
+	if err != nil || len(m2) != 0 {
+		t.Fatalf("空输入应返回空 map, got %v err=%v", m2, err)
 	}
 	// SumRefundedWithErr 只算成功(不含重复支付退回),此处无 is_duplicate=0 的成功单=0。
 	s, err := SumRefundedWithErr("RA1")

@@ -43,8 +43,8 @@
         {{ loading ? '加载中…' : emptyLabel }}
       </div>
       <div
-        v-for="row in list"
-        :key="row.id ?? 0"
+        v-for="(row, index) in list"
+        :key="row.id ?? `row-${index}`"
         class="mcard"
       >
         <div class="mcard-hd">
@@ -221,7 +221,12 @@ async function load(): Promise<void> {
 }
 
 function openAdd(): void {
-  Object.assign(form, { id: null, name: '', sortOrder: list.value.length + 1 });
+  // 取当前最大排序号 +1:「条数 +1」在中间删过行后会与已有值撞号
+  Object.assign(form, {
+    id: null,
+    name: '',
+    sortOrder: Math.max(0, ...list.value.map(r => Number(r.sortOrder) || 0)) + 1
+  });
   dialogVisible.value = true;
 }
 
@@ -250,12 +255,19 @@ async function save(): Promise<void> {
 }
 
 function onDelete(row: CrudRow): void {
+  // id 缺失时不要发 deleteApi(0):那必然打出一发 404/500,还会误导用户以为删掉了
+  if (row.id == null) {
+    MessagePlugin.warning('该记录缺少 id，请刷新后重试');
+    return;
+  }
+  // 收窄后的局部常量:上面的判空不会传播进 onConfirm 闭包
+  const id = row.id;
   const dlg = DialogPlugin.confirm({
     header: '确认删除',
     body: `确认删除${props.deleteNoun}【${row.name}】？`,
     onConfirm: async () => {
       try {
-        await props.deleteApi(row.id ?? 0);
+        await props.deleteApi(id);
         MessagePlugin.success('删除成功');
         dlg.hide();
         load();

@@ -53,8 +53,10 @@ func initLogFile(path string) error {
 // logf 输出带时间戳的日志:先控制台、再日志文件(打开失败时仅控制台)。
 func logf(format string, a ...interface{}) {
 	line := fmt.Sprintf("%s "+format+"\n", append([]interface{}{time.Now().Format("2006-01-02 15:04:05")}, a...)...)
-	fmt.Print(line)
+	// 控制台输出也放进锁内:看门狗 goroutine 与主循环同时打日志时,两行会在
+	// 终端里交错(文件侧本来就在锁内,只有控制台受影响)。
 	logMu.Lock()
+	fmt.Print(line)
 	if logFile != nil {
 		_, _ = logFile.WriteString(line)
 	}

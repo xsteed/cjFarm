@@ -29,35 +29,36 @@ export type PrivacyResolver = (param: {
   buttonId?: string;
 }) => void;
 
-let pending: PrivacyResolver | null = null;
+// 微信可能连续挂起多个隐私接口（连点两个隐私按钮）。逐个覆盖会让前一个 resolver
+// 永远得不到兑现 —— 对应的接口永久挂起，顾客会发现按钮「点了没反应」。
+// 改成队列：顾客在授权页做一次选择时，平台侧会释放所有被挂起的接口，
+// 所以那一页按「一次选择兑现全部」消费（见 takeAllPrivacyResolvers）。
+const pendingQueue: PrivacyResolver[] = [];
 
 /** app.ts 在 wx.onNeedPrivacyAuthorization 回调里登记待兑现的 resolver。 */
 export function setPrivacyResolver(fn: PrivacyResolver): void {
-  pending = fn;
-}
-
-export function hasPendingPrivacy(): boolean {
-  return pending !== null;
+  pendingQueue.push(fn);
 }
 
 /**
- * 取走待处理的 resolver——注意是「取走」：第二次调用返回 null。
- * 这样同一个 resolver 不可能被两处各兑现一遍（并发双击时尤其要紧）。
+ * 取走全部待兑现的 resolver：顾客做一次选择（同意/不同意/返回离开），
+ * 平台侧会释放所有被挂起的隐私接口，这里必须全部兑现，不能只兑现一个。
  */
-export function takePrivacyResolver(): PrivacyResolver | null {
-  const fn = pending;
-  pending = null;
-  return fn;
+export function takeAllPrivacyResolvers(): PrivacyResolver[] {
+  return pendingQueue.splice(0, pendingQueue.length);
 }
 
 /**
- * 告知平台隐私弹窗已曝光：不计入最终决定，所以**不清空** pending。
+ * 告知平台隐私弹窗已曝光：不计入最终决定，所以**不清空**队列。
  * 失败静默：这只影响后台的曝光统计，不能因为它把授权流程卡住。
  */
 export function reportPrivacyExposure(): void {
-  try {
-    pending?.({ event: 'exposureAuthorization' });
-  } catch {
-    /* 静默 */
+  // 队列里可能有多笔挂起：曝光告知对每一笔都报一次（不消耗、不清空）。
+  for (const fn of [...pendingQueue]) {
+    try {
+      fn({ event: 'exposureAuthorization' });
+    } catch {
+      /* 静默 */
+    }
   }
 }

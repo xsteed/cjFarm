@@ -40,7 +40,7 @@
             >（仅加菜）</span
           >
         </div>
-        <div class="v"><small>¥</small>{{ totalPrice }}</div>
+        <div class="v"><small>¥</small>{{ money(totalPrice) }}</div>
       </div>
     </div>
     <div
@@ -55,6 +55,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { money } from '@dining/shared/money';
 
 const props = defineProps<{
   showTabbar: boolean;
@@ -69,9 +70,7 @@ const emit = defineEmits<{
 
 // 按钮文案:空车提示「请选择菜品」;加菜场景是「去加菜」;其余「去结算」。
 // 与小程序 cart-bar 的 actionText 口径一致(加菜区分放在按钮上,金额标签统一写「合计」)。
-const actionText = computed(() =>
-  props.totalCount > 0 ? (props.canAppend ? '去加菜' : '去结算') : '请选择菜品'
-);
+const actionText = computed(() => (props.totalCount > 0 ? (props.canAppend ? '去加菜' : '去结算') : '请选择菜品'));
 </script>
 
 <style scoped>

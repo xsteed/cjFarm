@@ -61,9 +61,15 @@ func SyncBuiltinRoles() {
 	if id := RoleIDByKey(store.RoleKeyAdmin); id > 0 {
 		full := store.JoinPerms(store.AllPermCodes())
 		var admin po.Role
-		store.DB.QueryRow(`SELECT COALESCE(perms,'') FROM tb_role WHERE role_id=?`, id).Scan(&admin.Perms)
-		if admin.Perms != full {
-			if _, err := store.DB.Exec(`UPDATE tb_role SET perms=?, is_builtin=1, update_time=? WHERE role_id=?`, full, now, id); err == nil {
+		// 查询失败必须留痕:否则 admin.Perms 停在零值 "",下面的 UPDATE 会被
+		// 误判为「需要恢复」而执行一次;更糟的是连失败本身都无迹可查,
+		// 商户被锁在系统外时排查没有任何线索。
+		if err := store.DB.QueryRow(`SELECT COALESCE(perms,'') FROM tb_role WHERE role_id=?`, id).Scan(&admin.Perms); err != nil {
+			logger.Warnf("[role] 读取超级管理员权限失败,跳过本轮恢复: %v", err)
+		} else if admin.Perms != full {
+			if _, err := store.DB.Exec(`UPDATE tb_role SET perms=?, is_builtin=1, update_time=? WHERE role_id=?`, full, now, id); err != nil {
+				logger.Warnf("[role] 超级管理员权限恢复失败(系统可能处于无超管可用状态,请人工修复): %v", err)
+			} else {
 				logger.Infof("[role] 超级管理员角色权限已恢复为全量(%d 项)", len(store.AllPermCodes()))
 			}
 		}
@@ -84,9 +90,19 @@ func NormalizeRolePerms() {
 	items := []pair{}
 	for rows.Next() {
 		var p pair
-		if rows.Scan(&p.id, &p.old) == nil {
-			items = append(items, p)
+		// 扫描失败不能跳过:漏掉的角色不会被归一化,权限校验与实际生效的
+		// 权限码从此不一致,且无迹可查。宁可本轮整体放弃(下次启动重试)。
+		if err := rows.Scan(&p.id, &p.old); err != nil {
+			logger.Warnf("[role] 读取角色权限失败,跳过本轮归一化: %v", err)
+			rows.Close()
+			return
 		}
+		items = append(items, p)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Warnf("[role] 遍历角色权限中断,跳过本轮归一化: %v", err)
+		rows.Close()
+		return
 	}
 	rows.Close()
 	for _, p := range items {

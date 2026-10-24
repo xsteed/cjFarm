@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"dining-system/domain/po"
 	"dining-system/infrastructure"
 	"dining-system/infrastructure/logger"
+	"dining-system/infrastructure/store"
 	"dining-system/infrastructure/store/dao"
 	"dining-system/interfaces/dto"
 )
@@ -363,22 +365,10 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 		// 会员功能总闸:开关归一化,落库永远是 "1"/"0"
 		"member_enabled": normFlagValue(settings.MemberEnabled),
 	}
-	// 普通配置项:提交值直接覆盖保存(敏感项由 SetSetting 自动加密)。
-	// 旧值快照必须赶在 SetSetting 之前取——落库后 LoadSettings 读到的已是新值,
+	// 旧值快照必须赶在落库之前取——落库后 LoadSettings 读到的已是新值,
 	// 摘要里的「旧值 → 新值」会因此恒相等,变更记录全部丢失。
+	// 「清空代理令牌」是否算数也以这份快照为准(原本就是空的不算清空)。
 	before := dao.LoadSettings()
-	// 落库失败的配置键:任一项失败都不允许回「保存成功」,调用方据此应答错误。
-	var failedKeys []string
-	for k, v := range vals {
-		// 出厂默认非空却被保存为空:记录告警,便于追查「功能静默缺失」的起因。
-		if v == "" && dao.HasNonEmptyDefault(k) {
-			logger.CtxWarnf(ctx, "[setting][告警] 管理员 %s 将配置项 %s 保存为空值(出厂默认应为 %q)", actor, k, dao.DefaultValue(k))
-		}
-		if err := dao.SetSetting(k, v); err != nil {
-			failedKeys = append(failedKeys, k)
-			logger.CtxErrorf(ctx, "[setting][告警] 保存配置项 %s 失败: %v", k, err)
-		}
-	}
 
 	// 敏感配置项:留空或原样带回占位符都表示「不修改」。
 	// 前端把回显的占位符(******)随表单原样提交,必须先归一化为空串:
@@ -394,37 +384,50 @@ func SaveSettings(ctx context.Context, settings dto.Settings, actor string) (det
 			secrets[k] = ""
 		}
 	}
-	for k, v := range secrets {
-		if !infrastructure.IsSensitiveKey(k) {
-			logger.CtxWarnf(ctx, "[setting] %s 未登记为敏感项,已跳过", k)
-			continue
-		}
-		if v == "" {
-			continue
-		}
-		if err := dao.SetSetting(k, v); err != nil {
-			failedKeys = append(failedKeys, k)
-			logger.CtxErrorf(ctx, "[setting][告警] 保存敏感配置项 %s 失败: %v", k, err)
-		}
-	}
-	// 「清空代理令牌」是一次性指令,必须在敏感项写入之后执行,否则会被本次提交的
-	// 新令牌覆盖。清空后所有用该全局令牌的旧代理立即失联(须逐台改配或改签逐台身份),
-	// 属于影响面较大的动作,故在审计摘要里单独留痕。
 	agentTokenCleared := false
-	if settings.AgentTokenClear == "1" {
-		if dao.GetSetting("agent_token") != "" {
+
+	// 普通配置项 + 敏感项 + 代理令牌清空放进**同一个事务**:逐条各自提交时,
+	// 第 30/60 个键失败会让前 29 个已生效,库中成为新旧混合态,而接口报错、
+	// 指纹已变,管理员刷新后看到半新半旧的回显,极难定位。
+	// 事务内任一条失败即整体回滚,接口应答失败 —— 要么全生效,要么全不生效。
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		for k, v := range vals {
+			// 出厂默认非空却被保存为空:记录告警,便于追查「功能静默缺失」的起因。
+			if v == "" && dao.HasNonEmptyDefault(k) {
+				logger.CtxWarnf(ctx, "[setting][告警] 管理员 %s 将配置项 %s 保存为空值(出厂默认应为 %q)", actor, k, dao.DefaultValue(k))
+			}
+			if err := dao.SetSettingTx(tx, k, v); err != nil {
+				return fmt.Errorf("保存配置项 %s 失败: %w", k, err)
+			}
+		}
+		for k, v := range secrets {
+			if !infrastructure.IsSensitiveKey(k) {
+				logger.CtxWarnf(ctx, "[setting] %s 未登记为敏感项,已跳过", k)
+				continue
+			}
+			if v == "" {
+				continue
+			}
+			if err := dao.SetSettingTx(tx, k, v); err != nil {
+				return fmt.Errorf("保存敏感配置项 %s 失败: %w", k, err)
+			}
+		}
+		// 「清空代理令牌」是一次性指令,必须在敏感项写入之后执行,否则会被本次提交的
+		// 新令牌覆盖。清空后所有用该全局令牌的旧代理立即失联(须逐台改配或改签逐台身份),
+		// 属于影响面较大的动作,故在审计摘要里单独留痕。
+		if settings.AgentTokenClear == "1" && before["agent_token"] != "" {
+			if err := dao.SetSettingTx(tx, "agent_token", ""); err != nil {
+				return fmt.Errorf("清空代理令牌失败: %w", err)
+			}
 			agentTokenCleared = true
 		}
-		if err := dao.SetSetting("agent_token", ""); err != nil {
-			logger.CtxErrorf(ctx, "[setting][告警] 清空代理令牌失败: %v", err)
-			agentTokenCleared = false
-			failedKeys = append(failedKeys, "agent_token")
-		}
+		return nil
+	}); err != nil {
+		logger.CtxErrorf(ctx, "[setting][告警] 保存配置失败(已整体回滚): %v", err)
+		return "", false, fmt.Errorf("保存配置失败: %w", err)
 	}
-	// 有配置项落库失败:不生成「保存成功」的审计摘要,把失败键清单交给调用方应答。
-	if len(failedKeys) > 0 {
-		return "", false, fmt.Errorf("以下配置项保存失败: %s", strings.Join(failedKeys, ", "))
-	}
+	// 提交后统一失效一次缓存:让同进程的后续读取立刻看到新配置。
+	dao.InvalidateSettingCache()
 	logger.CtxInfof(ctx, "[setting] 管理员 %s 保存配置完成(普通项 %d + 敏感项 %d)", actor, len(vals), len(secrets))
 	detail = describeSettingChange(before, vals, secrets)
 	if agentTokenCleared {
@@ -473,7 +476,14 @@ func describeSettingChange(before map[string]string, vals, secrets map[string]st
 		}
 	}
 	// 敏感项:前端不回显、留空表示不修改,故只判断「本次是否提交了新的值」。
-	for _, k := range []string{"wxpay_apiv3_key", "feie_ukey", "agent_token"} {
+	// 键集合直接取自 secrets 入参:与 SaveSettings 的敏感项清单同源,
+	// 新增敏感键时不会漏记(此前硬编码三个键,wx_app_secret 被改时审计无痕)。
+	secretKeys := make([]string, 0, len(secrets))
+	for k := range secrets {
+		secretKeys = append(secretKeys, k)
+	}
+	sort.Strings(secretKeys)
+	for _, k := range secretKeys {
 		if secrets[k] != "" {
 			changed = append(changed, k+"(敏感项,值不记录)")
 		}

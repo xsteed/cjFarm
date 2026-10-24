@@ -8,16 +8,13 @@
 // ============================================================================
 import { httpGet, httpPost, configureHttp } from './http';
 import { setUiNotifier } from '../shared/ui';
-import { API_ORIGIN } from '../config';
+import { API_BASE_URL, REQUEST_TIMEOUT_MS } from '../config';
 import type {
   Id,
   MenuCategory,
   OrderCreatePayload,
   OrderCreateResult,
   OrderDetail,
-  PayCreatePayload,
-  PayCreateResult,
-  PayQr,
   PayQueryResult,
   PublicConfig,
   RemarkOption,
@@ -38,8 +35,8 @@ import type {
   PayJsapiResult
 } from '../types';
 
-// 装配：baseURL 指向后端 origin（见 config.ts 的 API_ORIGIN）。
-configureHttp({ baseURL: `${API_ORIGIN}/api`, timeoutMs: 15000 });
+// 装配：baseURL 指向后端 origin（单源在 config.ts，避免此处再拼一遍字符串）。
+configureHttp({ baseURL: API_BASE_URL, timeoutMs: REQUEST_TIMEOUT_MS });
 
 // 通知落地：逻辑层只调 ui.error/success，由这里决定小程序怎么呈现。
 setUiNotifier({
@@ -49,14 +46,7 @@ setUiNotifier({
 });
 
 // 顾客端
-export type {
-  PayJsapiPayload,
-  PayJsapiResult,
-  WalletInfo,
-  WalletMixedPayResult,
-  WalletRechargeParams,
-  WalletTxnRow
-};
+export type { PayJsapiPayload, PayJsapiResult, WalletInfo, WalletMixedPayResult, WalletRechargeParams, WalletTxnRow };
 export const getTable = (id: Id): Promise<TableInfo> => httpGet<TableInfo>(`/customer/table/${id}`);
 export const setTablePerson = (data: { tableId: number; personCount: number }): Promise<void> =>
   httpPost<void>('/customer/table/person', data);
@@ -69,8 +59,9 @@ export const appendOrder = (data: OrderCreatePayload): Promise<OrderCreateResult
   httpPost<OrderCreateResult>('/customer/order/append', data);
 
 // 按单号查订单详情。带当前桌台 tableId 时后端校验归属，防「凭单号遍历查他人订单」。
-export const getOrderByNo = (no: Id, tableId?: number): Promise<OrderDetail> =>
-  httpGet<OrderDetail>(`/customer/order/no/${no}${tableId ? `?tableId=${tableId}` : ''}`);
+// config.silent：轮询路径传 true，网络失败不弹全局 toast（由 poller 静默重试）。
+export const getOrderByNo = (no: Id, tableId?: number, config?: { silent?: boolean }): Promise<OrderDetail> =>
+  httpGet<OrderDetail>(`/customer/order/no/${no}${tableId ? `?tableId=${tableId}` : ''}`, undefined, config);
 
 // 会员自己的历史订单详情（跨桌、需登录，令牌过期由 401 兜底静默重登后重放）。
 export const getMyOrderDetail = (no: Id): Promise<OrderDetail> =>
@@ -78,25 +69,21 @@ export const getMyOrderDetail = (no: Id): Promise<OrderDetail> =>
 
 // 顾客催菜：请求后厨加急（同单 3 分钟冷却，超频后端回传剩余秒数）。
 // config 可传 { silent: true }：冷却拒绝时不弹全局错误，由调用方读 data.cooldown 自行展示。
-export const urgeOrder = (
-  orderNo: Id,
-  tableId: number,
-  config?: { silent?: boolean }
-): Promise<UrgeResult> => httpPost<UrgeResult>('/customer/order/urge', { orderNo, tableId }, config);
+export const urgeOrder = (orderNo: Id, tableId: number, config?: { silent?: boolean }): Promise<UrgeResult> =>
+  httpPost<UrgeResult>('/customer/order/urge', { orderNo, tableId }, config);
 
 // 改就餐人数（不改菜品）：人数决定茶位费，后端重算金额。只允许「进行中且未支付」的订单。
 export const updateOrderPerson = (data: OrderPersonPayload): Promise<OrderDetail> =>
   httpPost<OrderDetail>('/customer/order/person', data);
 
-export const getPayQr = (): Promise<PayQr> => httpGet<PayQr>('/customer/pay/qr');
 // 顾客端公开配置（无需登录）：店铺名 / 茶位费 / 促销 / 收款码。
 export const getPublicConfig = (): Promise<PublicConfig> => httpGet<PublicConfig>('/customer/config');
 
-// 在线支付（微信/支付宝 Native 扫码）
-export const createPay = (data: PayCreatePayload): Promise<PayCreateResult> =>
-  httpPost<PayCreateResult>('/customer/pay/create', data);
-export const queryPay = (orderNo: Id): Promise<PayQueryResult> =>
-  httpGet<PayQueryResult>('/customer/pay/query', { orderNo });
+// 在线支付只走小程序内 JSAPI（见下方 payJsapi）。Native 扫码那套（/customer/pay/qr、
+// /customer/pay/create）是给 H5 用的，小程序里「自己扫自己」没有意义 ——
+// 此前拷贝过来的 getPayQr / createPay 无任何调用方，已删。
+export const queryPay = (orderNo: Id, config?: { silent?: boolean }): Promise<PayQueryResult> =>
+  httpGet<PayQueryResult>('/customer/pay/query', { orderNo }, config);
 
 // ---------------------------------------------------------------------------
 // 小程序内支付（JSAPI）：服务端拿 wx.login 的 code 换 openid，签好调起参数，
@@ -115,10 +102,7 @@ export type { MemberProvider, MemberInfo, MemberLoginResult, MemberLoginPayload,
 export const memberLogin = (data: MemberLoginPayload): Promise<MemberLoginResult> =>
   httpPost<MemberLoginResult>('/customer/auth/login', data);
 export const memberProfile = (): Promise<MemberInfo> => httpGet<MemberInfo>('/customer/auth/profile');
-export const memberOrders = (
-  pageNum: number,
-  pageSize = 10
-): Promise<{ total: number; items: MemberOrderRow[] }> =>
+export const memberOrders = (pageNum: number, pageSize = 10): Promise<{ total: number; items: MemberOrderRow[] }> =>
   httpGet<{ total: number; items: MemberOrderRow[] }>('/customer/order/mine', { pageNum, pageSize });
 export const updateMemberProfile = (data: { nickname: string }): Promise<MemberInfo> =>
   httpPost<MemberInfo>('/customer/auth/profile', data);
@@ -130,17 +114,15 @@ export const bindMemberPhone = (code: string): Promise<{ phone: string }> =>
 // 储值（顾客自助，需会员令牌）
 // ---------------------------------------------------------------------------
 export const getWallet = (): Promise<WalletInfo> => httpGet<WalletInfo>('/customer/wallet');
-export const listWalletTxns = (
-  pageNum: number,
-  pageSize = 10
-): Promise<{ total: number; items: WalletTxnRow[] }> =>
+export const listWalletTxns = (pageNum: number, pageSize = 10): Promise<{ total: number; items: WalletTxnRow[] }> =>
   httpGet<{ total: number; items: WalletTxnRow[] }>('/customer/wallet/txns', { pageNum, pageSize });
 export const createWalletRecharge = (data: { amount: number; code: string }): Promise<WalletRechargeParams> =>
   httpPost<WalletRechargeParams>('/customer/wallet/recharge', data);
 export const getWalletRechargeStatus = (
-  rechargeNo: string
+  rechargeNo: string,
+  config?: { silent?: boolean }
 ): Promise<{ status: number; amount?: number }> =>
-  httpGet<{ status: number; amount?: number }>('/customer/wallet/recharge/status', { rechargeNo });
+  httpGet<{ status: number; amount?: number }>('/customer/wallet/recharge/status', { rechargeNo }, config);
 /**
  * 充值补账：回调丢失时让后端主动向渠道查单。
  * 顾客微信已扣款、余额却没到账是纯资损，这条通道是唯一的自救手段。
@@ -150,8 +132,7 @@ export const reconcileWalletRecharge = (): Promise<{ credited: number }> =>
 /** 同意《储值规则》（合规：发卡须明示章程并留痕）。 */
 export const agreeWalletRules = (rulesVer: string): Promise<void> =>
   httpPost<void>('/customer/wallet/rules/agree', { rulesVer });
-export const payOrderByWallet = (orderNo: string): Promise<void> =>
-  httpPost<void>('/customer/wallet/pay', { orderNo });
+export const payOrderByWallet = (orderNo: string): Promise<void> => httpPost<void>('/customer/wallet/pay', { orderNo });
 /**
  * 混合支付：先用余额抵扣 walletAmount（元），不足部分返回微信支付调起参数。
  * 后端会先扣余额再出参，调用方必须处理「拿到参数后拉起失败」的回退

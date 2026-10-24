@@ -493,11 +493,9 @@
                 :custom-value="['1', '0']"
               />
               <span class="tip">
-                开启后顾客小票（点菜单）与结账小票都整张放大一倍（飞鹅云通道，倍宽倍高），
-                客人看菜名、对账更清楚。
-                排版会按半个纸宽重排、票面长度约翻倍，菜品多的大单更费纸；
-                58mm 纸放大后每行只剩 16 格，菜名与金额可能分成两行，建议 80mm 纸使用。
-                厨房单与直连/代理打印机不受此开关影响。
+                开启后顾客小票（点菜单）与结账小票都整张放大一倍（飞鹅云通道，倍宽倍高）， 客人看菜名、对账更清楚。
+                排版会按半个纸宽重排、票面长度约翻倍，菜品多的大单更费纸； 58mm 纸放大后每行只剩 16
+                格，菜名与金额可能分成两行，建议 80mm 纸使用。 厨房单与直连/代理打印机不受此开关影响。
               </span>
             </t-space>
           </t-form-item>
@@ -1283,7 +1281,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import {
   getConfig,
@@ -1565,6 +1563,10 @@ function normFlag(v: unknown): '1' | '0' {
 // 枚举项不参与 FLAG_KEYS 归一化(它不是开关,有三个取值)。
 const KITCHEN_SPLIT_MODES = ['whole', 'item', 'portion'] as const;
 
+// 小程序码环境版本的合法取值:与后端一致。老后端下发非法历史值时回落 release,
+// 否则 t-radio-group 一个都不选中,保存还会把非法值原样写回。
+const CODE_ENV_VERSIONS = ['release', 'trial', 'develop'] as const;
+
 // silent = true 表示保存后的静默回显:不切换 loading 态(避免表单卸载重挂的闪烁),
 // 失败时也保留当前已加载状态。
 async function load(silent = false): Promise<void> {
@@ -1585,6 +1587,12 @@ async function load(silent = false): Promise<void> {
     )
       ? form.print_kitchen_split_mode
       : 'whole';
+    // 出码版本同为枚举项:非法值回落 release(与上面的粒度白名单同口径)
+    form.wx_code_env_version = CODE_ENV_VERSIONS.includes(
+      form.wx_code_env_version as (typeof CODE_ENV_VERSIONS)[number]
+    )
+      ? form.wx_code_env_version
+      : 'release';
     // 记录当前配置指纹,保存时带回做并发冲突校验(乐观锁)
     version.value = res.version || '';
     // 数值字段转为数字,便于 t-input-number 绑定
@@ -1623,6 +1631,13 @@ async function load(silent = false): Promise<void> {
   }
 }
 
+/** 数值项序列化:t-input-number 清空后值是 undefined/null,直接 String() 会把字面量
+ * "undefined"/"null" 原样提交后端。与 load() 的 Number()||0 兜底口径对称,非法值回落 0。 */
+function numStr(v: unknown): string {
+  const n = Number(v);
+  return String(Number.isFinite(n) ? n : 0);
+}
+
 async function save(): Promise<void> {
   if (!canEdit.value) {
     MessagePlugin.warning('当前账号只能查看配置，不能修改');
@@ -1652,17 +1667,17 @@ async function save(): Promise<void> {
     // 数值字段转回字符串,与后端约定一致;开关字段兜底为 '1'/'0'
     const payload: ConfigPayloadFull = {
       ...form,
-      seat_fee: String(form.seat_fee),
-      promotion_threshold: String(form.promotion_threshold),
-      promotion_discount: String(form.promotion_discount),
-      stale_alert_hours: String(form.stale_alert_hours),
-      biz_date_cutoff_hour: String(form.biz_date_cutoff_hour),
+      seat_fee: numStr(form.seat_fee),
+      promotion_threshold: numStr(form.promotion_threshold),
+      promotion_discount: numStr(form.promotion_discount),
+      stale_alert_hours: numStr(form.stale_alert_hours),
+      biz_date_cutoff_hour: numStr(form.biz_date_cutoff_hour),
       // 储值合规参数同为数值项,一并按字符串提交(后端 NormalizeAmountValue 再归一)
-      wallet_recharge_min: String(form.wallet_recharge_min),
-      wallet_recharge_max: String(form.wallet_recharge_max),
-      wallet_balance_max: String(form.wallet_balance_max),
-      wallet_balance_max_named: String(form.wallet_balance_max_named),
-      wallet_adjust_max: String(form.wallet_adjust_max),
+      wallet_recharge_min: numStr(form.wallet_recharge_min),
+      wallet_recharge_max: numStr(form.wallet_recharge_max),
+      wallet_balance_max: numStr(form.wallet_balance_max),
+      wallet_balance_max_named: numStr(form.wallet_balance_max_named),
+      wallet_adjust_max: numStr(form.wallet_adjust_max),
       // 乐观锁:带回回显时的指纹,后端发现不一致(有其他人已先保存)会拒绝
       version: version.value
     };
@@ -1684,6 +1699,11 @@ async function save(): Promise<void> {
     // 不需要也不能手动清空——清成空串会让管理员误以为「没保存上」。
     // 清空指令是一次性的:已随本次保存生效,不能留在表单里影响后续保存。
     agentTokenClear.value = false;
+    // 上传位同理:图片已随本次保存落库,不清空文件列表的话再点一次保存会把同一张图
+    // 重复上传一遍(幂等但白耗流量),用户也没有「撤销本次上传」的入口。
+    logoFiles.value = [];
+    wxFiles.value = [];
+    aliFiles.value = [];
   } catch (e) {
     // 409:配置已被他人修改,后端已拒绝(拦截器已弹出提示)。静默拉取最新值
     // 回填表单,让用户基于最新内容核对后再次保存,而不是拿着过期表单反复撞墙。
@@ -1904,13 +1924,8 @@ function printerName(id: number): string {
 }
 
 function printerScopeText(row: PrintAgent): string {
-  const ids: number[] =
-    Array.isArray(row.printerIdList) && row.printerIdList.length
-      ? row.printerIdList
-      : String(row.printerIds || '')
-          .split(',')
-          .map(s => Number(s))
-          .filter(n => n > 0);
+  // 与授权范围回显共用同一份解析(见 agentPrinterIds),避免两处各自拆 CSV 漂移
+  const ids = agentPrinterIds(row);
   if (!ids.length) return '全部打印机';
   return ids.map(printerName).join('、');
 }
@@ -2091,11 +2106,27 @@ async function copyInstallCommand(): Promise<void> {
   }
 }
 
+// 代理运行状态轮询:停留在配置页时「在线/离线、积压 N 单」不该一直停在打开页面那一刻
+// (与「打印机管理」页同一口径,30s 一拍)。
+const AGENT_STATUS_POLL_MS = 30_000;
+// 显式写 number:本仓 @types/node 在场,`setInterval` 的 ReturnType 会被推成 Timeout。
+let agentStatusTimer: number | null = null;
+
 onMounted(() => {
   load();
   loadAgents();
   loadPrinters();
   loadAgentStatus();
+  agentStatusTimer = window.setInterval(() => {
+    void loadAgentStatus();
+  }, AGENT_STATUS_POLL_MS);
+});
+
+onUnmounted(() => {
+  if (agentStatusTimer !== null) {
+    clearInterval(agentStatusTimer);
+    agentStatusTimer = null;
+  }
 });
 </script>
 

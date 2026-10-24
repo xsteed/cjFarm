@@ -13,11 +13,15 @@
       enterkeyhint="search"
       @input="onInput"
     />
-    <span
+    <!-- 用 button 而不是 span:可聚焦、可键盘触发,读屏也能读出「清空搜索」 -->
+    <button
+      type="button"
       class="search-clear"
+      aria-label="清空搜索"
       @click="onClear"
-      >×</span
     >
+      ×
+    </button>
   </div>
 </template>
 
@@ -124,8 +128,12 @@ function onClear(): void {
   width: 24px;
   height: 24px;
   margin-right: -8px;
+  padding: 0;
+  border: none;
   border-radius: 50%;
+  background: none;
   color: var(--ink-3);
+  font-family: inherit;
   font-size: 18px;
   line-height: 24px;
   text-align: center;

@@ -51,7 +51,10 @@ func TestStockNormalizeOnCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建菜品失败: %v", err)
 	}
-	specs := dao.LoadDishSpecs(int(id))
+	specs, err := dao.LoadDishSpecs(int(id))
+	if err != nil {
+		t.Fatalf("加载规格失败: %v", err)
+	}
 	if len(specs) != 1 || specs[0].Stock != -1 {
 		t.Fatalf("未设置库存应归一化为 -1（不限量）, got %+v", specs)
 	}
@@ -61,7 +64,10 @@ func TestStockNormalizeOnCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建菜品失败: %v", err)
 	}
-	specs2 := dao.LoadDishSpecs(int(id2))
+	specs2, err := dao.LoadDishSpecs(int(id2))
+	if err != nil {
+		t.Fatalf("加载规格失败: %v", err)
+	}
 	if len(specs2) != 1 || specs2[0].Stock != 5 {
 		t.Fatalf("显式库存应原样保存, got %+v", specs2)
 	}

@@ -88,6 +88,12 @@ func PaidPaymentsExcept(orderNo, channel string) int64 {
 	return dao.SumPaidPaymentsExcept(orderNo, channel)
 }
 
+// PaidPaymentsExceptE 是 PaidPaymentsExcept 的带错误版本,供回调/查单的金额校验使用。
+// 查询失败不能折叠成 0:混合支付(渠道只付差额)会因此被误判为金额不一致。
+func PaidPaymentsExceptE(orderNo, channel string) (int64, error) {
+	return dao.SumPaidPaymentsExceptE(orderNo, channel)
+}
+
 // GetPayment 查询某订单某渠道最近一条支付流水(仅填充 PaymentID/Status/Amount)。
 func GetPayment(orderNo, channel string) (po.Payment, error) {
 	return dao.GetPayment(orderNo, channel)

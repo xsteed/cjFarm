@@ -52,12 +52,17 @@ export function useSheetA11y(panelRef: Ref<HTMLElement | null>, isOpen: Ref<bool
     }
   }
 
-  watch(isOpen, async open => {
+  watch(isOpen, open => {
     if (open) {
       restoreTo = (document.activeElement as HTMLElement | null) ?? null;
-      await nextTick();
-      (focusableNodes()[0] ?? panelRef.value)?.focus();
+      // 监听必须同步注册:若放到 await nextTick() 之后,「打开后立刻关闭」会让关闭分支的
+      // removeEventListener 空跑,监听器泄漏到卸载之外,焦点还会被偷回已关闭的面板。
       window.addEventListener('keydown', onKeydown);
+      // 聚焦等 DOM 落地,但要先确认弹层没被关掉 —— 关了就什么都不做。
+      nextTick(() => {
+        if (!isOpen.value) return;
+        (focusableNodes()[0] ?? panelRef.value)?.focus();
+      });
     } else {
       window.removeEventListener('keydown', onKeydown);
       restoreTo?.focus?.();

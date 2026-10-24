@@ -309,14 +309,18 @@ const impliesMap = ref<Record<string, string>>({});
 const permTotal = ref<number>(0);
 const loadingCatalog = ref(false);
 
-const columns = [
-  { colKey: 'roleName', title: '角色', width: 220 },
-  { colKey: 'roleKey', title: '标识', width: 140 },
-  { colKey: 'permCount', title: '权限数', width: 130 },
-  { colKey: 'userCount', title: '员工数', width: 110 },
-  { colKey: 'remark', title: '说明' },
-  { colKey: 'op', title: '操作', width: 140 }
-];
+const columns = computed(() => {
+  const cols = [
+    { colKey: 'roleName', title: '角色', width: 220 },
+    { colKey: 'roleKey', title: '标识', width: 140 },
+    { colKey: 'permCount', title: '权限数', width: 130 },
+    { colKey: 'userCount', title: '员工数', width: 110 },
+    { colKey: 'remark', title: '说明' }
+  ];
+  // 只读账号不渲染操作列(与 Users.vue / Dishes.vue 同口径)
+  if (canEdit.value) cols.push({ colKey: 'op', title: '操作', width: 140 });
+  return cols;
+});
 
 // ---- 权限勾选辅助 ----
 // 「管理」类权限隐含同模块的「查看」——与后端 store.NormalizePerms 同一套规则。
@@ -348,7 +352,7 @@ function impliedBy(code: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>([code]);
   const walk = (c: string, depth: number): void => {
-    if (depth > 32) return;
+    if (depth > PERM_WALK_MAX_DEPTH) return;
     const mod = moduleOf(c);
     if (mod && c !== `${mod}:view`) {
       const v = `${mod}:view`;
@@ -369,11 +373,17 @@ function impliedBy(code: string): string[] {
   return out;
 }
 
+/** 权限隐含关系展开的深度上限:正常权限图最深的链也只有十几层,32 足够;
+ *  超出即视为数据成环(后端配置异常),停止展开而不是无限递归。 */
+const PERM_WALK_MAX_DEPTH = 32;
+/** 闭包收敛的最大轮数:每轮至少移除或补全一项,理论上不超过集合大小,64 作为安全上限。 */
+const PERM_CLOSURE_MAX_ROUNDS = 64;
+
 // 把权限集合收敛成「自洽闭包」:每一项所隐含的权限都必须在集合内。
 // 顺序必须是**先裁剪后补全** —— 反过来的话,取消一个被别人依赖的权限时,
 // 补全步骤会立刻把它加回来,取消操作看起来完全没生效。
 function closePerms(set: Set<string>): Set<string> {
-  for (let guard = 0; guard < 64; guard++) {
+  for (let guard = 0; guard < PERM_CLOSURE_MAX_ROUNDS; guard++) {
     let changed = false;
     for (const c of Array.from(set)) {
       if (impliedBy(c).some(x => !set.has(x))) {
@@ -383,7 +393,7 @@ function closePerms(set: Set<string>): Set<string> {
     }
     if (!changed) break;
   }
-  for (let guard = 0; guard < 64; guard++) {
+  for (let guard = 0; guard < PERM_CLOSURE_MAX_ROUNDS; guard++) {
     let changed = false;
     for (const c of Array.from(set)) {
       for (const x of impliedBy(c)) {
@@ -502,7 +512,8 @@ function openAdd(): void {
     roleId: null,
     roleKey: '',
     roleName: '',
-    sortOrder: list.value.length + 1,
+    // 取当前最大排序值 +1:列表未必按 sortOrder 有序,「角色数 +1」可能撞上已有值
+    sortOrder: Math.max(0, ...list.value.map(r => Number(r.sortOrder) || 0)) + 1,
     remark: '',
     permList: []
   });

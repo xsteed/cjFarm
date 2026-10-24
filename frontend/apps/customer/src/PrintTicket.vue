@@ -56,7 +56,7 @@
         <tbody>
           <tr
             v-for="(it, i) in order.items"
-            :key="i"
+            :key="it.itemId ?? i"
           >
             <td>
               <b
@@ -64,8 +64,19 @@
                 class="gift"
                 >赠 </b
               >{{ it.dishName }}
-              <div class="spec">
+              <div
+                v-if="it.specName"
+                class="spec"
+              >
                 {{ it.specName }}
+              </div>
+              <!-- 单项备注必须打出来:后端三个票种都逐行追加 itemRemark,
+                   少了它这张票与热敏机打出来的对不上,「不要辣」这种争议无从对账 -->
+              <div
+                v-if="it.itemRemark"
+                class="spec"
+              >
+                * {{ it.itemRemark }}
               </div>
             </td>
             <td>{{ it.isGift ? '赠' : $money(it.price) }}</td>
@@ -78,7 +89,12 @@
       <div class="ticket-row">
         <span>菜品金额</span><span>¥{{ $money(order.dishAmount) }}</span>
       </div>
-      <div class="ticket-row">
+      <!-- 与热敏小票同口径:未开启茶位费 / 本单不收时后端不打这一行,
+           前端也不能打出「茶位费(4人) 0.00」这种看起来像收错了的行 -->
+      <div
+        v-if="Number(order.seatFee) > 0"
+        class="ticket-row"
+      >
         <span>茶位费（{{ order.personCount }}人）</span><span>¥{{ $money(order.seatFee) }}</span>
       </div>
       <div
@@ -190,6 +206,9 @@ const paidRow = computed(() => {
 async function load(): Promise<void> {
   if (!orderNo.value) return;
   loadError.value = '';
+  // 先清空:查询失败时不能把上一单的票继续留在页面上 —— 否则红字报错的下方
+  // 还是旧票,顾客一按「打印」就打出了错的单。
+  order.value = null;
   try {
     order.value = await getOrderByNo(orderNo.value, tableId.value);
   } catch {

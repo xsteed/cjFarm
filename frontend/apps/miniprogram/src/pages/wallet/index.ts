@@ -90,27 +90,47 @@ Page({
     loadingMore: false
   },
 
+  /** 页面存活性：onUnload 置 false。充值轮询链据此中止 —— 离开页面后继续打接口、
+   *  对已卸载页面 setData/toast 都是纯浪费（顾客在这 5 秒内离开很常见）。 */
+  alive: true,
+
+  /** 补账+刷新在途标记：onShow 每次进入都会触发，防止并发多份 */
+  reconciling: false,
+
   onShow() {
     // 先补账再刷新：补账可能把「顾客已付款但回调没到」的钱找回来，
     // 刷新顺序颠倒的话顾客会先看到旧余额，产生「钱丢了」的错觉。
     void this.reconcileThenReload();
   },
 
+  onUnload() {
+    this.alive = false;
+  },
+
   /** 补账（静默，失败不影响页面）→ 刷新余额与流水。 */
   async reconcileThenReload(): Promise<void> {
+    // 在途守卫：onShow 每次进来都会触发，快速切页/返回会并发多份补账 + 全量刷新。
+    if (this.reconciling) return;
+    this.reconciling = true;
     try {
-      const r = await reconcileWalletRecharge();
-      if (r.credited > 0) {
-        // 找回了钱才提示；绝大多数调用是 0 笔，不该打扰顾客。
-        toast.success('充值已到账');
+      try {
+        const r = await reconcileWalletRecharge();
+        if (r.credited > 0) {
+          // 找回了钱才提示；绝大多数调用是 0 笔，不该打扰顾客。
+          toast.success('充值已到账');
+        }
+      } catch {
+        // 补账是尽力而为：渠道查单失败/未开通支付都不该挡住顾客看余额。
       }
-    } catch {
-      // 补账是尽力而为：渠道查单失败/未开通支付都不该挡住顾客看余额。
+      await this.reload();
+    } finally {
+      this.reconciling = false;
     }
-    await this.reload();
   },
 
   async reload(): Promise<void> {
+    // 补账在途时卸载页面（顾客等不及走了）：请求回来后不再 setData
+    if (!this.alive) return;
     this.setData({ loading: true, error: '' });
     try {
       const [info, txns] = await Promise.all([getWallet(), listWalletTxns(1, PAGE_SIZE)]);
@@ -188,10 +208,30 @@ Page({
       toast.info('请选择或输入充值金额');
       return;
     }
+    // 单笔区间前端先拦一道:后端也会兜底,但让顾客少挨一次「下单失败」。
+    const min = Number(this.data.info.rechargeMin) || 1;
+    const max = Number(this.data.info.rechargeMax) || 0;
+    if (amount < min || (max > 0 && amount > max)) {
+      toast.info(max > 0 ? `单笔充值金额需在 ${min} ~ ${max} 元之间` : `单笔充值金额不能低于 ${min} 元`);
+      return;
+    }
+    // 余额上限同样先拦:limitTip 里写明了「账户余额上限 X 元」,
+    // 不预校验的话顾客充到上限才被后端拒,又多一次往返。
+    const balance = Number(this.data.info.balance) || 0;
+    const balanceMax = Number(this.data.info.balanceMax) || 0;
+    if (balanceMax > 0 && balance + amount > balanceMax) {
+      toast.info(`账户余额上限为 ${balanceMax} 元，还可充值 ${Math.max(0, balanceMax - balance)} 元`);
+      return;
+    }
     this.setData({ recharging: true });
     try {
       const code = await new Promise<string>((resolve, reject) => {
-        wx.login({ success: r => resolve(r.code), fail: () => reject(new Error('微信登录失败，请重试')) });
+        // code 缺失同样按失败处理:与 pages/pay 的 wx.login 校验保持同口径,
+        // 否则会拿空 code 去打后端换 openid。
+        wx.login({
+          success: r => (r.code ? resolve(r.code) : reject(new Error('微信登录失败，请重试'))),
+          fail: () => reject(new Error('微信登录失败，请重试'))
+        });
       });
       const params = await createWalletRecharge({ amount, code });
       await new Promise<void>((resolve, reject) => {
@@ -206,11 +246,16 @@ Page({
         });
       });
       // 轮询入账状态：回调偶尔比前端慢半拍，最多等 5 秒。
+      // 每一拍前都查存活性：顾客在这 5 秒内离开页面很常见，不能继续打接口、
+      // 更不能对已卸载页面 setData/toast（此前整页没有 onUnload，链路无法取消）。
       let paid = false;
       for (let i = 0; i < 10; i++) {
+        if (!this.alive) return;
         await new Promise(r => setTimeout(r, 500));
+        if (!this.alive) return;
         try {
-          const st = await getWalletRechargeStatus(params.rechargeNo);
+          // silent：轮询路径不弹全局错误（失败由本循环 break 收敛）
+          const st = await getWalletRechargeStatus(params.rechargeNo, { silent: true });
           if (st.status === 1) {
             paid = true;
             break;
@@ -219,6 +264,7 @@ Page({
           break;
         }
       }
+      if (!this.alive) return;
       if (!paid) {
         // 轮询没等到 ≠ 没到账：让后端直接去渠道查一次，把钱找回来。
         // 这一步是「已付款却没入账」的唯一自救通道，不能只留一句「请稍后」。
@@ -234,23 +280,29 @@ Page({
       } else {
         toast.info('支付结果确认中，请下拉刷新查看');
       }
+      if (!this.alive) return;
       await this.reload();
     } catch (e) {
       const msg = (e as Error)?.message;
       if (msg && msg !== '支付未完成') toast.error(msg);
     } finally {
-      this.setData({ recharging: false });
+      if (this.alive) this.setData({ recharging: false });
     }
   },
 
-  /** 展示《储值规则》全文并请顾客确认（确认后才落同意留痕）。 */
+  /** 展示储值规则摘要并请顾客确认（确认后才落同意留痕）。 */
   agreeRules(): void {
     const info = this.data.info;
+    // showModal 的正文有长度上限：整段规则塞进去会被截成省略号，与「全文可查」的
+    // 承诺相反。弹窗只放开头两行 + 引导，完整正文在页面里已展开（rulesLines）。
+    const excerpt = String(info.rulesText || '')
+      .split('\n')
+      .filter(l => l.trim() !== '')
+      .slice(0, 2)
+      .join('\n');
     wx.showModal({
       title: '储值规则',
-      // 规则全文可能较长，弹窗只放前两行 + 引导展开看全文；
-      // 完整正文在页面里已展开，顾客随时可查。
-      content: `${info.rulesText || ''}\n\n同意后方可充值，本店将保留你的同意记录。`,
+      content: `${excerpt}${excerpt ? '\n……' : ''}\n\n完整规则见本页下方。同意后方可充值，本店将保留你的同意记录。`,
       confirmText: '同意',
       cancelText: '再看看',
       success: r => {

@@ -9,10 +9,28 @@
 package dao
 
 import (
+	"database/sql"
+
 	"dining-system/infrastructure"
 	"dining-system/infrastructure/logger"
 	"dining-system/infrastructure/store"
 )
+
+// sqlExecer 抽象 *sql.DB / *sql.Tx 的 Exec,让 SetSetting 与 SetSettingTx
+// 复用同一条写入语句(方言由 store.InsertReplaceInto 生成)。
+type sqlExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+// setSettingOn 在给定执行器上写入单个配置项,敏感项自动加密。
+func setSettingOn(e sqlExecer, key, value string) error {
+	if infrastructure.IsSensitiveKey(key) {
+		value = infrastructure.EncryptSecret(value)
+	}
+	_, err := e.Exec(store.InsertReplaceInto("tb_config", "cfg_key", "cfg_value", "update_time"),
+		key, value, store.Now())
+	return err
+}
 
 // SetSetting 写入单个配置项,敏感项自动加密。
 // 语句由方言层生成:SQLite 为 INSERT OR REPLACE,MySQL 为 REPLACE(按主键整体替换)。
@@ -21,16 +39,20 @@ import (
 // 时间冲掉(每次改配置都变成「刚创建」)。首次写入的时间由 EnsureSettingDefaults 的种子
 // 语句负责,改配置只推进 update_time。
 func SetSetting(key, value string) error {
-	if infrastructure.IsSensitiveKey(key) {
-		value = infrastructure.EncryptSecret(value)
+	if err := setSettingOn(store.DB, key, value); err != nil {
+		return err
 	}
-	_, err := store.DB.Exec(store.InsertReplaceInto("tb_config", "cfg_key", "cfg_value", "update_time"),
-		key, value, store.Now())
-	if err == nil {
-		// 写穿失效:管理后台保存的配置立即对同进程的后续读取可见。
-		InvalidateSettingCache()
-	}
-	return err
+	// 写穿失效:管理后台保存的配置立即对同进程的后续读取可见。
+	InvalidateSettingCache()
+	return nil
+}
+
+// SetSettingTx 事务内写入单个配置项(批量保存用)。
+//
+// 不在此处失效缓存:事务未提交前,同进程的其它读取看到的还是旧值,
+// 提前失效只会让它们回源查库拿到旧数据;批量保存由调用方在提交后统一失效一次。
+func SetSettingTx(tx *sql.Tx, key, value string) error {
+	return setSettingOn(tx, key, value)
 }
 
 // SetSettingIfEmpty 仅当配置项当前为空时写入(幂等回填),已有值绝不覆盖。

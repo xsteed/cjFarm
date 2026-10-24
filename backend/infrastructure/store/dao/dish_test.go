@@ -29,7 +29,10 @@ func dishDaoCreate(t *testing.T, name string, categoryID int, specs []po.Spec) (
 	if err != nil {
 		t.Fatalf("创建菜品失败: %v", err)
 	}
-	got := LoadDishSpecs(int(dishID))
+	got, err := LoadDishSpecs(int(dishID))
+	if err != nil {
+		t.Fatalf("加载规格失败: %v", err)
+	}
 	ids := make([]int64, 0, len(got))
 	for _, s := range got {
 		ids = append(ids, int64(s.SpecID))
@@ -145,7 +148,10 @@ func TestDishCreateUpdateDeleteRoundTrip(t *testing.T) {
 	}, []po.Spec{{SpecName: "份", Price: 2500}}); err != nil {
 		t.Fatalf("更新菜品失败: %v", err)
 	}
-	specs := LoadDishSpecs(int(dishID))
+	specs, err := LoadDishSpecs(int(dishID))
+	if err != nil {
+		t.Fatalf("加载规格失败: %v", err)
+	}
 	if len(specs) != 1 || specs[0].SpecName != "份" {
 		t.Fatalf("规格重建异常: %+v", specs)
 	}
@@ -176,7 +182,10 @@ func TestLoadSpecsForOrderJoin(t *testing.T) {
 	dishDaoInitDB(t)
 
 	dishID, _ := dishDaoCreate(t, "规格查询菜", 1, []po.Spec{{SpecName: "份", Price: 3200}})
-	specs := LoadDishSpecs(int(dishID))
+	specs, err := LoadDishSpecs(int(dishID))
+	if err != nil {
+		t.Fatalf("加载规格失败: %v", err)
+	}
 	if len(specs) != 1 {
 		t.Fatalf("应有一条规格, got %d", len(specs))
 	}
@@ -205,17 +214,20 @@ func TestLoadSpecsForOrderJoin(t *testing.T) {
 func TestLoadDishSpecsAndBatch(t *testing.T) {
 	dishDaoInitDB(t)
 
-	if got := LoadDishSpecs(999999); len(got) != 0 {
-		t.Fatalf("不存在菜品应返回空规格, got %v", got)
+	if got, err := LoadDishSpecs(999999); err != nil || len(got) != 0 {
+		t.Fatalf("不存在菜品应返回空规格, got %v err=%v", got, err)
 	}
-	if m := LoadSpecsByDishIDs(nil); len(m) != 0 {
-		t.Fatalf("空 ID 列表应返回空 map, got %v", m)
+	if m, err := LoadSpecsByDishIDs(nil); err != nil || len(m) != 0 {
+		t.Fatalf("空 ID 列表应返回空 map, got %v err=%v", m, err)
 	}
 
 	id1, _ := dishDaoCreate(t, "批量规格A", 1, []po.Spec{{SpecName: "份", Price: 1000}})
 	id2, _ := dishDaoCreate(t, "批量规格B", 2, []po.Spec{{SpecName: "小份", Price: 2000}, {SpecName: "大份", Price: 3000}})
 
-	m := LoadSpecsByDishIDs([]int{int(id1), int(id2), 999999})
+	m, err := LoadSpecsByDishIDs([]int{int(id1), int(id2), 999999})
+	if err != nil {
+		t.Fatalf("批量加载规格失败: %v", err)
+	}
 	if len(m[int(id1)]) != 1 {
 		t.Fatalf("菜品 %d 应有一条规格, got %v", id1, m[int(id1)])
 	}

@@ -9,7 +9,8 @@
 //
 // 小程序运行环境没有 URL/URLSearchParams（JSCore 不保证提供），所以这里手写解析。
 
-/** 从 scene 串中取出桌台码：支持 `tableCode=X`、`k=X`、裸 `X` 三种形态。 */
+/** 从 scene 串中取出桌台码：支持 `tableCode=X`、`k=X`、裸 `X` 三种形态。
+ *  内部自带一次解码，调用方**不要**再 tryDecode 一遍 —— 桌台码含 % 时会被解两轮。 */
 export function decodeScene(raw: string | undefined | null): string {
   const input = String(raw || '').trim();
   if (!input) return '';
@@ -36,15 +37,6 @@ export function resolveTableCode(options: Record<string, string | undefined> | u
   return decodeScene(options.scene) || String(options.tableCode || options.table || '').trim();
 }
 
-/** 安全解码：非法百分号编码时按原值返回（decodeURIComponent 会抛）。 */
-function tryDecode(raw: string): string {
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
-}
-
 /**
  * 解析「小程序内 wx.scanCode 扫到的内容」里的桌台码（首页与菜单页的「扫码点餐」共用）。
  *
@@ -64,7 +56,8 @@ export function parseScannedTableCode(text: string | undefined | null, path?: st
   // 小程序码的 path：?scene= / ?tableCode=
   const pageQuery = /[?&](?:table_?code|table|scene)=([^&#]+)/i.exec(pagePath);
   if (pageQuery) {
-    const code = decodeScene(tryDecode(pageQuery[1]));
+    // decodeScene 内部已解码一次：包一层 tryDecode 会解两轮，码值含 % 时被解错
+    const code = decodeScene(pageQuery[1]);
     if (code) return code;
   }
 
@@ -77,7 +70,8 @@ export function parseScannedTableCode(text: string | undefined | null, path?: st
   // 带参数的链接：?tableCode= / ?table= / ?scene=
   const linkQuery = /[?&](?:table_?code|table|scene)=([^&#]+)/i.exec(link);
   if (linkQuery) {
-    const code = decodeScene(tryDecode(linkQuery[1]));
+    // 同上：decodeScene 内部已解码一次，不再包 tryDecode
+    const code = decodeScene(linkQuery[1]);
     if (code) return code;
   }
 
@@ -100,10 +94,7 @@ export function parseScannedTableCode(text: string | undefined | null, path?: st
  * 两种形态都覆盖：扫小程序码（query.scene）与扫普通二维码/分享进入（query.tableCode）。
  * 什么都没带的「直接打开」返回空串，属正常情况：那次访问确实不是从桌台码进来的。
  */
-export function resolveLaunchTableCode(options?: {
-  scene?: unknown;
-  query?: Record<string, unknown>;
-}): string {
+export function resolveLaunchTableCode(options?: { scene?: unknown; query?: Record<string, unknown> }): string {
   const q = options?.query || {};
   const scene = typeof q.scene === 'string' ? q.scene : typeof options?.scene === 'string' ? options.scene : '';
   const tableCode = typeof q.tableCode === 'string' ? q.tableCode : typeof q.table === 'string' ? q.table : '';

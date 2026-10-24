@@ -43,6 +43,9 @@ function switchTo(route: string, append: boolean): void {
   const stack = currentRoutes();
   if (stack[stack.length - 1] === route) return;
   const idx = stack.lastIndexOf(route);
+  // 回退到栈里已有的实例(可能跨多级):保留它的滚动位置与已加载数据。
+  // 前提假设:同一页面的实例一定属于当前会话/当前桌台 —— 换桌都会经过
+  // pages/home 或本页 onScanCode 的重新加载,不会留下「另一桌的旧菜单实例」。
   if (idx >= 0) {
     wx.navigateBack({ delta: stack.length - 1 - idx });
     return;

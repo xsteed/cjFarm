@@ -73,22 +73,35 @@ func failData(c *gin.Context, msg string, data interface{}) {
 }
 
 // pageParams 解析分页参数(页码/每页条数),非法值回退默认。
+//
+// pageNum 必须加上界:Atoi 对超 int 范围的输入返回 MaxInt 且报错,若忽略错误,
+// 下游的 (pageNum-1)*pageSize 会溢出成负数 OFFSET —— SQLite 把负 OFFSET 当 0
+// (返回第一页,分页结果错乱),MySQL 直接报错。上界同时挡住「翻到第 10 万页」
+// 造成的慢查询。
 func pageParams(c *gin.Context) (int, int) {
-	pageNum, _ := strconv.Atoi(c.DefaultQuery("pageNum", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
-	if pageNum < 1 {
+	pageNum, err := strconv.Atoi(c.DefaultQuery("pageNum", "1"))
+	if err != nil || pageNum < 1 {
 		pageNum = 1
 	}
-	if pageSize < 1 || pageSize > 500 {
+	if pageNum > maxPageNum {
+		pageNum = maxPageNum
+	}
+	pageSize, err := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+	if err != nil || pageSize < 1 || pageSize > 500 {
 		pageSize = 10
 	}
 	return pageNum, pageSize
 }
 
+// maxPageNum 页码上界。单店任何列表的数据量都远小于此(10 条/页 × 10 万页),
+// 取一个足够大又不会让 OFFSET 溢出的值。
+const maxPageNum = 100000
+
 // idParam 解析路径参数 :id,失败时写入错误响应并返回 false。
+// 同时校验下界:0/负数 ID 在业务上不存在,放过去只是让下游白查一趟。
 func idParam(c *gin.Context) (int, bool) {
 	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
+	if err != nil || id <= 0 {
 		fail(c, "无效的ID")
 		return 0, false
 	}

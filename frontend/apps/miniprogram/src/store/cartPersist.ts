@@ -98,6 +98,9 @@ function rebuild(rawItems: RawCartLine[], menu: MenuCategory[]): CartLine[] {
     if (!dish || isSoldOut(dish) || !isOrderable(dish)) continue;
     const spec = (dish.specs || []).find(sp => Number(sp.specId) === Number(it.specId));
     if (!spec || Number(spec.stock) === 0) continue;
+    const stock = Number(spec.stock);
+    const unlimited = !Number.isFinite(stock) || stock < 0;
+    const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
     valid.push({
       // key 规则与 store/cart.ts 保持一致：`菜品:规格`
       key: `${Number(dish.dishId)}:${Number(spec.specId)}`,
@@ -108,8 +111,10 @@ function rebuild(rawItems: RawCartLine[], menu: MenuCategory[]): CartLine[] {
       // 价格以菜单现值为准，不沿用历史价
       price: Number(spec.price) || 0,
       image: String(dish.dishImage || ''),
-      quantity: Math.max(1, Number(it.quantity) || 1),
-      itemRemark: String(it.itemRemark || '')
+      // 恢复/再来一单时按当前库存夹紧:存了 5 份、期间被别人买走只剩 2 份 → 恢复成 2 份
+      quantity: unlimited ? qty : Math.min(qty, stock),
+      itemRemark: String(it.itemRemark || ''),
+      stock: unlimited ? -1 : stock
     });
   }
   return valid;

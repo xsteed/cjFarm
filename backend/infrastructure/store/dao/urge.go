@@ -79,9 +79,20 @@ func HasPendingUrge(orderID int) bool {
 // HandleUrgesByOrder 把某订单下所有待处理催菜标记为已处理。
 // 与订单状态流转配合:上菜(状态3)或完成时自动消解,避免残留陈旧催菜。
 func HandleUrgesByOrder(orderID int, operator string) {
-	store.DB.Exec(`UPDATE tb_order_urge SET status=?, handle_time=?, handle_by=?, update_time=?
+	_, _ = HandleUrgesByOrderCount(orderID, operator)
+}
+
+// HandleUrgesByOrderCount 同 HandleUrgesByOrder,但返回实际消解的条数与错误。
+// 供「商家点处理」这类入口区分「确实处理了」与「本来就没有待处理」:前者应报成功,
+// 后者此前也回「已处理」,前端提示与事实不符。
+func HandleUrgesByOrderCount(orderID int, operator string) (int64, error) {
+	res, err := store.DB.Exec(`UPDATE tb_order_urge SET status=?, handle_time=?, handle_by=?, update_time=?
 		WHERE order_id=? AND status=?`,
 		po.UrgeStatusHandled, store.Now(), operator, store.Now(), orderID, po.UrgeStatusPending)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // UrgeQuery 催菜列表筛选条件;零值字段表示不限。

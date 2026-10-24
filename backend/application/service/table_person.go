@@ -19,6 +19,8 @@ package service
 //     清掉「选了却一直没下单」的残留，不把上一批客人的默认带给下一批。
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -31,16 +33,26 @@ var (
 	tablePersonTTL = 60 * time.Minute
 )
 
+// maxTablePerson 入座人数上限,与下单/改人数路径(customer_service.go)同一口径。
+// 两处上限不一致会让「选了 30 人」在共享记忆里被静默丢弃、下单时又被接受,
+// 同桌另一部手机因此重复弹面板。
+const maxTablePerson = maxPersonCount
+
 type tablePersonEntry struct {
 	count int
 	at    time.Time
 }
 
-// SetTablePendingPerson 记录某桌的入座人数（1..20，越界静默丢弃 —— 人数来自
-// 顾客端，按异常输入兜底处理而不是报错）。后写覆盖先写，见文件头并发语义。
-func SetTablePendingPerson(tableID, count int) {
-	if tableID <= 0 || count < 1 || count > 20 {
-		return
+// SetTablePendingPerson 记录某桌的入座人数(1..maxTablePerson)。
+//
+// 越界返回 error(不再静默丢弃):调用方(handler)据此把「生效」与「被拒绝」
+// 区分开,前端才不会在人数没记住时反复弹同一个面板。后写覆盖先写,见文件头并发语义。
+func SetTablePendingPerson(tableID, count int) error {
+	if tableID <= 0 {
+		return errors.New("桌台不存在")
+	}
+	if count < 1 || count > maxTablePerson {
+		return fmt.Errorf("用餐人数需在 1~%d 之间", maxTablePerson)
 	}
 	tablePersonMu.Lock()
 	defer tablePersonMu.Unlock()
@@ -52,6 +64,7 @@ func SetTablePendingPerson(tableID, count int) {
 		}
 	}
 	tablePersonByTable[tableID] = tablePersonEntry{count: count, at: now}
+	return nil
 }
 
 // GetTablePendingPerson 取某桌的共享入座人数；无记录或已过期返回 0（客户端视为「没人选过」）。

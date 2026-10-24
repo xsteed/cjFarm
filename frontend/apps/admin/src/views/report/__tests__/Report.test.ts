@@ -36,6 +36,8 @@ if (typeof Blob !== 'undefined' && !Blob.prototype.text) {
 }
 
 type ChartInstance = {
+  /** 与真实 echarts 一致：返回 init 时绑定的 DOM。useEChart 靠它复用实例。 */
+  getDom: ReturnType<typeof vi.fn>;
   setOption: ReturnType<typeof vi.fn>;
   clear: ReturnType<typeof vi.fn>;
   resize: ReturnType<typeof vi.fn>;
@@ -53,7 +55,10 @@ type ChartOption = {
 };
 
 const echartsMock = vi.hoisted(() => ({
-  init: vi.fn(() => ({
+  // getDom() 返回 init 时传入的 el：与真实 echarts 一致，useEChart 的
+  // 「实例是否还绑在这个 DOM 上」复用判断才能在测试里走到复用分支。
+  init: vi.fn((el: unknown) => ({
+    getDom: vi.fn(() => el),
     setOption: vi.fn(),
     clear: vi.fn(),
     resize: vi.fn(),

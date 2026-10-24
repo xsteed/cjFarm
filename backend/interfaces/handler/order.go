@@ -15,12 +15,20 @@ import (
 	"dining-system/interfaces/dto"
 )
 
-// intArg 将查询串解析为整数;非法时返回 nil,调用方跳过该筛选条件。
-func intArg(v string) *int {
-	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-		return &n
+// intArg 将查询串解析为整数筛选值。v 为空返回 (nil, true) 表示「不限」;
+// 非空但非法时写入 400 并返回 (nil, false) —— 静默忽略会让管理端看到
+// 未过滤的全量列表,却以为是筛选结果(如 payStatus=abc)。
+func intArg(c *gin.Context, name string) (*int, bool) {
+	v := strings.TrimSpace(c.Query(name))
+	if v == "" {
+		return nil, true
 	}
-	return nil
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		fail(c, "参数 "+name+" 必须是整数")
+		return nil, false
+	}
+	return &n, true
 }
 
 // ============ 订单 ============
@@ -31,9 +39,11 @@ func OrderList(c *gin.Context) {
 	if v := c.Query("orderStatus"); v != "" {
 		q.OrderStatus = v
 	}
-	if v := c.Query("payStatus"); v != "" {
-		q.PayStatus = intArg(v)
+	payStatus, ok := intArg(c, "payStatus")
+	if !ok {
+		return
 	}
+	q.PayStatus = payStatus
 	if v := c.Query("orderNo"); v != "" {
 		q.OrderNo = v
 	}
@@ -55,9 +65,11 @@ func OrderList(c *gin.Context) {
 		q.SettleRemark = v
 	}
 	// 挂账状态筛选:0 非挂账 1 待收款 2 已结清
-	if v := c.Query("creditStatus"); v != "" {
-		q.CreditStatus = intArg(v)
+	creditStatus, ok := intArg(c, "creditStatus")
+	if !ok {
+		return
 	}
+	q.CreditStatus = creditStatus
 	// 只看新单:已下单且商家从未操作过(viewed_at 为空),口径与列表「新」角标一致。
 	if v := c.Query("newOnly"); v == "1" || v == "true" {
 		q.NewOnly = true
@@ -183,9 +195,11 @@ func OrderStatus(c *gin.Context) {
 func UrgeList(c *gin.Context) {
 	pageNum, pageSize := pageParams(c)
 	var q service.UrgeQuery
-	if v := c.Query("status"); v != "" {
-		q.Status = intArg(v)
+	status, ok := intArg(c, "status")
+	if !ok {
+		return
 	}
+	q.Status = status
 	if v := c.Query("tableNo"); v != "" {
 		q.TableNo = v
 	}

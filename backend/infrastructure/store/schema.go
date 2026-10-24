@@ -1154,9 +1154,15 @@ func migrate(stmts []string) {
 	migrateCustomerOpenid()
 
 	// 历史数据回填:老订单没有实收金额,按「已支付即全额实收」补齐,保证报表口径连续。
-	DB.Exec(`UPDATE tb_order SET paid_amount = total_amount - COALESCE(refund_amount,0)
-		WHERE pay_status=1 AND (paid_amount IS NULL OR paid_amount=0) AND (settle_type IS NULL OR settle_type='normal')`)
-	DB.Exec(`UPDATE tb_order SET settle_type='normal' WHERE settle_type IS NULL OR settle_type=''`)
+	// 失败只告警不中断启动(回填是幂等的,下次启动会重试),但不能静默 —
+	// 否则报表口径悄悄不一致,排查时无从下手。
+	if _, err := DB.Exec(`UPDATE tb_order SET paid_amount = total_amount - COALESCE(refund_amount,0)
+		WHERE pay_status=1 AND (paid_amount IS NULL OR paid_amount=0) AND (settle_type IS NULL OR settle_type='normal')`); err != nil {
+		logger.Warnf("[db] 回填历史订单实收金额失败(下次启动重试): %v", err)
+	}
+	if _, err := DB.Exec(`UPDATE tb_order SET settle_type='normal' WHERE settle_type IS NULL OR settle_type=''`); err != nil {
+		logger.Warnf("[db] 回填历史订单结算方式失败(下次启动重试): %v", err)
+	}
 	backfillTableCodes()
 	backfillMealTimes()
 	migrateUploadPrefix()
@@ -1337,10 +1343,21 @@ func dedupeRoleKeys() {
 	for rows.Next() {
 		var r roleRow
 		var del string
-		if rows.Scan(&r.id, &r.key, &del) == nil {
-			r.deleted = del != "0"
-			all = append(all, r)
+		// 扫描失败不能跳过该行继续:下面的去重会 DELETE 角色行,若恰好漏读了
+		// 「未删除的那一行」,keep 会指向一条已删除行,进而把唯一有效角色删掉,
+		// 所有挂在该角色上的员工瞬间失去权限。宁可本轮不去重(下次启动再试)。
+		if err := rows.Scan(&r.id, &r.key, &del); err != nil {
+			logger.Warnf("[db] 读取角色行失败,跳过本轮角色去重: %v", err)
+			rows.Close()
+			return
 		}
+		r.deleted = del != "0"
+		all = append(all, r)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Warnf("[db] 读取角色行失败,跳过本轮角色去重: %v", err)
+		rows.Close()
+		return
 	}
 	rows.Close()
 	if len(all) == 0 {
@@ -1369,7 +1386,12 @@ func dedupeRoleKeys() {
 			continue
 		}
 		// 员工引用改挂到保留行(表间无外键约束,顺序敏感:必须先改后删)。
-		DB.Exec(`UPDATE tb_user SET role_id=? WHERE role_id=?`, keep[r.key], r.id)
+		// 改挂失败时绝不能继续删除:tb_user.role_id 会指向不存在的角色,
+		// 这些员工下一次请求即命中 AuthzRoleMissing,登录与鉴权直接失效。
+		if _, err := DB.Exec(`UPDATE tb_user SET role_id=? WHERE role_id=?`, keep[r.key], r.id); err != nil {
+			logger.Warnf("[db] 重复角色行 %d 的员工引用改挂失败,保留该行不删除: %v", r.id, err)
+			continue
+		}
 		if _, err := DB.Exec(`DELETE FROM tb_role WHERE role_id=?`, r.id); err == nil {
 			dropped++
 		}

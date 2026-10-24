@@ -451,21 +451,44 @@ func TestOrderStatusTransitionsTx(t *testing.T) {
 		if active != 1 {
 			t.Fatalf("进行中订单数应为 1, got %d", active)
 		}
-		// 归档为已完成(状态 2)。
+		return nil
+	}); err != nil {
+		t.Fatalf("订单状态流转失败: %v", err)
+	}
+
+	// 未支付订单不能被归档(完成要求已支付,SQL 守卫原子兜底)。
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		n, err := FinishOrderTx(tx, id, "boss", 2)
+		if err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatalf("未支付订单归档应影响 0 行, got %d", n)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("未支付归档守卫校验失败: %v", err)
+	}
+
+	// 收款后归档为已完成(状态 2)。
+	if _, err := MarkOrderPaid(id, "现金", "boss"); err != nil {
+		t.Fatalf("标记收款失败: %v", err)
+	}
+	if err := store.WithTx(func(tx *sql.Tx) error {
 		if _, err := FinishOrderTx(tx, id, "boss", 2); err != nil {
 			return err
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("订单状态流转失败: %v", err)
+		t.Fatalf("归档失败: %v", err)
 	}
 
 	st, err := GetOrderState(id)
 	if err != nil {
 		t.Fatalf("查询订单状态失败: %v", err)
 	}
-	if st.OrderStatus != 4 || st.PayStatus != 0 {
-		t.Fatalf("归档后状态应为 4, got status=%d pay=%d", st.OrderStatus, st.PayStatus)
+	if st.OrderStatus != 4 || st.PayStatus != 1 {
+		t.Fatalf("归档后状态应为 4 且已支付, got status=%d pay=%d", st.OrderStatus, st.PayStatus)
 	}
 
 	// 取消未支付订单(新建另一笔)。
@@ -650,9 +673,27 @@ func TestMarkOrderPaidByChannelRejectsCanceledOrder(t *testing.T) {
 
 // TestUpdateOrderStatusTxWritesFinishTime 状态流转置为已完成时必须写 finish_time:
 // 「今日完成订单数」(CountFinishedIn)按该列统计,漏写会让这条归档永远不计入完成数。
+// 同时验证支付守卫:未支付订单置 4 影响 0 行(完成 = 对已支付订单的收尾归档)。
 func TestUpdateOrderStatusTxWritesFinishTime(t *testing.T) {
 	orderDaoInitDB(t)
 	id := orderDaoCreate(t, "D-ST-1", 1)
+	// 未支付:置为已完成应被 SQL 守卫挡下。
+	if err := store.WithTx(func(tx *sql.Tx) error {
+		n, err := UpdateOrderStatusTx(tx, id, 4, "boss", 1)
+		if err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatalf("未支付订单置为完成应影响 0 行, got %d", n)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("未支付完成守卫校验失败: %v", err)
+	}
+	// 收款后置为已完成:写 finish_time。
+	if _, err := MarkOrderPaid(id, "现金", "boss"); err != nil {
+		t.Fatalf("标记收款失败: %v", err)
+	}
 	if err := store.WithTx(func(tx *sql.Tx) error {
 		n, err := UpdateOrderStatusTx(tx, id, 4, "boss", 1)
 		if err != nil {
@@ -728,7 +769,11 @@ func TestDiningTimePersisted(t *testing.T) {
 	}
 
 	// 归档 / 取消两条终止路径同样要留结束时间。
+	// 归档要求已支付(支付守卫):先收款再归档。
 	id2 := orderDaoCreate(t, "D-DINE-2", 1)
+	if _, err := MarkOrderPaid(id2, "现金", "boss"); err != nil {
+		t.Fatalf("标记收款失败: %v", err)
+	}
 	if err := store.WithTx(func(tx *sql.Tx) error {
 		_, err := FinishOrderTx(tx, id2, "boss", 1)
 		return err

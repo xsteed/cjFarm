@@ -18,8 +18,14 @@ func ListRemarks() ([]po.Remark, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var r po.Remark
-		rows.Scan(&r.RemarkID, &r.OptionName, &r.SortOrder, &r.DelFlag, TS(&r.CreateTime), TS(&r.UpdateTime))
+		// 扫描失败上抛:静默丢弃会让备注选项从下单页少几项,且无任何迹象。
+		if err := rows.Scan(&r.RemarkID, &r.OptionName, &r.SortOrder, &r.DelFlag, TS(&r.CreateTime), TS(&r.UpdateTime)); err != nil {
+			return nil, err
+		}
 		list = append(list, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return list, nil
 }

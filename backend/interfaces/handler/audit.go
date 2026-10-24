@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -272,9 +274,27 @@ func AuditLog() gin.HandlerFunc {
 //
 // 之所以要抓响应:审计不只是「做了什么」,还得记「为什么没做成」——
 // 「免单失败:未填写原因」比一行冷冰冰的 status=0 有用得多。
+//
+// 透传 Flush/Hijack:gin 的 ResponseWriter 接口本身不含它们,但 net/http 的
+// http.ResponseController 与协议升级(SSE/WebSocket)会按具体类型断言。
+// 不转发的话,将来 admin 组挂任何流式接口都会被这个包装器静默破坏
+// (Flush 退化为无操作,数据卡在缓冲区里不发)。
 type auditBodyWriter struct {
 	gin.ResponseWriter
 	buf *bytes.Buffer
+}
+
+func (w *auditBodyWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *auditBodyWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("audit: 底层 ResponseWriter 不支持 Hijack")
 }
 
 func (w *auditBodyWriter) Write(b []byte) (int, error) {

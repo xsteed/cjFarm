@@ -470,6 +470,9 @@ export interface CartLine {
   image: string;
   quantity: number;
   itemRemark: string;
+  /** 加购时该规格的剩余份数快照：-1 / 缺省 = 不限量，>=0 为可购份数。
+   *  购物车页的 + 拿不到菜单对象，靠它夹紧（后端下单事务按 stock >= qty 校验）。 */
+  stock?: number;
 }
 
 /** 规格选择快照（规格弹层确定后回写菜品行的「当前规格」）。 */

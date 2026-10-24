@@ -275,13 +275,15 @@
       @copy="copyText"
     />
 
+    <!-- list-count 传总条数而不是当前页条数:导出会按筛选条件翻页取全量,
+         否则用户看到「（20）」却导出 137 张 -->
     <BatchQrDialog
       v-model:visible="batchVisible"
       :shop-logo="shopLogo"
       :shop-title="shopTitle"
       :h5-base="h5Base"
       :all-count="allCount"
-      :list-count="list.length"
+      :list-count="pagination.total"
       :query-table-name="query.tableName"
     />
 
@@ -474,7 +476,9 @@ async function load(silent = false): Promise<void> {
   } catch {
     /* 失败已由拦截器统一 toast */
   } finally {
-    loading.value = false;
+    // 静默轮询(silent)从没置 true,不能无条件置 false —— 否则会提前关掉手动加载的
+    // 遮罩(数据还没回来),并破坏定时器守卫对 loading 的判断,导致请求重叠。
+    if (!silent) loading.value = false;
   }
 }
 

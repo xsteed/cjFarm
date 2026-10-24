@@ -140,7 +140,11 @@ func (p *Alipay) Close(orderNo string) error {
 			Msg  string `json:"msg"`
 		} `json:"alipay_trade_close_response"`
 	}
-	_ = json.Unmarshal(resp, &out)
+	// 解析失败按关单失败处理(fail-closed):调用方(混合支付撤销)只有在关单成功
+	// 时才敢退余额,解析失败却当成成功会把「可能已支付」的钱退回去。
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return fmt.Errorf("支付宝关单响应解析失败: %w", err)
+	}
 	if out.Resp.Code != "10000" {
 		return fmt.Errorf("支付宝关单失败: %s", out.Resp.Msg)
 	}

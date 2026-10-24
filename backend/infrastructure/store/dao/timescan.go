@@ -100,8 +100,11 @@ func normalizeDateString(s string) (string, bool) {
 	if s == "" || isZeroDate(s) {
 		return "", true
 	}
-	if t, err := time.ParseInLocation(time.RFC3339, s, time.Local); err == nil {
-		return t.Format(conf.TimeLayout), false
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		// 带 T/时区的输入要先折算成本地时间再格式化:ParseInLocation 对带
+		// Z/偏移的串会保留原 zone,直接 Format 出来的是 UTC 墙钟时间,
+		// 与注释承诺的「折算成本地时间文本」不符(差 8 小时)。
+		return t.In(time.Local).Format(conf.TimeLayout), false
 	}
 	if t, err := time.ParseInLocation("2006-01-02T15:04:05", s, time.Local); err == nil {
 		return t.Format(conf.TimeLayout), false

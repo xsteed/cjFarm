@@ -175,17 +175,18 @@
             v-if="row.isNew"
             class="ocard-new"
             title="新订单，尚未处理"
-          >新</span>
+            >新</span
+          >
           <!-- 「待完成」badge:右上角与「新」左右对称,先付已收款、还差点「完成订单」归档释放桌台 -->
           <span
             v-if="row.needFinish"
             class="ocard-finish"
             title="已收款，点「完成订单」归档并释放桌台"
-          >待完成</span>
+            >待完成</span
+          >
           <div class="ocard-top">
             <span class="ocard-no"
-              ><span class="ocard-no-label">短号(取餐号):</span
-              >#{{ row.shortNo || row.orderNo.slice(-6) }}</span
+              ><span class="ocard-no-label">短号(取餐号):</span>#{{ row.shortNo || row.orderNo.slice(-6) }}</span
             >
             <t-tag
               :theme="ORDER_STATUS[row.orderStatus]?.theme"
@@ -347,12 +348,14 @@
         <span
           class="tbl"
           :title="row.tableNo ? row.tableNo + '号桌' + (row.tableName ? ' · ' + row.tableName : '') : ''"
-        >{{ row.tableNo ? row.tableNo + '号桌' : '-' }}<span
-          v-if="row.tableName"
-          class="tbl-name"
-        >
+          >{{ row.tableNo ? row.tableNo + '号桌' : '-'
+          }}<span
+            v-if="row.tableName"
+            class="tbl-name"
+          >
             · {{ row.tableName }}</span
-        ></span>
+          ></span
+        >
       </template>
       <template #orderStatus="{ row }">
         <t-tag
@@ -582,6 +585,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, h } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { listOrders, changeOrderStatus, cancelOrder, finishOrder, handleUrge, ORDER_STATUS } from '@dining/api';
 import { useIsMobile } from '../utils/useMobile';
+import { isRefundable } from '../utils/refundable';
 import { usePullRefresh } from '../composables/usePullRefresh';
 import { usePayFirst } from '../composables/usePayFirst';
 import { hasPerm } from '@dining/auth';
@@ -635,7 +639,15 @@ interface OrderQuery {
   newOnly: boolean;
 }
 
-const query = reactive<OrderQuery>({ orderNo: '', tableNo: '', tableName: '', orderStatus: '', payStatus: '', settleFilter: '', newOnly: false });
+const query = reactive<OrderQuery>({
+  orderNo: '',
+  tableNo: '',
+  tableName: '',
+  orderStatus: '',
+  payStatus: '',
+  settleFilter: '',
+  newOnly: false
+});
 const pagination = reactive({ current: 1, pageSize: 10, total: 0 });
 const { isMobile } = useIsMobile();
 // 移动端下拉刷新当前列表(沿用当前筛选与页码)
@@ -687,18 +699,11 @@ const columns = computed(() => {
   return cols;
 });
 
-// canRefund 仅在线支付(微信/支付宝)且已支付、未全额退款、且没有处理中退款的订单可发起在线退款。
+// canRefund = 权限位 + 订单支付状态。状态判定收敛在 utils/refundable 的 isRefundable,
+// 与订单详情弹窗(useOrderActions)共用同一份实现，避免一处排除处理中退款、另一处漏掉。
 // 另需 refund:operate —— 本期该权限只授予超级管理员。
-// refundingAmount（处理中的退款单）同样占用可退额度，必须排除：否则按钮可点、点了被后端拒。
 function canRefund(row: OrderRow): boolean {
-  return (
-    canRefundOperate.value &&
-    row &&
-    row.payStatus === 1 &&
-    ['wxpay', 'alipay'].includes(row.payChannel) &&
-    !((row.refundingAmount || 0) > 0) &&
-    (row.refundAmount || 0) < row.totalAmount
-  );
+  return canRefundOperate.value && isRefundable(row);
 }
 
 // ---- 操作列各按钮的行级可用性:操作列固定渲染全部按钮,能否点击由「行状态 + 权限位」
@@ -786,7 +791,9 @@ async function load(silent = false): Promise<void> {
     const maxPage = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
     if (pagination.current > maxPage) {
       pagination.current = maxPage;
-      load();
+      // 静默标志必须透传:夹取重拉发生在自动刷新里时,不带 silent 会点亮全表遮罩,
+      // 每轮轮询都可能闪一下,与 silent 的初衷相反。
+      load(silent);
     }
   } catch {
     /* 失败已由拦截器统一 toast */
@@ -881,10 +888,12 @@ function openRefund(row: OrderRow): void {
 }
 
 function onCancel(row: OrderRow): void {
+  if (acting.value) return;
   const dlg = DialogPlugin.confirm({
     header: '确认取消',
     body: `确认取消订单【${row.orderNo}】？`,
     onConfirm: async () => {
+      acting.value = true;
       try {
         await cancelOrder({ orderId: row.orderId, cancelReason: '商家取消' });
         MessagePlugin.success('订单已取消');
@@ -892,6 +901,8 @@ function onCancel(row: OrderRow): void {
         await afterRowAction(row.orderId);
       } catch {
         dlg.hide();
+      } finally {
+        acting.value = false;
       }
     }
   });
@@ -904,7 +915,10 @@ function onCancel(row: OrderRow): void {
 // 弹窗的出纸提示牌(SettleDialog .st-hint-print)完全一致 —— 品牌橙浅底、12px,
 // 「不会打印小票」加粗,两处出纸提示在收银眼里是同一种"会涉及出纸"的信号。
 function onFinish(row: OrderRow): void {
+  // 防重入必须在打开确认框时就置位:放在 onConfirm 里(等用户点确认)意味着连点行按钮
+  // 会堆叠多个确认框,每个框确认后各发一次请求。取消/关弹窗时经 onClose 解除标记。
   if (acting.value) return;
+  acting.value = true;
   const finishBody = payFirst.value
     ? () =>
         h('div', { style: 'display:flex;flex-direction:column;gap:10px;' }, [
@@ -923,7 +937,6 @@ function onFinish(row: OrderRow): void {
     header: '确认完成订单，释放桌台',
     body: finishBody,
     onConfirm: async () => {
-      acting.value = true;
       try {
         await finishOrder({ orderId: row.orderId });
         MessagePlugin.success('订单已完成');
@@ -934,6 +947,11 @@ function onFinish(row: OrderRow): void {
       } finally {
         acting.value = false;
       }
+    },
+    // 取消/直接关掉弹窗也要解除在途标记,否则一次「看看又关掉」会让后续行操作全部失灵
+    // (自动刷新也会被 acting 一直挡着)。
+    onClose: () => {
+      acting.value = false;
     }
   });
 }
@@ -968,7 +986,13 @@ function cardActions(row: OrderRow): CardAction[] {
     // 完成订单用 warning(琥珀):与确认收款(success 绿)、取消(danger 红)、详情(primary 橙)
     // 四色全区分 —— 收银一瞥即知哪个是「收尾」,不会跟「收款」看混。
     if (canFinishRow(row))
-      items.push({ key: 'finish', label: '完成订单', theme: 'warning', run: () => onFinish(row), disabled: acting.value });
+      items.push({
+        key: 'finish',
+        label: '完成订单',
+        theme: 'warning',
+        run: () => onFinish(row),
+        disabled: acting.value
+      });
     return items;
   }
   // 后付模式:完整操作铺在卡片上(制作/上齐是厨房流程,催办/退款按行状态出现)。
@@ -984,7 +1008,13 @@ function cardActions(row: OrderRow): CardAction[] {
       disabled: acting.value
     });
   if (row.orderStatus === 2 && canOperate.value)
-    items.push({ key: 'serve', label: '已上齐', theme: 'warning', run: () => setStatus(row, 3), disabled: acting.value });
+    items.push({
+      key: 'serve',
+      label: '已上齐',
+      theme: 'warning',
+      run: () => setStatus(row, 3),
+      disabled: acting.value
+    });
   if ([1, 2, 3].includes(row.orderStatus) && row.payStatus === 0 && canSettle.value)
     items.push({
       key: 'settle',
@@ -1038,6 +1068,9 @@ function resetFilters(): void {
   query.payStatus = '';
   query.settleFilter = '';
   query.newOnly = false;
+  // 移动端状态 tab 写的是 query.orderStatus(见 onStatusTab),漏清会让「重置」后
+  // 状态筛选仍在,且 tab 高亮依旧显示旧状态 —— 视觉与数据都不像重置过。
+  query.orderStatus = '';
   // 订单号搜索框与桌面端共用同一个 query.orderNo,漏清会让「重置」后关键词仍在;
   // 同时回到第一页,否则重置完仍停在第 N 页,看起来「没生效」。
   query.orderNo = '';

@@ -396,16 +396,20 @@ type visitJob struct {
 	visitor po.Visitor
 }
 
-var (
-	visitOnce sync.Once
-	visitChan chan visitJob
-)
+// visitChan 在包初始化时创建,而不是在 worker 启动的 goroutine 里赋值:
+// RecordVisit 对它是无锁读取,晚赋值会让「worker 尚未启动就到访」的打点
+// 走进 nil 分支被静默丢弃(漏记),且从数据竞争角度也是不安全的写读模式。
+// 包级初始化保证任何请求到达前 channel 已就绪;没有 worker 消费时打点只在
+// 缓冲里排队(满后丢弃并告警),不会写库。
+var visitChan = make(chan visitJob, visitChanSize)
+
+// visitOnce 保证 worker 进程内单例。
+var visitOnce sync.Once
 
 // StartVisitWriter 启动批量写 worker(进程内单例,由 StartVisitRollup 调用)。
 // 所有访问明细只经由这一个 goroutine 写库:SQLite 单写者模式下不放大锁竞争。
 func StartVisitWriter() {
 	visitOnce.Do(func() {
-		visitChan = make(chan visitJob, visitChanSize)
 		go visitWriterLoop()
 	})
 }
@@ -448,12 +452,9 @@ func visitWriterLoop() {
 // RecordVisit 记录一次访问(异步,恒不返回错误)。
 //
 // 顺序:参数清洗 → 算访客键 → 投递到写队列。队列满则丢弃并告警。
+// channel 在包初始化时创建(见上),此处无需判空;未启动 worker 时打点只进缓冲。
 func RecordVisit(in VisitInput) {
 	if !VisitEnabled() {
-		return
-	}
-	if visitChan == nil {
-		// worker 未启动(只在测试里出现:boot 阶段 StartVisitRollup 会先起 worker)。
 		return
 	}
 	ipHash, uaHash := hashVisitValue(strings.TrimSpace(in.IP)), hashVisitValue(strings.TrimSpace(in.UA))

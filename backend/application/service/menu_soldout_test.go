@@ -13,12 +13,15 @@ func TestUpdateDishSoldOutRoundtrip(t *testing.T) {
 	menuInitDB(t)
 	cat := menuSeedCategory(t, "测试分类")
 	dishID := menuSeedDish(t, cat, "售罄测试菜", 1, 1000, "份")
-	specs := dao.LoadDishSpecs(dishID)
+	specs, err := dao.LoadDishSpecs(dishID)
+	if err != nil {
+		t.Fatalf("加载规格失败: %v", err)
+	}
 	if len(specs) != 1 {
 		t.Fatalf("规格数=%d, want 1", len(specs))
 	}
 
-	err := UpdateDish(dto.Dish{
+	err = UpdateDish(dto.Dish{
 		DishID:     dishID,
 		CategoryID: cat,
 		DishName:   "售罄测试菜",

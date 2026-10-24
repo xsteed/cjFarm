@@ -18,6 +18,8 @@ export function clampPerson(n: unknown): number {
 
 /** 是否为一次合法的显式选择（0 / 小数 / 超范围 / 非数字都算「没选」）。 */
 export function isValidPerson(n: unknown): boolean {
-  const v = Math.floor(Number(n) || 0);
-  return v >= PERSON_MIN && v <= PERSON_MAX;
+  const v = Number(n);
+  // 小数必须判掉:先 floor 再判区间会让 3.7 通过,而计价按 3 人、界面显示 3.7 人,
+  // 同一张桌出现两个人数(正是本文件要消灭的价格漂移)。
+  return Number.isInteger(v) && v >= PERSON_MIN && v <= PERSON_MAX;
 }

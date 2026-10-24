@@ -419,11 +419,9 @@ function applyFilters(): void {
 }
 
 function resetFilters(): void {
-  query.module = '';
-  query.businessType = '';
-  query.status = '';
-  query.targetId = '';
-  dateRange.value = [];
+  // 移动端「重置」必须与桌面端 resetQuery 同一口径:关键词(operator)的输入框在弹层之外,
+  // 漏清会让重置后它仍旧生效;页码不回 1、不重新加载,列表也仍是旧关键词+旧页码的数据。
+  resetQuery();
 }
 
 // 清理会真的删数据，单独收口到 log:manage（只读的 log:view 看不到这个按钮）。

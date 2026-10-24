@@ -5,8 +5,7 @@
         <div class="chart-title">用餐时长分析</div>
         <div class="chart-sub">
           统计口径为已完成订单（完成时间 − 下单时间）<template v-if="stats.orderCount">
-            · 样本 <b>{{ stats.orderCount }}</b> 单 · 人次
-            <b>{{ stats.guestCount || 0 }}</b></template
+            · 样本 <b>{{ stats.orderCount }}</b> 单 · 人次 <b>{{ stats.guestCount || 0 }}</b></template
           >
         </div>
       </div>
@@ -14,9 +13,15 @@
         v-if="stats.orderCount"
         class="dur-stats"
       >
-        <span>平均 <b>{{ durationText(stats.avgMinutes) }}</b></span>
-        <span>中位 <b>{{ durationText(stats.medianMinutes) }}</b></span>
-        <span>最长 <b>{{ durationText(stats.maxMinutes) }}</b></span>
+        <span
+          >平均 <b>{{ durationText(stats.avgMinutes) }}</b></span
+        >
+        <span
+          >中位 <b>{{ durationText(stats.medianMinutes) }}</b></span
+        >
+        <span
+          >最长 <b>{{ durationText(stats.maxMinutes) }}</b></span
+        >
       </div>
     </div>
     <div
@@ -30,7 +35,6 @@
 import { onMounted, ref, watch } from 'vue';
 import type { DiningDurationStats } from '@dining/types';
 import { durationText } from '@dining/shared';
-import { useIsMobile } from '../../utils/useMobile';
 import { chart, EMPTY_OPTION, type EChartOption } from '../../composables/useEChart';
 import { AXIS_COLOR, AXIS_LINE, SPLIT_LINE, BRAND_DEEP, pickTooltipParam } from './reportShared';
 
@@ -39,7 +43,6 @@ const props = defineProps<{
 }>();
 
 const el = ref<HTMLElement | null>(null);
-const { isMobile } = useIsMobile();
 
 function render(): void {
   const c = chart('diningDuration', el.value);
@@ -60,7 +63,7 @@ function render(): void {
         const row = list[p.dataIndex] || {};
         const n = Number(row.count || 0);
         const total = props.stats.orderCount || 1;
-        return `${row.label}<br/><b>${n}</b> 单（占 ${(n / total * 100).toFixed(1)}%）`;
+        return `${row.label}<br/><b>${n}</b> 单（占 ${((n / total) * 100).toFixed(1)}%）`;
       }
     },
     grid: { left: 8, right: 16, top: 20, bottom: 4, containLabel: true },
@@ -111,8 +114,7 @@ function render(): void {
 
 onMounted(render);
 watch(() => props.stats, render, { deep: true });
-// 断点变化时重绘
-watch(isMobile, render);
+// （无 watch(isMobile)：这个图的 grid/axis 全是固定值，断点变化重绘出来的内容完全一样）
 </script>
 
 <style scoped>

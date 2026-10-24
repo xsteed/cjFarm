@@ -44,11 +44,15 @@ func normalizePassword(pw string) string {
 }
 
 // HashPassword 生成密码哈希(bcrypt)。
+//
+// 失败时直接 panic,不回退旧格式:旧格式是无自适应的 SHA-256+盐,一旦回退,
+// 新设的密码会以弱哈希落库且**无任何日志**,事后无从发现。password 已被
+// normalizePassword 摘要到 72 字节内,bcrypt 在此条件下不会失败,panic 只可能
+// 出现在实现异常/成本被改坏的场景,属于必须立刻暴露的故障。
 func HashPassword(pw string) string {
 	h, err := bcrypt.GenerateFromPassword([]byte(normalizePassword(pw)), bcrypt.DefaultCost)
 	if err != nil {
-		// 极端失败时回退为旧格式,保证可用性。
-		return legacyHashPassword(pw)
+		panic("store: bcrypt 生成哈希失败,拒绝降级为弱哈希: " + err.Error())
 	}
 	return string(h)
 }
@@ -78,11 +82,14 @@ func WastePasswordVerify(pw string) {
 	_ = VerifyPassword(pw, dummyHash)
 }
 
-// legacyHashPassword 旧版哈希(仅用于 bcrypt 失败时的兜底,不推荐)。
+// legacyHashPassword 旧版哈希。仅保留给兼容测试与历史数据工具使用,
+// 新密码一律走 HashPassword(bcrypt),不得再调用本函数落库。
 func legacyHashPassword(pw string) string {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
-		copy(salt, []byte("dining-fixed-salt"))
+		// 固定盐等于「所有账号同一个盐」,离线爆破成本骤降且无任何信号,
+		// 宁可显式失败也不降级。
+		panic("store: crypto/rand 不可用,拒绝生成使用固定盐的密码哈希: " + err.Error())
 	}
 	sum := sha256.Sum256(append(salt, []byte(pw)...))
 	return hex.EncodeToString(salt) + "$" + hex.EncodeToString(sum[:])

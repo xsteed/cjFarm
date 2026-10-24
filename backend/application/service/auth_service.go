@@ -543,7 +543,12 @@ func ChangePassword(userID int, oldPassword, newPassword, actor string) error {
 	if err := dao.SetUserPassword(userID, store.HashPassword(newPassword), actor); err != nil {
 		return errors.New("密码保存失败，请稍后重试")
 	}
-	dao.DeleteRememberTokensByUser(userID)
+	// 吊销失败不能吞:remember 令牌 7/30 天有效,删不掉意味着「已改密」的账号
+	// 仍能凭旧令牌免登录 —— 正是改密要防的场景。密码已改,这里只告警不失败
+	// (失败会让用户以为没改成功,用旧密码又登不进来)。
+	if err := dao.DeleteRememberTokensByUser(userID); err != nil {
+		logger.Warnf("[auth][告警] 改密后吊销记住我会话失败(旧令牌在删除成功前仍可用) 用户%d: %v", userID, err)
+	}
 	return nil
 }
 
@@ -688,7 +693,10 @@ func ResetUserPassword(userID int, password, actor string) error {
 	if err := dao.SetUserPassword(userID, store.HashPassword(password), actor); err != nil {
 		return err
 	}
-	dao.DeleteRememberTokensByUser(userID)
+	// 同 ChangePassword:吊销失败必须留痕,否则旧 remember 令牌仍可免登录。
+	if err := dao.DeleteRememberTokensByUser(userID); err != nil {
+		logger.Warnf("[auth][告警] 重置密码后吊销记住我会话失败(旧令牌在删除成功前仍可用) 用户%d: %v", userID, err)
+	}
 	return nil
 }
 
@@ -753,6 +761,21 @@ func EnsureRoleAssignable(roleID int, operatorPerms []string) error {
 	return nil
 }
 
+// EnsureUserManageable 校验操作人有权管理(改密/重置密码/停用/删除)目标员工。
+//
+// 为什么停用与删除也要校验:dao 层的防锁死规则只挡「停用自己」与「停用最后一个
+// 启用超管」。只要还有另一个启用超管,只持 user:edit 的角色就能停用/删除超级
+// 管理员账号 —— 这是对高权限账号的可用性打击,与「重置超管密码直接登录」是同一条
+// 提权路径的另一面。规则与 EnsureRoleAssignable 同源:目标员工的角色权限集不得
+// 高于操作人自身。
+func EnsureUserManageable(userID int, operatorPerms []string) error {
+	u, err := dao.GetUserByID(userID)
+	if err != nil || u == nil {
+		return errors.New("员工不存在")
+	}
+	return EnsureRoleAssignable(u.RoleID, operatorPerms)
+}
+
 // EnsureUserPasswordResettable 校验操作人有权重置目标员工的密码。
 //
 // 与 EnsureRoleAssignable 同源:重置密码是比「改角色」更直接的提权路径 ——
@@ -760,11 +783,7 @@ func EnsureRoleAssignable(roleID int, operatorPerms []string) error {
 // 拿到全量权限,连「等对方下次登录」都不需要,完全绕过 role:edit。
 // 因此这里复用同一套规则:目标员工的角色权限集不得高于操作人自身。
 func EnsureUserPasswordResettable(userID int, operatorPerms []string) error {
-	u, err := dao.GetUserByID(userID)
-	if err != nil || u == nil {
-		return errors.New("员工不存在")
-	}
-	return EnsureRoleAssignable(u.RoleID, operatorPerms)
+	return EnsureUserManageable(userID, operatorPerms)
 }
 
 // EnsurePermsWithinOperator 校验「待写入角色的权限集」不高于操作人自身。
@@ -857,8 +876,11 @@ func SaveRole(roleKey, roleName string, permList []string, sortOrder int, remark
 // UpdateRole 修改角色(名称/权限/排序/备注),返回审计摘要。
 func UpdateRole(roleID int, roleKey, roleName string, permList []string, sortOrder int, remark, actor string) (string, error) {
 	roleName = strings.TrimSpace(roleName)
-	if roleName == "" {
-		return "", errors.New("请填写角色名称")
+	// roleKey 与 SaveRole 同一口径必须非空:内置角色是按 key 识别并归一化的
+	// (bootstrap.RoleIDByKey / NormalizeRolePerms),更新成空串会让这些路径失效。
+	roleKey = strings.TrimSpace(roleKey)
+	if roleKey == "" || roleName == "" {
+		return "", errors.New("请填写角色名称与角色标识")
 	}
 	if bad := store.UnknownPerms(permList); len(bad) > 0 {
 		return "", errors.New("存在无效的权限项:" + strings.Join(bad, "、"))

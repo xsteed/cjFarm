@@ -35,7 +35,7 @@
         v-if="!onlineQr"
         class="online-pay-btn"
         :class="{ disabled: paying }"
-        @click="emit('online-pay')"
+        @click="paying ? null : emit('online-pay')"
       >
         {{ paying ? '正在生成支付码…' : `在线支付 ¥${Number(currentOrder.totalAmount).toFixed(2)}` }}
       </div>

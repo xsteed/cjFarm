@@ -125,7 +125,9 @@ export function usePullRefresh(
     lastY = y;
 
     if (!armed) {
-      // 手势前半段在滚列表,滚到顶部后继续下拉:从这一步起接管,已滚过的位移不计入
+      // 手势前半段在滚列表,滚到顶部后继续下拉:从这一步起接管。
+      // 起点取「本次 move 事件开始前的 y」(= y - step),所以之前滚过的位移不计入,
+      // 本次这一小段位移计入(否则接管瞬间会丢掉手感)。
       if (step > 0 && scroller.scrollTop <= 0) {
         armed = true;
         pulling.value = true;
@@ -197,8 +199,12 @@ export function usePullRefresh(
 
   /** 布局容器可能晚于页面渲染(懒加载/首帧),首次触摸时补绑一次 */
   function ensureBound(): void {
+    // 已绑定的元素还在文档里就不必再 querySelector:这个函数挂在 document 的
+    // capture touchstart 上,每次触摸都跑一次选择器是纯浪费(切路由后旧容器会
+    // 变成 disconnected,那时才需要重新查找)。
+    if (boundEl && boundEl.isConnected) return;
     const el = resolveScroller();
-    if (!el || el === boundEl) return;
+    if (!el) return;
     unbind();
     boundEl = el;
     bind();

@@ -189,12 +189,14 @@ func SumRefundedInclPending(orderNo string) (int64, error) {
 // RefundingAmounts 批量统计各订单「处理中」的退款金额(分),key 为 order_id。
 // 供订单列表展示「退款中」:tb_order.refund_amount 只在退款**成功**时累加,
 // 处理中的退款单已占用可退额度却不会体现在订单行上 —— 收银据此会误以为可以再退一次,
-// 点下去必然被后端拒绝,且看不出该单正在退款。查询失败静默返回空 map(列表只是不打标记)。
+// 点下去必然被后端拒绝,且看不出该单正在退款。
 // 与额度口径一致:不含重复支付退回(is_duplicate=1)。
-func RefundingAmounts(orderIDs []int) map[int]int64 {
+//
+// 查询失败返回 error 而不是静默空 map:漏标一笔「退款中」,收银就会重复发起退款。
+func RefundingAmounts(orderIDs []int) (map[int]int64, error) {
 	out := map[int]int64{}
 	if len(orderIDs) == 0 {
-		return out
+		return out, nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(orderIDs)), ",")
 	args := make([]interface{}, 0, len(orderIDs)+1)
@@ -207,17 +209,26 @@ func RefundingAmounts(orderIDs []int) map[int]int64 {
 		GROUP BY order_id`, args...)
 	if err != nil {
 		logger.Warnf("[pay] 统计订单处理中退款金额失败: %v", err)
-		return out
+		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int
 		var cents int64
-		if rows.Scan(&id, &cents) == nil && cents > 0 {
+		// 扫描失败必须上抛:漏标一笔「退款中」会让收银以为还能退,重复发起退款。
+		if err := rows.Scan(&id, &cents); err != nil {
+			logger.Warnf("[pay] 扫描处理中退款金额失败: %v", err)
+			return out, err
+		}
+		if cents > 0 {
 			out[id] = cents
 		}
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		logger.Warnf("[pay] 遍历处理中退款金额中断: %v", err)
+		return out, err
+	}
+	return out, nil
 }
 
 // SumRefundedInclPendingTx 是 SumRefundedInclPending 的事务版本,语义一致。

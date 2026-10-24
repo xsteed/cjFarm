@@ -40,7 +40,14 @@ var ErrRechargeNotFound = errors.New("充值单不存在")
 
 // ErrRechargeClosed 充值单已关闭(超过支付时限被关单,是终态)。
 // 回调据此应答成功且**绝不入账**:顾客早已放弃的充值,不该被延迟通知复活。
+// 注意:这只是「不自动入账」,不代表钱没到账 —— 若顾客在关单后真的付了款,
+// handler 会落 Error 级日志(含渠道交易号)供人工退款,见 handlePayNotify。
 var ErrRechargeClosed = errors.New("充值单已关闭")
+
+// ErrRechargeAmountMismatch 回调金额与充值单金额不一致。
+// 与订单回调口径一致:不入账,但应答成功(金额不会因重试而变化,让渠道重试
+// 24 小时纯属空耗),并落 Error 级日志 + 渠道交易号供人工核对。
+var ErrRechargeAmountMismatch = errors.New("充值金额与充值单不一致")
 
 // 储值配置项(默认值见 store.settingDefaults,门店可在管理端调整)。
 const (
@@ -354,14 +361,18 @@ func WalletRechargeCredit(rechargeNo, channel, channelTradeNo string, amountCent
 			return nil // 已入账,重复通知直接成功
 		}
 		if r.Status == po.RechargeStatusClosed {
-			// 终态:顾客早已放弃的充值,不能被延迟通知复活。
-			logger.Warnf("[wallet][告警] 充值单已关闭却收到回调,拒绝入账 单%s 金额%d分", rechargeNo, amountCents)
+			// 终态:顾客早已放弃的充值,不能被延迟通知复活。但这笔钱可能真的
+			// 到了商户号(顾客在关单后才完成支付),必须留下可追的资金线索:
+			// 单号 + 渠道交易号 + 金额,供人工在渠道后台退款。
+			logger.Errorf("[wallet][告警] 充值单已关闭却收到支付回调,未入账,需人工退款 单%s 渠道%s 交易号%s 金额%d分",
+				rechargeNo, channel, channelTradeNo, amountCents)
 			return ErrRechargeClosed
 		}
 		// 金额防线与订单回调同一口径:不一致绝不入账。
 		if r.Amount != amountCents {
-			logger.Warnf("[wallet][告警] 充值回调金额不一致 单%s 期望%d分 实际%d分", rechargeNo, r.Amount, amountCents)
-			return fmt.Errorf("充值金额不一致")
+			logger.Errorf("[wallet][告警] 充值回调金额不一致,未入账,需人工核对 单%s 渠道%s 交易号%s 期望%d分 实际%d分",
+				rechargeNo, channel, channelTradeNo, r.Amount, amountCents)
+			return ErrRechargeAmountMismatch
 		}
 		// 先「抢占」这条充值单,再动钱 —— 顺序至关重要。
 		//
@@ -378,6 +389,19 @@ func WalletRechargeCredit(rechargeNo, channel, channelTradeNo string, amountCent
 			logger.Infof("[wallet] 充值单已由并发回调入账,按幂等处理 单%s", rechargeNo)
 			return nil
 		}
+		// 余额上限复查:建单时的预检在事务外,并发多笔充值可各自通过预检把余额
+		// 推过合规上限(储值余额监管红线)。这里在钱包行锁保护下按「当前余额 +
+		// 本笔(本金+赠金)」再判一次,超限则整笔回滚(充值单回到待支付,不会
+		// 出现「标记已入账却没加钱」),并留告警供人工核对/退款。
+		curBalance, curGift, err := dao.LockWalletTx(tx, r.CustomerID)
+		if err != nil {
+			return err
+		}
+		if limit := walletBalanceMaxCents(r.CustomerID); curBalance+curGift+r.Amount+r.GiftAmount > limit {
+			logger.Warnf("[wallet][告警] 充值入账将超余额上限,拒绝入账 单%s 会员%d 当前%d+%d分 本笔%d+%d分 上限%d分",
+				rechargeNo, r.CustomerID, curBalance, curGift, r.Amount, r.GiftAmount, limit)
+			return fmt.Errorf("充值后余额将超过上限 %s 元，请先消费或联系门店调整", po.FormatYuan(limit))
+		}
 		if _, _, err := dao.AdjustWalletTx(tx, r.CustomerID, r.Amount, po.WalletTxnRecharge, "", channelTradeNo, "储值充值", ""); err != nil {
 			return err
 		}
@@ -389,7 +413,9 @@ func WalletRechargeCredit(rechargeNo, channel, channelTradeNo string, amountCent
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, ErrRechargeNotFound) && !errors.Is(err, ErrRechargeClosed) {
+	// 这三类已在事务内落过更具体的日志,这里不再重复;其余错误才需要这条汇总日志。
+	if err != nil && !errors.Is(err, ErrRechargeNotFound) && !errors.Is(err, ErrRechargeClosed) &&
+		!errors.Is(err, ErrRechargeAmountMismatch) {
 		logger.Warnf("[wallet] 充值入账失败 单%s: %v", rechargeNo, err)
 	}
 	return err
@@ -435,8 +461,16 @@ func PayOrderByWallet(ctx context.Context, customerID int, orderNo string) (bool
 			return errors.New("只能使用自己的储值余额支付自己的订单")
 		}
 		if owner == 0 {
-			if _, err := dao.ClaimOrderCustomerTx(tx, orderNo, customerID); err != nil {
+			// 认领失败(false)= 该单已被其它会员认领(同桌多人同时支付同一张桌码)。
+			// 必须拒绝:否则输家会用自己的余额给胜者的订单付款,而 PrepareMixedPay
+			// 在 PayCents>0 时事务内不标记订单支付,没有 MarkOrderPaidByChannelTx
+			// 的守卫兜底,钱扣了单却是别人的(退款也退给胜者)。
+			claimed, err := dao.ClaimOrderCustomerTx(tx, orderNo, customerID)
+			if err != nil {
 				return err
+			}
+			if !claimed {
+				return errors.New("订单已被其他会员认领，请刷新后重试")
 			}
 		}
 		// 支付流水:先落待支付占位(订单行锁内复核金额,与渠道支付同一防线),
@@ -471,8 +505,15 @@ func PayOrderByWallet(ctx context.Context, customerID int, orderNo string) (bool
 
 // OrderOwner 读订单归属的会员 ID(0 = 匿名单/订单不存在)。
 // 供「顾客撤销自己发起的支付」这类一次性归属判断使用。
+// 注意:读取失败也会返回 0,归属校验场景请用 OrderOwnerE。
 func OrderOwner(orderNo string) int {
 	return dao.OrderCustomer(orderNo)
+}
+
+// OrderOwnerE 是 OrderOwner 的带错误版本:归属校验必须区分「匿名单」与「读失败」,
+// 否则一次 DB 抖动就会让「只能撤销自己的订单」这道检查静默放行。
+func OrderOwnerE(orderNo string) (int, error) {
+	return dao.OrderCustomerE(orderNo)
 }
 
 // ============================================================================
@@ -500,15 +541,40 @@ type MixedPayPreparation struct {
 //
 // 幂等/并发:订单行条件更新(MarkOrderPaidByChannelTx)决定谁真正把订单付清;
 // 未付清时由 remaining = 总额 - 已入账额 保证不会多扣。
+//
+// ⚠️ 同一订单同一时刻只允许一笔「在途」混合支付:已入账额 > 0 且订单仍未付清时,
+// 必须拒绝再次发起,而不是按 remaining 再扣一份。原因是一条真实的资损链:
+//
+//	第一次发起已扣 W1 并创建了渠道单(T−W1),顾客退出收银台后重试/双击 →
+//	第二次按 remaining 再扣 W2 → 渠道下单必然撞「out_trade_no 已使用」而失败 →
+//	handler 回退余额,而 AbortMixedPay 按流水退掉的是该单**全部**已付储值
+//	(W1+W2)→ 第一笔渠道支付随后到账时,「期望金额」按已退款的流水算出来
+//	必然对不上,合法支付被判「金额不一致」:不入账、应答成功、渠道不再重试。
+//	顾客实付 T−W1、余额全退、订单永不入账。
+//
+// 拒绝后顾客可走「取消支付」接口(/customer/wallet/pay-cancel)立即回收余额再重试,
+// 或等 15 分钟超时释放;两条路都会把储值流水置为已退款,之后 remaining 恢复全额。
 func PrepareMixedPay(ctx context.Context, customerID int, orderNo string, walletCents int64) (MixedPayPreparation, error) {
 	var prep MixedPayPreparation
 	if walletCents <= 0 {
 		return prep, errors.New("请选择要使用的储值金额")
 	}
 	err := store.WithTx(func(tx *sql.Tx) error {
-		o, err := dao.GetOrderAmountTx(tx, orderNo)
+		// 先读一次只为拿 order_id(订单不存在则直接拒绝)。
+		first, err := dao.GetOrderAmountTx(tx, orderNo)
 		if err != nil {
 			return errors.New("订单不存在")
+		}
+		// 订单行取写锁(与 CreatePayment / 加菜 / 改单同一用途):并发(双击、
+		// 超时重试)的混合支付准备必须串行。没有这把锁,两个事务可以都读到
+		// 「未支付、已入账 0」,各自扣一份余额,下面的在途守卫形同虚设。
+		if err := dao.TouchOrderTx(tx, first.OrderID); err != nil {
+			return err
+		}
+		// 锁后重读:行锁保证此刻读到的是最新已提交状态。
+		o, err := dao.GetOrderAmountTx(tx, orderNo)
+		if err != nil {
+			return err
 		}
 		if o.PayStatus == 1 {
 			return errors.New("订单已支付")
@@ -528,13 +594,24 @@ func PrepareMixedPay(ctx context.Context, customerID int, orderNo string, wallet
 			return errors.New("只能使用自己的储值余额支付自己的订单")
 		}
 		if owner == 0 {
-			if _, err := dao.ClaimOrderCustomerTx(tx, orderNo, customerID); err != nil {
+			// 同 PayOrderByWallet:认领失败必须拒绝,不能忽略 changed=false。
+			claimed, err := dao.ClaimOrderCustomerTx(tx, orderNo, customerID)
+			if err != nil {
 				return err
+			}
+			if !claimed {
+				return errors.New("订单已被其他会员认领，请刷新后重试")
 			}
 		}
 		paid, err := dao.SumPaidPaymentsTx(tx, orderNo)
 		if err != nil {
 			return err
+		}
+		// 在途支付守卫(见上方注释里的资损链):订单未付清但已有入账金额,
+		// 说明「有一笔支付正在路上」—— 混合支付的储值部分已扣、或渠道已到账
+		// 回调未落地。此时再扣一份余额,随后必然在渠道下单处撞单并触发全量回退。
+		if paid > 0 {
+			return errors.New("该订单已发起过混合支付：请先在支付页取消上一笔（取消后余额立即退回），或稍等自动退回后再试")
 		}
 		remaining := o.TotalAmount - paid
 		if remaining <= 0 {
@@ -616,12 +693,24 @@ func AbortMixedPay(ctx context.Context, orderNo, reason string) error {
 			return err
 		}
 		var walletPaid int64
-		var walletIDs []int
 		for _, p := range payments {
-			if p.Channel == PayChannelWallet {
-				walletPaid += p.Amount
-				walletIDs = append(walletIDs, p.PaymentID)
+			// 只退「当前仍为已支付」的储值流水:已退款(Refunded)的钱早已退回顾客,
+			// 再退一次就是双倍退款。ListPaidPaymentsTx 故意含 Refunded(退款分摊
+			// 要按流水算剩余可退额),因此这里必须按状态过滤,不能照单全退。
+			if p.Channel != PayChannelWallet || p.Status != dao.PayStatusPaid {
+				continue
 			}
+			// 抢占式标记:条件 UPDATE 决定「谁有资格退这笔」。仅靠上面的读后判断
+			// 不够 —— 两个并发事务可以都读到 Paid(读快照),各自再退一次。
+			// 行锁串行化后,后到者命中 0 行,直接跳过。
+			claimed, e := dao.MarkPaymentStatusIfTx(tx, p.PaymentID, dao.PayStatusPaid, dao.PayStatusRefunded)
+			if e != nil {
+				return e
+			}
+			if !claimed {
+				continue // 另一个并发撤销已抢先退款
+			}
+			walletPaid += p.Amount
 		}
 		if walletPaid > 0 {
 			principal, gift := walletPaid, int64(0)
@@ -650,11 +739,7 @@ func AbortMixedPay(ctx context.Context, orderNo, reason string) error {
 					return e
 				}
 			}
-			for _, id := range walletIDs {
-				if e := dao.MarkPaymentStatusTx(tx, id, dao.PayStatusRefunded); e != nil {
-					return e
-				}
-			}
+			// 流水状态已在上面按「抢占成功」逐条置为 Refunded,这里不再重复更新。
 			released = walletPaid
 		}
 		// 关闭本单所有待支付的渠道流水:它们对应的渠道单由调用方(handler)负责关。

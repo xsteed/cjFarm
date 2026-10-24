@@ -151,6 +151,78 @@ func TestAbortMixedPayRestoresBuckets(t *testing.T) {
 	}
 }
 
+// TestAbortMixedPayTwiceNoDoubleRefund 撤销必须幂等:顾客连点两次「取消支付」
+// (或取消与 15 分钟超时巡检撞车)不能把同一份余额退两次。
+//
+// 之前 ListPaidPaymentsTx 把已退款流水也算进来,第二次撤销会按同一笔再退一次。
+func TestAbortMixedPayTwiceNoDoubleRefund(t *testing.T) {
+	ctx := context.Background()
+	id, o, _ := mixedOrder(t, "mixed-abort-twice", 10)
+	before, _ := WalletDetail(id)
+
+	// 只抵扣 5 元(余额 10 元),余下 5 元留待渠道支付 —— 这样订单保持未支付,
+	// 撤销时才会走「退余额」分支(余额付清时 AbortMixedPay 直接返回)。
+	if _, err := PrepareMixedPay(ctx, id, o.OrderNo, 500); err != nil {
+		t.Fatalf("混合支付失败: %v", err)
+	}
+	if err := AbortMixedPay(ctx, o.OrderNo, "第一次取消"); err != nil {
+		t.Fatalf("第一次撤销失败: %v", err)
+	}
+	afterFirst, _ := WalletDetail(id)
+	if afterFirst.Balance != before.Balance || afterFirst.BalanceGift != before.BalanceGift {
+		t.Fatalf("第一次撤销应原样还原: 期望 %v/%v, got %v/%v",
+			before.Balance, before.BalanceGift, afterFirst.Balance, afterFirst.BalanceGift)
+	}
+	// 第二次撤销:储值流水已是 Refunded,不得再退。
+	if err := AbortMixedPay(ctx, o.OrderNo, "第二次取消"); err != nil {
+		t.Fatalf("第二次撤销应静默成功: %v", err)
+	}
+	afterSecond, _ := WalletDetail(id)
+	if afterSecond.Balance != before.Balance || afterSecond.BalanceGift != before.BalanceGift {
+		t.Fatalf("重复撤销不得二次退款: 期望 %v/%v, got %v/%v",
+			before.Balance, before.BalanceGift, afterSecond.Balance, afterSecond.BalanceGift)
+	}
+}
+
+// TestPrepareMixedPayRejectsInFlight 已有在途混合支付时,拒绝同一订单再次发起。
+//
+// 钉住一条资损链:第二次发起会按 remaining 再扣一份余额,随后在渠道下单处撞
+// 「out_trade_no 已使用」而失败,handler 的回退又会把该单**全部**已付储值流水
+// (含第一笔还在路上的)一起退掉 —— 第一笔渠道支付到账时「期望金额」对不上,
+// 被判金额不一致:不入账、应答成功、渠道不再重试,订单永远收不平。
+func TestPrepareMixedPayRejectsInFlight(t *testing.T) {
+	ctx := context.Background()
+	id, o, total := mixedOrder(t, "mixed-inflight", 10)
+
+	prep, err := PrepareMixedPay(ctx, id, o.OrderNo, 1000)
+	if err != nil {
+		t.Fatalf("首次混合支付失败: %v", err)
+	}
+	if prep.PayCents <= 0 {
+		t.Fatalf("用例前提:应留下渠道差额, got %d", prep.PayCents)
+	}
+
+	// 在途(储值已扣、订单未付清):再次发起必须被拒绝,而不是按 remaining 再扣一份。
+	if _, err := PrepareMixedPay(ctx, id, o.OrderNo, 1000); err == nil {
+		t.Fatal("已有在途混合支付时应拒绝再次发起")
+	}
+	if w, _ := WalletDetail(id); w.Balance != 0 {
+		t.Fatalf("拒绝期间不得再扣余额, got %v", w.Balance)
+	}
+
+	// 取消后放行:储值流水置为已退款,remaining 恢复全额,可重新发起。
+	if err := AbortMixedPay(ctx, o.OrderNo, "用例取消"); err != nil {
+		t.Fatalf("取消失败: %v", err)
+	}
+	prep2, err := PrepareMixedPay(ctx, id, o.OrderNo, 1000)
+	if err != nil {
+		t.Fatalf("取消后应允许重新发起: %v", err)
+	}
+	if prep2.WalletCents != 1000 || prep2.PayCents != total-1000 {
+		t.Fatalf("重新发起拆分异常: 余额%d 待付%d(总额%d)", prep2.WalletCents, prep2.PayCents, total)
+	}
+}
+
 // TestRefundPartsSplitAcrossChannels 混合支付订单退款:按支付流水分摊,钱各回各家。
 func TestRefundPartsSplitAcrossChannels(t *testing.T) {
 	ctx := context.Background()

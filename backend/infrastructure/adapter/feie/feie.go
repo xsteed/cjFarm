@@ -221,6 +221,13 @@ func (c *Client) callRaw(apiname string, params map[string]string) (*resp, strin
 	form.Set("sig", Sign(c.user, c.ukey, stime))
 	form.Set("apiname", apiname)
 	for k, v := range params {
+		// 保留键(user/stime/sig/apiname)不允许业务参数覆盖:签名串是按
+		// user+ukey+stime 算的,业务参数若同名会把签名/时间戳换掉,
+		// 云端验签必然失败 —— 且失败原因(签名不符)离现场很远,极难排查。
+		switch k {
+		case "user", "stime", "sig", "apiname":
+			return nil, "", fmt.Errorf("飞鹅接口参数 %q 为保留字段,禁止传入", k)
+		}
 		form.Set(k, v)
 	}
 

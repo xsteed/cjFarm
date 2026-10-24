@@ -80,6 +80,11 @@ Page({
   /** 查支付状态的并发锁：手动点击与静默轮询共用（data.checking 只负责按钮样式） */
   querying: false,
 
+  /** 储值余额请求在途标记:render 末尾与切 tab 都会触发,避免并发重复请求 */
+  walletLoading: false,
+  /** 最近一次请求对应的订单金额:在途期间金额变过就按最新值补跑一次 */
+  walletTotal: 0,
+
   /** 支付成功后延时跳转的定时器：页面提前卸载时必须清掉 */
   leaveTimer: null as ReturnType<typeof setTimeout> | null,
 
@@ -189,26 +194,37 @@ Page({
       this.setData({ canWallet: false, walletShort: false });
       return;
     }
+    // 记下本次请求用的金额:在途请求返回时若已过期(订单金额变过),按最新值再补跑一次,
+    // 否则 canWallet / mixedText 会按旧金额算,混合支付拆分显示错。
+    this.walletTotal = total;
+    // 在途守卫:render 末尾与切支付 tab 都会触发,同一时刻只放一份请求出去。
+    if (this.walletLoading) return;
+    this.walletLoading = true;
     try {
       const w = await getWallet();
       // 可用余额 = 本金 + 赠金:赠金不能退现,但买单和本金一样好使。
       const available = (Number(w.balance) || 0) + (Number(w.balanceGift) || 0);
       // 混合支付只在「有钱但不够」且小程序支付已开通时出现:
       // 没有 JSAPI 就没有补差通道,这时给按钮只会把人引到死路。
-      const usable = Math.min(available, total);
-      const canMixed = total > 0 && available > 0 && available < total && this.data.canJsapi;
+      const latest = this.walletTotal;
+      const usable = Math.min(available, latest);
+      const canMixed = latest > 0 && available > 0 && available < latest && this.data.canJsapi;
       this.setData({
         walletBalanceText: money(available),
-        canWallet: available >= total && total > 0,
+        canWallet: available >= latest && latest > 0,
         canMixed,
         // 按分取整:展示与下单金额必须一致,不能出现「显示 10.005 元」。
         walletUsable: Math.floor(usable * 100) / 100,
-        mixedText: canMixed ? `余额 ${money(usable)} + 微信 ${money(total - usable)}` : '',
+        mixedText: canMixed ? `余额 ${money(usable)} + 微信 ${money(latest - usable)}` : '',
         // 有余额但不够付:提示「去充值」,比默默隐藏按钮更能让会员知道储值的存在。
-        walletShort: available > 0 && available < total && total > 0
+        walletShort: available > 0 && available < latest && latest > 0
       });
     } catch {
       this.setData({ canWallet: false, canMixed: false, walletShort: false });
+    } finally {
+      this.walletLoading = false;
+      // 在途期间订单金额又变过:按最新值补跑一次(最多一层,不会递归)
+      if (this.walletTotal !== total) void this.refreshWallet(this.walletTotal);
     }
   },
 
@@ -306,7 +322,15 @@ Page({
           toast.info('已取消，储值余额将稍后自动退回');
         }
       } else {
-        toast.error(String((e as Error)?.message || '支付失败，储值余额将稍后自动退回'));
+        // 非取消类失败（签名错误 / 参数非法 / 后端未开通）同样意味着「确定没付成」，
+        // 但余额已被后端扣下：必须主动关单退回，不能只提示「稍后自动退回」——
+        // 那要把余额锁到 15 分钟后的超时巡检，顾客看到的就是「钱少了」。
+        try {
+          await cancelMixedByWallet(orderNo);
+          toast.info('支付未完成，储值余额已退回');
+        } catch {
+          toast.error('支付未完成，储值余额将稍后自动退回');
+        }
       }
       await this.refreshWallet(total);
     }
@@ -332,7 +356,9 @@ Page({
     this.querying = true;
     if (!silent) this.setData({ checking: true });
     try {
-      const res = await queryPay(orderNo);
+      // silent 与入参一致：手动查询时 checkPaid 的 catch 有自己的提示，
+      // 轮询路径（silent=true）则全程安静，不再由 http 层每 5s 弹一次 toast。
+      const res = await queryPay(orderNo, { silent });
       if (Number(res?.payStatus) === 1) {
         // 先落「已付款」再回拉详情：详情失败也不能让顾客看到「还没付款」的假象
         this.poller?.stop();
@@ -430,7 +456,12 @@ Page({
 
   onCopyOrderNo(): void {
     if (!this.data.shortNo) return;
-    wx.setClipboardData({ data: this.data.shortNo });
+    // 成功时微信自带「内容已复制」提示,不再重复 toast;失败必须给出口,
+    // 否则顾客点了复制毫无反应,还以为单号已经复制走了。
+    wx.setClipboardData({
+      data: this.data.shortNo,
+      fail: () => toast.info('复制失败，请长按单号手动复制')
+    });
   },
 
   onBack(): void {

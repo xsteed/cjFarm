@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -172,11 +173,21 @@ func SaveUpload(fileName string, data []byte) (string, error) {
 		return "", err
 	}
 
-	name := fmt.Sprintf("dining_%s_%d%s", time.Now().Format("20060102_150405"), time.Now().Nanosecond(), ext)
+	// 时间戳 + 随机段:只有时间戳时,同纳秒并发上传会撞 tb_image.img_name 唯一索引
+	// (靠上层重试兜底,但用户白等一次);随机段让冲突概率降到可忽略,也让文件名
+	// 不可被预测。time.Now() 只取一次,避免「日期段与纳秒段」跨秒不一致。
+	now := time.Now()
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("生成文件名失败: %w", err)
+	}
+	name := fmt.Sprintf("dining_%s_%d_%x%s", now.Format("20060102_150405"), now.Nanosecond(), b, ext)
 	// 图片内容落库:展示链路按文件名查 tb_image,磁盘不再作为运行时数据源;
 	// 文件名一旦写入即不可变,若撞唯一索引会显式返回错误,交由调用方重试。
+	// 错误必须原样包装上抛(不是笼统的「上传失败」):dao 注释明确要求把
+	// 「文件名冲突」暴露给上层重试,吞掉后 handler 无法区分冲突与其它故障。
 	if err := dao.SaveImage(name, store.ImageMIME(ext), data); err != nil {
-		return "", errors.New("上传失败")
+		return "", fmt.Errorf("上传失败: %w", err)
 	}
 	// 返回的路径前缀必须与后端静态路由、Nginx 反代一致,统一取自 store.UploadURLPrefix。
 	return store.UploadURLPrefix + name, nil

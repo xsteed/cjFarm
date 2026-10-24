@@ -78,11 +78,19 @@ func InitAuthKey() string {
 // resolveAuthKey 按三级优先级解析签名密钥,返回密钥与其是否为「进程随机」。
 // persist 为 false 时文件缺失不落盘(只读解析);为 true 时允许自动生成并落盘。
 func resolveAuthKey(persist bool) (string, bool) {
+	path := Getenv(conf.EnvAuthKeyPath, filepath.FromSlash(conf.DefaultAuthKeyPath))
 	if v := strings.TrimSpace(os.Getenv(conf.EnvTokenSecret)); v != "" {
-		return normalizeAuthKey(v), false
+		key := normalizeAuthKey(v)
+		// env 与密钥文件同时存在且不一致:所有存量登录态会静默失效(令牌签名
+		// 校验不过),启动日志必须点名,否则运维只能靠猜。
+		if data, err := os.ReadFile(path); err == nil {
+			if fk, perr := parseAuthKeyFile(string(data)); perr == nil && fk != key {
+				logger.Warnf("[authkey] TOKEN_SECRET 与密钥文件 %s 不一致,将使用 TOKEN_SECRET;原有登录态将全部失效", path)
+			}
+		}
+		return key, false
 	}
 
-	path := Getenv(conf.EnvAuthKeyPath, filepath.FromSlash(conf.DefaultAuthKeyPath))
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:

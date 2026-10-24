@@ -38,7 +38,8 @@ async function saveApi(row: CrudRow): Promise<void> {
     optionName: row.name,
     sortOrder: row.sortOrder
   };
-  if (row.id) {
+  // id === 0 也是合法主键时才不该走新增;当前自增从 1 起,但用 != null 更稳
+  if (row.id != null) {
     await updateRemark(payload);
   } else {
     await saveRemark(payload);

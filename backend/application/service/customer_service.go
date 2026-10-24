@@ -76,8 +76,22 @@ func CustomerTable(ref string) (dto.Table, *dto.Order, []dto.Order, error) {
 			currentOrder = &order
 		}
 		// 已付款但出餐未完成的订单:顾客据此查看出餐进度。
-		for _, o := range dao.ListServingOrdersByTable(t.TableID, guard) {
-			servingOrders = append(servingOrders, dto.FromOrderCustomer(o, orderItemsFromPO(dao.LoadOrderItems(o.OrderID)), false))
+		// 明细批量 IN 查询加载(与 CustomerMenu 同款),避免一桌多笔订单时
+		// 查询数随订单数线性增长(扫码是匿名公开接口,放大面最大)。
+		serving := dao.ListServingOrdersByTable(t.TableID, guard)
+		if len(serving) > 0 {
+			ids := make([]int, 0, len(serving))
+			for _, o := range serving {
+				ids = append(ids, o.OrderID)
+			}
+			itemsByOrder, err := dao.LoadOrderItemsByOrderIDs(ids)
+			if err != nil {
+				return dto.Table{}, nil, nil, err
+			}
+			for _, o := range serving {
+				servingOrders = append(servingOrders,
+					dto.FromOrderCustomer(o, orderItemsFromPO(itemsByOrder[o.OrderID]), false))
+			}
 		}
 	}
 	return dto.FromTable(t), currentOrder, servingOrders, nil
@@ -107,7 +121,10 @@ func CustomerMenu() ([]CustomerMenuCategory, error) {
 	}
 
 	// 批量加载规格
-	specMap := dao.LoadSpecsByDishIDs(ids)
+	specMap, err := dao.LoadSpecsByDishIDs(ids)
+	if err != nil {
+		return nil, err
+	}
 	dishOut := make([]dto.Dish, 0, len(dishes))
 	for _, d := range dishes {
 		specs := make([]dto.Spec, 0, len(specMap[d.DishID]))
@@ -207,6 +224,10 @@ type CustomerCreateOrderResult struct {
 	Duplicated     bool           // 幂等命中:重复请求返回的首次结果,无需再打印
 }
 
+// maxPersonCount 用餐人数上限。茶位费按人数计,一次误填就会算出巨额应收;
+// 下单/改人数/入座共享记忆三处共用同一上限,避免口径漂移。
+const maxPersonCount = 100
+
 // CustomerCreateOrder 顾客首次下单:校验参数、以数据库为准重建明细、占用桌台、
 // 在同一桌台并发下单校验后原子写入订单与明细。
 // clientRequestID 为可选幂等键:同一键的重复请求(双击/超时重试)返回首次结果。
@@ -219,10 +240,13 @@ func CustomerCreateOrder(customerID, tableID, personCount int, orderRemark strin
 	if tableID == 0 || len(items) == 0 {
 		return CustomerCreateOrderResult{}, errors.New("请选择桌台并点选菜品")
 	}
+	// order_remark 列宽 500:顾客端自由文本不截断会在 MySQL 严格模式下
+	// 让整个下单事务失败(前端只看到「系统繁忙」)。
+	orderRemark = truncateRunes(strings.TrimSpace(orderRemark), orderRemarkMaxLen)
 	if personCount < 1 {
 		personCount = 1
 	}
-	if personCount > 100 {
+	if personCount > maxPersonCount {
 		return CustomerCreateOrderResult{}, errors.New("用餐人数超出限制")
 	}
 	// 校验桌台存在且未删除,并同时取到人工状态:
@@ -432,8 +456,8 @@ func CustomerUpdatePerson(tableID int, orderNo string, personCount int) (Custome
 	if tableID == 0 || orderNo == "" {
 		return CustomerUpdatePersonResult{}, errors.New("参数错误")
 	}
-	if personCount < 1 || personCount > 100 {
-		// 上限与加菜接口的人数字段保持一致(前端自己收敛到 1~20)
+	if personCount < 1 || personCount > maxPersonCount {
+		// 上限与加菜/下单接口保持一致(maxPersonCount)
 		return CustomerUpdatePersonResult{}, errors.New("用餐人数需在 1~100 之间")
 	}
 
@@ -532,7 +556,7 @@ func CustomerAppendOrder(tableID int, orderNo string, items []dto.OrderItem, per
 	if tableID == 0 || orderNo == "" || len(items) == 0 {
 		return CustomerAppendOrderResult{}, errors.New("参数错误")
 	}
-	if personCount > 100 {
+	if personCount > maxPersonCount {
 		return CustomerAppendOrderResult{}, errors.New("用餐人数超出限制")
 	}
 

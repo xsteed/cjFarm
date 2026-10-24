@@ -77,6 +77,7 @@ function onCustomInput(e: Event): void {
 
 <style scoped>
 /* ---------- 单项备注弹窗 ---------- */
+
 /* 层级必须高过购物车抽屉:TDesign 的 .t-drawer 是 z-index 1500,
    低于它的话弹层会整个被抽屉盖住,表现为「点了添加备注没反应」。 */
 .remark-mask {

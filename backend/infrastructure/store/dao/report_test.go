@@ -47,8 +47,8 @@ func TestRangeAmountMoneyFlow(t *testing.T) {
 	}
 
 	// 昨日营业额(退款发生前):100。
-	if got := RangeAmount(f(yStart), f(tStart)); got != 10000 {
-		t.Fatalf("昨日营业额期望 10000, got %d", got)
+	if got, err := RangeAmount(f(yStart), f(tStart)); err != nil || got != 10000 {
+		t.Fatalf("昨日营业额期望 10000, got %d err=%v", got, err)
 	}
 
 	// 今日对订单 A 全额退款 + 一笔重复支付退回(不应计入任何统计)。
@@ -60,16 +60,16 @@ func TestRangeAmountMoneyFlow(t *testing.T) {
 	mustExec(`UPDATE tb_order SET paid_amount=0, refund_amount=10000, refund_time=? WHERE order_no='RA1'`, noon(tStart))
 
 	// 昨日营业额不受今日退款影响(数字落定后不漂移)。
-	if got := RangeAmount(f(yStart), f(tStart)); got != 10000 {
-		t.Fatalf("今日退款后昨日营业额应保持 10000(不漂移), got %d", got)
+	if got, err := RangeAmount(f(yStart), f(tStart)); err != nil || got != 10000 {
+		t.Fatalf("今日退款后昨日营业额应保持 10000(不漂移), got %d err=%v", got, err)
 	}
 	// 今日:挂账回款 +5000,退款 -10000,重复退回不计 → -5000。
-	if got := RangeAmount(f(tStart), f(tEnd)); got != -5000 {
-		t.Fatalf("今日净资金流期望 -5000, got %d", got)
+	if got, err := RangeAmount(f(tStart), f(tEnd)); err != nil || got != -5000 {
+		t.Fatalf("今日净资金流期望 -5000, got %d err=%v", got, err)
 	}
 	// 今日退款额 = 100(重复退回不计入)。
-	if got := SumRefundIn(f(tStart), f(tEnd)); got != 10000 {
-		t.Fatalf("今日退款额期望 10000(排除重复退回), got %d", got)
+	if got, err := SumRefundIn(f(tStart), f(tEnd)); err != nil || got != 10000 {
+		t.Fatalf("今日退款额期望 10000(排除重复退回), got %d err=%v", got, err)
 	}
 }
 
@@ -131,7 +131,11 @@ func TestHourlyStatsMoneyFlow(t *testing.T) {
 	for _, b := range byHour {
 		sum += b.AmtCents
 	}
-	if want := RangeAmount(f(tStart), f(tEnd)); sum != want {
+	want, err := RangeAmount(f(tStart), f(tEnd))
+	if err != nil {
+		t.Fatalf("营业额查询失败: %v", err)
+	}
+	if sum != want {
 		t.Fatalf("分时合计 %d 应等于营业额 %d", sum, want)
 	}
 	// 订单数/客流按下单时间:两单都在 10 点下单。

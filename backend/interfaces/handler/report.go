@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"dining-system/application/service"
+	"dining-system/infrastructure/logger"
 )
 
 // ============ 报表 ============
@@ -14,7 +15,13 @@ import (
 // 组装响应出参。营收/订单/客流等统计口径详见 service.ReportSummary 等方法的注释。
 
 func ReportSummary(c *gin.Context) {
-	s := service.ReportSummary()
+	s, err := service.ReportSummary()
+	if err != nil {
+		// 统计失败必须显式报错:静默按 0 展示会让店主把「查不到」当成「没开张」。
+		logger.CtxWarnf(c.Request.Context(), "[report] 汇总统计失败: %v", err)
+		fail(c, "统计失败，请稍后再试")
+		return
+	}
 	ok(c, gin.H{
 		"todayAmount":        s.TodayAmount,
 		"todayOrderCount":    s.TodayOrderCount,
@@ -36,6 +43,11 @@ func ReportSummary(c *gin.Context) {
 		"yesterdayGuestCount":           s.YesterdayGuestCount,
 		"lastMonthSamePeriodAmount":     s.LastMonthSamePeriodAmount,
 		"lastMonthSamePeriodOrderCount": s.LastMonthSamePeriodOrderCount,
+		// 营业额拆解:储值核销部分 + 实际到账(= 营业额 - 储值核销)。
+		// service 已算好这两项,此前漏在这里下发,导致前端 KPI 的
+		// 「其中储值核销 / 实际到账」永远不渲染(合规展示缺失)。
+		"todayWalletAmount": s.TodayWalletAmount,
+		"todayCashAmount":   s.TodayCashAmount,
 		// 免单 / 赠送 / 挂账
 		"todayFreeAmount":          s.TodayFreeAmount,
 		"todayGiftAmount":          s.TodayGiftAmount,
@@ -63,7 +75,12 @@ func ReportDailyTrend(c *gin.Context) {
 }
 
 func ReportMonthlyTrend(c *gin.Context) {
-	items := service.MonthlyTrend()
+	items, err := service.MonthlyTrend()
+	if err != nil {
+		logger.CtxWarnf(c.Request.Context(), "[report] 月度趋势统计失败: %v", err)
+		fail(c, "统计失败，请稍后再试")
+		return
+	}
 	out := make([]gin.H, 0, len(items))
 	for _, it := range items {
 		out = append(out, gin.H{

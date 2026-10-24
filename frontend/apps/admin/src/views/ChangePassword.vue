@@ -60,6 +60,8 @@ const submitting = ref(false);
 const form = reactive({ oldPassword: '', newPassword: '', confirm: '' });
 
 async function submit(): Promise<void> {
+  // 防重入:按钮 disabled 只挡点击,提交中按回车仍会再发一次请求
+  if (submitting.value) return;
   if (!form.oldPassword) {
     MessagePlugin.warning('请输入原密码');
     return;
@@ -82,6 +84,9 @@ async function submit(): Promise<void> {
     clearRemember();
     MessagePlugin.success('密码修改成功，请用新密码重新登录');
     router.replace('/login');
+  } catch {
+    // 失败(如「原密码错误」400)由拦截器统一 toast;必须 catch,
+    // 否则 rejection 会从 @click/@keyup.enter 冒出去成为 unhandled rejection。
   } finally {
     submitting.value = false;
   }

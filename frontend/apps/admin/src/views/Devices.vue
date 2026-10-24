@@ -186,7 +186,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { listRememberSessions, revokeRememberSession } from '@dining/api';
 import type { RememberSession } from '@dining/types';
@@ -202,7 +202,9 @@ const loading = ref(false);
 const revoking = ref(false);
 const list = ref<RememberSession[]>([]);
 // 本机识别:本地令牌与服务端回传的前 8 位比对(完整令牌不出服务端)。
-const myPrefix = (getRemember() || '').slice(0, 8);
+// 用 computed 而不是 setup 时算一次:页面存活期内重新登录会换掉 remember 令牌,
+// 常量会把「本机」标签一直标在旧令牌那一行。
+const myPrefix = computed(() => (getRemember() || '').slice(0, 8));
 
 const cols = [
   { colKey: 'device', title: '设备', width: 190 },
@@ -220,6 +222,9 @@ function parseTime(s: unknown): number {
 // 档位:由「到期 - 签发」反推,即登录时勾选的 7 天 / 30 天 / 永久。
 function planText(row: RememberSession): string {
   const days = Math.round((parseTime(row.expireTime) - parseTime(row.createTime)) / 86400000);
+  // 时间字段缺失/非法时 parseTime 得 NaN,Math.round(NaN) 仍是 NaN ——
+  // 不拦会渲染出「NaN 天」。
+  if (!Number.isFinite(days)) return '-';
   if (days >= 36500) return '永久';
   return `${days} 天`;
 }
@@ -238,6 +243,8 @@ async function load(): Promise<void> {
   try {
     const res = await listRememberSessions();
     list.value = (res && res.sessions) || [];
+  } catch {
+    /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted(load) 与刷新按钮会抛未处理的 Promise 拒绝 */
   } finally {
     loading.value = false;
   }
@@ -283,7 +290,7 @@ async function doRevoke(): Promise<void> {
       if (!row) return;
       await revokeRememberSession({ tokenId: row.tokenId });
       // 吊销的是本机:同步清掉本地令牌,避免残留一条已死的令牌下次白跑一次 401。
-      if (row.tokenPrefix === myPrefix) clearRemember();
+      if (row.tokenPrefix === myPrefix.value) clearRemember();
       MessagePlugin.success('已吊销该设备');
     }
     confirmVisible.value = false;

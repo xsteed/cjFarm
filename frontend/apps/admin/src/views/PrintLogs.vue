@@ -150,7 +150,9 @@
         <div class="mcard-grid">
           <div class="mcard-cell">
             <div class="k">桌号</div>
-            <div class="v">{{ row.tableNo }} · {{ row.tableName }}</div>
+            <div class="v">
+              {{ row.tableNo }}<template v-if="row.tableName"> · {{ row.tableName }}</template>
+            </div>
           </div>
           <div class="mcard-cell">
             <div class="k">单据</div>
@@ -515,9 +517,9 @@ function applyFilters(): void {
 }
 
 function resetFilters(): void {
-  query.status = '';
-  query.docType = '';
-  query.provider = '';
+  // 与桌面端 resetQuery 同一口径:orderNo 搜索框在弹层之外,漏清会让重置后关键词仍旧
+  // 生效;页码不回 1、不重新加载,列表仍是旧数据。
+  resetQuery();
 }
 
 // 通道中文名统一取自 api 枚举,避免这里再硬编码一遍导致两处漂移。
@@ -697,7 +699,9 @@ async function onRefresh(row: PrintLogRow): Promise<void> {
     MessagePlugin.success(res?.msg || '已回查云端结果');
     load();
   } catch {
-    // 失败原因由请求拦截器统一弹出
+    // 失败原因由请求拦截器统一弹出。失败也要刷新:后端可能已回写部分状态
+    // (如云端已打印但回写失败),不刷新会停在旧状态。与 onReprint 同口径。
+    load();
   } finally {
     refreshingIds.value.delete(id);
   }

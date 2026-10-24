@@ -158,5 +158,12 @@ export const adminRoutes: RouteRecordRaw[] = [
       const path = Array.isArray(to.params.path) ? to.params.path.join('/') : (to.params.path ?? '');
       return { path: `/${path}`, query: to.query, hash: to.hash };
     }
+  },
+  {
+    // 404 兜底:手敲/收藏了不存在的地址时 matched 为空,AdminLayout 都不会渲染
+    // (纯白屏,连侧栏都没有)。重定向到默认落地页;没有 dashboard 权限的账号
+    // 会由全局守卫再送到「第一个有权限的菜单」。
+    path: '/:pathMatch(.*)*',
+    redirect: '/dashboard'
   }
 ];

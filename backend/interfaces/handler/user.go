@@ -143,6 +143,17 @@ func UserToggleStatus(c *gin.Context) {
 		fail(c, "参数错误")
 		return
 	}
+	// 提权防护:停用是对账号的可用性打击,与改密/删除同规则 —— 目标员工的角色
+	// 权限不得高于操作人自身,否则只持 user:edit 的角色可以停用超级管理员。
+	auth := currentAuth(c)
+	if auth == nil {
+		unauthorized(c, "未登录或登录已过期")
+		return
+	}
+	if err := service.EnsureUserManageable(p.UserID, auth.Perms); err != nil {
+		fail(c, err.Error())
+		return
+	}
 	detail, msg, err := service.SetUserStatus(p.UserID, p.Status, currentUID(c), adminName(c))
 	if err != nil {
 		fail(c, err.Error())
@@ -155,6 +166,16 @@ func UserToggleStatus(c *gin.Context) {
 func UserDelete(c *gin.Context) {
 	id, valid := idParam(c)
 	if !valid {
+		return
+	}
+	// 提权防护:删除同样是高影响动作,规则同停用(见 UserToggleStatus)。
+	auth := currentAuth(c)
+	if auth == nil {
+		unauthorized(c, "未登录或登录已过期")
+		return
+	}
+	if err := service.EnsureUserManageable(id, auth.Perms); err != nil {
+		fail(c, err.Error())
 		return
 	}
 	if err := service.DeleteUser(id, currentUID(c), adminName(c)); err != nil {

@@ -2,6 +2,10 @@
 // PNG 本身已是压缩格式,再套 DEFLATE 收益极低,因此只做容器封装,
 // 好处是零依赖、体积小、兼容所有解压工具(Windows 资源管理器 / macOS 归档工具)。
 
+/** 下载用 object URL 的回收延迟:给浏览器留足读取 Blob 的时间(大批量 ZIP 尤其重要)。
+ *  导出给单测用,避免测试与实现各自写一个数字后漂移。 */
+export const OBJECT_URL_TTL_MS = 60_000;
+
 const CRC_TABLE: Uint32Array = (() => {
   const t = new Uint32Array(256);
   for (let i = 0; i < 256; i++) {
@@ -61,7 +65,9 @@ export async function downloadZip(files: ZipFileInput[], zipName = 'export.zip')
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  // 延迟回收 object URL:浏览器在 click 之后才异步开始读取 Blob,大批量 ZIP 可能在
+  // 4 秒内还没读完 —— 过早 revoke 会让下载中断/得到 0 字节文件。
+  setTimeout(() => URL.revokeObjectURL(url), OBJECT_URL_TTL_MS);
   return a.download;
 }
 

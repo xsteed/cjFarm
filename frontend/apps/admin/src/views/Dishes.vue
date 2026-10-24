@@ -41,10 +41,7 @@
         </t-button>
       </div>
       <t-space>
-        <div
-          v-if="!isMobile"
-          class="view-mode-switch"
-        >
+        <div class="view-mode-switch">
           <t-radio-group v-model="viewMode">
             <t-radio-button value="table"> 列表 </t-radio-button>
             <t-radio-button value="card"> 卡片 </t-radio-button>
@@ -157,7 +154,8 @@
             <span
               v-if="d.signature === 1"
               class="sig-tag"
-            >招牌</span>
+              >招牌</span
+            >
             <!-- 蒙版:下架优先于售罄(顾客端完全看不到 vs 临时沽清),同一套视觉 -->
             <span
               v-if="d.status !== 1"
@@ -269,7 +267,8 @@
             <span
               v-if="row.signature === 1"
               class="sig-tag"
-            >招牌</span>
+              >招牌</span
+            >
             <!-- 蒙版:下架优先于售罄,缩略图太小直接在图上压字,一眼可辨 -->
             <span
               v-if="row.status !== 1"
@@ -532,7 +531,7 @@
           <div class="spec-editor">
             <div
               v-for="(s, i) in form.specs"
-              :key="i"
+              :key="s._key"
               class="spec-row"
             >
               <t-input
@@ -654,11 +653,17 @@ const { distance: refreshDistance, refreshing: refreshRefreshing, pulling: refre
 const showCard = computed(() => (isMobile.value ? true : viewMode.value === 'card'));
 
 interface SpecForm {
+  /** 列表渲染的稳定 key:v-for 用 index 作 key 时删中间行会让输入框 DOM 按位置复用
+   *  (焦点跳走/光标错位)。新建行没有 specId,这里给一个递增的本地 key。 */
+  _key: string;
   specId?: number;
   specName: string;
   price: number;
   stock: number;
 }
+
+let specKeySeq = 0;
+const nextSpecKey = (): string => `spec-${++specKeySeq}`;
 
 interface DishForm {
   dishId: number | null;
@@ -733,7 +738,9 @@ async function load(): Promise<void> {
     // 缺 items 时兜底成空数组:否则 list.value=undefined 会让模板的 !list.length 抛
     // TypeError 白屏(同仓库其它列表页都做了这层兜底)。
     list.value = res.items || [];
-    pagination.total = res.total;
+    pagination.total = res.total || 0;
+  } catch {
+    /* 失败已由拦截器统一 toast;必须 catch,否则 onMounted(load) 会抛未处理的 Promise 拒绝 */
   } finally {
     loading.value = false;
   }
@@ -743,8 +750,13 @@ async function loadCategories(): Promise<void> {
   // 分类下拉依赖 category:view(跨模块读)。内置角色要么两者都有、要么都没有,
   // 但自定义角色可能只给 dish:view —— 那时跳过请求,而不是让它弹一次 403。
   if (!hasPerm('category:view')) return;
-  const res = await listCategories();
-  categories.value = res.items || [];
+  try {
+    const res = await listCategories();
+    categories.value = res.items || [];
+  } catch {
+    // 失败已由拦截器统一 toast;必须 catch,否则 onMounted 裸调会抛未处理的 Promise 拒绝
+    categories.value = [];
+  }
 }
 
 // 「所属分类」下拉直接输入新分类名回车即建档:调 /admin/category/save 建分类,
@@ -856,7 +868,7 @@ function openAdd(): void {
     soldOut: 0,
     signature: 0,
     sortOrder: 0,
-    specs: [{ specName: '份', price: 0, stock: -1 }],
+    specs: [{ _key: nextSpecKey(), specName: '份', price: 0, stock: -1 }],
     imageFiles: []
   });
   dialogVisible.value = true;
@@ -874,6 +886,7 @@ function openEdit(row: Dish): void {
     signature: Number(row.signature) === 1 ? 1 : 0,
     sortOrder: row.sortOrder ?? 0,
     specs: (row.specs ?? []).map(s => ({
+      _key: nextSpecKey(),
       specId: s.specId,
       specName: s.specName ?? '',
       price: s.price ?? 0,
@@ -885,7 +898,7 @@ function openEdit(row: Dish): void {
 }
 
 function addSpec(): void {
-  form.specs.push({ specName: '', price: 0, stock: -1 });
+  form.specs.push({ _key: nextSpecKey(), specName: '', price: 0, stock: -1 });
 }
 
 function removeSpec(i: number): void {
@@ -893,12 +906,15 @@ function removeSpec(i: number): void {
 }
 
 async function save(): Promise<void> {
-  if (!form.categoryId || !form.dishName) {
+  if (!form.categoryId || !form.dishName.trim()) {
     MessagePlugin.warning('请选择分类并填写菜品名称');
     return;
   }
-  if (!form.specs.length) {
-    MessagePlugin.warning('请至少添加一个规格');
+  // 规格名 trim 后为空的行会在下面被剔除,必须按剔除后的数量校验:只查 form.specs.length
+  // 会让「唯一一行规格名留空」穿过前端校验,最终提交 specs: [] 撞后端「规格必填」强校验。
+  const validSpecs = form.specs.filter(s => s.specName.trim());
+  if (!form.specs.length || !validSpecs.length) {
+    MessagePlugin.warning(form.specs.length ? '请填写规格名称' : '请至少添加一个规格');
     return;
   }
   if (saving.value) return;
@@ -936,9 +952,12 @@ async function save(): Promise<void> {
       signature: form.signature,
       sortOrder: form.sortOrder,
       // specId 必须带上：后端据此增量更新（保留库存），否则每次都重建规格、库存清零
-      specs: form.specs
-        .filter(s => s.specName)
-        .map(s => ({ specId: s.specId, specName: s.specName, price: s.price, stock: s.stock }))
+      specs: validSpecs.map(s => ({
+        specId: s.specId,
+        specName: s.specName.trim(),
+        price: s.price,
+        stock: s.stock
+      }))
     };
     try {
       if (form.dishId) {

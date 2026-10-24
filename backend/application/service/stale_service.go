@@ -145,12 +145,15 @@ type StaleReleaseOutcome struct {
 // 清台后配合 StaleGuardBizDate 的读取隔离,顾客扫码不会再被带进那些旧单。
 func ReleaseStaleTables(ctx context.Context) (StaleReleaseOutcome, error) {
 	var out StaleReleaseOutcome
-	today := CurrentBizDate()
-	tableIDs := dao.ListStaleTableIDs(today)
+	tableIDs := dao.ListStaleTableIDs(CurrentBizDate())
 	if len(tableIDs) == 0 {
 		return out, nil
 	}
 	for _, id := range tableIDs {
+		// 营业日每轮重取:巡检跨越 biz_date_cutoff_hour 时,沿用进入循环前那份
+		// 旧值会让后半轮把「新营业日的单」还当旧单判(或反过来),快照计数与
+		// 事务内判定都用当前值,两者口径才不会漂移。
+		today := CurrentBizDate()
 		// 事务外快照仅用于日志计数(该桌遗留了几笔单);清台判定以事务内为准。
 		orders := dao.ListActiveOrdersByTable(id, "")
 		stale := 0

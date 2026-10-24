@@ -13,7 +13,8 @@
     </div>
     <div class="meta-item">
       <span class="mk">翻台率</span>
-      <span class="mv">{{ turnover }}<em>次/桌</em></span>
+      <!-- 无桌台时 turnover 是 '—'，单位要跟着一起隐藏，否则渲染成「—次/桌」 -->
+      <span class="mv">{{ turnover }}<em v-if="turnover !== '—'">次/桌</em></span>
     </div>
     <div class="meta-item">
       <span class="mk">今日退款</span>

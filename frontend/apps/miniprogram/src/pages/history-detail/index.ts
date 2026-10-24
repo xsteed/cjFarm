@@ -65,7 +65,9 @@ Page({
   menu: null as MenuCategory[] | null,
 
   onLoad(options: Record<string, string | undefined>) {
-    const orderNo = decodeURIComponent(String(options?.orderNo || '')).trim();
+    // 不再 decodeURIComponent：微信交给 onLoad 的 options 已经解码过，再解一次会把
+    // 含 % 的单号解成别的单号（pages/order、pages/pay 都是直接取用，同口径）。
+    const orderNo = String(options?.orderNo || '').trim();
     if (!orderNo) {
       this.setData({ loading: false, error: '缺少订单号' });
       return;
@@ -126,7 +128,9 @@ Page({
       payText: payStatusText(order),
       payClass: `tag-${payStatusTheme(order)}`,
       personCount: Number(order.personCount) || 1,
-      createTimeText: String(order.createTime || '').replace('T', ' ').slice(0, 16),
+      createTimeText: String(order.createTime || '')
+        .replace('T', ' ')
+        .slice(0, 16),
       orderRemark: String(order.orderRemark || ''),
       dishTotalText: money(order.dishAmount),
       seatFeeText: money(order.seatFee),

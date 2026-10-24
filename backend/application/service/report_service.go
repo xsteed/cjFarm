@@ -21,6 +21,13 @@ import (
 //
 // 订单数/客流量按「下单时间(create_time)」统计,反映经营流量,与资金流口径互补。
 //
+// ⚠️ 双口径并存是**有意的设计**(不是疏漏),读报表时须按指标分别归属:
+//   - 资金流(钱到账时间):营业额、储值核销、退款、挂账核销 —— pay_time /
+//     credit_settle_time / tb_refund.update_time;
+//   - 流量(下单时间)：订单数、客流、免单让利、赠送让利、挂账产生 —— create_time。
+// 跨日订单(如 23:50 下单、00:10 收款)会让「今日营业额」与「今日免单让利」
+// 不是同一批单。老板对账时以资金流指标为准,流量指标看趋势即可。
+//
 // 时间区间统一采用左闭右开 [start, end),避免「当日」与「次日」在零点边界上重复计数。
 
 const (
@@ -30,9 +37,23 @@ const (
 	maxRangeDays = 366
 )
 
-// dayStart 返回某天的零点(本地时区),用于构造 [start, end) 区间边界。
+// dayStart 返回某天的零点(本地时区)。
 func dayStart(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+// bizDayStartOf 返回「营业日 d 的起点」:d 当天 00:00 + 营业日切换小时(cutoff)。
+//
+// cutoff=0(默认)时即自然日零点,与历史口径完全一致;cutoff=4 时,
+// 10-13 的营业日是 [10-13 04:00, 10-14 04:00),凌晨 2 点的流水归 10-13。
+// 与订单 biz_date、跨日清台共用同一套折算(见 stale_service.BizDateOf)。
+func bizDayStartOf(d time.Time, cutoffHour int) time.Time {
+	return time.Date(d.Year(), d.Month(), d.Day(), cutoffHour, 0, 0, 0, d.Location())
+}
+
+// currentBizDayStart 返回当前营业日的起点(相对 now 与截止时刻)。
+func currentBizDayStart(now time.Time, cutoffHour int) time.Time {
+	return bizDayStartOf(now.Add(-time.Duration(cutoffHour)*time.Hour), cutoffHour)
 }
 
 // parseDay 解析 YYYY-MM-DD(本地时区)。
@@ -44,11 +65,15 @@ func parseDay(s string) (time.Time, bool) {
 	return t, true
 }
 
-// resolveRange 统一解析「报表区间」参数,返回闭区间 [start, end] 的两个自然日。
+// resolveRange 统一解析「报表区间」参数,返回闭区间 [start, end] 的两个**营业日**起点。
 //
 // 两种传参方式(同时出现时 start/end 优先):
-//   - start=YYYY-MM-DD&end=YYYY-MM-DD —— 自定义区间(含首尾);
-//   - days=N —— 截至今天的近 N 天。
+//   - start=YYYY-MM-DD&end=YYYY-MM-DD —— 自定义区间(含首尾,按营业日理解);
+//   - days=N —— 截至今天营业日的近 N 个营业日。
+//
+// start/end 都是「该营业日 00:00 + cutoff」的时刻,与报表汇总、日分桶同一口径
+// (cutoff=0 时即自然日零点,与旧行为一致);调用方用 Format(conf.TimeLayout)
+// 作为左闭右开区间边界,end 再加一天即为区间右端。
 //
 // 非法值一律回退默认,越界则夹到 maxDays,保证任何 query 都构造不出「全表扫描」。
 func resolveRange(startStr, endStr, daysStr string, defaultDays, maxDays int) (start, end time.Time) {
@@ -58,13 +83,24 @@ func resolveRange(startStr, endStr, daysStr string, defaultDays, maxDays int) (s
 	if maxDays < 1 {
 		maxDays = 1
 	}
-	today := dayStart(time.Now())
+	cutoff := BizDayCutoffHour()
+	today := currentBizDayStart(time.Now(), cutoff)
 	start, end, custom := today.AddDate(0, 0, -(defaultDays-1)), today, false
+	startOK, endOK := false, false
 	if s, ok := parseDay(startStr); ok {
-		start, custom = s, true
+		start, startOK, custom = bizDayStartOf(s, cutoff), true, true
 	}
 	if e, ok := parseDay(endStr); ok {
-		end, custom = e, true
+		end, endOK, custom = bizDayStartOf(e, cutoff), true, true
+	}
+	// 只传了一侧时,另一侧按 defaultDays 贴着它推导,而不是留在「相对今天」的
+	// 默认值上 —— 否则 start=今天-29 配上一年前的 end,会交换成一个横跨整年的
+	// 无意义区间(虽然仍受 maxDays 夹紧,但数字与调用方意图完全不符)。
+	if startOK && !endOK {
+		end = start.AddDate(0, 0, defaultDays-1)
+	}
+	if endOK && !startOK {
+		start = end.AddDate(0, 0, -(defaultDays - 1))
 	}
 	if !custom {
 		days := defaultDays
@@ -116,6 +152,13 @@ type Summary struct {
 	YesterdayGuestCount           int
 	LastMonthSamePeriodAmount     float64
 	LastMonthSamePeriodOrderCount int
+	// MonthSameSpanAmount 本月与「上月同期」**等长**区间的营业额:环比必须用它。
+	//
+	// 月末会出现天数不对称:3/31 时上月只有 28 天,拿「本月 31 天(MonthAmount)」
+	// 去比「上月 28 天」永远显示负增长,没有参考价值。本字段把本月侧也截到同样的
+	// 天数(3/1~3/28),与 LastMonthSamePeriodAmount 构成可比的一对。
+	MonthSameSpanAmount     float64
+	MonthSameSpanOrderCount int
 	TodayFreeAmount               float64
 	TodayGiftAmount               float64
 	// TodayWalletAmount 今日营业额中用储值余额核销的部分。
@@ -135,7 +178,10 @@ type Summary struct {
 
 // ReportSummary 汇总今日/昨日/本月/上月同期的营业额、订单量、客流量,
 // 以及今日异常、桌台在途、免单与挂账等经营指标。
-func ReportSummary() Summary {
+//
+// 任一统计查询失败即返回 error,由 handler 应答失败 —— 不静默按 0 展示:
+// DB 抖动时「今日营业额 0.00」会被店主当成真没开张,比报错更难排查。
+func ReportSummary() (Summary, error) {
 	nowT := time.Now()
 	today := dayStart(nowT)
 	tomorrow := today.AddDate(0, 0, 1)
@@ -155,64 +201,129 @@ func ReportSummary() Summary {
 	todayStart, tomorrowStart := f(today), f(tomorrow)
 
 	// ---- 今日 ----
-	todayAmountCents := dao.RangeAmount(todayStart, tomorrowStart)
-	todayOrderCount := dao.RangeOrderCount(todayStart, tomorrowStart)
-	todayGuestCount := dao.RangeGuestCount(todayStart, tomorrowStart)
+	todayAmountCents, err := dao.RangeAmount(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
+	todayOrderCount, err := dao.RangeOrderCount(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
+	todayGuestCount, err := dao.RangeGuestCount(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	// ---- 昨日(环比基准) ----
-	yesterdayAmountCents := dao.RangeAmount(f(yesterday), todayStart)
-	yesterdayOrderCount := dao.RangeOrderCount(f(yesterday), todayStart)
-	yesterdayGuestCount := dao.RangeGuestCount(f(yesterday), todayStart)
+	yesterdayAmountCents, err := dao.RangeAmount(f(yesterday), todayStart)
+	if err != nil {
+		return Summary{}, err
+	}
+	yesterdayOrderCount, err := dao.RangeOrderCount(f(yesterday), todayStart)
+	if err != nil {
+		return Summary{}, err
+	}
+	yesterdayGuestCount, err := dao.RangeGuestCount(f(yesterday), todayStart)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	// ---- 本月 / 上月同期 ----
-	monthAmountCents := dao.RangeAmount(f(monthStart), f(nextMonth))
-	monthOrderCount := dao.RangeOrderCount(f(monthStart), f(nextMonth))
-	monthGuestCount := dao.RangeGuestCount(f(monthStart), f(nextMonth))
-	lastMonthAmountCents := dao.RangeAmount(f(lastMonthStart), f(lastMonthSameEnd))
-	lastMonthOrderCount := dao.RangeOrderCount(f(lastMonthStart), f(lastMonthSameEnd))
+	monthAmountCents, err := dao.RangeAmount(f(monthStart), f(nextMonth))
+	if err != nil {
+		return Summary{}, err
+	}
+	monthOrderCount, err := dao.RangeOrderCount(f(monthStart), f(nextMonth))
+	if err != nil {
+		return Summary{}, err
+	}
+	monthGuestCount, err := dao.RangeGuestCount(f(monthStart), f(nextMonth))
+	if err != nil {
+		return Summary{}, err
+	}
+	lastMonthAmountCents, err := dao.RangeAmount(f(lastMonthStart), f(lastMonthSameEnd))
+	if err != nil {
+		return Summary{}, err
+	}
+	lastMonthOrderCount, err := dao.RangeOrderCount(f(lastMonthStart), f(lastMonthSameEnd))
+	if err != nil {
+		return Summary{}, err
+	}
 
 	// ---- 今日异常与风险 ----
 	// 已支付订单通常已计入「完成」,这里按 finish_time 统计便于和营业额口径区分。
-	todayFinishedCount := dao.CountFinishedIn(todayStart, tomorrowStart)
-	todayCancelCount := dao.CountCanceledIn(todayStart, tomorrowStart)
+	todayFinishedCount, err := dao.CountFinishedIn(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
+	todayCancelCount, err := dao.CountCanceledIn(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
 	// 退款按流水逐笔统计(资金流口径,见 dao.SumRefundIn 注释)。
-	todayRefundCents := dao.SumRefundIn(todayStart, tomorrowStart)
+	todayRefundCents, err := dao.SumRefundIn(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	// ---- 桌台 / 在途订单 ----
-	tableCount := dao.TableCount()
-	freeTableCount := dao.FreeTableCount()
-	activeOrderCount := dao.ActiveOrderCount(StaleGuardBizDate())
+	tableCount, err := dao.TableCount()
+	if err != nil {
+		return Summary{}, err
+	}
+	freeTableCount, err := dao.FreeTableCount()
+	if err != nil {
+		return Summary{}, err
+	}
+	activeOrderCount, err := dao.ActiveOrderCount(StaleGuardBizDate())
+	if err != nil {
+		return Summary{}, err
+	}
 
 	// ---- 今日免单(让利额) ----
-	todayFreeCents := dao.SumFreeIn(todayStart, tomorrowStart)
+	todayFreeCents, err := dao.SumFreeIn(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	// ---- 今日赠送(让利额) ----
-	todayGiftCents := dao.SumGiftIn(todayStart, tomorrowStart)
+	todayGiftCents, err := dao.SumGiftIn(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	// ---- 今日储值核销(营业额中「以前收过的钱」) ----
-	todayWalletCents := dao.RangeWalletConsume(todayStart, tomorrowStart)
+	todayWalletCents, err := dao.RangeWalletConsume(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
 	if todayWalletCents > todayAmountCents {
 		// 理论上是子集;真超了说明有历史脏数据,按营业额封顶,避免算出负的到账资金。
 		todayWalletCents = todayAmountCents
 	}
 
 	// ---- 挂账 ----
-	creditPendingCents, creditPendingCount := dao.CreditPendingStats()
-	todayCreditCents := dao.SumCreditIn(todayStart, tomorrowStart)
-	todayCreditSettledCents, todayCreditSettledCount := dao.CreditSettledIn(todayStart, tomorrowStart)
+	creditPendingCents, creditPendingCount, err := dao.CreditPendingStats()
+	if err != nil {
+		return Summary{}, err
+	}
+	todayCreditCents, err := dao.SumCreditIn(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
+	todayCreditSettledCents, todayCreditSettledCount, err := dao.CreditSettledIn(todayStart, tomorrowStart)
+	if err != nil {
+		return Summary{}, err
+	}
 
 	todayAmount := po.ToYuan(todayAmountCents)
-	todayAvg := 0.0
-	if todayOrderCount > 0 {
-		todayAvg = todayAmount / float64(todayOrderCount)
-	}
 
 	return Summary{
 		TodayAmount:                   po.Round2(todayAmount),
 		TodayOrderCount:               todayOrderCount,
 		TodayFinishedCount:            todayFinishedCount,
 		TodayGuestCount:               todayGuestCount,
-		TodayAvgAmount:                po.Round2(todayAvg),
+		TodayAvgAmount:                roundAvg(todayAmountCents, todayOrderCount),
 		TodayCancelCount:              todayCancelCount,
 		TodayRefundAmount:             po.Round2(po.ToYuan(todayRefundCents)),
 		MonthAmount:                   po.Round2(po.ToYuan(monthAmountCents)),
@@ -236,7 +347,7 @@ func ReportSummary() Summary {
 		TodayCreditAmount:             po.Round2(po.ToYuan(todayCreditCents)),
 		TodayCreditSettledAmount:      po.Round2(po.ToYuan(todayCreditSettledCents)),
 		TodayCreditSettledCount:       todayCreditSettledCount,
-	}
+	}, nil
 }
 
 // DailyTrendItem 区间内某一天的营业额/订单/客流。
@@ -291,7 +402,7 @@ type MonthlyTrendItem struct {
 }
 
 // MonthlyTrend 返回最近 12 个月(含本月)逐月营业额/订单/客流。
-func MonthlyTrend() []MonthlyTrendItem {
+func MonthlyTrend() ([]MonthlyTrendItem, error) {
 	nowT := time.Now()
 	thisMonth := time.Date(nowT.Year(), nowT.Month(), 1, 0, 0, 0, 0, nowT.Location())
 	out := []MonthlyTrendItem{}
@@ -299,14 +410,26 @@ func MonthlyTrend() []MonthlyTrendItem {
 		m := thisMonth.AddDate(0, -i, 0)
 		next := m.AddDate(0, 1, 0)
 		s, e := m.Format(conf.TimeLayout), next.Format(conf.TimeLayout)
+		amtCents, err := dao.RangeAmount(s, e)
+		if err != nil {
+			return nil, err
+		}
+		orderCount, err := dao.RangeOrderCount(s, e)
+		if err != nil {
+			return nil, err
+		}
+		guestCount, err := dao.RangeGuestCount(s, e)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, MonthlyTrendItem{
 			Month:      fmt.Sprintf("%d月", int(m.Month())),
-			Amount:     po.Round2(po.ToYuan(dao.RangeAmount(s, e))),
-			OrderCount: dao.RangeOrderCount(s, e),
-			GuestCount: dao.RangeGuestCount(s, e),
+			Amount:     po.Round2(po.ToYuan(amtCents)),
+			OrderCount: orderCount,
+			GuestCount: guestCount,
 		})
 	}
-	return out
+	return out, nil
 }
 
 // DishRankItem 菜品排行的一行结果。
